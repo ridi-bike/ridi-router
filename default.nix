@@ -9,6 +9,7 @@ in
   pkgs.mkShell {
     packages = [
       toolchain
+      pkgs.just
     ];
 
     RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
