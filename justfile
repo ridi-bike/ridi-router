@@ -12,7 +12,7 @@ overpass-query := '"[out:json];
                       [access!=no]
                       [highway!=path]
                       [highway!=service]
-                      (around:10000,57.15368,24.85370)->.roads;
+                      (around:10,57.15368,24.85370,57.16393,24.89780)->.roads;
                     (.roads;>>;);
                     out;"'
 run-and-load := 'cat test-map-data-formatted.json | cargo run'
