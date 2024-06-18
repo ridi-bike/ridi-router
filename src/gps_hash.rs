@@ -1,3 +1,10 @@
+pub enum HashOffset {
+    None,
+    Lat,
+    LatLon,
+    Lon,
+}
+
 fn interleave_u32_with_zeros(input: u32) -> u64 {
     // https://lemire.me/blog/2018/01/08/how-fast-can-you-bit-interleave-32-bit-integers/
     let mut output: u64 = input.into();
@@ -9,15 +16,20 @@ fn interleave_u32_with_zeros(input: u32) -> u64 {
     return output;
 }
 
-fn get_adjusted_coords(lat: f32, lon: f32) -> (u32, u32) {
+fn get_adjusted_coords(lat: f32, lon: f32, variant: HashOffset) -> (u32, u32) {
     let lat_adj: u32 = ((lat + 90.0) * 100000.0).trunc() as u32 * 2;
     let lon_adj: u32 = ((lon + 180.0) * 100000.0).trunc() as u32;
 
-    (lat_adj, lon_adj)
+    match variant {
+        HashOffset::None => (lat_adj, lon_adj),
+        HashOffset::Lat => (lat_adj + 1, lon_adj),
+        HashOffset::LatLon => (lat_adj + 1, lon_adj + 1),
+        HashOffset::Lon => (lat_adj, lon_adj + 1),
+    }
 }
 
-pub fn get_gps_coords_hash(lat: f32, lon: f32) -> u64 {
-    let (lat_adj, lon_adj) = get_adjusted_coords(lat, lon);
+pub fn get_gps_coords_hash(lat: f32, lon: f32, variant: HashOffset) -> u64 {
+    let (lat_adj, lon_adj) = get_adjusted_coords(lat, lon, variant);
 
     (interleave_u32_with_zeros(lat_adj) << 1) | interleave_u32_with_zeros(lon_adj)
 }
@@ -28,12 +40,6 @@ mod tests {
 
     struct InterleaveTest {
         input: u32,
-        output: u64,
-    }
-
-    struct HashTest {
-        lat: f32,
-        lon: f32,
         output: u64,
     }
 
@@ -59,15 +65,28 @@ mod tests {
     #[test]
     fn coords_adj_works() {
         let tests = vec![
-            (57.153232, 24.858824, 29430646, 20485882),
-            (-77.499, -69.500, 2500200, 11050000),
+            (57.153232, 24.858824, HashOffset::None, 29430646, 20485882),
+            (57.153232, 24.858824, HashOffset::Lat, 29430647, 20485882),
+            (57.153232, 24.858824, HashOffset::LatLon, 29430647, 20485883),
+            (57.153232, 24.858824, HashOffset::Lon, 29430646, 20485883),
+            (-77.499, -69.500, HashOffset::None, 2500200, 11050000),
+            (-77.499, -69.500, HashOffset::Lat, 2500201, 11050000),
+            (-77.499, -69.500, HashOffset::LatLon, 2500201, 11050001),
+            (-77.499, -69.500, HashOffset::Lon, 2500200, 11050001),
         ];
 
-        for (input_lat, input_lon, output_lat, output_lon) in tests {
-            let (lat_adj, lon_adj) = get_adjusted_coords(input_lat, input_lon);
+        for (input_lat, input_lon, variant, output_lat, output_lon) in tests {
+            let (lat_adj, lon_adj) = get_adjusted_coords(input_lat, input_lon, variant);
             assert_eq!(lat_adj, output_lat);
             assert_eq!(lon_adj, output_lon);
         }
+    }
+
+    struct HashTest {
+        lat: f32,
+        lon: f32,
+        variant: HashOffset,
+        output: u64,
     }
 
     #[test]
@@ -76,17 +95,55 @@ mod tests {
             HashTest {
                 lat: 57.153232, // 29430646 = 0b 1 1 1 0 0 0 0 0 1 0 0 0 1 0 0 1 1 0 1 1 1 0 1 1 0
                 lon: 24.858824, // 20485882 = 0b 1 0 0 1 1 1 0 0 0 1 0 0 1 0 1 1 0 1 1 1 1 1 0 1 0
+                variant: HashOffset::None,
                 output: 0b11101001010100001001000011000111100111111101101100,
+            },
+            HashTest {
+                lat: 57.153232, // 29430647 = 0b 1 1 1 0 0 0 0 0 1 0 0 0 1 0 0 1 1 0 1 1 1 0 1 1 1
+                lon: 24.858824, // 20485882 = 0b 1 0 0 1 1 1 0 0 0 1 0 0 1 0 1 1 0 1 1 1 1 1 0 1 0
+                variant: HashOffset::Lat,
+                output: 0b11101001010100001001000011000111100111111101101110,
+            },
+            HashTest {
+                lat: 57.153232, // 29430647 = 0b 1 1 1 0 0 0 0 0 1 0 0 0 1 0 0 1 1 0 1 1 1 0 1 1 1
+                lon: 24.858824, // 20485883 = 0b 1 0 0 1 1 1 0 0 0 1 0 0 1 0 1 1 0 1 1 1 1 1 0 1 1
+                variant: HashOffset::LatLon,
+                output: 0b11101001010100001001000011000111100111111101101111,
+            },
+            HashTest {
+                lat: 57.153232, // 29430646 = 0b 1 1 1 0 0 0 0 0 1 0 0 0 1 0 0 1 1 0 1 1 1 0 1 1 0
+                lon: 24.858824, // 20485883 = 0b 1 0 0 1 1 1 0 0 0 1 0 0 1 0 1 1 0 1 1 1 1 1 0 1 1
+                variant: HashOffset::Lon,
+                output: 0b11101001010100001001000011000111100111111101101101,
             },
             HashTest {
                 lat: -77.499, // 2500200  = 0b 0 0 1 0 0 1 1 0 0 0 1 0 0 1 1 0 0 1 1 0 1 0 0 0
                 lon: -69.500, // 11050000 = 0b 1 0 1 0 1 0 0 0 1 0 0 1 1 1 0 0 0 0 0 1 0 0 0 0
+                variant: HashOffset::None,
                 output: 0b010011000110100001001001011110000010100110000000,
+            },
+            HashTest {
+                lat: -77.499, // 2500201  = 0b 0 0 1 0 0 1 1 0 0 0 1 0 0 1 1 0 0 1 1 0 1 0 0 1
+                lon: -69.500, // 11050000 = 0b 1 0 1 0 1 0 0 0 1 0 0 1 1 1 0 0 0 0 0 1 0 0 0 0
+                variant: HashOffset::Lat,
+                output: 0b010011000110100001001001011110000010100110000010,
+            },
+            HashTest {
+                lat: -77.499, // 2500201  = 0b 0 0 1 0 0 1 1 0 0 0 1 0 0 1 1 0 0 1 1 0 1 0 0 1
+                lon: -69.500, // 11050001 = 0b 1 0 1 0 1 0 0 0 1 0 0 1 1 1 0 0 0 0 0 1 0 0 0 1
+                variant: HashOffset::LatLon,
+                output: 0b010011000110100001001001011110000010100110000011,
+            },
+            HashTest {
+                lat: -77.499, // 2500200  = 0b 0 0 1 0 0 1 1 0 0 0 1 0 0 1 1 0 0 1 1 0 1 0 0 0
+                lon: -69.500, // 11050001 = 0b 1 0 1 0 1 0 0 0 1 0 0 1 1 1 0 0 0 0 0 1 0 0 0 1
+                variant: HashOffset::Lon,
+                output: 0b010011000110100001001001011110000010100110000001,
             },
         ];
 
         for test in tests {
-            let output = get_gps_coords_hash(test.lat, test.lon);
+            let output = get_gps_coords_hash(test.lat, test.lon, test.variant);
             assert_eq!(output, test.output);
         }
     }
