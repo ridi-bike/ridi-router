@@ -2,13 +2,14 @@ use std::{
     collections::HashMap,
     io::{self, BufRead},
     process,
-    rc::Rc,
 };
 
 use geo_types::Point;
+use gps_coords_hash_map::{GpsCoordsHashMap, GpsCoordsHashMapPoint};
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use osm::OsmData;
 
+mod gps_coords_hash_map;
 mod gps_hash;
 mod osm;
 
@@ -46,7 +47,7 @@ fn main() {
 
     let mut ways = HashMap::new();
     let mut nodes = HashMap::new();
-    // let mut coordinates =
+    let mut coordinates = GpsCoordsHashMap::new();
 
     for element in osm_data.elements.iter() {
         if element.type_field == "node" {
@@ -60,6 +61,12 @@ fn main() {
                         lon,
                     },
                 );
+                coordinates.insert(GpsCoordsHashMapPoint {
+                    id: element.id,
+                    lat,
+                    lon,
+                });
+                eprintln!("writing {:?} {:?}", lat, lon);
             } else {
                 eprintln!("Found node with missing coordinates");
                 process::exit(1);
@@ -88,11 +95,26 @@ fn main() {
 
     let mut track_segment = TrackSegment::new();
 
-    for p in 1..100 {
-        let node = osm_data.elements.get(p).unwrap();
-        let waypoint = Waypoint::new(Point::new(node.lon.unwrap(), node.lat.unwrap()));
+    let test_lat = 0.0_f64;
+    let test_lon = 0.0_f64;
+
+    let waypoint = Waypoint::new(Point::new(test_lat, test_lon));
+    track_segment.points.push(waypoint);
+
+    let closes_point = coordinates.get_closest(test_lat, test_lon);
+
+    if let Some(point) = closes_point {
+        let waypoint = Waypoint::new(Point::new(point.lat, point.lon));
         track_segment.points.push(waypoint);
+    } else {
+        eprintln!("no closest point found");
     }
+
+    // for p in 1..100 {
+    //     let node = osm_data.elements.get(p).unwrap();
+    //     let waypoint = Waypoint::new(Point::new(node.lon.unwrap(), node.lat.unwrap()));
+    //     track_segment.points.push(waypoint);
+    // }
 
     let mut track = Track::new();
     track.segments.push(track_segment);
