@@ -1,4 +1,5 @@
 fn interleave_u32_with_zeros(input: u32) -> u64 {
+    // https://lemire.me/blog/2018/01/08/how-fast-can-you-bit-interleave-32-bit-integers/
     let mut output: u64 = input.into();
     output = (output ^ (output << 16)) & 0x0000ffff0000ffff;
     output = (output ^ (output << 8)) & 0x00ff00ff00ff00ff;
@@ -73,21 +74,19 @@ mod tests {
     fn hash_works() {
         let tests = vec![
             HashTest {
-                lat: 57.153232, // 0  1  1  0  0  1  1  1  1  0  0  1  1  0  1  1  1  1  0  1  0  1  0  0  0
-                lon: 24.858824, // 1  0  0  1  1  1  0  0  0  1  0  0  1  0  1  1  0  1  1  1  1  1  0  1  0
-                output: 0b01101001011110101001001011001111101101110111000100,
+                lat: 57.153232, // 29430646 = 0b 1 1 1 0 0 0 0 0 1 0 0 0 1 0 0 1 1 0 1 1 1 0 1 1 0
+                lon: 24.858824, // 20485882 = 0b 1 0 0 1 1 1 0 0 0 1 0 0 1 0 1 1 0 1 1 1 1 1 0 1 0
+                output: 0b11101001010100001001000011000111100111111101101100,
             },
             HashTest {
-                lat: -77.499, // 0  0  1  0  0  1  1  0  0  0  1  0  0  1  1  0  0  1  1  0  1  0  0  0
-                lon: -69.500, // 1  0  1  0  1  0  0  0  1  0  0  1  1  1  0  0  0  0  0  1  0  0  0  0
+                lat: -77.499, // 2500200  = 0b 0 0 1 0 0 1 1 0 0 0 1 0 0 1 1 0 0 1 1 0 1 0 0 0
+                lon: -69.500, // 11050000 = 0b 1 0 1 0 1 0 0 0 1 0 0 1 1 1 0 0 0 0 0 1 0 0 0 0
                 output: 0b010011000110100001001001011110000010100110000000,
             },
         ];
 
         for test in tests {
             let output = get_gps_coords_hash(test.lat, test.lon);
-            println!("ex {:b}", test.output);
-            println!("re {:b}", output);
             assert_eq!(output, test.output);
         }
     }
