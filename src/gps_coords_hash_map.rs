@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, rc::Rc};
+use std::{collections::BTreeMap, rc::Rc, u128, u64};
 
 use crate::gps_hash::{get_gps_coords_hash, HashOffset};
 
@@ -61,17 +61,31 @@ impl GpsCoordsHashMap {
 
         let mut grid_points: Vec<Rc<GpsCoordsHashMapPoint>> = Vec::new();
 
-        for level in 0..=64 {
-            eprintln!("level {}", level);
-            let square_size = if level == 0 { 0 } else { 2_u64.pow(level) };
-            let from = if search_hash >= square_size {
-                search_hash - square_size
-            } else {
-                0
-            };
-            let to = search_hash;
-            eprintln!("square_size {}", square_size);
-            eprintln!("range {}..={}", from, to);
+        let orientation = search_hash << 62 >> 62;
+
+        eprintln!("orientation {}", orientation);
+
+        for level in 0..=32 {
+            let shift_width = 2 * level;
+            let from = search_hash >> shift_width << shift_width;
+            let to = from
+                | if shift_width > 0 {
+                    u64::max_value() >> (64 - shift_width)
+                } else {
+                    search_hash
+                };
+
+            // let mask = u64::max_value() ^ ((2 * level) - 1);
+            eprintln!("level {} shift_width {}", level, shift_width);
+            // let square_size = if level == 0 { 0 } else { 2_u64.pow(level) };
+            // let from = if search_hash >= square_size {
+            //     search_hash - square_size
+            // } else {
+            //     0
+            // };
+            // let to = search_hash;
+            // eprintln!("square_size {}", square_size);
+            eprintln!("range {:b}..{:b}", from, to);
 
             let offset_none_points = self.offset_none.range(from..=to);
             let offset_lat_points = self.offset_lat.range(from..=to);
@@ -87,7 +101,7 @@ impl GpsCoordsHashMap {
             ];
 
             let points = points.concat();
-            if !points.is_empty() || from == 0 {
+            if !points.is_empty() || (from == 0 && to == u64::max_value()) {
                 grid_points = points;
                 break;
             }
@@ -126,5 +140,233 @@ impl GpsCoordsHashMap {
         points_with_dist.sort_by(|(dist_a, _), (dist_b, _)| dist_a.cmp(dist_b));
 
         points_with_dist.get(0).map(|(_, p)| p.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::panic;
+
+    use super::*;
+
+    #[test]
+    fn closest_lookup() {
+        println!("===================================");
+        let tests: Vec<(Vec<GpsCoordsHashMapPoint>, GpsCoordsHashMapPoint, i64)> = vec![
+            (
+                vec![GpsCoordsHashMapPoint {
+                    id: 1,
+                    lat: 57.1640,
+                    lon: 24.8652,
+                }],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: 57.1670,
+                    lon: 24.8658,
+                },
+                1,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: 57.1640,
+                        lon: 24.8652,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: 57.1740,
+                        lon: 24.8630,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: 57.1670,
+                    lon: 24.8658,
+                },
+                1,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: 57.163429387682214,
+                    lon: 24.87742424011231,
+                },
+                2,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: 57.193343289610794,
+                    lon: 24.872531890869144,
+                },
+                1,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: -10.660607953624762,
+                    lon: -52.03125,
+                },
+                2,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 3,
+                        lat: 9.795677582829743,
+                        lon: -1.7578125000000002,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 4,
+                        lat: -36.03133177633188,
+                        lon: -65.21484375000001,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: -10.660607953624762,
+                    lon: -52.03125,
+                },
+                4,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 3,
+                        lat: 9.795677582829743,
+                        lon: -1.7578125000000002,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: -10.660607953624762,
+                    lon: -52.03125,
+                },
+                3,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 3,
+                        lat: 9.795677582829743,
+                        lon: -1.7578125000000002,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 4,
+                        lat: -36.03133177633188,
+                        lon: -65.21484375000001,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: -28.92163128242129,
+                    lon: 144.14062500000003,
+                },
+                4,
+            ),
+            (
+                vec![
+                    GpsCoordsHashMapPoint {
+                        id: 1,
+                        lat: -38.591187457054524,
+                        lon: -156.33535699675508,
+                    },
+                    GpsCoordsHashMapPoint {
+                        id: 2,
+                        lat: -26.16538350360019,
+                        lon: 34.914643003244926,
+                    },
+                ],
+                GpsCoordsHashMapPoint {
+                    id: 0,
+                    lat: -28.92163128242129,
+                    lon: 144.14062500000003,
+                },
+                1,
+            ),
+        ];
+        for test in tests {
+            println!("test case for coords");
+            let (points, check_point, closest_id) = test;
+            let mut coords = GpsCoordsHashMap::new();
+            for point in points {
+                coords.insert(point);
+            }
+
+            let closest = coords.get_closest(check_point.lat, check_point.lon);
+            if let Some(closest) = closest {
+                eprintln!("closest found id {} expected {}", closest.id, closest_id);
+                assert_eq!(closest.id, closest_id);
+            } else {
+                panic!("No points found");
+            }
+        }
     }
 }

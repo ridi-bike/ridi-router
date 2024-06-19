@@ -140,6 +140,12 @@ mod tests {
                 offset: HashOffset::Lon,
                 output: 0b010011000110100001001001011110000010100110000001,
             },
+            HashTest {
+                lat: 89.9999,
+                lon: 179.9999,
+                offset: HashOffset::Lon,
+                output: 0b010011000110100001001001011110000010100110000001,
+            },
         ];
 
         for test in tests {
