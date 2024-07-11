@@ -23,12 +23,12 @@ pub struct Osm3s {
 pub struct Element {
     #[serde(rename = "type")]
     pub type_field: String,
-    pub id: i64,
+    pub id: u64,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
     pub tags: Option<Tags>,
     #[serde(default)]
-    pub nodes: Vec<i64>,
+    pub nodes: Vec<u64>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
