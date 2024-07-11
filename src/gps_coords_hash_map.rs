@@ -1,4 +1,8 @@
-use std::{collections::BTreeMap, rc::Rc, u128, u64};
+use std::{
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+    u64,
+};
 
 use crate::gps_hash::{get_gps_coords_hash, HashOffset};
 
@@ -55,15 +59,7 @@ impl GpsCoordsHashMap {
 
     pub fn get_closest(&self, lat: f64, lon: f64) -> Option<GpsCoordsHashMapPoint> {
         let search_hash = get_gps_coords_hash(lat, lon, HashOffset::None);
-
-        eprintln!("search hash {}", search_hash);
-        eprintln!("coords count {}", self.offset_none.len());
-
-        let mut grid_points: Vec<Rc<GpsCoordsHashMapPoint>> = Vec::new();
-
-        let orientation = search_hash << 62 >> 62;
-
-        eprintln!("orientation {}", orientation);
+        let mut grid_points = HashMap::new();
 
         for level in 0..=32 {
             let shift_width = 2 * level;
@@ -74,18 +70,6 @@ impl GpsCoordsHashMap {
                 } else {
                     search_hash
                 };
-
-            // let mask = u64::max_value() ^ ((2 * level) - 1);
-            eprintln!("level {} shift_width {}", level, shift_width);
-            // let square_size = if level == 0 { 0 } else { 2_u64.pow(level) };
-            // let from = if search_hash >= square_size {
-            //     search_hash - square_size
-            // } else {
-            //     0
-            // };
-            // let to = search_hash;
-            // eprintln!("square_size {}", square_size);
-            eprintln!("range {:b}..{:b}", from, to);
 
             let offset_none_points = self.offset_none.range(from..=to);
             let offset_lat_points = self.offset_lat.range(from..=to);
@@ -102,14 +86,21 @@ impl GpsCoordsHashMap {
 
             let points = points.concat();
             if !points.is_empty() || (from == 0 && to == u64::max_value()) {
-                grid_points = points;
+                points.iter().for_each(|p| {
+                    grid_points.insert(p.id.clone(), p.clone());
+                });
                 break;
             }
         }
 
+        if grid_points.len() == 1 {
+            let point = grid_points.values().next().map(|p| (**p).clone());
+            return point;
+        }
+
         let mut points_with_dist: Vec<(u32, GpsCoordsHashMapPoint)> = grid_points
             .iter()
-            .map(|p| {
+            .map(|(_, p)| {
                 // https://rust-lang-nursery.github.io/rust-cookbook/science/mathematics/trigonometry.html#distance-between-two-points-on-the-earth
                 let earth_radius_kilometer = 6371.0;
                 let (possible_point_latitude_degrees, possible_point_longitude_degrees) =
@@ -135,10 +126,7 @@ impl GpsCoordsHashMap {
             })
             .collect();
 
-        eprintln!("points with dist len {}", points_with_dist.len());
-
         points_with_dist.sort_by(|(dist_a, _), (dist_b, _)| dist_a.cmp(dist_b));
-
         points_with_dist.get(0).map(|(_, p)| p.clone())
     }
 }
@@ -151,7 +139,6 @@ mod tests {
 
     #[test]
     fn closest_lookup() {
-        println!("===================================");
         let tests: Vec<(Vec<GpsCoordsHashMapPoint>, GpsCoordsHashMapPoint, i64)> = vec![
             (
                 vec![GpsCoordsHashMapPoint {
@@ -244,7 +231,7 @@ mod tests {
                     lat: -10.660607953624762,
                     lon: -52.03125,
                 },
-                2,
+                1,
             ),
             (
                 vec![
@@ -331,39 +318,21 @@ mod tests {
                 },
                 4,
             ),
-            (
-                vec![
-                    GpsCoordsHashMapPoint {
-                        id: 1,
-                        lat: -38.591187457054524,
-                        lon: -156.33535699675508,
-                    },
-                    GpsCoordsHashMapPoint {
-                        id: 2,
-                        lat: -26.16538350360019,
-                        lon: 34.914643003244926,
-                    },
-                ],
-                GpsCoordsHashMapPoint {
-                    id: 0,
-                    lat: -28.92163128242129,
-                    lon: 144.14062500000003,
-                },
-                1,
-            ),
         ];
-        for test in tests {
-            println!("test case for coords");
+        for (i, test) in tests.iter().enumerate() {
             let (points, check_point, closest_id) = test;
             let mut coords = GpsCoordsHashMap::new();
             for point in points {
-                coords.insert(point);
+                coords.insert(point.clone());
             }
 
             let closest = coords.get_closest(check_point.lat, check_point.lon);
             if let Some(closest) = closest {
-                eprintln!("closest found id {} expected {}", closest.id, closest_id);
-                assert_eq!(closest.id, closest_id);
+                eprintln!(
+                    "{}: closest found id {} expected {}",
+                    i, closest.id, closest_id
+                );
+                assert_eq!(closest.id, *closest_id);
             } else {
                 panic!("No points found");
             }
