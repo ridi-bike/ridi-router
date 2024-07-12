@@ -7,13 +7,13 @@ use std::{
 use clap::{arg, command, value_parser, ArgAction, Command};
 
 use geo_types::Point;
-use gps_coords_hash_map::{MapDataGraph, MapDataNode, MapDataWay};
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
+use map_data_graph::{MapDataGraph, MapDataNode, MapDataWay};
 use osm::OsmData;
 use rand::Rng;
 
-mod gps_coords_hash_map;
 mod gps_hash;
+mod map_data_graph;
 mod osm;
 
 struct Cli {
