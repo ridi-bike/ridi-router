@@ -1,5 +1,5 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
     collections::{BTreeMap, HashMap},
     rc::Rc,
     u64,
@@ -23,7 +23,7 @@ pub struct MapDataPoint {
     pub fork: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MapDataWay {
     pub id: u64,
     pub node_ids: Vec<u64>,
@@ -137,41 +137,42 @@ impl MapDataGraph {
         self.points.insert(id, point);
     }
 
-    pub fn insert_way(&mut self, value: MapDataWay) -> () {
-        let prev_point: Option<MapDataNode> = None;
-        for point_id in &value.node_ids {
+    pub fn insert_way(&mut self, way: MapDataWay) -> () {
+        let mut prev_point: Option<RefMut<MapDataPoint>> = None;
+        for point_id in &way.node_ids {
             if let Some(point) = self.points.get(point_id) {
                 let mut point: RefMut<'_, _> = point.borrow_mut();
-                point.part_of_ways.push(point_id.clone());
+                point.part_of_ways.push(way.id.clone());
                 if point.part_of_ways.len() > 1 {
                     point.fork = true;
                 }
-                if let Some(prev_point) = &prev_point {
-                    let line_id = get_line_id(&value.id, &prev_point.id, &point_id);
+                if let Some(prev_point_id) = &prev_point {
+                    let line_id = get_line_id(&way.id, &prev_point_id.id, &point_id);
                     self.lines.insert(
                         line_id.clone(),
                         MapDataLine {
                             id: line_id,
-                            way_id: value.id.clone(),
-                            point_ids: (prev_point.id.clone(), point_id.clone()),
+                            way_id: way.id.clone(),
+                            point_ids: (prev_point_id.id.clone(), point_id.clone()),
                             length_m: get_distance(
-                                &prev_point.lat,
-                                &prev_point.lon,
+                                &prev_point_id.lat,
+                                &prev_point_id.lon,
                                 &point.lat,
                                 &point.lon,
                             ),
                             direction_deg: get_heading(
-                                &prev_point.lat,
-                                &prev_point.lon,
+                                &prev_point_id.lat,
+                                &prev_point_id.lon,
                                 &point.lat,
                                 &point.lon,
                             ),
                         },
                     );
                 }
+                prev_point = Some(point);
             }
         }
-        self.ways.insert(value.id.clone(), value);
+        self.ways.insert(way.id.clone(), way);
     }
 
     pub fn get_adjacent(&self, node: &MapDataPoint) -> Vec<(MapDataLine, MapDataPoint)> {
@@ -179,6 +180,9 @@ impl MapDataGraph {
             None => return Vec::new(),
             Some(p) => p,
         };
+        println!("ways {:?}", self.ways);
+        println!("lines {:?}", self.lines);
+        println!("points {:?}", self.points);
         let lines_and_points: Vec<_> = center_point
             .borrow()
             .part_of_ways
