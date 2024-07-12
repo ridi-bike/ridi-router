@@ -10,6 +10,7 @@ use geo_types::Point;
 use gps_coords_hash_map::{MapDataGraph, MapDataNode, MapDataWay};
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use osm::OsmData;
+use rand::Rng;
 
 mod gps_coords_hash_map;
 mod gps_hash;
@@ -94,10 +95,10 @@ fn main() {
     let from_lon = matches.get_one::<f64>("from_lon").unwrap();
 
     let mut track_segment = TrackSegment::new();
-    let waypoint = Waypoint::new(Point::new(*from_lat, *from_lon));
+    let waypoint = Waypoint::new(Point::new(*from_lon, *from_lat));
     track_segment.points.push(waypoint);
 
-    let closes_point = match map_data.get_closest_to_coords(*from_lat, *from_lon) {
+    let start_point = match map_data.get_closest_to_coords(*from_lat, *from_lon) {
         None => {
             eprintln!("no closest point found");
             process::exit(1);
@@ -105,27 +106,49 @@ fn main() {
         Some(p) => p,
     };
 
-    let waypoint = Waypoint::new(Point::new(closes_point.lat, closes_point.lon));
+    let waypoint = Waypoint::new(Point::new(start_point.lon, start_point.lat));
     track_segment.points.push(waypoint);
 
-    for step in 1..100 {
-        eprintln!("step: {}", step);
-        let adj_lines_points = map_data.get_adjacent(&closes_point);
-        eprintln!("adj lines and points {:?}", adj_lines_points);
+    let mut prev_point = start_point.clone();
+    let mut visited_points = Vec::new();
+    for step in 1..100000 {
+        let adj_lines_points = map_data.get_adjacent(&prev_point);
         let adj_points = adj_lines_points
             .iter()
             .filter_map(|line_point| {
                 let (_, point) = line_point;
-                if point.id != closes_point.id {
+                if point.id != start_point.id {
                     return Some(line_point);
                 }
                 None
             })
             .collect::<Vec<_>>();
-        let next_point = adj_points.get(0);
+        let adj_points = adj_points
+            .iter()
+            .filter(|(_, point)| {
+                !visited_points[if visited_points.len() > 2 {
+                    visited_points.len() - 3
+                } else {
+                    0
+                }..if visited_points.len() > 0 {
+                    visited_points.len() - 1
+                } else {
+                    0
+                }]
+                    .contains(&point.id)
+            })
+            .collect::<Vec<_>>();
+        let idx = if adj_points.len() > 1 {
+            rand::thread_rng().gen_range(0..adj_points.len() - 1)
+        } else {
+            0
+        };
+        let next_point = adj_points.get(idx);
         if let Some((_, next_point)) = next_point {
-            let waypoint = Waypoint::new(Point::new(next_point.lat, next_point.lon));
+            visited_points.push(next_point.id);
+            let waypoint = Waypoint::new(Point::new(next_point.lon, next_point.lat));
             track_segment.points.push(waypoint);
+            prev_point = next_point.clone();
         }
     }
 

@@ -180,9 +180,6 @@ impl MapDataGraph {
             None => return Vec::new(),
             Some(p) => p,
         };
-        println!("ways {:?}", self.ways);
-        println!("lines {:?}", self.lines);
-        println!("points {:?}", self.points);
         let lines_and_points: Vec<_> = center_point
             .borrow()
             .part_of_ways
@@ -192,7 +189,11 @@ impl MapDataGraph {
                 if let Some(way) = way {
                     let point_idx_on_way = way.node_ids.iter().position(|&point| point == node.id);
                     if let Some(point_idx_on_way) = point_idx_on_way {
-                        let point_before = way.node_ids.get(point_idx_on_way - 1);
+                        let point_before = if point_idx_on_way > 0 {
+                            way.node_ids.get(point_idx_on_way - 1)
+                        } else {
+                            None
+                        };
                         let point_after = way.node_ids.get(point_idx_on_way + 1);
                         return Some(
                             [point_before, point_after]
@@ -377,6 +378,17 @@ mod tests {
                     (String::from("1234-2-3"), 2),
                     (String::from("1234-4-3"), 4),
                 ],
+            ),
+            (
+                3,
+                MapDataPoint {
+                    id: 1,
+                    lat: 1.0,
+                    lon: 1.0,
+                    fork: false,
+                    part_of_ways: Vec::new(),
+                },
+                vec![(String::from("1234-1-2"), 2)],
             ),
         ];
 
