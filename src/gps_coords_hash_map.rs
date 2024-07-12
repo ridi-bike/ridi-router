@@ -291,8 +291,125 @@ impl MapDataGraph {
 #[cfg(test)]
 mod tests {
     use core::panic;
+    use std::{collections::HashSet, u8};
 
     use super::*;
+
+    #[test]
+    fn adjacent_lookup() {
+        let test_data: Vec<(Vec<MapDataNode>, Vec<MapDataWay>)> = vec![(
+            vec![
+                MapDataNode {
+                    id: 1,
+                    lat: 1.0,
+                    lon: 1.0,
+                },
+                MapDataNode {
+                    id: 2,
+                    lat: 2.0,
+                    lon: 2.0,
+                },
+                MapDataNode {
+                    id: 3,
+                    lat: 3.0,
+                    lon: 3.0,
+                },
+                MapDataNode {
+                    id: 4,
+                    lat: 4.0,
+                    lon: 4.0,
+                },
+                MapDataNode {
+                    id: 5,
+                    lat: 5.0,
+                    lon: 5.0,
+                },
+                MapDataNode {
+                    id: 6,
+                    lat: 6.0,
+                    lon: 6.0,
+                },
+                MapDataNode {
+                    id: 7,
+                    lat: 7.0,
+                    lon: 7.0,
+                },
+            ],
+            vec![
+                MapDataWay {
+                    id: 1234,
+                    node_ids: vec![1, 2, 3, 4],
+                },
+                MapDataWay {
+                    id: 5367,
+                    node_ids: vec![5, 3, 6, 7],
+                },
+            ],
+        )];
+        let tests: Vec<(u8, MapDataPoint, Vec<(String, u64)>)> = vec![
+            (
+                1,
+                MapDataPoint {
+                    id: 2,
+                    lat: 2.0,
+                    lon: 2.0,
+                    fork: false,
+                    part_of_ways: Vec::new(),
+                },
+                vec![(String::from("1234-1-2"), 1), (String::from("1234-2-3"), 3)],
+            ),
+            (
+                2,
+                MapDataPoint {
+                    id: 3,
+                    lat: 3.0,
+                    lon: 3.0,
+                    fork: false,
+                    part_of_ways: Vec::new(),
+                },
+                vec![
+                    (String::from("5367-5-3"), 5),
+                    (String::from("5367-6-3"), 6),
+                    (String::from("1234-2-3"), 2),
+                    (String::from("1234-4-3"), 4),
+                ],
+            ),
+        ];
+
+        for test in tests {
+            let mut map_data = MapDataGraph::new();
+            for (test_nodes, test_ways) in &test_data {
+                for test_node in test_nodes {
+                    map_data.insert_node(test_node.clone());
+                }
+                for test_way in test_ways {
+                    map_data.insert_way(test_way.clone());
+                }
+            }
+
+            let (test_id, point, expected_result) = test;
+            let adj_elements = map_data.get_adjacent(&point);
+            eprintln!(
+                "id: {}, expected {} results, found {} results",
+                test_id,
+                expected_result.len(),
+                adj_elements.len()
+            );
+            assert_eq!(adj_elements.len(), expected_result.len());
+            for (adj_line, adj_point) in &adj_elements {
+                let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
+                    line_id.split("-").collect::<HashSet<_>>()
+                        == adj_line.id.split("-").collect::<HashSet<_>>()
+                        && point_id == &adj_point.id
+                });
+                eprintln!(
+                    "id: {}, expected {:?}, found {:?}",
+                    test_id, expected_result, adj_elements
+                );
+                assert_eq!(adj_match.is_some(), true);
+            }
+        }
+    }
 
     #[test]
     fn closest_lookup() {
