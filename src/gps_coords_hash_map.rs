@@ -29,11 +29,13 @@ pub struct MapDataWay {
     pub node_ids: Vec<u64>,
 }
 
-struct MapDataLine {
-    id: String,
-    way_id: u64,
-    length_m: f64,
-    direction_deg: f64,
+#[derive(Clone, Debug)]
+pub struct MapDataLine {
+    pub id: String,
+    pub way_id: u64,
+    pub point_ids: (u64, u64),
+    pub length_m: f64,
+    pub direction_deg: f64,
 }
 
 type PointMap = BTreeMap<u64, Rc<RefCell<MapDataPoint>>>;
@@ -86,6 +88,10 @@ fn get_heading(from_lat: &f64, from_lon: &f64, to_lat: &f64, to_lon: &f64) -> f6
     };
 
     heading
+}
+
+fn get_line_id(way_id: &u64, point_id_1: &u64, point_id_2: &u64) -> String {
+    format!("{}-{}-{}", way_id, point_id_1, point_id_2)
 }
 
 impl MapDataGraph {
@@ -141,12 +147,13 @@ impl MapDataGraph {
                     point.fork = true;
                 }
                 if let Some(prev_point) = &prev_point {
-                    let line_id = format!("{}-{}-{}", &value.id, &prev_point.id, &point_id);
+                    let line_id = get_line_id(&value.id, &prev_point.id, &point_id);
                     self.lines.insert(
                         line_id.clone(),
                         MapDataLine {
                             id: line_id,
                             way_id: value.id.clone(),
+                            point_ids: (prev_point.id.clone(), point_id.clone()),
                             length_m: get_distance(
                                 &prev_point.lat,
                                 &prev_point.lon,
@@ -167,47 +174,60 @@ impl MapDataGraph {
         self.ways.insert(value.id.clone(), value);
     }
 
-    pub fn get_adjacent_points(&self, node: MapDataNode) -> Vec<MapDataPoint> {
-        let point = match self.points.get(&node.id) {
+    pub fn get_adjacent(&self, node: &MapDataPoint) -> Vec<(MapDataLine, MapDataPoint)> {
+        let center_point = match self.points.get(&node.id) {
             None => return Vec::new(),
             Some(p) => p,
         };
-        let points: Vec<_> = point
+        let lines_and_points: Vec<_> = center_point
             .borrow()
             .part_of_ways
             .iter()
-            .map(|w_id| self.ways.get(w_id))
-            .filter_map(|w| {
-                if let Some(w) = w {
-                    let point_idx = w.node_ids.iter().position(|&p| p == node.id);
-                    if let Some(point_idx) = point_idx {
-                        let point_before = w.node_ids.get(point_idx - 1);
-                        let point_after = w.node_ids.get(point_idx + 1);
+            .map(|way_id| self.ways.get(way_id))
+            .filter_map(|way| {
+                if let Some(way) = way {
+                    let point_idx_on_way = way.node_ids.iter().position(|&point| point == node.id);
+                    if let Some(point_idx_on_way) = point_idx_on_way {
+                        let point_before = way.node_ids.get(point_idx_on_way - 1);
+                        let point_after = way.node_ids.get(point_idx_on_way + 1);
                         return Some(
                             [point_before, point_after]
                                 .iter()
-                                .filter_map(|&p| p)
-                                .map(|&p| p)
-                                .collect::<Vec<u64>>(),
+                                .filter_map(|&point| point)
+                                .map(|point| self.points.get(&point))
+                                .filter_map(|p| {
+                                    if let Some(p) = p {
+                                        return Some(p.borrow().clone());
+                                    }
+                                    None
+                                })
+                                .map(|point| {
+                                    let line_id_bck =
+                                        get_line_id(&way.id, &point.id, &center_point.borrow().id);
+                                    let line_id_fwd =
+                                        get_line_id(&way.id, &center_point.borrow().id, &point.id);
+                                    let line_bck = self.lines.get(&line_id_bck);
+                                    let line_fwd = self.lines.get(&line_id_fwd);
+                                    [line_bck, line_fwd]
+                                        .iter()
+                                        .filter_map(|&line| line)
+                                        .map(|line| (line.clone(), point.clone()))
+                                        .collect::<Vec<_>>()
+                                })
+                                .flatten()
+                                .collect::<Vec<_>>(),
                         );
                     }
                 }
                 None
             })
             .flatten()
-            .map(|p| self.points.get(&p))
-            .filter_map(|p| {
-                if let Some(p) = p {
-                    return Some(p.borrow().clone());
-                }
-                None
-            })
             .collect();
 
-        points
+        lines_and_points
     }
 
-    pub fn get_closest_to_coords(&self, lat: f64, lon: f64) -> Option<MapDataNode> {
+    pub fn get_closest_to_coords(&self, lat: f64, lon: f64) -> Option<MapDataPoint> {
         let search_hash = get_gps_coords_hash(lat, lon, HashOffset::None);
         let mut grid_points = HashMap::new();
 
@@ -251,11 +271,7 @@ impl MapDataGraph {
         }
 
         if grid_points.len() == 1 {
-            let point = grid_points.values().next().map(|p| MapDataNode {
-                id: p.borrow().id.clone(),
-                lat: p.borrow().lat.clone(),
-                lon: p.borrow().lon.clone(),
-            });
+            let point = grid_points.values().next().map(|p| p.borrow().clone());
             return point;
         }
 
@@ -268,11 +284,7 @@ impl MapDataGraph {
             .collect();
 
         points_with_dist.sort_by(|(dist_a, _), (dist_b, _)| dist_a.cmp(dist_b));
-        points_with_dist.get(0).map(|(_, p)| MapDataNode {
-            id: p.borrow().id.clone(),
-            lat: p.borrow().lat.clone(),
-            lon: p.borrow().lon.clone(),
-        })
+        points_with_dist.get(0).map(|(_, p)| p.borrow().clone())
     }
 }
 
