@@ -1,5 +1,5 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{RefCell, RefMut},
     collections::{BTreeMap, HashMap},
     rc::Rc,
     u64,
@@ -27,6 +27,7 @@ pub struct MapDataPoint {
 pub struct MapDataWay {
     pub id: u64,
     pub node_ids: Vec<u64>,
+    pub one_way: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -36,6 +37,7 @@ pub struct MapDataLine {
     pub point_ids: (u64, u64),
     pub length_m: f64,
     pub direction_deg: f64,
+    pub one_way: bool,
 }
 
 type PointMap = BTreeMap<u64, Rc<RefCell<MapDataPoint>>>;
@@ -166,6 +168,7 @@ impl MapDataGraph {
                                 &point.lat,
                                 &point.lon,
                             ),
+                            one_way: way.one_way,
                         },
                     );
                 }
@@ -175,8 +178,8 @@ impl MapDataGraph {
         self.ways.insert(way.id.clone(), way);
     }
 
-    pub fn get_adjacent(&self, node: &MapDataPoint) -> Vec<(MapDataLine, MapDataPoint)> {
-        let center_point = match self.points.get(&node.id) {
+    pub fn get_adjacent(&self, input_point: &MapDataPoint) -> Vec<(MapDataLine, MapDataPoint)> {
+        let center_point = match self.points.get(&input_point.id) {
             None => return Vec::new(),
             Some(p) => p,
         };
@@ -187,7 +190,10 @@ impl MapDataGraph {
             .map(|way_id| self.ways.get(way_id))
             .filter_map(|way| {
                 if let Some(way) = way {
-                    let point_idx_on_way = way.node_ids.iter().position(|&point| point == node.id);
+                    let point_idx_on_way = way
+                        .node_ids
+                        .iter()
+                        .position(|&point| point == input_point.id);
                     if let Some(point_idx_on_way) = point_idx_on_way {
                         let point_before = if point_idx_on_way > 0 {
                             way.node_ids.get(point_idx_on_way - 1)
@@ -344,10 +350,12 @@ mod tests {
                 MapDataWay {
                     id: 1234,
                     node_ids: vec![1, 2, 3, 4],
+                    one_way: false,
                 },
                 MapDataWay {
                     id: 5367,
                     node_ids: vec![5, 3, 6, 7],
+                    one_way: false,
                 },
             ],
         )];
