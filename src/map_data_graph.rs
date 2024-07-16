@@ -7,14 +7,14 @@ use std::{
 
 use crate::gps_hash::{get_gps_coords_hash, HashOffset};
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapDataNode {
     pub id: u64,
     pub lat: f64,
     pub lon: f64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapDataPoint {
     pub id: u64,
     pub lat: f64,
@@ -23,14 +23,14 @@ pub struct MapDataPoint {
     pub fork: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapDataWay {
     pub id: u64,
     pub node_ids: Vec<u64>,
     pub one_way: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapDataLine {
     pub id: String,
     pub way_id: u64,
@@ -304,61 +304,13 @@ mod tests {
     use core::panic;
     use std::{collections::HashSet, u8};
 
+    use crate::test_data::{self, get_test_data};
+
     use super::*;
 
     #[test]
     fn adjacent_lookup() {
-        let test_data: Vec<(Vec<MapDataNode>, Vec<MapDataWay>)> = vec![(
-            vec![
-                MapDataNode {
-                    id: 1,
-                    lat: 1.0,
-                    lon: 1.0,
-                },
-                MapDataNode {
-                    id: 2,
-                    lat: 2.0,
-                    lon: 2.0,
-                },
-                MapDataNode {
-                    id: 3,
-                    lat: 3.0,
-                    lon: 3.0,
-                },
-                MapDataNode {
-                    id: 4,
-                    lat: 4.0,
-                    lon: 4.0,
-                },
-                MapDataNode {
-                    id: 5,
-                    lat: 5.0,
-                    lon: 5.0,
-                },
-                MapDataNode {
-                    id: 6,
-                    lat: 6.0,
-                    lon: 6.0,
-                },
-                MapDataNode {
-                    id: 7,
-                    lat: 7.0,
-                    lon: 7.0,
-                },
-            ],
-            vec![
-                MapDataWay {
-                    id: 1234,
-                    node_ids: vec![1, 2, 3, 4],
-                    one_way: false,
-                },
-                MapDataWay {
-                    id: 5367,
-                    node_ids: vec![5, 3, 6, 7],
-                    one_way: false,
-                },
-            ],
-        )];
+        let test_data = get_test_data();
         let tests: Vec<(u8, MapDataPoint, Vec<(String, u64)>)> = vec![
             (
                 1,
@@ -400,17 +352,16 @@ mod tests {
             ),
         ];
 
-        for test in tests {
-            let mut map_data = MapDataGraph::new();
-            for (test_nodes, test_ways) in &test_data {
-                for test_node in test_nodes {
-                    map_data.insert_node(test_node.clone());
-                }
-                for test_way in test_ways {
-                    map_data.insert_way(test_way.clone());
-                }
-            }
+        let mut map_data = MapDataGraph::new();
+        let (test_nodes, test_ways) = &test_data;
+        for test_node in test_nodes {
+            map_data.insert_node(test_node.clone());
+        }
+        for test_way in test_ways {
+            map_data.insert_way(test_way.clone());
+        }
 
+        for test in tests {
             let (test_id, point, expected_result) = test;
             let adj_elements = map_data.get_adjacent(&point);
             eprintln!(
