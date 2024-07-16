@@ -15,6 +15,7 @@ use rand::Rng;
 mod gps_hash;
 mod map_data_graph;
 mod osm;
+mod route_creator;
 
 struct Cli {
     from_lat: f64,
@@ -87,6 +88,9 @@ fn main() {
             map_data.insert_way(MapDataWay {
                 id: element.id,
                 node_ids: element.nodes.clone(),
+                one_way: element
+                    .tags
+                    .map_or(false, |tags| tags.oneway.map_or(false, |one_way| one_way)),
             });
         }
     }
