@@ -1,7 +1,7 @@
 use crate::map_data_graph::{MapDataGraph, MapDataLine, MapDataPoint};
 
 #[derive(Debug, PartialEq)]
-pub enum RouterWalker {
+pub enum RouterWalkerError {
     WrongForkChoice {
         id: u64,
         available_fork_ids: Vec<u64>,
@@ -62,7 +62,9 @@ impl<'a> RouteWalker<'a> {
         self.next_fork_choice_point_id = Some(*id);
     }
 
-    pub fn move_forward_to_next_fork(&mut self) -> Result<RouteWalkerMoveResult, RouterWalker> {
+    pub fn move_forward_to_next_fork(
+        &mut self,
+    ) -> Result<RouteWalkerMoveResult, RouterWalkerError> {
         loop {
             let point = match self.route_walked.last() {
                 Some((_, p)) => p,
@@ -83,7 +85,7 @@ impl<'a> RouteWalker<'a> {
                 available_lines
                     .iter()
                     .position(|(_, point)| point.id == next_id)
-                    .ok_or(RouterWalker::WrongForkChoice {
+                    .ok_or(RouterWalkerError::WrongForkChoice {
                         id: next_id,
                         available_fork_ids: available_lines.iter().map(|(_, p)| p.id).collect(),
                     })?
@@ -137,7 +139,7 @@ mod tests {
     use core::panic;
 
     use crate::{
-        route::walker::{RouteWalkerMoveResult, RouterWalker},
+        route::walker::{RouteWalkerMoveResult, RouterWalkerError},
         test_utils::{get_point_with_id, get_test_map_data_graph, line_is_between_point_ids},
     };
 
@@ -146,8 +148,10 @@ mod tests {
     #[test]
     fn walker_same_start_end() {
         let map_data = get_test_map_data_graph();
+        let point1 = get_point_with_id(1);
+        let point2 = get_point_with_id(2);
 
-        let mut walker = RouteWalker::new(&map_data, get_point_with_id(1), get_point_with_id(1));
+        let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
         assert_eq!(
             walker.move_forward_to_next_fork(),
@@ -159,14 +163,16 @@ mod tests {
     #[test]
     fn walker_error_on_wrong_choice() {
         let map_data = get_test_map_data_graph();
+        let point1 = get_point_with_id(1);
+        let point2 = get_point_with_id(2);
 
-        let mut walker = RouteWalker::new(&map_data, get_point_with_id(2), get_point_with_id(3));
+        let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
         walker.set_fork_choice_point_id(&99);
 
         assert_eq!(
             walker.move_forward_to_next_fork(),
-            Err(RouterWalker::WrongForkChoice {
+            Err(RouterWalkerError::WrongForkChoice {
                 id: 99,
                 available_fork_ids: vec![1, 3]
             })
@@ -180,12 +186,10 @@ mod tests {
 
         let from_id = 1;
         let to_id = 2;
+        let point1 = get_point_with_id(1);
+        let point2 = get_point_with_id(2);
 
-        let mut walker = RouteWalker::new(
-            &map_data,
-            get_point_with_id(from_id.clone()),
-            get_point_with_id(to_id.clone()),
-        );
+        let mut walker = RouteWalker::new(&map_data, &point1, &point2);
         assert_eq!(
             walker.move_forward_to_next_fork(),
             Ok(RouteWalkerMoveResult::Finish)
@@ -205,15 +209,11 @@ mod tests {
     fn walker_choose_path() {
         let map_data = get_test_map_data_graph();
 
-        let from_id = 1;
-        let to_id = 7;
         let fork_ch_id = 6;
+        let point1 = get_point_with_id(1);
+        let point2 = get_point_with_id(2);
 
-        let mut walker = RouteWalker::new(
-            &map_data,
-            get_point_with_id(from_id.clone()),
-            get_point_with_id(to_id.clone()),
-        );
+        let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),
@@ -271,16 +271,12 @@ mod tests {
     fn walker_reach_dead_end_walk_back() {
         let map_data = get_test_map_data_graph();
 
-        let from_id = 1;
-        let to_id = 4;
         let fork_ch_id_1 = 6;
         let fork_ch_id_2 = 4;
+        let point1 = get_point_with_id(1);
+        let point2 = get_point_with_id(2);
 
-        let mut walker = RouteWalker::new(
-            &map_data,
-            get_point_with_id(from_id.clone()),
-            get_point_with_id(to_id.clone()),
-        );
+        let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),
