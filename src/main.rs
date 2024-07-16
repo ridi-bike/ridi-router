@@ -1,10 +1,9 @@
 use std::{
-    collections::HashMap,
     io::{self, BufRead},
     process,
 };
 
-use clap::{arg, command, value_parser, ArgAction, Command};
+use clap::{arg, value_parser, Command};
 
 use geo_types::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
@@ -13,17 +12,12 @@ use osm::OsmData;
 use rand::Rng;
 
 mod gps_hash;
+mod gps_utils;
 mod map_data_graph;
 mod osm;
-mod route_creator;
-mod test_data;
-
-struct Cli {
-    from_lat: f64,
-    from_lon: f64,
-    to_lat: f64,
-    to_lon: f64,
-}
+mod route;
+#[cfg(test)]
+mod test_utils;
 
 fn main() {
     let matches = Command::new("gps-router")

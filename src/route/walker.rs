@@ -1,7 +1,7 @@
 use crate::map_data_graph::{MapDataGraph, MapDataLine, MapDataPoint};
 
 #[derive(Debug, PartialEq)]
-pub enum RouterError {
+pub enum RouterWalker {
     WrongForkChoice {
         id: u64,
         available_fork_ids: Vec<u64>,
@@ -10,10 +10,10 @@ pub enum RouterError {
 
 pub type RouteElement = (MapDataLine, MapDataPoint);
 
-pub struct RouteWalker {
-    map_data_graph: MapDataGraph,
-    start: MapDataPoint,
-    end: MapDataPoint,
+pub struct RouteWalker<'a> {
+    map_data_graph: &'a MapDataGraph,
+    start: &'a MapDataPoint,
+    end: &'a MapDataPoint,
     route_walked: Vec<RouteElement>,
     next_fork_choice_point_id: Option<u64>,
 }
@@ -25,8 +25,12 @@ pub enum RouteWalkerMoveResult {
     Finish,
 }
 
-impl RouteWalker {
-    pub fn new(map_data_graph: MapDataGraph, start: MapDataPoint, end: MapDataPoint) -> Self {
+impl<'a> RouteWalker<'a> {
+    pub fn new(
+        map_data_graph: &'a MapDataGraph,
+        start: &'a MapDataPoint,
+        end: &'a MapDataPoint,
+    ) -> Self {
         Self {
             map_data_graph,
             start,
@@ -58,7 +62,7 @@ impl RouteWalker {
         self.next_fork_choice_point_id = Some(*id);
     }
 
-    pub fn move_forward_to_next_fork(&mut self) -> Result<RouteWalkerMoveResult, RouterError> {
+    pub fn move_forward_to_next_fork(&mut self) -> Result<RouteWalkerMoveResult, RouterWalker> {
         loop {
             let point = match self.route_walked.last() {
                 Some((_, p)) => p,
@@ -79,7 +83,7 @@ impl RouteWalker {
                 available_lines
                     .iter()
                     .position(|(_, point)| point.id == next_id)
-                    .ok_or(RouterError::WrongForkChoice {
+                    .ok_or(RouterWalker::WrongForkChoice {
                         id: next_id,
                         available_fork_ids: available_lines.iter().map(|(_, p)| p.id).collect(),
                     })?
@@ -133,8 +137,8 @@ mod tests {
     use core::panic;
 
     use crate::{
-        route_creator::{RouteWalkerMoveResult, RouterError},
-        test_data::{get_point_with_id, get_test_map_data_graph, line_is_between_point_ids},
+        route::walker::{RouteWalkerMoveResult, RouterWalker},
+        test_utils::{get_point_with_id, get_test_map_data_graph, line_is_between_point_ids},
     };
 
     use super::RouteWalker;
@@ -143,7 +147,7 @@ mod tests {
     fn walker_same_start_end() {
         let map_data = get_test_map_data_graph();
 
-        let mut walker = RouteWalker::new(map_data, get_point_with_id(1), get_point_with_id(1));
+        let mut walker = RouteWalker::new(&map_data, get_point_with_id(1), get_point_with_id(1));
 
         assert_eq!(
             walker.move_forward_to_next_fork(),
@@ -156,13 +160,13 @@ mod tests {
     fn walker_error_on_wrong_choice() {
         let map_data = get_test_map_data_graph();
 
-        let mut walker = RouteWalker::new(map_data, get_point_with_id(2), get_point_with_id(3));
+        let mut walker = RouteWalker::new(&map_data, get_point_with_id(2), get_point_with_id(3));
 
         walker.set_fork_choice_point_id(&99);
 
         assert_eq!(
             walker.move_forward_to_next_fork(),
-            Err(RouterError::WrongForkChoice {
+            Err(RouterWalker::WrongForkChoice {
                 id: 99,
                 available_fork_ids: vec![1, 3]
             })
@@ -178,7 +182,7 @@ mod tests {
         let to_id = 2;
 
         let mut walker = RouteWalker::new(
-            map_data,
+            &map_data,
             get_point_with_id(from_id.clone()),
             get_point_with_id(to_id.clone()),
         );
@@ -206,7 +210,7 @@ mod tests {
         let fork_ch_id = 6;
 
         let mut walker = RouteWalker::new(
-            map_data,
+            &map_data,
             get_point_with_id(from_id.clone()),
             get_point_with_id(to_id.clone()),
         );
@@ -264,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn walker_reach_deadend_walk_back() {
+    fn walker_reach_dead_end_walk_back() {
         let map_data = get_test_map_data_graph();
 
         let from_id = 1;
@@ -273,7 +277,7 @@ mod tests {
         let fork_ch_id_2 = 4;
 
         let mut walker = RouteWalker::new(
-            map_data,
+            &map_data,
             get_point_with_id(from_id.clone()),
             get_point_with_id(to_id.clone()),
         );

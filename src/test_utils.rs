@@ -1,7 +1,5 @@
-#[cfg(test)]
 use crate::map_data_graph::{MapDataGraph, MapDataLine, MapDataNode, MapDataPoint, MapDataWay};
 
-#[cfg(test)]
 pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
     //       1
     //       |
@@ -66,7 +64,6 @@ pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
     )
 }
 
-#[cfg(test)]
 pub fn get_point_with_id(id: u64) -> MapDataPoint {
     MapDataPoint {
         id,
@@ -77,7 +74,6 @@ pub fn get_point_with_id(id: u64) -> MapDataPoint {
     }
 }
 
-#[cfg(test)]
 pub fn get_test_map_data_graph() -> MapDataGraph {
     let test_data = get_test_data();
     let mut map_data = MapDataGraph::new();
@@ -92,7 +88,6 @@ pub fn get_test_map_data_graph() -> MapDataGraph {
     map_data
 }
 
-#[cfg(test)]
 pub fn line_is_between_point_ids(line: MapDataLine, id1: u64, id2: u64) -> bool {
     let ids = [line.point_ids.0, line.point_ids.1];
     line.id
