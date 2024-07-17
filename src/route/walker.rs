@@ -98,12 +98,14 @@ impl<'a> RouteWalker<'a> {
                 Some(element) => element.clone(),
             };
 
+            eprintln!("moved to {:#?}", next_point);
             self.route_walked.push(next_point);
         }
     }
 
     pub fn move_backwards_to_prev_fork(&mut self) -> Option<Vec<(MapDataLine, MapDataPoint)>> {
         self.next_fork_choice_point_id = None;
+        eprintln!("move back nternals {:#?}", self.route_walked);
         let current_fork = self.route_walked.pop();
         if current_fork.is_none() {
             return None;
@@ -119,10 +121,12 @@ impl<'a> RouteWalker<'a> {
             },
         )) = self.route_walked.last()
         {
+            eprintln!("popped {:#?}", _point);
             self.route_walked.pop();
         }
 
         if let Some((_, point)) = self.route_walked.last() {
+            eprintln!("prev fork now is current {:#?}", point);
             return Some(self.get_available_lines(point));
         }
 
@@ -271,7 +275,7 @@ mod tests {
     fn walker_reach_dead_end_walk_back() {
         let map_data = get_test_map_data_graph();
 
-        let fork_ch_id_1 = 6;
+        let fork_ch_id_1 = 5;
         let fork_ch_id_2 = 4;
         let point1 = get_point_with_id(1);
         let point2 = get_point_with_id(4);

@@ -10,7 +10,9 @@ pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
     // 5 - - 3 - - 6 - - 7
     //       |     |
     //       |     |
-    //       4 - - 8 - - 0
+    //       4 - - 8 - - 9
+    //
+    //       11 - 12
     (
         vec![
             MapDataNode {
@@ -48,6 +50,26 @@ pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
                 lat: 7.0,
                 lon: 7.0,
             },
+            MapDataNode {
+                id: 8,
+                lat: 8.0,
+                lon: 8.0,
+            },
+            MapDataNode {
+                id: 9,
+                lat: 9.0,
+                lon: 9.0,
+            },
+            MapDataNode {
+                id: 11,
+                lat: 11.0,
+                lon: 11.0,
+            },
+            MapDataNode {
+                id: 12,
+                lat: 12.0,
+                lon: 12.0,
+            },
         ],
         vec![
             MapDataWay {
@@ -58,6 +80,21 @@ pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
             MapDataWay {
                 id: 5367,
                 node_ids: vec![5, 3, 6, 7],
+                one_way: false,
+            },
+            MapDataWay {
+                id: 489,
+                node_ids: vec![4, 8, 9],
+                one_way: false,
+            },
+            MapDataWay {
+                id: 68,
+                node_ids: vec![6, 8],
+                one_way: false,
+            },
+            MapDataWay {
+                id: 1112,
+                node_ids: vec![11, 12],
                 one_way: false,
             },
         ],
