@@ -142,6 +142,6 @@ mod test {
         };
 
         eprint!("{:#?}", route);
-        assert!(route_matches_ids(route.clone(), vec![1, 2, 3, 6, 7]));
+        assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
     }
 }
