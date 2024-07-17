@@ -94,6 +94,8 @@ fn main() {
 
     let from_lat = matches.get_one::<f64>("from_lat").unwrap();
     let from_lon = matches.get_one::<f64>("from_lon").unwrap();
+    let to_lat = matches.get_one::<f64>("to_lat").unwrap();
+    let to_lon = matches.get_one::<f64>("to_lon").unwrap();
 
     let mut track_segment = TrackSegment::new();
     let waypoint = Waypoint::new(Point::new(*from_lon, *from_lat));
@@ -106,6 +108,16 @@ fn main() {
         }
         Some(p) => p,
     };
+
+    // let end_point = match map_data.get_closest_to_coords(*to_lat, *to_lon) {
+    //     None => {
+    //         eprintln!("no closest point found");
+    //         process::exit(1);
+    //     }
+    //     Some(p) => p,
+    // };
+    //
+    // let mut navigator = RouteNavigator::new();
 
     let waypoint = Waypoint::new(Point::new(start_point.lon, start_point.lat));
     track_segment.points.push(waypoint);

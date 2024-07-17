@@ -100,3 +100,48 @@ impl<'a> RouteNavigator<'a> {
         Ok(self.walkers.iter().map(|w| w.get_route().clone()).collect())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::test_utils::{get_point_with_id, get_test_map_data_graph, route_matches_ids};
+
+    use super::RouteNavigator;
+
+    #[test]
+    fn navigate_pick_best() {
+        let map_data = get_test_map_data_graph();
+        let start = get_point_with_id(1);
+        let end = get_point_with_id(7);
+        let mut navigator = RouteNavigator::new(
+            &map_data,
+            &start,
+            &end,
+            vec![|from_point, _to_point, choices| {
+                if from_point.id == 3 && choices.1.id == 6 {
+                    return 10;
+                }
+                if from_point.id == 6 && choices.1.id == 7 {
+                    return 10;
+                }
+                0
+            }],
+        );
+        let routes = navigator.generate_routes();
+        let routes = if let Ok(r) = routes {
+            r
+        } else {
+            assert!(false);
+            return ();
+        };
+        let route = routes.get(0);
+        let route = if let Some(r) = route {
+            r
+        } else {
+            assert!(false);
+            return ();
+        };
+
+        eprint!("{:#?}", route);
+        assert!(route_matches_ids(route.clone(), vec![1, 2, 3, 6, 7]));
+    }
+}

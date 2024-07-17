@@ -8,9 +8,9 @@ pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
     //       |
     //       |
     // 5 - - 3 - - 6 - - 7
-    //       |
-    //       |
-    //       4
+    //       |     |
+    //       |     |
+    //       4 - - 8 - - 0
     (
         vec![
             MapDataNode {
@@ -101,4 +101,19 @@ pub fn line_is_between_point_ids(line: MapDataLine, id1: u64, id2: u64) -> bool 
             .contains(&id2.to_string().as_str())
         && ids.contains(&id1)
         && ids.contains(&id2)
+}
+
+pub fn route_matches_ids(route: Vec<(MapDataLine, MapDataPoint)>, ids: Vec<u64>) -> bool {
+    ids.iter()
+        .enumerate()
+        .map(|(idx, &id)| {
+            let route_element = route.get(idx);
+            if let Some(route_element) = route_element {
+                if route_element.1.id == id {
+                    return true;
+                }
+            }
+            false
+        })
+        .all(|v| v)
 }

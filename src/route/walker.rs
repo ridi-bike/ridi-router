@@ -149,7 +149,7 @@ mod tests {
     fn walker_same_start_end() {
         let map_data = get_test_map_data_graph();
         let point1 = get_point_with_id(1);
-        let point2 = get_point_with_id(2);
+        let point2 = get_point_with_id(1);
 
         let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
@@ -163,8 +163,8 @@ mod tests {
     #[test]
     fn walker_error_on_wrong_choice() {
         let map_data = get_test_map_data_graph();
-        let point1 = get_point_with_id(1);
-        let point2 = get_point_with_id(2);
+        let point1 = get_point_with_id(2);
+        let point2 = get_point_with_id(3);
 
         let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
@@ -211,7 +211,7 @@ mod tests {
 
         let fork_ch_id = 6;
         let point1 = get_point_with_id(1);
-        let point2 = get_point_with_id(2);
+        let point2 = get_point_with_id(7);
 
         let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
@@ -274,7 +274,7 @@ mod tests {
         let fork_ch_id_1 = 6;
         let fork_ch_id_2 = 4;
         let point1 = get_point_with_id(1);
-        let point2 = get_point_with_id(2);
+        let point2 = get_point_with_id(4);
 
         let mut walker = RouteWalker::new(&map_data, &point1, &point2);
 
