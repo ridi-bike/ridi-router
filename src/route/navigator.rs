@@ -75,19 +75,35 @@ impl<'a> RouteNavigator<'a> {
                         eprintln!("cached fork weights {:#?}", self.weight_cache);
 
                         let chosen_fork = if let Some(cached_fork_weights) = cached_fork_weights {
-                            eprintln!(
-                                "eval stuck - weight len {:?}, walker last {:?}",
-                                cached_fork_weights.len(),
-                                walker.get_route().last()
-                            );
-                            if cached_fork_weights.len() == 0 && walker.get_route().last() == None {
-                                eprintln!("pushed to stuck {}", walker_idx);
-                                stuck_walkers_idx.push(walker_idx);
-                            }
                             let mut cached_fork_weights = cached_fork_weights.clone();
                             let choice = cached_fork_weights.pop();
                             self.weight_cache
-                                .insert(last_point_id.clone(), cached_fork_weights);
+                                .insert(last_point_id.clone(), cached_fork_weights.clone());
+
+                            eprintln!(
+                                "eval stuck - weight len {:#?}, walker last {:#?}",
+                                &cached_fork_weights.len(),
+                                walker.get_route().last()
+                            );
+                            let cached_fork_weights = cached_fork_weights
+                                .iter()
+                                .filter_map(|weight| {
+                                    if fork_choices.iter().any(|c| c.1.id == weight.0) {
+                                        return Some(*weight);
+                                    }
+                                    None
+                                })
+                                .collect::<Vec<_>>();
+                            if cached_fork_weights.len() == 0
+                                && walker
+                                    .get_route()
+                                    .iter()
+                                    .find(|r| r.1.fork == true && r.1.id != *last_point_id)
+                                    == None
+                            {
+                                eprintln!("pushed to stuck {}", walker_idx);
+                                stuck_walkers_idx.push(walker_idx);
+                            }
 
                             choice
                         } else {
@@ -149,9 +165,10 @@ impl<'a> RouteNavigator<'a> {
                 break;
             }
 
-            if loop_count > 10 {
-                panic!("loop count {}", loop_count);
+            if loop_count > 20 {
+                panic!("panic: loop count {}", loop_count);
             }
+            eprintln!("loop num {}", loop_count);
         }
 
         self.walkers.iter().map(|w| w.get_route().clone()).collect()
@@ -248,9 +265,6 @@ mod test {
         // 1. cached weights will in a loop scenario will offer a cached weight for a way that's
         //    actually backwards. we need to check for cached weight and walker choice intersection
         //    as the walker won't offer backwards fork choices
-        // 2. a point will be marked as a fork incorrectly if two ways overlap but don't actually
-        //    introduce a fork - way 1 - 2 - 3 and way 3 - 4 - 5 will mark point 3 as a fork even
-        //    though it's not
         let map_data = get_test_map_data_graph();
         let start = get_point_with_id(1);
         let end = get_point_with_id(11);
