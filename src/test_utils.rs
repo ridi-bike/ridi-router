@@ -1,4 +1,6 @@
-use crate::map_data_graph::{MapDataGraph, MapDataLine, MapDataNode, MapDataPoint, MapDataWay};
+use crate::map_data_graph::{
+    MapDataGraph, MapDataLine, MapDataNode, MapDataPoint, MapDataWay, MapDataWayNodeIds,
+};
 
 pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
     //       1
@@ -74,27 +76,27 @@ pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
         vec![
             MapDataWay {
                 id: 1234,
-                node_ids: vec![1, 2, 3, 4],
+                node_ids: MapDataWayNodeIds::from_vec(vec![1, 2, 3, 4]),
                 one_way: false,
             },
             MapDataWay {
                 id: 5367,
-                node_ids: vec![5, 3, 6, 7],
+                node_ids: MapDataWayNodeIds::from_vec(vec![5, 3, 6, 7]),
                 one_way: false,
             },
             MapDataWay {
                 id: 489,
-                node_ids: vec![4, 8, 9],
+                node_ids: MapDataWayNodeIds::from_vec(vec![4, 8, 9]),
                 one_way: false,
             },
             MapDataWay {
                 id: 68,
-                node_ids: vec![6, 8],
+                node_ids: MapDataWayNodeIds::from_vec(vec![6, 8]),
                 one_way: false,
             },
             MapDataWay {
                 id: 1112,
-                node_ids: vec![11, 12],
+                node_ids: MapDataWayNodeIds::from_vec(vec![11, 12]),
                 one_way: false,
             },
         ],

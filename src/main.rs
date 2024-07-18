@@ -7,7 +7,7 @@ use clap::{arg, value_parser, Command};
 
 use geo_types::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
-use map_data_graph::{MapDataGraph, MapDataNode, MapDataWay};
+use map_data_graph::{MapDataGraph, MapDataNode, MapDataWay, MapDataWayNodeIds};
 use osm::OsmData;
 use rand::Rng;
 
@@ -80,15 +80,17 @@ fn main() {
             }
         }
         if element.type_field == "way" {
-            map_data.insert_way(MapDataWay {
-                id: element.id,
-                node_ids: element.nodes.clone(),
-                one_way: element.tags.as_ref().map_or(false, |tags| {
-                    tags.oneway
-                        .as_ref()
-                        .map_or(false, |one_way| one_way == "yes")
-                }),
-            });
+            map_data
+                .insert_way(MapDataWay {
+                    id: element.id,
+                    node_ids: MapDataWayNodeIds::from_vec(element.nodes.clone()),
+                    one_way: element.tags.as_ref().map_or(false, |tags| {
+                        tags.oneway
+                            .as_ref()
+                            .map_or(false, |one_way| one_way == "yes")
+                    }),
+                })
+                .unwrap();
         }
     }
 

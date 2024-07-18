@@ -2,7 +2,8 @@ use std::{
     cell::{RefCell, RefMut},
     collections::{BTreeMap, HashMap},
     rc::Rc,
-    u64,
+    slice::Iter,
+    u64, usize,
 };
 
 use crate::{
@@ -12,7 +13,8 @@ use crate::{
 
 #[derive(Debug)]
 pub enum MapDataError {
-    MissingPoint { point_Id: u64 },
+    MissingPoint { point_id: u64 },
+    MissingWay { way_id: u64 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -32,9 +34,74 @@ pub struct MapDataPoint {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct MapDataWayNodeIds {
+    ids: Vec<u64>,
+    first: Option<u64>,
+    last: Option<u64>,
+}
+impl MapDataWayNodeIds {
+    pub fn from_vec(ids: Vec<u64>) -> Self {
+        Self {
+            first: ids.first().map(|v| v.clone()),
+            last: ids.last().map(|v| v.clone()),
+            ids,
+        }
+    }
+    pub fn is_first_or_last(&self, id: u64) -> bool {
+        let is_first = if let Some(first_id) = self.first {
+            first_id == id
+        } else {
+            false
+        };
+        let is_last = if let Some(last_id) = self.last {
+            last_id == id
+        } else {
+            false
+        };
+
+        is_first || is_last
+    }
+
+    pub fn get_after(&self, idx: usize) -> Option<&u64> {
+        self.ids.get(idx + 1)
+    }
+
+    pub fn get_before(&self, idx: usize) -> Option<&u64> {
+        if idx == 0 {
+            return None;
+        }
+        self.ids.get(idx - 1)
+    }
+
+    pub fn iter(&self) -> Iter<'_, u64> {
+        self.ids.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a MapDataWayNodeIds {
+    type Item = &'a u64;
+
+    type IntoIter = std::slice::Iter<'a, u64>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.ids.iter()
+    }
+}
+
+impl IntoIterator for MapDataWayNodeIds {
+    type Item = u64;
+
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.ids.into_iter()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapDataWay {
     pub id: u64,
-    pub node_ids: Vec<u64>,
+    pub node_ids: MapDataWayNodeIds,
     pub one_way: bool,
 }
 
@@ -110,11 +177,23 @@ impl MapDataGraph {
     pub fn insert_way(&mut self, way: MapDataWay) -> Result<(), MapDataError> {
         let mut prev_point: Option<RefMut<MapDataPoint>> = None;
         for point_id in &way.node_ids {
-            if let Some(point) = self.points.get(point_id) {
+            if let Some(point) = self.points.get(&point_id) {
                 let mut point: RefMut<'_, _> = point.borrow_mut();
                 point.part_of_ways.push(way.id.clone());
-                if point.part_of_ways.len() > 1 {
+                if point.part_of_ways.len() > 2 {
                     point.fork = true;
+                } else if let Some(other_way_id) =
+                    point.part_of_ways.iter().find(|&w_id| w_id != &way.id)
+                {
+                    let way2 = self
+                        .ways
+                        .get(&other_way_id)
+                        .ok_or(MapDataError::MissingWay {
+                            way_id: other_way_id.clone(),
+                        })?;
+
+                    point.fork = !way2.node_ids.is_first_or_last(point.id)
+                        || !way.node_ids.is_first_or_last(point.id);
                 }
                 if let Some(prev_point_id) = &prev_point {
                     let line_id = get_line_id(&way.id, &prev_point_id.id, &point_id);
@@ -143,7 +222,7 @@ impl MapDataGraph {
                 prev_point = Some(point);
             } else {
                 return Err(MapDataError::MissingPoint {
-                    point_Id: point_id.clone(),
+                    point_id: point_id.clone(),
                 });
             }
         }
@@ -169,12 +248,8 @@ impl MapDataGraph {
                         .iter()
                         .position(|&point| point == input_point.id);
                     if let Some(point_idx_on_way) = point_idx_on_way {
-                        let point_before = if point_idx_on_way > 0 {
-                            way.node_ids.get(point_idx_on_way - 1)
-                        } else {
-                            None
-                        };
-                        let point_after = way.node_ids.get(point_idx_on_way + 1);
+                        let point_before = way.node_ids.get_before(point_idx_on_way);
+                        let point_after = way.node_ids.get_after(point_idx_on_way);
                         return Some(
                             [point_before, point_after]
                                 .iter()
@@ -278,7 +353,7 @@ mod tests {
     use core::panic;
     use std::{collections::HashSet, u8};
 
-    use crate::test_utils::get_test_data;
+    use crate::test_utils::{get_point_with_id, get_test_data, get_test_map_data_graph};
 
     use super::*;
 
@@ -288,17 +363,42 @@ mod tests {
         let res = map_data.insert_way(MapDataWay {
             id: 1,
             one_way: false,
-            node_ids: vec![1],
+            node_ids: MapDataWayNodeIds::from_vec(vec![1]),
         });
         if let Ok(_) = res {
             assert!(false);
         } else if let Err(e) = res {
-            if let MapDataError::MissingPoint { point_Id: p } = e {
+            if let MapDataError::MissingPoint { point_id: p } = e {
                 assert_eq!(p, 1);
             } else {
                 assert!(false);
             }
         }
+    }
+
+    #[test]
+    fn mark_forks() {
+        let map_data = get_test_map_data_graph();
+        let point = get_point_with_id(5);
+        let points = map_data.get_adjacent(&point);
+        eprintln!("points {:#?}", points);
+        points
+            .iter()
+            .for_each(|p| assert!((p.1.id == 3 && p.1.fork == true) || p.1.id != 3));
+
+        let point = get_point_with_id(3);
+        let points = map_data.get_adjacent(&point);
+        let non_forks = vec![2, 5, 4];
+        eprintln!("points {:#?}", points);
+        points.iter().for_each(|p| {
+            assert!(
+                ((non_forks.contains(&p.1.id) && p.1.fork == false)
+                    || !non_forks.contains(&p.1.id))
+            )
+        });
+        points
+            .iter()
+            .for_each(|p| assert!((p.1.id == 6 && p.1.fork == true) || p.1.id != 6));
     }
 
     #[test]
@@ -351,7 +451,7 @@ mod tests {
             map_data.insert_node(test_node.clone());
         }
         for test_way in test_ways {
-            map_data.insert_way(test_way.clone());
+            map_data.insert_way(test_way.clone()).unwrap();
         }
 
         for test in tests {
