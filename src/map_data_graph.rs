@@ -10,6 +10,11 @@ use crate::{
     gps_utils::{get_distance, get_heading},
 };
 
+#[derive(Debug)]
+pub enum MapDataError {
+    MissingPoint { point_Id: u64 },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapDataNode {
     pub id: u64,
@@ -102,7 +107,7 @@ impl MapDataGraph {
         self.points.insert(id, point);
     }
 
-    pub fn insert_way(&mut self, way: MapDataWay) -> () {
+    pub fn insert_way(&mut self, way: MapDataWay) -> Result<(), MapDataError> {
         let mut prev_point: Option<RefMut<MapDataPoint>> = None;
         for point_id in &way.node_ids {
             if let Some(point) = self.points.get(point_id) {
@@ -136,9 +141,15 @@ impl MapDataGraph {
                     );
                 }
                 prev_point = Some(point);
+            } else {
+                return Err(MapDataError::MissingPoint {
+                    point_Id: point_id.clone(),
+                });
             }
         }
         self.ways.insert(way.id.clone(), way);
+
+        Ok(())
     }
 
     pub fn get_adjacent(&self, input_point: &MapDataPoint) -> Vec<(MapDataLine, MapDataPoint)> {
@@ -267,9 +278,28 @@ mod tests {
     use core::panic;
     use std::{collections::HashSet, u8};
 
-    use crate::test_utils::{self, get_test_data};
+    use crate::test_utils::get_test_data;
 
     use super::*;
+
+    #[test]
+    fn check_missing_points() {
+        let mut map_data = MapDataGraph::new();
+        let res = map_data.insert_way(MapDataWay {
+            id: 1,
+            one_way: false,
+            node_ids: vec![1],
+        });
+        if let Ok(_) = res {
+            assert!(false);
+        } else if let Err(e) = res {
+            if let MapDataError::MissingPoint { point_Id: p } = e {
+                assert_eq!(p, 1);
+            } else {
+                assert!(false);
+            }
+        }
+    }
 
     #[test]
     fn adjacent_lookup() {

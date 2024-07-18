@@ -119,7 +119,7 @@ pub fn get_test_map_data_graph() -> MapDataGraph {
         map_data.insert_node(test_node.clone());
     }
     for test_way in test_ways {
-        map_data.insert_way(test_way.clone());
+        map_data.insert_way(test_way.clone()).unwrap();
     }
 
     map_data
