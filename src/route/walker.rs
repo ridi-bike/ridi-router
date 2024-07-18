@@ -214,6 +214,7 @@ mod tests {
         let map_data = get_test_map_data_graph();
 
         let fork_ch_id = 6;
+        let fork_ch_id_2 = 7;
         let point1 = get_point_with_id(1);
         let point2 = get_point_with_id(7);
 
@@ -237,6 +238,21 @@ mod tests {
         });
 
         walker.set_fork_choice_point_id(&fork_ch_id);
+
+        let choices = match walker.move_forward_to_next_fork() {
+            Err(_) => panic!("Error received from move"),
+            Ok(RouteWalkerMoveResult::Fork(c)) => c,
+            _ => panic!("did not get choices for routes"),
+        };
+        assert_eq!(choices.len(), 2);
+        choices.iter().for_each(|(l, p)| {
+            assert!(p.id == 8 || p.id == 7);
+            assert!(
+                line_is_between_point_ids(l.clone(), 8, 6)
+                    || line_is_between_point_ids(l.clone(), 7, 6)
+            )
+        });
+        walker.set_fork_choice_point_id(&fork_ch_id_2);
 
         assert!(walker.move_forward_to_next_fork() == Ok(RouteWalkerMoveResult::Finish));
 
