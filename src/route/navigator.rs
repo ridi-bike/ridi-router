@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::map_data_graph::{MapDataGraph, MapDataLine, MapDataPoint};
 
@@ -27,7 +27,7 @@ pub struct RouteNavigator<'a> {
     weight_calcs: Vec<ForkWeightCalc>,
     start: &'a MapDataPoint,
     end: &'a MapDataPoint,
-    weight_cache: HashMap<u64, Vec<(u64, u32)>>,
+    discarded_fork_choices: HashSet<(u64, u64)>,
 }
 
 impl<'a> RouteNavigator<'a> {
@@ -43,7 +43,7 @@ impl<'a> RouteNavigator<'a> {
             start,
             end,
             weight_calcs,
-            weight_cache: HashMap::new(),
+            discarded_fork_choices: HashSet::new(),
         }
     }
 
@@ -72,83 +72,104 @@ impl<'a> RouteNavigator<'a> {
                                 (WeightCalcPreviousElement::Step { line, point }, &point.id)
                             }
                         };
-                        let cached_fork_weights = self.weight_cache.get(&last_point_id);
-                        eprintln!("cached fork weights {:#?}", self.weight_cache);
-
-                        let chosen_fork = if let Some(cached_fork_weights) = cached_fork_weights {
-                            let mut cached_fork_weights = cached_fork_weights.clone();
-                            let choice = cached_fork_weights.pop();
-                            self.weight_cache
-                                .insert(last_point_id.clone(), cached_fork_weights.clone());
-
-                            eprintln!(
-                                "eval stuck - weight len {:#?}, walker last {:#?}",
-                                &cached_fork_weights.len(),
-                                walker.get_route().last()
-                            );
-                            let cached_fork_weights = cached_fork_weights
-                                .iter()
-                                .filter_map(|weight| {
-                                    if fork_choices.iter().any(|c| c.1.id == weight.0) {
-                                        return Some(*weight);
+                        // let cached_fork_weights = self.weight_cache.get(&last_point_id);
+                        // eprintln!("cached fork weights {:#?}", self.weight_cache);
+                        //
+                        // let chosen_fork = if let Some(cached_fork_weights) = cached_fork_weights {
+                        //     let mut cached_fork_weights = cached_fork_weights.clone();
+                        //     let choice = cached_fork_weights.pop();
+                        //     self.weight_cache
+                        //         .insert(last_point_id.clone(), cached_fork_weights.clone());
+                        //
+                        //     eprintln!(
+                        //         "eval stuck - weight len {:#?}, walker last {:#?}",
+                        //         &cached_fork_weights.len(),
+                        //         walker.get_route().last()
+                        //     );
+                        //     let cached_fork_weights = cached_fork_weights
+                        //         .iter()
+                        //         .filter_map(|weight| {
+                        //             if fork_choices.iter().any(|c| c.1.id == weight.0) {
+                        //                 return Some(*weight);
+                        //             }
+                        //             None
+                        //         })
+                        //         .collect::<Vec<_>>();
+                        //     if cached_fork_weights.len() == 0
+                        //         && walker
+                        //             .get_route()
+                        //             .iter()
+                        //             .find(|r| r.1.fork == true && r.1.id != *last_point_id)
+                        //             == None
+                        //     {
+                        //         eprintln!("pushed to stuck {}", walker_idx);
+                        //         stuck_walkers_idx.push(walker_idx);
+                        //     }
+                        //
+                        //     choice
+                        // } else {
+                        let mut fork_weights = fork_choices
+                            .iter()
+                            .filter(|f| {
+                                !self
+                                    .discarded_fork_choices
+                                    .contains(&(*last_point_id, f.1.id))
+                            })
+                            .map(|f| {
+                                (
+                                    f.1.id,
+                                    self.weight_calcs
+                                        .iter()
+                                        .map(|weight_calc| weight_calc(&prev_element, f)),
+                                )
+                            })
+                            .filter_map(|(p_id, mut ws)| {
+                                if ws.any(|w| w == WeightCalcResult::DoNotUse) {
+                                    return None;
+                                }
+                                let ws_sum: u32 = ws.into_iter().fold(0u32, |acc, val| {
+                                    if let WeightCalcResult::UseWithWeight(w) = val {
+                                        return acc + w as u32;
                                     }
-                                    None
-                                })
-                                .collect::<Vec<_>>();
-                            if cached_fork_weights.len() == 0
-                                && walker
-                                    .get_route()
-                                    .iter()
-                                    .find(|r| r.1.fork == true && r.1.id != *last_point_id)
-                                    == None
+                                    0
+                                });
+                                Some((p_id, ws_sum))
+                            })
+                            .collect::<Vec<_>>();
+                        eprintln!(
+                            "unsorted weights for {:?} -  {:#?}",
+                            last_point_id, fork_weights
+                        );
+                        fork_weights.sort_by(|w1, w2| w1.1.cmp(&w2.1));
+                        // let choice = fork_weights.pop();
+                        let chosen_fork = fork_weights.pop();
+                        // eprintln!(
+                        //     "insert weight cache {:?}:{:#?}",
+                        //     last_point_id, fork_weights
+                        // );
+                        //     eprintln!("choice {:#?}", &choice);
+                        //     self.weight_cache
+                        //         .insert(last_point_id.clone(), fork_weights);
+                        //
+                        //     choice
+                        // };
+
+                        if let Some(chosen_fork) = chosen_fork {
+                            eprintln!("moving to {:#?}", chosen_fork);
+                            self.discarded_fork_choices
+                                .insert((*last_point_id, chosen_fork.0));
+                            walker.set_fork_choice_point_id(&chosen_fork.0);
+                        } else {
+                            eprintln!("moving back");
+                            if walker
+                                .get_route()
+                                .iter()
+                                .find(|r| r.1.fork == true && r.1.id != *last_point_id)
+                                == None
                             {
                                 eprintln!("pushed to stuck {}", walker_idx);
                                 stuck_walkers_idx.push(walker_idx);
                             }
-
-                            choice
-                        } else {
-                            let mut fork_weights = fork_choices
-                                .iter()
-                                .map(|f| {
-                                    (
-                                        f.1.id,
-                                        self.weight_calcs
-                                            .iter()
-                                            .map(|weight_calc| weight_calc(&prev_element, f)),
-                                    )
-                                })
-                                .filter_map(|(p_id, mut ws)| {
-                                    if ws.any(|w| w == WeightCalcResult::DoNotUse) {
-                                        return None;
-                                    }
-                                    let ws_sum: u32 = ws.into_iter().fold(0u32, |acc, val| {
-                                        if let WeightCalcResult::UseWithWeight(w) = val {
-                                            return acc + w as u32;
-                                        }
-                                        0
-                                    });
-                                    Some((p_id, ws_sum))
-                                })
-                                .collect::<Vec<_>>();
-                            fork_weights.sort_by(|w1, w2| w1.1.cmp(&w2.1));
-                            let choice = fork_weights.pop();
-                            eprintln!(
-                                "insert weight cache {:?}:{:#?}",
-                                last_point_id, fork_weights
-                            );
-                            eprintln!("choice {:#?}", &choice);
-                            self.weight_cache
-                                .insert(last_point_id.clone(), fork_weights);
-
-                            choice
-                        };
-
-                        if let Some(chosen_fork) = chosen_fork {
-                            eprintln!("moving to {:#?}", chosen_fork);
-                            walker.set_fork_choice_point_id(&chosen_fork.0);
-                        } else {
-                            eprintln!("moving back");
                             walker.move_backwards_to_prev_fork();
                         }
                     } else if move_result == Ok(RouteWalkerMoveResult::DeadEnd) {
@@ -297,5 +318,49 @@ mod test {
         let routes = navigator.generate_routes();
         eprintln!("routes {:#?}", routes);
         assert_eq!(routes.len(), 0);
+    }
+
+    #[test]
+    fn navigate_on_weight_sum() {
+        let map_data = get_test_map_data_graph();
+        let start = get_point_with_id(1);
+        let end = get_point_with_id(7);
+        let mut navigator = RouteNavigator::new(
+            &map_data,
+            &start,
+            &end,
+            vec![
+                |prev_element, choice| {
+                    let prev_point = match prev_element {
+                        WeightCalcPreviousElement::Step { line: _, point } => point,
+                        WeightCalcPreviousElement::Start(point) => point,
+                    };
+                    if prev_point.id == 3 && choice.1.id == 6 {
+                        return WeightCalcResult::UseWithWeight(10);
+                    }
+                    WeightCalcResult::UseWithWeight(6)
+                },
+                |prev_element, choice| {
+                    let prev_point = match prev_element {
+                        WeightCalcPreviousElement::Step { line: _, point } => point,
+                        WeightCalcPreviousElement::Start(point) => point,
+                    };
+                    if prev_point.id == 3 && choice.1.id == 6 {
+                        return WeightCalcResult::UseWithWeight(1);
+                    }
+                    WeightCalcResult::UseWithWeight(6)
+                },
+            ],
+        );
+        let routes = navigator.generate_routes();
+        let route = routes.get(0);
+        let route = if let Some(r) = route {
+            r
+        } else {
+            assert!(false);
+            return ();
+        };
+        eprintln!("route {:#?}", route);
+        assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
     }
 }
