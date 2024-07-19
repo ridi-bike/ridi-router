@@ -1,6 +1,7 @@
 use crate::map_data_graph::{
     MapDataGraph, MapDataLine, MapDataNode, MapDataPoint, MapDataWay, MapDataWayNodeIds,
 };
+use crate::route::walker::Route;
 
 pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
     //       1
@@ -142,13 +143,13 @@ pub fn line_is_between_point_ids(line: MapDataLine, id1: u64, id2: u64) -> bool 
         && ids.contains(&id2)
 }
 
-pub fn route_matches_ids(route: Vec<(MapDataLine, MapDataPoint)>, ids: Vec<u64>) -> bool {
+pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {
     ids.iter()
         .enumerate()
         .map(|(idx, &id)| {
-            let route_element = route.get(idx);
-            if let Some(route_element) = route_element {
-                if route_element.1.id == id {
+            let route_segment = route.get_segment_by_index(idx);
+            if let Some(route_segment) = route_segment {
+                if route_segment.get_end_point().id == id {
                     return true;
                 }
             }
