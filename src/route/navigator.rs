@@ -12,6 +12,7 @@ pub enum WeightCalcPreviousElement<'a> {
     },
 }
 
+#[derive(Debug, PartialEq)]
 pub enum WeightCalcResult {
     UseWithWeight(u8),
     DoNotUse,
@@ -114,17 +115,20 @@ impl<'a> RouteNavigator<'a> {
                                         f.1.id,
                                         self.weight_calcs
                                             .iter()
-                                            .map(|weight_calc| weight_calc(&prev_element, f))
-                                            .filter_map(|weight_result| {
-                                                if let WeightCalcResult::UseWithWeight(weight) =
-                                                    weight_result
-                                                {
-                                                    return Some(weight as u32);
-                                                }
-                                                None
-                                            })
-                                            .sum::<u32>(),
+                                            .map(|weight_calc| weight_calc(&prev_element, f)),
                                     )
+                                })
+                                .filter_map(|(p_id, mut ws)| {
+                                    if ws.any(|w| w == WeightCalcResult::DoNotUse) {
+                                        return None;
+                                    }
+                                    let ws_sum: u32 = ws.into_iter().fold(0u32, |acc, val| {
+                                        if let WeightCalcResult::UseWithWeight(w) = val {
+                                            return acc + w as u32;
+                                        }
+                                        0
+                                    });
+                                    Some((p_id, ws_sum))
                                 })
                                 .collect::<Vec<_>>();
                             fork_weights.sort_by(|w1, w2| w1.1.cmp(&w2.1));
@@ -261,10 +265,6 @@ mod test {
 
     #[test]
     fn navigate_all_stuck_return_no_routes() {
-        // TODO
-        // 1. cached weights will in a loop scenario will offer a cached weight for a way that's
-        //    actually backwards. we need to check for cached weight and walker choice intersection
-        //    as the walker won't offer backwards fork choices
         let map_data = get_test_map_data_graph();
         let start = get_point_with_id(1);
         let end = get_point_with_id(11);
@@ -272,9 +272,30 @@ mod test {
             &map_data,
             &start,
             &end,
-            vec![|_prev_element, _choices| WeightCalcResult::UseWithWeight(1)],
+            vec![|_prev_element, _choice| WeightCalcResult::UseWithWeight(1)],
         );
         let routes = navigator.generate_routes();
+        assert_eq!(routes.len(), 0);
+    }
+
+    #[test]
+    fn navigate_no_routes_with_do_not_use_weight() {
+        let map_data = get_test_map_data_graph();
+        let start = get_point_with_id(1);
+        let end = get_point_with_id(7);
+        let mut navigator = RouteNavigator::new(
+            &map_data,
+            &start,
+            &end,
+            vec![|_prev_element, choice| {
+                if choice.1.id == 7 {
+                    return WeightCalcResult::DoNotUse;
+                }
+                WeightCalcResult::UseWithWeight(1)
+            }],
+        );
+        let routes = navigator.generate_routes();
+        eprintln!("routes {:#?}", routes);
         assert_eq!(routes.len(), 0);
     }
 }
