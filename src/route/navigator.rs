@@ -116,15 +116,18 @@ impl<'a> RouteNavigator<'a> {
                                     .contains(&(*last_point_id, f.1.id))
                             })
                             .map(|f| {
+                                eprintln!("calc weight map all {:#?}", f);
                                 (
                                     f.1.id,
                                     self.weight_calcs
                                         .iter()
-                                        .map(|weight_calc| weight_calc(&prev_element, f)),
+                                        .map(|weight_calc| weight_calc(&prev_element, f))
+                                        .collect::<Vec<_>>(),
                                 )
                             })
-                            .filter_map(|(p_id, mut ws)| {
-                                if ws.any(|w| w == WeightCalcResult::DoNotUse) {
+                            .filter_map(|(p_id, ws)| {
+                                eprintln!("calc weight sum {} {:#?}", p_id, ws);
+                                if ws.iter().any(|w| *w == WeightCalcResult::DoNotUse) {
                                     return None;
                                 }
                                 let ws_sum: u32 = ws.into_iter().fold(0u32, |acc, val| {
