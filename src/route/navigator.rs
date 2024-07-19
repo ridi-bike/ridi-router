@@ -229,7 +229,30 @@ mod test {
                 if from_point.id == 3 && choices.1.id == 6 {
                     return WeightCalcResult::UseWithWeight(10);
                 }
-                if from_point.id == 6 && choices.1.id == 7 {
+                WeightCalcResult::UseWithWeight(1)
+            }],
+        );
+        let routes = navigator.generate_routes();
+        let route = routes.get(0);
+        let route = if let Some(r) = route {
+            r
+        } else {
+            assert!(false);
+            return ();
+        };
+
+        assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
+
+        let mut navigator = RouteNavigator::new(
+            &map_data,
+            &start,
+            &end,
+            vec![|prev_element, choices| {
+                let from_point = match prev_element {
+                    WeightCalcPreviousElement::Start(point) => point,
+                    WeightCalcPreviousElement::Step { line: _, point } => point,
+                };
+                if from_point.id == 3 && choices.1.id == 4 {
                     return WeightCalcResult::UseWithWeight(10);
                 }
                 WeightCalcResult::UseWithWeight(1)
@@ -244,7 +267,7 @@ mod test {
             return ();
         };
 
-        assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
+        assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
     }
 
     #[test]
