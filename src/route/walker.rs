@@ -1,3 +1,5 @@
+use std::{usize, vec};
+
 use crate::map_data_graph::{MapDataGraph, MapDataLine, MapDataPoint};
 
 #[derive(Debug, PartialEq)]
@@ -81,6 +83,7 @@ impl FromIterator<(MapDataLine, MapDataPoint)> for Route {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct RouteSegmentList {
     segment_list: Vec<RouteSegment>,
 }
@@ -91,12 +94,66 @@ impl RouteSegmentList {
             segment_list: Vec::new(),
         }
     }
+    pub fn get_segment_count(&self) -> usize {
+        self.segment_list.len()
+    }
+    pub fn has_segment_with_point_id(&self, point_id: u64) -> bool {
+        self.segment_list
+            .iter()
+            .position(|route_segment| route_segment.get_end_point().id == point_id)
+            != None
+    }
+    pub fn get_all_segment_point_ids(&self) -> Vec<u64> {
+        self.segment_list
+            .iter()
+            .map(|segment| segment.end_point.id)
+            .collect()
+    }
+    pub fn get_segment_from_point_id(&self, point_id: u64) -> Option<&RouteSegment> {
+        self.segment_list
+            .iter()
+            .find(|segment| segment.end_point.id == point_id)
+    }
+    pub fn exclude_segments_where_point_ids_in(&self, point_ids: &Vec<u64>) -> RouteSegmentList {
+        self.segment_list
+            .iter()
+            .filter(|segment| !point_ids.contains(&segment.end_point.id))
+            .collect()
+    }
+    pub fn get_first_segment(&self) -> Option<&RouteSegment> {
+        self.segment_list.get(0)
+    }
+}
+
+impl IntoIterator for RouteSegmentList {
+    type Item = RouteSegment;
+
+    type IntoIter = vec::IntoIter<RouteSegment>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.segment_list.into_iter()
+    }
 }
 
 impl From<Vec<RouteSegment>> for RouteSegmentList {
     fn from(value: Vec<RouteSegment>) -> Self {
         Self {
             segment_list: value,
+        }
+    }
+}
+
+impl FromIterator<RouteSegment> for RouteSegmentList {
+    fn from_iter<T: IntoIterator<Item = RouteSegment>>(iter: T) -> Self {
+        RouteSegmentList {
+            segment_list: iter.into_iter().collect(),
+        }
+    }
+}
+impl<'a> FromIterator<&'a RouteSegment> for RouteSegmentList {
+    fn from_iter<T: IntoIterator<Item = &'a RouteSegment>>(iter: T) -> Self {
+        RouteSegmentList {
+            segment_list: Vec::from_iter(iter.into_iter().cloned()),
         }
     }
 }
@@ -111,7 +168,7 @@ pub struct RouteWalker<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum RouteWalkerMoveResult {
-    Fork(Vec<RouteSegment>),
+    Fork(RouteSegmentList),
     DeadEnd,
     Finish,
 }
@@ -131,7 +188,7 @@ impl<'a> RouteWalker<'a> {
         }
     }
 
-    fn get_available_lines(&self, point: &MapDataPoint) -> Vec<RouteSegment> {
+    fn get_available_fork_segments(&self, point: &MapDataPoint) -> RouteSegmentList {
         let prev_point = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
             if let Some(p) = self.route_walked.get_segment_by_index(idx) {
                 &p.get_end_point()
@@ -166,38 +223,37 @@ impl<'a> RouteWalker<'a> {
                 return Ok(RouteWalkerMoveResult::Finish);
             }
 
-            let available_lines = self.get_available_lines(point);
+            let available_segments = self.get_available_fork_segments(point);
 
-            if available_lines.len() > 1 && self.next_fork_choice_point_id.is_none() {
-                return Ok(RouteWalkerMoveResult::Fork(available_lines));
+            if available_segments.get_segment_count() > 1
+                && self.next_fork_choice_point_id.is_none()
+            {
+                return Ok(RouteWalkerMoveResult::Fork(available_segments));
             }
 
-            let next_index = if let Some(next_id) = self.next_fork_choice_point_id {
+            let next_segment = if let Some(next_id) = self.next_fork_choice_point_id {
                 self.next_fork_choice_point_id = None;
-                available_lines
-                    .iter()
-                    .position(|route_segment| route_segment.get_end_point().id == next_id)
-                    .ok_or(RouterWalkerError::WrongForkChoice {
+                if !available_segments.has_segment_with_point_id(next_id) {
+                    return Err(RouterWalkerError::WrongForkChoice {
                         id: next_id,
-                        available_fork_ids: available_lines
-                            .iter()
-                            .map(|route_segment| route_segment.get_end_point().id)
-                            .collect(),
-                    })?
+                        available_fork_ids: available_segments.get_all_segment_point_ids(),
+                    });
+                }
+                available_segments.get_segment_from_point_id(next_id)
             } else {
-                0
+                available_segments.get_first_segment()
             };
 
-            let next_point = match available_lines.get(next_index) {
+            let next_segment = match next_segment {
                 None => return Ok(RouteWalkerMoveResult::DeadEnd),
-                Some(element) => element,
+                Some(segment) => segment,
             };
 
-            self.route_walked.add_segment(next_point.clone());
+            self.route_walked.add_segment(next_segment.clone());
         }
     }
 
-    pub fn move_backwards_to_prev_fork(&mut self) -> Option<Vec<RouteSegment>> {
+    pub fn move_backwards_to_prev_fork(&mut self) -> Option<RouteSegmentList> {
         self.next_fork_choice_point_id = None;
         let current_fork = self.route_walked.remove_last_segment();
         if current_fork.is_none() {
@@ -221,7 +277,7 @@ impl<'a> RouteWalker<'a> {
         }
 
         if let Some(RouteSegment { line: _, end_point }) = self.route_walked.get_segment_last() {
-            return Some(self.get_available_lines(&end_point));
+            return Some(self.get_available_fork_segments(&end_point));
         }
 
         None
@@ -324,9 +380,9 @@ mod tests {
             _ => panic!("did not get choices for routes"),
         };
 
-        assert_eq!(choices.len(), 3);
+        assert_eq!(choices.get_segment_count(), 3);
 
-        choices.iter().for_each(|route_segment| {
+        choices.into_iter().for_each(|route_segment| {
             assert!(
                 route_segment.end_point.id == 5
                     || route_segment.end_point.id == 4
@@ -346,8 +402,8 @@ mod tests {
             Ok(RouteWalkerMoveResult::Fork(c)) => c,
             _ => panic!("did not get choices for routes"),
         };
-        assert_eq!(choices.len(), 2);
-        choices.iter().for_each(|route_segment| {
+        assert_eq!(choices.get_segment_count(), 2);
+        choices.into_iter().for_each(|route_segment| {
             assert!(route_segment.end_point.id == 8 || route_segment.end_point.id == 7);
             assert!(
                 line_is_between_point_ids(route_segment.line.clone(), 8, 6)
@@ -405,9 +461,9 @@ mod tests {
             Ok(RouteWalkerMoveResult::Fork(c)) => c,
             _ => panic!("did not get choices for routes"),
         };
-        assert_eq!(choices.len(), 3);
+        assert_eq!(choices.get_segment_count(), 3);
 
-        choices.iter().for_each(|route_segment| {
+        choices.into_iter().for_each(|route_segment| {
             assert!(
                 route_segment.end_point.id == 5
                     || route_segment.end_point.id == 4
@@ -429,7 +485,7 @@ mod tests {
             Some(c) => c,
         };
 
-        choices.iter().for_each(|route_segment| {
+        choices.into_iter().for_each(|route_segment| {
             assert!(
                 route_segment.end_point.id == 5
                     || route_segment.end_point.id == 4

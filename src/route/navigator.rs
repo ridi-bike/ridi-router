@@ -1,15 +1,26 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::map_data_graph::{MapDataGraph, MapDataLine, MapDataPoint};
 
 use super::walker::{Route, RouteSegment, RouteWalker, RouteWalkerMoveResult};
 
-pub enum WeightCalcPreviousElement<'a> {
-    Start(&'a MapDataPoint),
-    Step {
-        line: &'a MapDataLine,
+pub enum WeightCalcPreviousSegment<'a> {
+    Start {
         point: &'a MapDataPoint,
     },
+    Step {
+        line: &'a MapDataLine,
+        end_point: &'a MapDataPoint,
+    },
+}
+
+impl WeightCalcPreviousSegment<'_> {
+    pub fn get_point(&self) -> &MapDataPoint {
+        match self {
+            WeightCalcPreviousSegment::Start { point } => point,
+            WeightCalcPreviousSegment::Step { line: _, end_point } => end_point,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -19,7 +30,82 @@ pub enum WeightCalcResult {
 }
 
 type ForkWeightCalc =
-    fn(prev_element: &WeightCalcPreviousElement, to: &RouteSegment) -> WeightCalcResult;
+    fn(prev_segment: &WeightCalcPreviousSegment, to: &RouteSegment) -> WeightCalcResult;
+
+#[derive(Debug)]
+struct DiscardedForkChoices {
+    choices: HashMap<u64, HashSet<u64>>,
+}
+impl DiscardedForkChoices {
+    pub fn new() -> Self {
+        Self {
+            choices: HashMap::new(),
+        }
+    }
+
+    pub fn add_discarded_choice(&mut self, point_id: &u64, choice_point_id: &u64) -> () {
+        let existing_choices = self.choices.get(point_id);
+        if let Some(mut existing_choices) = existing_choices.cloned() {
+            existing_choices.insert(choice_point_id.clone());
+            self.choices.insert(point_id.clone(), existing_choices);
+        } else if existing_choices.is_none() {
+            let mut ids = HashSet::new();
+            ids.insert(choice_point_id.clone());
+            self.choices.insert(point_id.clone(), ids);
+        }
+    }
+
+    pub fn get_discarded_choices_for_pont(&self, point_id: &u64) -> Option<Vec<u64>> {
+        match self.choices.get(point_id) {
+            None => None,
+            Some(ids) => Some(ids.clone().into_iter().collect()),
+        }
+    }
+}
+
+struct ForkWeights {
+    weight_list: HashMap<u64, u32>,
+}
+
+impl ForkWeights {
+    pub fn new() -> Self {
+        Self {
+            weight_list: HashMap::new(),
+        }
+    }
+    pub fn add_calc_result(
+        &mut self,
+        choice_point_id: &u64,
+        weights: &Vec<WeightCalcResult>,
+    ) -> () {
+        if weights
+            .iter()
+            .all(|weight| *weight != WeightCalcResult::DoNotUse)
+        {
+            let existing_weight = match self.weight_list.get(choice_point_id) {
+                None => 0u32,
+                Some(w) => w.clone(),
+            };
+            self.weight_list.insert(
+                choice_point_id.clone(),
+                existing_weight
+                    + weights
+                        .into_iter()
+                        .map(|r| match r {
+                            WeightCalcResult::DoNotUse => 0u32,
+                            WeightCalcResult::UseWithWeight(w) => w.clone() as u32,
+                        })
+                        .sum::<u32>(),
+            );
+        }
+    }
+
+    pub fn get_choice_id_by_index_from_heaviest(&self, idx: usize) -> Option<u64> {
+        let mut vec = self.weight_list.iter().collect::<Vec<_>>();
+        vec.sort_by(|v, v2| v2.1.cmp(v.1));
+        vec.get(idx).map(|w| w.0).copied()
+    }
+}
 
 pub struct RouteNavigator<'a> {
     map_data_graph: &'a MapDataGraph,
@@ -27,7 +113,7 @@ pub struct RouteNavigator<'a> {
     weight_calcs: Vec<ForkWeightCalc>,
     start: &'a MapDataPoint,
     end: &'a MapDataPoint,
-    discarded_fork_choices: HashSet<(u64, u64)>,
+    discarded_fork_choices: DiscardedForkChoices,
 }
 
 impl<'a> RouteNavigator<'a> {
@@ -43,88 +129,68 @@ impl<'a> RouteNavigator<'a> {
             start,
             end,
             weight_calcs,
-            discarded_fork_choices: HashSet::new(),
+            discarded_fork_choices: DiscardedForkChoices::new(),
         }
     }
 
-    fn get_next_fork_choice(fork_choices: &Vec<RouteSegment>) -> () {}
-
     pub fn generate_routes(&mut self) -> Vec<Route> {
-        let mut loop_count = 0;
         let mut stuck_walkers_idx = Vec::new();
         loop {
-            loop_count += 1;
             self.walkers
                 .iter_mut()
                 .enumerate()
                 .for_each(|(walker_idx, walker)| {
                     let move_result = walker.move_forward_to_next_fork();
-                    eprintln!("move result {:#?}", move_result);
                     if move_result == Ok(RouteWalkerMoveResult::Finish) {
                         return ();
                     }
-                    if let Ok(RouteWalkerMoveResult::Fork(fork_choices)) = &move_result {
+                    if let Ok(RouteWalkerMoveResult::Fork(fork_choices)) = move_result {
                         let last_element = walker.get_route().get_segment_last();
-                        let (prev_element, last_point_id) = match last_element {
+                        let (prev_segment, last_point_id) = match last_element {
                             None => (
-                                WeightCalcPreviousElement::Start(&self.start),
+                                WeightCalcPreviousSegment::Start { point: &self.start },
                                 &self.start.id,
                             ),
                             Some(route_segment) => (
-                                WeightCalcPreviousElement::Step {
+                                WeightCalcPreviousSegment::Step {
                                     line: route_segment.get_line(),
-                                    point: route_segment.get_end_point(),
+                                    end_point: route_segment.get_end_point(),
                                 },
                                 &route_segment.get_end_point().id,
                             ),
                         };
-                        let mut fork_weights = fork_choices
-                            .iter()
-                            .filter(|&f| {
-                                !self
-                                    .discarded_fork_choices
-                                    .contains(&(*last_point_id, f.get_end_point().id))
-                            })
-                            .map(|f| {
-                                eprintln!("calc weight map all {:#?}", f);
-                                (
-                                    f.get_end_point().id,
-                                    self.weight_calcs
-                                        .iter()
-                                        .map(|weight_calc| weight_calc(&prev_element, f))
-                                        .collect::<Vec<_>>(),
-                                )
-                            })
-                            .filter_map(|(p_id, ws)| {
-                                eprintln!("calc weight sum {} {:#?}", p_id, ws);
-                                if ws.iter().any(|w| *w == WeightCalcResult::DoNotUse) {
-                                    return None;
-                                }
-                                let ws_sum: u32 = ws.into_iter().fold(0u32, |acc, val| {
-                                    if let WeightCalcResult::UseWithWeight(w) = val {
-                                        return acc + w as u32;
-                                    }
-                                    0
-                                });
-                                Some((p_id, ws_sum))
-                            })
-                            .collect::<Vec<_>>();
-                        eprintln!(
-                            "unsorted weights for {:?} -  {:#?}",
-                            last_point_id, fork_weights
+                        let fork_choices = fork_choices.exclude_segments_where_point_ids_in(
+                            &self
+                                .discarded_fork_choices
+                                .get_discarded_choices_for_pont(&last_point_id)
+                                .map_or(Vec::new(), |d| d.clone()),
                         );
-                        fork_weights.sort_by(|w1, w2| w1.1.cmp(&w2.1));
-                        let chosen_fork = fork_weights.pop();
+                        let fork_weights = fork_choices.into_iter().fold(
+                            ForkWeights::new(),
+                            |mut fork_weights, fork_route_segment| {
+                                let fork_weight_calc_results = self
+                                    .weight_calcs
+                                    .iter()
+                                    .map(|weight_calc| {
+                                        weight_calc(&prev_segment, &fork_route_segment)
+                                    })
+                                    .collect::<Vec<_>>();
+                                fork_weights.add_calc_result(
+                                    &fork_route_segment.get_end_point().id,
+                                    &fork_weight_calc_results,
+                                );
+                                fork_weights
+                            },
+                        );
+                        let chosen_fork_point_id =
+                            fork_weights.get_choice_id_by_index_from_heaviest(0);
 
-                        if let Some(chosen_fork) = chosen_fork {
-                            eprintln!("moving to {:#?}", chosen_fork);
+                        if let Some(chosen_fork_point_id) = chosen_fork_point_id {
                             self.discarded_fork_choices
-                                .insert((*last_point_id, chosen_fork.0));
-                            walker.set_fork_choice_point_id(&chosen_fork.0);
+                                .add_discarded_choice(last_point_id, &chosen_fork_point_id);
+                            walker.set_fork_choice_point_id(&chosen_fork_point_id);
                         } else {
-                            eprintln!("moving back");
                             if walker.get_route().get_fork_before_last_segment() == None {
-                                eprintln!("pushed to stuck {}", walker_idx);
                                 stuck_walkers_idx.push(walker_idx);
                             }
                             walker.move_backwards_to_prev_fork();
@@ -134,7 +200,6 @@ impl<'a> RouteNavigator<'a> {
                     }
                 });
             while let Some(&walker_idx) = stuck_walkers_idx.last() {
-                eprintln!("popped walker {walker_idx}");
                 stuck_walkers_idx.pop();
                 self.walkers.remove(walker_idx);
             }
@@ -146,11 +211,6 @@ impl<'a> RouteNavigator<'a> {
             {
                 break;
             }
-
-            if loop_count > 20 {
-                panic!("panic: loop count {}", loop_count);
-            }
-            eprintln!("loop num {}", loop_count);
         }
 
         self.walkers.iter().map(|w| w.get_route().clone()).collect()
@@ -160,7 +220,7 @@ impl<'a> RouteNavigator<'a> {
 #[cfg(test)]
 mod test {
     use crate::{
-        route::navigator::{WeightCalcPreviousElement, WeightCalcResult},
+        route::navigator::{WeightCalcPreviousSegment, WeightCalcResult},
         test_utils::{get_point_with_id, get_test_map_data_graph, route_matches_ids},
     };
 
@@ -175,10 +235,10 @@ mod test {
             &map_data,
             &start,
             &end,
-            vec![|prev_element, choices| {
-                let from_point = match prev_element {
-                    WeightCalcPreviousElement::Start(point) => point,
-                    WeightCalcPreviousElement::Step { line: _, point } => point,
+            vec![|prev_segment, choices| {
+                let from_point = match prev_segment {
+                    WeightCalcPreviousSegment::Start { point } => point,
+                    WeightCalcPreviousSegment::Step { line: _, end_point } => end_point,
                 };
                 if from_point.id == 3 && choices.get_end_point().id == 6 {
                     return WeightCalcResult::UseWithWeight(10);
@@ -201,10 +261,10 @@ mod test {
             &map_data,
             &start,
             &end,
-            vec![|prev_element, choices| {
-                let from_point = match prev_element {
-                    WeightCalcPreviousElement::Start(point) => point,
-                    WeightCalcPreviousElement::Step { line: _, point } => point,
+            vec![|prev_segment, choices| {
+                let from_point = match prev_segment {
+                    WeightCalcPreviousSegment::Start { point } => point,
+                    WeightCalcPreviousSegment::Step { line: _, end_point } => end_point,
                 };
                 if from_point.id == 3 && choices.get_end_point().id == 4 {
                     return WeightCalcResult::UseWithWeight(10);
@@ -233,10 +293,10 @@ mod test {
             &map_data,
             &start,
             &end,
-            vec![|prev_element, choices| {
-                let from_point = match prev_element {
-                    WeightCalcPreviousElement::Start(point) => point,
-                    WeightCalcPreviousElement::Step { line: _, point } => point,
+            vec![|prev_segment, choices| {
+                let from_point = match prev_segment {
+                    WeightCalcPreviousSegment::Start { point } => point,
+                    WeightCalcPreviousSegment::Step { line: _, end_point } => end_point,
                 };
                 if from_point.id == 3 {
                     if choices.get_end_point().id == 5 {
@@ -273,7 +333,7 @@ mod test {
             &map_data,
             &start,
             &end,
-            vec![|_prev_element, _choice| WeightCalcResult::UseWithWeight(1)],
+            vec![|_prev_segment, _choice| WeightCalcResult::UseWithWeight(1)],
         );
         let routes = navigator.generate_routes();
         assert_eq!(routes.len(), 0);
@@ -288,7 +348,7 @@ mod test {
             &map_data,
             &start,
             &end,
-            vec![|_prev_element, choice| {
+            vec![|_prev_segment, choice| {
                 if choice.get_end_point().id == 7 {
                     return WeightCalcResult::DoNotUse;
                 }
@@ -296,7 +356,6 @@ mod test {
             }],
         );
         let routes = navigator.generate_routes();
-        eprintln!("routes {:#?}", routes);
         assert_eq!(routes.len(), 0);
     }
 
@@ -310,20 +369,20 @@ mod test {
             &start,
             &end,
             vec![
-                |prev_element, choice| {
-                    let prev_point = match prev_element {
-                        WeightCalcPreviousElement::Step { line: _, point } => point,
-                        WeightCalcPreviousElement::Start(point) => point,
+                |prev_segment, choice| {
+                    let prev_point = match prev_segment {
+                        WeightCalcPreviousSegment::Start { point } => point,
+                        WeightCalcPreviousSegment::Step { line: _, end_point } => end_point,
                     };
                     if prev_point.id == 3 && choice.get_end_point().id == 6 {
                         return WeightCalcResult::UseWithWeight(10);
                     }
                     WeightCalcResult::UseWithWeight(6)
                 },
-                |prev_element, choice| {
-                    let prev_point = match prev_element {
-                        WeightCalcPreviousElement::Step { line: _, point } => point,
-                        WeightCalcPreviousElement::Start(point) => point,
+                |prev_segment, choice| {
+                    let prev_point = match prev_segment {
+                        WeightCalcPreviousSegment::Start { point } => point,
+                        WeightCalcPreviousSegment::Step { line: _, end_point } => end_point,
                     };
                     if prev_point.id == 3 && choice.get_end_point().id == 6 {
                         return WeightCalcResult::UseWithWeight(1);
@@ -340,7 +399,6 @@ mod test {
             assert!(false);
             return ();
         };
-        eprintln!("route {:#?}", route);
         assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
     }
 }
