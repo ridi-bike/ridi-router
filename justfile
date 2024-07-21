@@ -13,10 +13,10 @@ overpass-query := '"[out:json];
                       [access!=no]
                       [highway!=path]
                       [highway!=service]
-                      (around:10000,57.15368,24.85370,57.16393,24.89780)->.roads;
+                      (around:100000,57.15368,24.85370,57.31337,25.28080)->.roads;
                     (.roads;>>;);
                     out;"'
-run-and-load := 'cat test-map-data-formatted.json | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 0.0 --to_lon 0.0'
+run-and-load := 'cat test-map-data-formatted.json | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
 
 data-fetch:
 	curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > test-map-data.json

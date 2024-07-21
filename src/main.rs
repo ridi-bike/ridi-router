@@ -5,14 +5,14 @@ use std::{
 
 use clap::{arg, value_parser, Command};
 
-use geo_types::Point;
-use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
+use gpx_writer::RoutesWriter;
 use map_data_graph::{MapDataGraph, MapDataNode, MapDataWay, MapDataWayNodeIds};
 use osm::OsmData;
-use rand::Rng;
+use route::{navigator::RouteNavigator, weights::weight_heading};
 
 mod gps_hash;
 mod gps_utils;
+mod gpx_writer;
 mod map_data_graph;
 mod osm;
 mod route;
@@ -99,10 +99,6 @@ fn main() {
     let to_lat = matches.get_one::<f64>("to_lat").unwrap();
     let to_lon = matches.get_one::<f64>("to_lon").unwrap();
 
-    let mut track_segment = TrackSegment::new();
-    let waypoint = Waypoint::new(Point::new(*from_lon, *from_lat));
-    track_segment.points.push(waypoint);
-
     let start_point = match map_data.get_closest_to_coords(*from_lat, *from_lon) {
         None => {
             eprintln!("no closest point found");
@@ -111,69 +107,100 @@ fn main() {
         Some(p) => p,
     };
 
-    // let end_point = match map_data.get_closest_to_coords(*to_lat, *to_lon) {
-    //     None => {
-    //         eprintln!("no closest point found");
-    //         process::exit(1);
-    //     }
-    //     Some(p) => p,
-    // };
-    //
-    // let mut navigator = RouteNavigator::new();
-
-    let waypoint = Waypoint::new(Point::new(start_point.lon, start_point.lat));
-    track_segment.points.push(waypoint);
-
-    let mut prev_point = start_point.clone();
-    let mut visited_points = Vec::new();
-    for step in 1..100000 {
-        let adj_lines_points = map_data.get_adjacent(&prev_point);
-        let adj_points = adj_lines_points
-            .iter()
-            .filter_map(|line_point| {
-                let (_, point) = line_point;
-                if point.id != start_point.id {
-                    return Some(line_point);
-                }
-                None
-            })
-            .collect::<Vec<_>>();
-        let adj_points = adj_points
-            .iter()
-            .filter(|(_, point)| {
-                !visited_points[if visited_points.len() > 2 {
-                    visited_points.len() - 3
-                } else {
-                    0
-                }..if visited_points.len() > 0 {
-                    visited_points.len() - 1
-                } else {
-                    0
-                }]
-                    .contains(&point.id)
-            })
-            .collect::<Vec<_>>();
-        let idx = if adj_points.len() > 1 {
-            rand::thread_rng().gen_range(0..adj_points.len() - 1)
-        } else {
-            0
-        };
-        let next_point = adj_points.get(idx);
-        if let Some((_, next_point)) = next_point {
-            visited_points.push(next_point.id);
-            let waypoint = Waypoint::new(Point::new(next_point.lon, next_point.lat));
-            track_segment.points.push(waypoint);
-            prev_point = next_point.clone();
+    let end_point = match map_data.get_closest_to_coords(*to_lat, *to_lon) {
+        None => {
+            eprintln!("no closest point found");
+            process::exit(1);
         }
+        Some(p) => p,
+    };
+
+    let mut navigator =
+        RouteNavigator::new(&map_data, &start_point, &end_point, vec![weight_heading]);
+
+    let writer = RoutesWriter::new(
+        start_point.clone(),
+        navigator.generate_routes(),
+        *from_lat,
+        *from_lon,
+        None,
+    );
+
+    match writer.write_gpx() {
+        Ok(()) => return (),
+        Err(e) => eprintln!("Error on write: {:#?}", e),
     }
 
-    let mut track = Track::new();
-    track.segments.push(track_segment);
-
-    let mut gpx = Gpx::default();
-    gpx.tracks.push(track);
-
-    gpx.version = GpxVersion::Gpx11;
-
-    write(&gpx, std::io::stdout()).unwrap();
+    // let mut gpx = Gpx::default();
+    // gpx.version = GpxVersion::Gpx11;
+    //
+    // let routes = navigator.generate_routes();
+    //
+    // for route in routes {
+    //     let mut track_segment = TrackSegment::new();
+    //
+    //     let waypoint = Waypoint::new(Point::new(*from_lon, *from_lat));
+    //     track_segment.points.push(waypoint);
+    //
+    //     let waypoint = Waypoint::new(Point::new(start_point.lon, start_point.lat));
+    //     track_segment.points.push(waypoint);
+    //
+    //     for segment in route {
+    //         let waypoint = Waypoint::new(Point::new(
+    //             segment.get_end_point().lon,
+    //             segment.get_end_point().lat,
+    //         ));
+    //         track_segment.points.push(waypoint);
+    //     }
+    //
+    //     let mut track = Track::new();
+    //     track.segments.push(track_segment);
+    //
+    //     gpx.tracks.push(track);
+    // }
+    //
+    // // let mut prev_point = start_point.clone();
+    // // let mut visited_points = Vec::new();
+    // // for step in 1..100000 {
+    // //     let adj_lines_points = map_data.get_adjacent(&prev_point);
+    // //     let adj_points = adj_lines_points
+    // //         .iter()
+    // //         .filter_map(|line_point| {
+    // //             let (_, point) = line_point;
+    // //             if point.id != start_point.id {
+    // //                 return Some(line_point);
+    // //             }
+    // //             None
+    // //         })
+    // //         .collect::<Vec<_>>();
+    // //     let adj_points = adj_points
+    // //         .iter()
+    // //         .filter(|(_, point)| {
+    // //             !visited_points[if visited_points.len() > 2 {
+    // //                 visited_points.len() - 3
+    // //             } else {
+    // //                 0
+    // //             }..if visited_points.len() > 0 {
+    // //                 visited_points.len() - 1
+    // //             } else {
+    // //                 0
+    // //             }]
+    // //                 .contains(&point.id)
+    // //         })
+    // //         .collect::<Vec<_>>();
+    // //     let idx = if adj_points.len() > 1 {
+    // //         rand::thread_rng().gen_range(0..adj_points.len() - 1)
+    // //     } else {
+    // //         0
+    // //     };
+    // //     let next_point = adj_points.get(idx);
+    // //     if let Some((_, next_point)) = next_point {
+    // //         visited_points.push(next_point.id);
+    // //         let waypoint = Waypoint::new(Point::new(next_point.lon, next_point.lat));
+    // //         track_segment.points.push(waypoint);
+    // //         prev_point = next_point.clone();
+    // //     }
+    // // }
+    //
+    // write(&gpx, std::io::stdout()).unwrap();
 }

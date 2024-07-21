@@ -83,7 +83,17 @@ impl FromIterator<(MapDataLine, MapDataPoint)> for Route {
     }
 }
 
-#[derive(Debug, PartialEq)]
+impl IntoIterator for Route {
+    type Item = RouteSegment;
+
+    type IntoIter = std::vec::IntoIter<RouteSegment>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.route_segments.into_iter()
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct RouteSegmentList {
     segment_list: Vec<RouteSegment>,
 }
