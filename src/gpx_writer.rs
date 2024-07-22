@@ -1,4 +1,4 @@
-use geo_types::Point;
+use geo::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use std::{fs::File, io::Error};
 

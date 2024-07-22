@@ -1,9 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{
-    gpx_writer::RoutesWriter,
-    map_data_graph::{MapDataGraph, MapDataLine, MapDataPoint},
-};
+use crate::map_data_graph::{MapDataGraph, MapDataPoint};
 
 use super::{
     walker::{Route, RouteWalker, RouteWalkerMoveResult},
@@ -118,10 +115,10 @@ impl<'a> RouteNavigator<'a> {
     }
 
     pub fn generate_routes(&mut self) -> Vec<Route> {
-        let mut loop_num = 0;
+        // let mut loop_num = 0;
         let mut stuck_walkers_idx = Vec::new();
         loop {
-            loop_num += 1;
+            // loop_num += 1;
             self.walkers
                 .iter_mut()
                 .enumerate()
@@ -195,20 +192,20 @@ impl<'a> RouteNavigator<'a> {
                 break;
             }
 
-            if loop_num % 100 == 0 {
-                let writer = RoutesWriter::new(
-                    self.start.clone(),
-                    self.walkers.iter().map(|w| w.get_route().clone()).collect(),
-                    self.start.lat.clone(),
-                    self.start.lon.clone(),
-                    Some(format!("../logs/{loop_num}.gpx")),
-                );
-                let res = writer.write_gpx();
-                if let Err(e) = res {
-                    eprintln!("Error on writing log: {:#?}", e);
-                    break;
-                }
-            }
+            // if loop_num % 100 == 0 {
+            //     let writer = RoutesWriter::new(
+            //         self.start.clone(),
+            //         self.walkers.iter().map(|w| w.get_route().clone()).collect(),
+            //         self.start.lat.clone(),
+            //         self.start.lon.clone(),
+            //         Some(format!("logs/{loop_num}.gpx")),
+            //     );
+            //     let res = writer.write_gpx();
+            //     if let Err(e) = res {
+            //         eprintln!("Error on writing log: {:#?}", e);
+            //         break;
+            //     }
+            // }
         }
 
         self.walkers.iter().map(|w| w.get_route().clone()).collect()
@@ -218,7 +215,7 @@ impl<'a> RouteNavigator<'a> {
 #[cfg(test)]
 mod test {
     use crate::{
-        route::{navigator::WeightCalcResult, walker::RouteSegment, weights::WeightCalcInput},
+        route::{navigator::WeightCalcResult, weights::WeightCalcInput},
         test_utils::{get_point_with_id, get_test_map_data_graph, route_matches_ids},
     };
 

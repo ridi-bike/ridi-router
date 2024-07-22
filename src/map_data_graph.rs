@@ -1,3 +1,4 @@
+use geo::{HaversineBearing, HaversineDistance, Point};
 use std::{
     cell::{RefCell, RefMut},
     collections::{BTreeMap, HashMap},
@@ -6,10 +7,7 @@ use std::{
     u64, usize,
 };
 
-use crate::{
-    gps_hash::{get_gps_coords_hash, HashOffset},
-    gps_utils::{get_distance, get_heading},
-};
+use crate::gps_hash::{get_gps_coords_hash, HashOffset};
 
 #[derive(Debug)]
 pub enum MapDataError {
@@ -111,7 +109,7 @@ pub struct MapDataLine {
     pub way_id: u64,
     pub point_ids: (u64, u64),
     pub length_m: f64,
-    pub direction_deg: f64,
+    pub bearing_deg: f64,
     pub one_way: bool,
 }
 
@@ -197,24 +195,16 @@ impl MapDataGraph {
                 }
                 if let Some(prev_point_id) = &prev_point {
                     let line_id = get_line_id(&way.id, &prev_point_id.id, &point_id);
+                    let prev_geo_point = Point::new(prev_point_id.lon, prev_point_id.lat);
+                    let point_geo = Point::new(point.lon, point.lat);
                     self.lines.insert(
                         line_id.clone(),
                         MapDataLine {
                             id: line_id,
                             way_id: way.id.clone(),
                             point_ids: (prev_point_id.id.clone(), point_id.clone()),
-                            length_m: get_distance(
-                                &prev_point_id.lat,
-                                &prev_point_id.lon,
-                                &point.lat,
-                                &point.lon,
-                            ),
-                            direction_deg: get_heading(
-                                &prev_point_id.lat,
-                                &prev_point_id.lon,
-                                &point.lat,
-                                &point.lon,
-                            ),
+                            length_m: prev_geo_point.haversine_distance(&point_geo),
+                            bearing_deg: prev_geo_point.haversine_bearing(point_geo),
                             one_way: way.one_way,
                         },
                     );
@@ -338,7 +328,9 @@ impl MapDataGraph {
         let mut points_with_dist: Vec<(u32, Rc<RefCell<MapDataPoint>>)> = grid_points
             .iter()
             .map(|(_, p)| {
-                let distance = get_distance(&p.borrow().lat, &p.borrow().lon, &lat, &lon);
+                let point1 = Point::new(p.borrow().lon, p.borrow().lat);
+                let point2 = Point::new(lon, lat);
+                let distance = point1.haversine_distance(&point2);
                 (distance.round() as u32, Rc::clone(&p))
             })
             .collect();

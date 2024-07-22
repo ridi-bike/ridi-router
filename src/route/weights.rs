@@ -1,4 +1,6 @@
-use crate::{gps_utils::get_heading, map_data_graph::MapDataPoint};
+use geo::{HaversineBearing, Point};
+
+use crate::map_data_graph::MapDataPoint;
 
 use super::{
     navigator::WeightCalcResult,
@@ -20,18 +22,14 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         Some(segment) => segment.get_end_point(),
         None => input.start_point,
     };
-    let end_heading = get_heading(
-        &choice_point.lat,
-        &choice_point.lon,
-        &input.end_point.lat,
-        &input.end_point.lon,
+    let choice_point_geo = Point::new(choice_point.lon, choice_point.lat);
+    let end_point_geo = Point::new(input.end_point.lon, input.end_point.lat);
+    let end_heading = choice_point_geo.haversine_bearing(end_point_geo);
+    let choice_segment_point_geo = Point::new(
+        input.choice_segment.get_end_point().lon,
+        input.choice_segment.get_end_point().lat,
     );
-    let choice_heading = get_heading(
-        &choice_point.lat,
-        &choice_point.lon,
-        &input.choice_segment.get_end_point().lat,
-        &input.choice_segment.get_end_point().lon,
-    );
+    let choice_heading = choice_point_geo.haversine_bearing(choice_segment_point_geo);
     eprintln!("end {}, choice {}", end_heading, choice_heading);
     match end_heading - choice_heading {
         -15.0..15.0 => WeightCalcResult::UseWithWeight(150),
@@ -43,6 +41,17 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         90.0..135.0 => WeightCalcResult::UseWithWeight(1),
         _ => WeightCalcResult::DoNotUse,
     }
+}
+
+pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
+    if input
+        .route
+        .contains_point_id(input.choice_segment.get_end_point().id)
+    {
+        return WeightCalcResult::DoNotUse;
+    }
+
+    WeightCalcResult::UseWithWeight(0)
 }
 
 #[cfg(test)]
@@ -68,9 +77,10 @@ mod test {
                 way_id: 1,
                 one_way: false,
                 length_m: 0.0,
-                direction_deg: 0.0,
+                bearing_deg: 0.0,
             },
             MapDataPoint {
+                // 57.15514, 24.85033
                 id: 3,
                 lat: 57.15514,
                 lon: 24.85033,
@@ -79,6 +89,7 @@ mod test {
             },
         );
         let end_point = MapDataPoint {
+            // 57.15651, 24.84966
             id: 2,
             lat: 57.15651,
             lon: 24.84966,
@@ -86,6 +97,7 @@ mod test {
             part_of_ways: Vec::new(),
         };
         let start_point = MapDataPoint {
+            // 57.15471, 24.84954
             id: 1,
             lat: 57.15471,
             lon: 24.84954,

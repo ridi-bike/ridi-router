@@ -69,6 +69,12 @@ impl Route {
             }),
         }
     }
+    pub fn contains_point_id(&self, id: u64) -> bool {
+        self.route_segments
+            .iter()
+            .find(|segment| segment.end_point.id == id)
+            .is_some()
+    }
 }
 
 impl From<Vec<RouteSegment>> for Route {

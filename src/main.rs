@@ -8,10 +8,12 @@ use clap::{arg, value_parser, Command};
 use gpx_writer::RoutesWriter;
 use map_data_graph::{MapDataGraph, MapDataNode, MapDataWay, MapDataWayNodeIds};
 use osm::OsmData;
-use route::{navigator::RouteNavigator, weights::weight_heading};
+use route::{
+    navigator::RouteNavigator,
+    weights::{weight_heading, weight_no_loops},
+};
 
 mod gps_hash;
-mod gps_utils;
 mod gpx_writer;
 mod map_data_graph;
 mod osm;
@@ -115,8 +117,12 @@ fn main() {
         Some(p) => p,
     };
 
-    let mut navigator =
-        RouteNavigator::new(&map_data, &start_point, &end_point, vec![weight_heading]);
+    let mut navigator = RouteNavigator::new(
+        &map_data,
+        &start_point,
+        &end_point,
+        vec![weight_heading, weight_no_loops],
+    );
 
     let writer = RoutesWriter::new(
         start_point.clone(),
