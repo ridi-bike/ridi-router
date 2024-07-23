@@ -77,12 +77,16 @@ impl OsmJsonParser {
             }
             if token.kind == TokenType::String || token.kind == TokenType::Number {
                 if let Buffer::MultiByte(buf) = token.buf {
-                    self.prev_string = Some(
-                        std::str::from_utf8(&buf.to_owned())
-                            .or_else(|error| Err(ParserError::Utf8ParseError { error }))?
-                            .to_string()
-                            .replace("\"", ""),
-                    );
+                    let val = std::str::from_utf8(&buf.to_owned())
+                        .or_else(|error| Err(ParserError::Utf8ParseError { error }))?
+                        .to_string()
+                        .replace("\"", "");
+                    if let None = self.prev_string {
+                        if let Some(key) = self.prev_key.clone() {
+                            eprintln!("{}:{}", key, val);
+                        }
+                    }
+                    self.prev_string = Some(val);
                 } else {
                     return Err(ParserError::UnexpectedBuffer);
                 }
@@ -107,12 +111,6 @@ impl OsmJsonParser {
         if let Some(loc) = self.location.last() {
             if let ParserStateLocation::InList(_) = *loc {
                 self.location.pop();
-                let list = self.data.pop();
-                if let Some(list) = list {
-                    eprintln!("list: {:#?}", list);
-                } else {
-                    return Err(ParserError::ListNotFoundInData);
-                }
             } else {
                 return Err(ParserError::UnexpectedToken {
                     token: TokenType::BracketClose,
@@ -126,7 +124,6 @@ impl OsmJsonParser {
     fn set_curly_open(&mut self) -> Result<(), ParserError> {
         self.location
             .push(ParserStateLocation::InObject(self.prev_key.clone()));
-        self.data.push(ParserData::Object(HashMap::new()));
         Ok(())
     }
 
@@ -134,12 +131,6 @@ impl OsmJsonParser {
         if let Some(loc) = self.location.last() {
             if let ParserStateLocation::InObject(_) = *loc {
                 self.location.pop();
-                let object = self.data.pop();
-                if let Some(object) = object {
-                    eprintln!("object: {:#?}", object);
-                } else {
-                    return Err(ParserError::ObjectNotFoundInData);
-                }
             } else {
                 return Err(ParserError::UnexpectedToken {
                     token: TokenType::CurlyClose,
