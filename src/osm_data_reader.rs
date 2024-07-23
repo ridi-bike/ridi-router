@@ -1,109 +1,153 @@
-use std::{io::BufRead, time::Instant};
+use std::{collections::HashMap, io::BufRead, str::Utf8Error, time::Instant};
 
-use clap::parser;
 use json_tools::{Buffer, BufferType, Lexer, Token, TokenType};
 
 use crate::map_data_graph::MapDataGraph;
 
-enum ParserError {
-    UnexpectedToken,
-}
-
 #[derive(Debug, PartialEq)]
-enum ParserPrevKey {
-    None,
-    String(String),
-    Elements,
-    Nodes,
-    Members,
-    Tags,
+enum ParserError {
+    UnexpectedToken { token: TokenType, context: String },
+    Utf8ParseError { error: Utf8Error },
+    UnexpectedBuffer,
+    ArrayFoundInRoot,
+    ListNotFoundInData,
+    ObjectNotFoundInData,
 }
 
 #[derive(Debug, PartialEq)]
 enum ParserStateLocation {
-    InElementList,
-    InElementObject,
-    InNodesList,
-    InMemberList,
-    InMemberObject,
-    InTagsObject,
-    InObject,
-    InList,
+    InObject(Option<String>),
+    InList(String),
 }
 
-struct ParserState {
+#[derive(Debug)]
+struct OsmJsonParser {
     location: Vec<ParserStateLocation>,
-    prev_key: ParserPrevKey,
-    prev_string: String,
+    prev_key: Option<String>,
+    prev_string: Option<String>,
+    data: Vec<HashMap<String, String>>,
 }
 
-impl ParserState {
-    pub fn set_bracket_open(&mut self) -> Result<(), ParserError> {
-        let last_location = self.location.last();
-        if let None = last_location {
-            self.location.push(ParserStateLocation::InElementList);
-        } else if let Some(loc) = last_location {
-            if *loc == ParserStateLocation::InElementObject {
-                if self.prev_key == ParserPrevKey::Nodes {
-                    self.location.push(ParserStateLocation::InNodesList);
-                } else if self.prev_key == ParserPrevKey::Members {
-                    self.location.push(ParserStateLocation::InMemberList);
+impl OsmJsonParser {
+    pub fn new() -> Self {
+        Self {
+            location: Vec::new(),
+            prev_key: None,
+            prev_string: None,
+            data: Vec::new(),
+        }
+    }
+
+    pub fn get_current_path(&self) -> String {
+        self.location
+            .iter()
+            .map(|loc| match loc {
+                ParserStateLocation::InObject(obj) => {
+                    if let Some(obj) = obj {
+                        obj.clone()
+                    } else {
+                        String::new()
+                    }
+                }
+                ParserStateLocation::InList(list) => list.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
+    pub fn parse_line(&mut self, line: Vec<u8>) -> Result<(), ParserError> {
+        eprintln!("parse line {:#?}", std::str::from_utf8(&line));
+        for token in Lexer::new(line, BufferType::Bytes(0)) {
+            if token.kind == TokenType::BracketOpen {
+                self.set_bracket_open()?;
+            }
+            if token.kind == TokenType::BracketClose {
+                self.set_bracket_close()?;
+            }
+            if token.kind == TokenType::CurlyOpen {
+                self.set_curly_open()?;
+            }
+            if token.kind == TokenType::CurlyClose {
+                self.set_curly_close()?;
+            }
+
+            if token.kind == TokenType::Colon {
+                self.prev_key = self.prev_string.clone();
+                self.prev_string = None;
+            }
+            if token.kind == TokenType::String || token.kind == TokenType::Number {
+                if let Buffer::MultiByte(buf) = token.buf {
+                    self.prev_string = Some(
+                        std::str::from_utf8(&buf.to_owned())
+                            .or_else(|error| Err(ParserError::Utf8ParseError { error }))?
+                            .to_string()
+                            .replace("\"", ""),
+                    );
                 } else {
-                    self.location.push(ParserStateLocation::InList);
+                    return Err(ParserError::UnexpectedBuffer);
                 }
             }
         }
+
+        eprintln!("parser {:#?}", self);
         Ok(())
     }
-    pub fn set_bracket_close(&mut self) -> Result<(), ParserError> {
+
+    fn set_bracket_open(&mut self) -> Result<(), ParserError> {
+        if let Some(key) = &self.prev_key {
+            self.location
+                .push(ParserStateLocation::InList(key.to_string()));
+            return Ok(());
+        }
+
+        Err(ParserError::ArrayFoundInRoot)
+    }
+
+    fn set_bracket_close(&mut self) -> Result<(), ParserError> {
         if let Some(loc) = self.location.last() {
-            if *loc == ParserStateLocation::InElementList
-                || *loc == ParserStateLocation::InNodesList
-                || *loc == ParserStateLocation::InMemberList
-                || *loc == ParserStateLocation::InList
-            {
+            if let ParserStateLocation::InList(_) = *loc {
                 self.location.pop();
+                let list = self.data.pop();
+                if let Some(list) = list {
+                    eprintln!("list: {:#?}", list);
+                } else {
+                    return Err(ParserError::ListNotFoundInData);
+                }
             } else {
-                return Err(ParserError::UnexpectedToken);
+                return Err(ParserError::UnexpectedToken {
+                    token: TokenType::BracketClose,
+                    context: String::from("not in a list"),
+                });
             }
         }
         Ok(())
     }
 
-    pub fn set_curly_open(&mut self) -> Result<(), ParserError> {
-        let last_location = self.location.last();
-        if let None = last_location {
-            return Err(ParserError::UnexpectedToken);
-        } else if let Some(loc) = last_location {
-            if *loc == ParserStateLocation::InElementList {
-                self.location.push(ParserStateLocation::InElementObject);
-            } else if *loc == ParserStateLocation::InElementObject
-                && self.prev_key == ParserPrevKey::Tags
-            {
-                self.location.push(ParserStateLocation::InTagsObject);
-            } else if *loc == ParserStateLocation::InElementObject {
-                self.location.push(ParserStateLocation::InObject);
-            } else if *loc == ParserStateLocation::InMemberList {
-                self.location.push(ParserStateLocation::InMemberObject);
-            } else {
-                self.location.push(ParserStateLocation::InObject);
-            }
-        }
+    fn set_curly_open(&mut self) -> Result<(), ParserError> {
+        self.location
+            .push(ParserStateLocation::InObject(self.prev_key.clone()));
+        self.data.push(ParserData::Object(HashMap::new()));
         Ok(())
     }
 
-    pub fn set_curly_close(&mut self) -> Result<(), ParserError> {
+    fn set_curly_close(&mut self) -> Result<(), ParserError> {
         if let Some(loc) = self.location.last() {
-            if *loc == ParserStateLocation::InTagsObject
-                || *loc == ParserStateLocation::InMemberObject
-                || *loc == ParserStateLocation::InObject
-                || *loc == ParserStateLocation::InElementObject
-            {
+            if let ParserStateLocation::InObject(_) = *loc {
                 self.location.pop();
+                let object = self.data.pop();
+                if let Some(object) = object {
+                    eprintln!("object: {:#?}", object);
+                } else {
+                    return Err(ParserError::ObjectNotFoundInData);
+                }
+            } else {
+                return Err(ParserError::UnexpectedToken {
+                    token: TokenType::CurlyClose,
+                    context: String::from("not in a object"),
+                });
             }
-        } else {
-            return Err(ParserError::UnexpectedToken);
         }
+
         Ok(())
     }
 }
@@ -111,11 +155,7 @@ impl ParserState {
 pub fn read_osm_data() -> Result<MapDataGraph, ParserError> {
     let mut map_data = MapDataGraph::new();
     let std_read_start = Instant::now();
-    let mut parser_state = ParserState {
-        location: Vec::new(),
-        prev_key: ParserPrevKey::None,
-        prev_string: String::new(),
-    };
+    let mut parser_state = OsmJsonParser::new();
     {
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
@@ -123,43 +163,7 @@ pub fn read_osm_data() -> Result<MapDataGraph, ParserError> {
                 .expect("Could not read line from standard in")
                 .as_bytes()
                 .to_owned();
-            for token in Lexer::new(line, BufferType::Bytes(0)) {
-                if token.kind == TokenType::BracketOpen {
-                    parser_state.set_bracket_open();
-                }
-                if token.kind == TokenType::BracketClose {
-                    parser_state.set_bracket_close();
-                }
-                if token.kind == TokenType::CurlyOpen {
-                    parser_state.set_curly_open();
-                }
-                if token.kind == TokenType::CurlyClose {
-                    parser_state.set_curly_close();
-                }
-
-                if token.kind == TokenType::String {
-                    if let Buffer::MultiByte(buf) = token.buf {
-                        parser_state.prev_string = std::str::from_utf8(&buf.to_owned())
-                            .or_else(|e| Err(ParserError::UnexpectedToken))?
-                            .to_string();
-                    } else {
-                        Err(ParserError::UnexpectedToken);
-                    }
-                }
-                if token.kind == TokenType::Colon {
-                    if parser_state.prev_string == "elements" {
-                        parser_state.prev_key = ParserPrevKey::Elements;
-                    } else if parser_state.prev_string == "tags" {
-                        parser_state.prev_key = ParserPrevKey::Tags;
-                    } else if parser_state.prev_string == "members" {
-                        parser_state.prev_key = ParserPrevKey::Members;
-                    } else if parser_state.prev_string == "nodes" {
-                        parser_state.prev_key = ParserPrevKey::Nodes;
-                    } else {
-                        parser_state.prev_key = ParserPrevKey::String(parser_state.prev_string);
-                    }
-                }
-            }
+            parser_state.parse_line(line)?;
         }
 
         // let osm_data_result = serde_json::from_str::<OsmData>(&input_map_data);
@@ -207,12 +211,31 @@ pub fn read_osm_data() -> Result<MapDataGraph, ParserError> {
         //             .unwrap();
         //     }
         // }
-        let map_data_construct_duration = map_data_construct_start.elapsed();
-        eprintln!(
-            "Map Data Construct took {} seconds",
-            map_data_construct_duration.as_secs()
-        );
+        // let map_data_construct_duration = map_data_construct_start.elapsed();
+        // eprintln!(
+        //     "Map Data Construct took {} seconds",
+        //     map_data_construct_duration.as_secs()
+        // );
     }
 
-    map_data
+    // map_data
+    Ok(map_data)
+}
+
+#[cfg(test)]
+mod test {
+    use crate::test_utils::get_test_data_osm_json;
+
+    use super::OsmJsonParser;
+
+    #[test]
+    fn read_osm_json() {
+        let test_data_osm_json = get_test_data_osm_json();
+
+        let mut parser = OsmJsonParser::new();
+        for line in test_data_osm_json {
+            parser.parse_line(line.as_bytes().to_owned()).unwrap();
+        }
+        assert!(false);
+    }
 }

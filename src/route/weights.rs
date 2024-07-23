@@ -76,8 +76,8 @@ mod test {
                 point_ids: (1, 1),
                 way_id: 1,
                 one_way: false,
-                length_m: 0.0,
-                bearing_deg: 0.0,
+                // length_m: 0.0,
+                // bearing_deg: 0.0,
             },
             MapDataPoint {
                 // 57.15514, 24.85033
