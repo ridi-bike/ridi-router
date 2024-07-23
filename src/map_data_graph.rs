@@ -104,13 +104,29 @@ pub struct MapDataWay {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct MapDataRelation {
+    pub id: u64,
+    pub node_ids: MapDataWayNodeIds,
+    pub one_way: bool,
+    pub members: [MapDataRelationMember; 3],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum MapDataRelationMember {
+    From { way_id: u64 },
+    To { way_id: u64 },
+    Via { node_id: u64 },
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapDataLine {
     pub id: String,
     pub way_id: u64,
     pub point_ids: (u64, u64),
-    pub length_m: f64,
-    pub bearing_deg: f64,
+    // pub length_m: f64,
+    // pub bearing_deg: f64,
     pub one_way: bool,
+    // pub accessible_from_line_ids: Vec<String>,
 }
 
 type PointMap = BTreeMap<u64, Rc<RefCell<MapDataPoint>>>;
@@ -195,7 +211,7 @@ impl MapDataGraph {
                 }
                 if let Some(prev_point_id) = &prev_point {
                     let line_id = get_line_id(&way.id, &prev_point_id.id, &point_id);
-                    let prev_geo_point = Point::new(prev_point_id.lon, prev_point_id.lat);
+                    let prev_point_geo = Point::new(prev_point_id.lon, prev_point_id.lat);
                     let point_geo = Point::new(point.lon, point.lat);
                     self.lines.insert(
                         line_id.clone(),
@@ -203,9 +219,10 @@ impl MapDataGraph {
                             id: line_id,
                             way_id: way.id.clone(),
                             point_ids: (prev_point_id.id.clone(), point_id.clone()),
-                            length_m: prev_geo_point.haversine_distance(&point_geo),
-                            bearing_deg: prev_geo_point.haversine_bearing(point_geo),
+                            // length_m: prev_point_geo.haversine_distance(&point_geo),
+                            // bearing_deg: prev_point_geo.haversine_bearing(point_geo),
                             one_way: way.one_way,
+                            // accessible_from_line_ids: Vec::new(),
                         },
                     );
                 }
@@ -220,6 +237,8 @@ impl MapDataGraph {
 
         Ok(())
     }
+
+    // pub fn insert_relation(&mut self, relation: MapDataRelation) -> Result<(), MapDataError> {}
 
     pub fn get_adjacent(&self, input_point: &MapDataPoint) -> Vec<(MapDataLine, MapDataPoint)> {
         let center_point = match self.points.get(&input_point.id) {

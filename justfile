@@ -14,20 +14,26 @@ overpass-query := '"[out:json];
                       [highway!=path]
                       [highway!=service]
                       (around:100000,57.15368,24.85370,57.31337,25.28080)->.roads;
-                    (.roads;>>;);
+                    relation
+                      [type=restriction]
+                      (around:100000,57.15368,24.85370,57.31337,25.28080)->.rules;
+                    (
+                      .roads;>>;
+                      .rules;>>;
+                    );
                     out;"'
-run-and-load := 'cat test-map-data-formatted.json | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
+run-and-load := 'cat map-data/test-map-data-formatted.json | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
 
 data-fetch:
-	curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > test-map-data.json
+	curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > map-data/test-map-data.json
 
 data-format:
-  cat test-map-data.json | jq | tee test-map-data-formatted.json
+  cat map-data/test-map-data.json | jq | tee map-data/test-map-data-formatted.json
 
 run:
   {{run-and-load}}
 
 run-show:
-  {{run-and-load}} > output.gpx
-  gpxsee output.gpx
+  {{run-and-load}} > map-data/output.gpx
+  gpxsee map-data/output.gpx
   

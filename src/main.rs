@@ -1,6 +1,7 @@
 use std::{
     io::{self, BufRead},
     process,
+    time::Instant,
 };
 
 use clap::{arg, value_parser, Command};
@@ -17,6 +18,7 @@ mod gps_hash;
 mod gpx_writer;
 mod map_data_graph;
 mod osm;
+mod osm_data_reader;
 mod route;
 #[cfg(test)]
 mod test_utils;
@@ -49,57 +51,74 @@ fn main() {
         )
         .get_matches();
 
-    let mut input_map_data: String = String::new();
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let line = line.expect("Could not read line from standard in");
-        input_map_data.push_str(line.as_str());
-    }
-
-    let osm_data_result = serde_json::from_str::<OsmData>(&input_map_data);
-
-    let osm_data = match osm_data_result {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Problem parsing osm data: {e}");
-            process::exit(1);
-        }
-    };
-
     let mut map_data = MapDataGraph::new();
+    let std_read_start = Instant::now();
+    {
+        let mut input_map_data: String = String::new();
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let line = line.expect("Could not read line from standard in");
+            input_map_data.push_str(line.as_str());
+        }
 
-    for element in osm_data.elements.iter() {
-        if element.type_field == "node" {
-            if let (Some(lat), Some(lon)) = (element.lat, element.lon) {
-                map_data.insert_node(MapDataNode {
-                    id: element.id,
-                    lat,
-                    lon,
-                });
-            } else {
-                eprintln!("Found node with missing coordinates");
+        let osm_data_result = serde_json::from_str::<OsmData>(&input_map_data);
+
+        let osm_data = match osm_data_result {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Problem parsing osm data: {e}");
                 process::exit(1);
             }
+        };
+
+        let std_read_duration = std_read_start.elapsed();
+        eprintln!(
+            "stdin read and serde took {} seconds",
+            std_read_duration.as_secs()
+        );
+
+        let map_data_construct_start = Instant::now();
+
+        for element in osm_data.elements.iter() {
+            if element.type_field == "node" {
+                if let (Some(lat), Some(lon)) = (element.lat, element.lon) {
+                    map_data.insert_node(MapDataNode {
+                        id: element.id,
+                        lat,
+                        lon,
+                    });
+                } else {
+                    eprintln!("Found node with missing coordinates");
+                    process::exit(1);
+                }
+            }
+            if element.type_field == "way" {
+                map_data
+                    .insert_way(MapDataWay {
+                        id: element.id,
+                        node_ids: MapDataWayNodeIds::from_vec(element.nodes.clone()),
+                        one_way: element.tags.as_ref().map_or(false, |tags| {
+                            tags.oneway
+                                .as_ref()
+                                .map_or(false, |one_way| one_way == "yes")
+                        }),
+                    })
+                    .unwrap();
+            }
         }
-        if element.type_field == "way" {
-            map_data
-                .insert_way(MapDataWay {
-                    id: element.id,
-                    node_ids: MapDataWayNodeIds::from_vec(element.nodes.clone()),
-                    one_way: element.tags.as_ref().map_or(false, |tags| {
-                        tags.oneway
-                            .as_ref()
-                            .map_or(false, |one_way| one_way == "yes")
-                    }),
-                })
-                .unwrap();
-        }
+        let map_data_construct_duration = map_data_construct_start.elapsed();
+        eprintln!(
+            "Map Data Construct took {} seconds",
+            map_data_construct_duration.as_secs()
+        );
     }
 
     let from_lat = matches.get_one::<f64>("from_lat").unwrap();
     let from_lon = matches.get_one::<f64>("from_lon").unwrap();
     let to_lat = matches.get_one::<f64>("to_lat").unwrap();
     let to_lon = matches.get_one::<f64>("to_lon").unwrap();
+
+    let routes_generation_start = Instant::now();
 
     let start_point = match map_data.get_closest_to_coords(*from_lat, *from_lon) {
         None => {
@@ -124,89 +143,18 @@ fn main() {
         vec![weight_heading, weight_no_loops],
     );
 
-    let writer = RoutesWriter::new(
-        start_point.clone(),
-        navigator.generate_routes(),
-        *from_lat,
-        *from_lon,
-        None,
+    let routes = navigator.generate_routes();
+
+    let routes_generation_duration = routes_generation_start.elapsed();
+    eprintln!(
+        "Routes generation took {} seconds",
+        routes_generation_duration.as_secs()
     );
+
+    let writer = RoutesWriter::new(start_point.clone(), routes, *from_lat, *from_lon, None);
 
     match writer.write_gpx() {
         Ok(()) => return (),
         Err(e) => eprintln!("Error on write: {:#?}", e),
     }
-
-    // let mut gpx = Gpx::default();
-    // gpx.version = GpxVersion::Gpx11;
-    //
-    // let routes = navigator.generate_routes();
-    //
-    // for route in routes {
-    //     let mut track_segment = TrackSegment::new();
-    //
-    //     let waypoint = Waypoint::new(Point::new(*from_lon, *from_lat));
-    //     track_segment.points.push(waypoint);
-    //
-    //     let waypoint = Waypoint::new(Point::new(start_point.lon, start_point.lat));
-    //     track_segment.points.push(waypoint);
-    //
-    //     for segment in route {
-    //         let waypoint = Waypoint::new(Point::new(
-    //             segment.get_end_point().lon,
-    //             segment.get_end_point().lat,
-    //         ));
-    //         track_segment.points.push(waypoint);
-    //     }
-    //
-    //     let mut track = Track::new();
-    //     track.segments.push(track_segment);
-    //
-    //     gpx.tracks.push(track);
-    // }
-    //
-    // // let mut prev_point = start_point.clone();
-    // // let mut visited_points = Vec::new();
-    // // for step in 1..100000 {
-    // //     let adj_lines_points = map_data.get_adjacent(&prev_point);
-    // //     let adj_points = adj_lines_points
-    // //         .iter()
-    // //         .filter_map(|line_point| {
-    // //             let (_, point) = line_point;
-    // //             if point.id != start_point.id {
-    // //                 return Some(line_point);
-    // //             }
-    // //             None
-    // //         })
-    // //         .collect::<Vec<_>>();
-    // //     let adj_points = adj_points
-    // //         .iter()
-    // //         .filter(|(_, point)| {
-    // //             !visited_points[if visited_points.len() > 2 {
-    // //                 visited_points.len() - 3
-    // //             } else {
-    // //                 0
-    // //             }..if visited_points.len() > 0 {
-    // //                 visited_points.len() - 1
-    // //             } else {
-    // //                 0
-    // //             }]
-    // //                 .contains(&point.id)
-    // //         })
-    // //         .collect::<Vec<_>>();
-    // //     let idx = if adj_points.len() > 1 {
-    // //         rand::thread_rng().gen_range(0..adj_points.len() - 1)
-    // //     } else {
-    // //         0
-    // //     };
-    // //     let next_point = adj_points.get(idx);
-    // //     if let Some((_, next_point)) = next_point {
-    // //         visited_points.push(next_point.id);
-    // //         let waypoint = Waypoint::new(Point::new(next_point.lon, next_point.lat));
-    // //         track_segment.points.push(waypoint);
-    // //         prev_point = next_point.clone();
-    // //     }
-    // // }
-    //
-    // write(&gpx, std::io::stdout()).unwrap();
 }

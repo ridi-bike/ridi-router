@@ -115,10 +115,8 @@ impl<'a> RouteNavigator<'a> {
     }
 
     pub fn generate_routes(&mut self) -> Vec<Route> {
-        // let mut loop_num = 0;
         let mut stuck_walkers_idx = Vec::new();
         loop {
-            // loop_num += 1;
             self.walkers
                 .iter_mut()
                 .enumerate()
@@ -191,21 +189,6 @@ impl<'a> RouteNavigator<'a> {
             {
                 break;
             }
-
-            // if loop_num % 100 == 0 {
-            //     let writer = RoutesWriter::new(
-            //         self.start.clone(),
-            //         self.walkers.iter().map(|w| w.get_route().clone()).collect(),
-            //         self.start.lat.clone(),
-            //         self.start.lon.clone(),
-            //         Some(format!("logs/{loop_num}.gpx")),
-            //     );
-            //     let res = writer.write_gpx();
-            //     if let Err(e) = res {
-            //         eprintln!("Error on writing log: {:#?}", e);
-            //         break;
-            //     }
-            // }
         }
 
         self.walkers.iter().map(|w| w.get_route().clone()).collect()
