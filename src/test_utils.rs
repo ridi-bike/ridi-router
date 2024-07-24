@@ -158,6 +158,36 @@ pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {
         .all(|v| v)
 }
 
+pub fn get_test_data_osm_json_nodes() -> Vec<&'static str> {
+    vec![
+        r#"{"#,
+        r#"  "version": 0.6,"#,
+        r#"  "generator": "Overpass API 0.7.62.1 084b4234","#,
+        r#"  "osm3s": {"#,
+        r#"    "timestamp_osm_base": "2024-07-23T11:01:29Z","#,
+        r#"    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.""#,
+        r#"  },"#,
+        r#"  "elements": ["#,
+        r#""#,
+        r#"{"#,
+        r#"  "type": "node","#,
+        r#"  "id": 18483373,"#,
+        r#"  "lat": 57.1995635,"#,
+        r#"  "lon": 25.0419124"#,
+        r#"},"#,
+        r#"{"#,
+        r#"  "type": "node","#,
+        r#"  "id": 18483475,"#,
+        r#"  "lat": 57.1455443,"#,
+        r#"  "lon": 24.8581908,"#,
+        r#"  "tags": {"#,
+        r#"    "highway": "traffic_signals""#,
+        r#"  }"#,
+        r#"}"#,
+        r#"  ]"#,
+        r#"}"#,
+    ]
+}
 pub fn get_test_data_osm_json() -> Vec<&'static str> {
     vec![
         r#"{"#,
