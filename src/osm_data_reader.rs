@@ -22,6 +22,8 @@ enum ParserError {
     FailedToParseLat { error: ParseFloatError },
     FailedToParseLon { error: ParseFloatError },
     UnknownNodeType { node_type: String },
+    UnknownMemberType { member_type: String },
+    UnknownMemberRole { role: String },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -46,9 +48,9 @@ enum OsmRelMemberRole {
 
 #[derive(Debug, PartialEq, Clone)]
 struct OsmRelMember {
-    member_type: OsmRelMemberType,
-    member_ref: u64,
-    role: OsmRelMemberRole,
+    member_type: Option<OsmRelMemberType>,
+    member_ref: Option<u64>,
+    role: Option<OsmRelMemberRole>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -125,6 +127,9 @@ impl OsmJsonParser {
                 self.prev_key = self.prev_string.take();
                 eprintln!("token colon {:#?}:{:#?}", self.prev_key, self.prev_string);
             }
+            if token.kind == TokenType::Comma {
+                self.prev_string = None;
+            }
             if token.kind == TokenType::String || token.kind == TokenType::Number {
                 if let Buffer::MultiByte(buf) = token.buf {
                     let val = std::str::from_utf8(&buf.to_owned())
@@ -134,8 +139,11 @@ impl OsmJsonParser {
 
                     if self.prev_key != None {
                         eprintln!("check_update_current {:#?} {:#?}", &self.prev_key, &val);
+                        eprintln!("current parser {:#?}", self);
                         self.check_update_current_element(&val)?;
-                        self.prev_key = None;
+                        if !self.is_in_nodes_list() {
+                            self.prev_key = None;
+                        }
                     }
                     self.prev_string = Some(val);
                 } else {
@@ -189,8 +197,7 @@ impl OsmJsonParser {
                             _ => {}
                         }
                     }
-                }
-                if self.is_in_tags_obj() {
+                } else if self.is_in_tags_obj() {
                     if let Some(ref mut current_element) = self.current_element {
                         if current_element.tags.is_none() {
                             current_element.tags = Some(HashMap::new());
@@ -199,21 +206,58 @@ impl OsmJsonParser {
                             tags.insert(key, val.to_string());
                         }
                     }
-                }
-                if self.is_in_nodes_list() {
+                } else if self.is_in_nodes_list() {
+                    eprintln!("will try to insert node id");
                     if let Some(ref mut current_element) = self.current_element {
+                        eprintln!("is in nodes, current_element {:?}", current_element);
                         if current_element.nodes.is_none() {
                             current_element.nodes = Some(Vec::new());
                         }
                         if let Some(ref mut nodes) = current_element.nodes {
+                            eprintln!("is in nodes, nodes {:?}", nodes);
                             let node_id = val
                                 .parse::<u64>()
                                 .or_else(|error| Err(ParserError::FailedToParseNodeId { error }))?;
+                            eprintln!("pushing node id {}", node_id);
                             nodes.push(node_id);
                         }
                     }
+                } else if self.is_in_members_obj() {
+                    if let Some(current_element) = self.current_element.as_mut() {
+                        if let Some(members) = current_element.members.as_mut() {
+                            if let Some(member) = members.last_mut() {
+                                match key.as_str() {
+                                    "type" => match val.as_str() {
+                                        "way" => member.member_type = Some(OsmRelMemberType::Way),
+                                        "node" => member.member_type = Some(OsmRelMemberType::Node),
+                                        _ => {
+                                            return Err(ParserError::UnknownMemberType {
+                                                member_type: val.to_string(),
+                                            })
+                                        }
+                                    },
+                                    "ref" => {
+                                        let ref_id = val.parse::<u64>().or_else(|error| {
+                                            Err(ParserError::FailedToParseNodeId { error })
+                                        })?;
+                                        member.member_ref = Some(ref_id);
+                                    }
+                                    "role" => match val.as_str() {
+                                        "from" => member.role = Some(OsmRelMemberRole::From),
+                                        "to" => member.role = Some(OsmRelMemberRole::To),
+                                        "via" => member.role = Some(OsmRelMemberRole::Via),
+                                        _ => {
+                                            return Err(ParserError::UnknownMemberRole {
+                                                role: val.to_string(),
+                                            })
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
                 }
-                if self.is_in_members_obj() {}
             }
         }
 
@@ -250,6 +294,21 @@ impl OsmJsonParser {
         if self.current_element.is_none() {
             if self.is_in_elements_obj() {
                 self.current_element = Some(OsmElement::new());
+            }
+        } else {
+            if self.is_in_members_obj() {
+                if let Some(ref mut current_element) = self.current_element {
+                    if current_element.members.is_none() {
+                        current_element.members = Some(Vec::new());
+                    }
+                    if let Some(ref mut members) = current_element.members {
+                        members.push(OsmRelMember {
+                            member_type: None,
+                            member_ref: None,
+                            role: None,
+                        })
+                    }
+                }
             }
         }
         self.prev_key = None;
@@ -304,6 +363,29 @@ impl OsmJsonParser {
         false
     }
 
+    fn is_in_members_list(&self) -> bool {
+        if let Some(ParserStateLocation::InObject(None)) = self.location.first() {
+            if let Some(ParserStateLocation::InList(list_key)) = self.location.get(1) {
+                if list_key == "elements" {
+                    if let Some(ParserStateLocation::InObject(Some(obj_key))) = self.location.get(2)
+                    {
+                        if obj_key == "elements" {
+                            if let Some(ParserStateLocation::InList(list_key)) =
+                                self.location.get(3)
+                            {
+                                if list_key == "members" && self.location.len() == 4 {
+                                    eprintln!("in members list true");
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("in members list false");
+        false
+    }
     fn is_in_members_obj(&self) -> bool {
         if let Some(ParserStateLocation::InObject(None)) = self.location.first() {
             if let Some(ParserStateLocation::InList(list_key)) = self.location.get(1) {
@@ -368,6 +450,7 @@ impl OsmJsonParser {
                                 self.location.last()
                             {
                                 if list_key == "nodes" && self.location.len() == 4 {
+                                    eprintln!("nodes list yes");
                                     return true;
                                 }
                             }
@@ -377,6 +460,7 @@ impl OsmJsonParser {
             }
         }
 
+        eprintln!("nodes list no");
         false
     }
 }
@@ -461,11 +545,17 @@ mod test {
     fn read_osm_json() {
         let test_data_osm_json = get_test_data_osm_json_nodes();
 
+        let mut all_elements = Vec::new();
+
         let mut parser = OsmJsonParser::new();
         for line in test_data_osm_json {
             let elements = parser.parse_line(line.as_bytes().to_owned()).unwrap();
             eprintln!("elements {:#?}", elements);
+            for element in elements {
+                all_elements.push(element);
+            }
         }
+        eprintln!("res: {:#?}", all_elements);
         assert!(false);
     }
 }
