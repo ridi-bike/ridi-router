@@ -104,6 +104,7 @@ impl OsmJsonParser {
         eprintln!("parse line {:#?}", std::str::from_utf8(&line));
         let mut osm_elements = Vec::new();
         for token in Lexer::new(line, BufferType::Bytes(0)) {
+            eprintln!("token: {:#?}", token);
             if token.kind == TokenType::BracketOpen {
                 self.set_bracket_open()?;
             }
@@ -121,8 +122,8 @@ impl OsmJsonParser {
             }
 
             if token.kind == TokenType::Colon {
-                self.prev_key = self.prev_string.clone();
-                self.prev_string = None;
+                self.prev_key = self.prev_string.take();
+                eprintln!("token colon {:#?}:{:#?}", self.prev_key, self.prev_string);
             }
             if token.kind == TokenType::String || token.kind == TokenType::Number {
                 if let Buffer::MultiByte(buf) = token.buf {
@@ -130,8 +131,12 @@ impl OsmJsonParser {
                         .or_else(|error| Err(ParserError::Utf8ParseError { error }))?
                         .to_string()
                         .replace("\"", "");
-                    eprintln!("check_update_current {:#?} {:#?}", &self.prev_key, &val);
-                    self.check_update_current_element(&val)?;
+
+                    if self.prev_key != None {
+                        eprintln!("check_update_current {:#?} {:#?}", &self.prev_key, &val);
+                        self.check_update_current_element(&val)?;
+                        self.prev_key = None;
+                    }
                     self.prev_string = Some(val);
                 } else {
                     return Err(ParserError::UnexpectedBuffer);
@@ -247,12 +252,15 @@ impl OsmJsonParser {
                 self.current_element = Some(OsmElement::new());
             }
         }
+        self.prev_key = None;
+        self.prev_string = None;
         Ok(())
     }
 
     fn set_curly_close(&mut self) -> Result<Option<OsmElement>, ParserError> {
         if let Some(loc) = self.location.last() {
-            if let ParserStateLocation::InObject(_) = *loc {
+            if let ParserStateLocation::InObject(loc_key) = loc {
+                self.prev_key = loc_key.clone();
                 self.location.pop();
             } else {
                 return Err(ParserError::UnexpectedToken {
@@ -261,6 +269,7 @@ impl OsmJsonParser {
                 });
             }
         }
+        self.prev_string = None;
 
         if self.is_in_elements_list() {
             return Ok(self.current_element.take());
