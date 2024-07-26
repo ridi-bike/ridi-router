@@ -9,6 +9,7 @@ use clap::{arg, value_parser, Command};
 use gpx_writer::RoutesWriter;
 use map_data_graph::{MapDataGraph, MapDataNode, MapDataWay, MapDataWayNodeIds};
 use osm::OsmData;
+use osm_data_reader::read_osm_data;
 use route::{
     navigator::RouteNavigator,
     weights::{weight_heading, weight_no_loops},
@@ -51,67 +52,7 @@ fn main() {
         )
         .get_matches();
 
-    let mut map_data = MapDataGraph::new();
-    let std_read_start = Instant::now();
-    {
-        let mut input_map_data: String = String::new();
-        let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            let line = line.expect("Could not read line from standard in");
-            input_map_data.push_str(line.as_str());
-        }
-
-        let osm_data_result = serde_json::from_str::<OsmData>(&input_map_data);
-
-        let osm_data = match osm_data_result {
-            Ok(data) => data,
-            Err(e) => {
-                eprintln!("Problem parsing osm data: {e}");
-                process::exit(1);
-            }
-        };
-
-        let std_read_duration = std_read_start.elapsed();
-        eprintln!(
-            "stdin read and serde took {} seconds",
-            std_read_duration.as_secs()
-        );
-
-        let map_data_construct_start = Instant::now();
-
-        for element in osm_data.elements.iter() {
-            if element.type_field == "node" {
-                if let (Some(lat), Some(lon)) = (element.lat, element.lon) {
-                    map_data.insert_node(MapDataNode {
-                        id: element.id,
-                        lat,
-                        lon,
-                    });
-                } else {
-                    eprintln!("Found node with missing coordinates");
-                    process::exit(1);
-                }
-            }
-            if element.type_field == "way" {
-                map_data
-                    .insert_way(MapDataWay {
-                        id: element.id,
-                        node_ids: MapDataWayNodeIds::from_vec(element.nodes.clone()),
-                        one_way: element.tags.as_ref().map_or(false, |tags| {
-                            tags.oneway
-                                .as_ref()
-                                .map_or(false, |one_way| one_way == "yes")
-                        }),
-                    })
-                    .unwrap();
-            }
-        }
-        let map_data_construct_duration = map_data_construct_start.elapsed();
-        eprintln!(
-            "Map Data Construct took {} seconds",
-            map_data_construct_duration.as_secs()
-        );
-    }
+    let map_data = read_osm_data().unwrap();
 
     let from_lat = matches.get_one::<f64>("from_lat").unwrap();
     let from_lon = matches.get_one::<f64>("from_lon").unwrap();

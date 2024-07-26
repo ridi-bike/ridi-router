@@ -8,22 +8,51 @@ use std::{
 
 use json_tools::{Buffer, BufferType, Lexer, Token, TokenType};
 
-use crate::map_data_graph::MapDataGraph;
+use crate::map_data_graph::{
+    MapDataError, MapDataGraph, MapDataNode, MapDataWay, MapDataWayNodeIds,
+};
 
-#[derive(Debug, PartialEq)]
-enum ParserError {
-    UnexpectedToken { token: TokenType, context: String },
-    Utf8ParseError { error: Utf8Error },
+#[derive(Debug)]
+pub enum ParserError {
+    UnexpectedToken {
+        token: TokenType,
+        context: String,
+    },
+    Utf8ParseError {
+        error: Utf8Error,
+    },
     UnexpectedBuffer,
     ArrayFoundInRoot,
     ListNotFoundInData,
     ObjectNotFoundInData,
-    FailedToParseNodeId { error: ParseIntError },
-    FailedToParseLat { error: ParseFloatError },
-    FailedToParseLon { error: ParseFloatError },
-    UnknownNodeType { node_type: String },
-    UnknownMemberType { member_type: String },
-    UnknownMemberRole { role: String },
+    FailedToParseNodeId {
+        error: ParseIntError,
+    },
+    FailedToParseLat {
+        error: ParseFloatError,
+    },
+    FailedToParseLon {
+        error: ParseFloatError,
+    },
+    UnknownNodeType {
+        node_type: String,
+    },
+    UnknownMemberType {
+        member_type: String,
+    },
+    UnknownMemberRole {
+        role: String,
+    },
+    MissingElementType {
+        element: OsmElement,
+    },
+    MissingValueForElement {
+        element_type: OsmElementType,
+        value: String,
+    },
+    UnableToInsertWay {
+        error: MapDataError,
+    },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -103,10 +132,8 @@ impl OsmJsonParser {
     }
 
     pub fn parse_line(&mut self, line: Vec<u8>) -> Result<Vec<OsmElement>, ParserError> {
-        eprintln!("parse line {:#?}", std::str::from_utf8(&line));
         let mut osm_elements = Vec::new();
         for token in Lexer::new(line, BufferType::Bytes(0)) {
-            eprintln!("token: {:#?}", token);
             if token.kind == TokenType::BracketOpen {
                 self.set_bracket_open()?;
             }
@@ -125,7 +152,6 @@ impl OsmJsonParser {
 
             if token.kind == TokenType::Colon {
                 self.prev_key = self.prev_string.take();
-                eprintln!("token colon {:#?}:{:#?}", self.prev_key, self.prev_string);
             }
             if token.kind == TokenType::Comma {
                 self.prev_string = None;
@@ -138,8 +164,6 @@ impl OsmJsonParser {
                         .replace("\"", "");
 
                     if self.prev_key != None {
-                        eprintln!("check_update_current {:#?} {:#?}", &self.prev_key, &val);
-                        eprintln!("current parser {:#?}", self);
                         self.check_update_current_element(&val)?;
                         if !self.is_in_nodes_list() {
                             self.prev_key = None;
@@ -152,14 +176,12 @@ impl OsmJsonParser {
             }
         }
 
-        eprintln!("parser {:#?}", self);
         Ok(osm_elements)
     }
 
     fn check_update_current_element(&mut self, val: &String) -> Result<(), ParserError> {
         if let None = self.prev_string {
             if let Some(key) = self.prev_key.clone() {
-                eprintln!("{}:{}", key, val);
                 if self.is_in_elements_obj() {
                     if let Some(ref mut current_element) = self.current_element {
                         match key.as_str() {
@@ -207,18 +229,14 @@ impl OsmJsonParser {
                         }
                     }
                 } else if self.is_in_nodes_list() {
-                    eprintln!("will try to insert node id");
                     if let Some(ref mut current_element) = self.current_element {
-                        eprintln!("is in nodes, current_element {:?}", current_element);
                         if current_element.nodes.is_none() {
                             current_element.nodes = Some(Vec::new());
                         }
                         if let Some(ref mut nodes) = current_element.nodes {
-                            eprintln!("is in nodes, nodes {:?}", nodes);
                             let node_id = val
                                 .parse::<u64>()
                                 .or_else(|error| Err(ParserError::FailedToParseNodeId { error }))?;
-                            eprintln!("pushing node id {}", node_id);
                             nodes.push(node_id);
                         }
                     }
@@ -374,7 +392,6 @@ impl OsmJsonParser {
                                 self.location.get(3)
                             {
                                 if list_key == "members" && self.location.len() == 4 {
-                                    eprintln!("in members list true");
                                     return true;
                                 }
                             }
@@ -383,7 +400,6 @@ impl OsmJsonParser {
                 }
             }
         }
-        eprintln!("in members list false");
         false
     }
     fn is_in_members_obj(&self) -> bool {
@@ -450,7 +466,6 @@ impl OsmJsonParser {
                                 self.location.last()
                             {
                                 if list_key == "nodes" && self.location.len() == 4 {
-                                    eprintln!("nodes list yes");
                                     return true;
                                 }
                             }
@@ -460,78 +475,73 @@ impl OsmJsonParser {
             }
         }
 
-        eprintln!("nodes list no");
         false
     }
 }
 
 pub fn read_osm_data() -> Result<MapDataGraph, ParserError> {
-    let mut map_data = MapDataGraph::new();
     let std_read_start = Instant::now();
+    let mut map_data = MapDataGraph::new();
     let mut parser_state = OsmJsonParser::new();
-    {
-        let stdin = std::io::stdin();
-        for line in stdin.lock().lines() {
-            let line = line
-                .expect("Could not read line from standard in")
-                .as_bytes()
-                .to_owned();
-            parser_state.parse_line(line)?;
-        }
-
-        // let osm_data_result = serde_json::from_str::<OsmData>(&input_map_data);
-        //
-        // let osm_data = match osm_data_result {
-        //     Ok(data) => data,
-        //     Err(e) => {
-        //         eprintln!("Problem parsing osm data: {e}");
-        //         process::exit(1);
-        //     }
-        // };
-        //
-        // let std_read_duration = std_read_start.elapsed();
-        // eprintln!(
-        //     "stdin read and serde took {} seconds",
-        //     std_read_duration.as_secs()
-        // );
-        //
-        // let map_data_construct_start = Instant::now();
-        //
-        // for element in osm_data.elements.iter() {
-        //     if element.type_field == "node" {
-        //         if let (Some(lat), Some(lon)) = (element.lat, element.lon) {
-        //             map_data.insert_node(MapDataNode {
-        //                 id: element.id,
-        //                 lat,
-        //                 lon,
-        //             });
-        //         } else {
-        //             eprintln!("Found node with missing coordinates");
-        //             process::exit(1);
-        //         }
-        //     }
-        //     if element.type_field == "way" {
-        //         map_data
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let line = line
+            .expect("Could not read line from standard in")
+            .as_bytes()
+            .to_owned();
+        let _ = parser_state.parse_line(line)?;
+        // for element in elements {
+        //     let element_type =
+        //         element
+        //             .element_type
+        //             .to_owned()
+        //             .ok_or(ParserError::MissingElementType {
+        //                 element: element.clone(),
+        //             })?;
+        //     match element_type {
+        //         OsmElementType::Node => map_data.insert_node(MapDataNode {
+        //             id: element.id.ok_or(ParserError::MissingValueForElement {
+        //                 element_type: OsmElementType::Node,
+        //                 value: String::from("id"),
+        //             })?,
+        //             lat: element.lat.ok_or(ParserError::MissingValueForElement {
+        //                 element_type: OsmElementType::Node,
+        //                 value: String::from("lat"),
+        //             })?,
+        //             lon: element.lon.ok_or(ParserError::MissingValueForElement {
+        //                 element_type: OsmElementType::Node,
+        //                 value: String::from("lon"),
+        //             })?,
+        //         }),
+        //         OsmElementType::Way => map_data
         //             .insert_way(MapDataWay {
-        //                 id: element.id,
-        //                 node_ids: MapDataWayNodeIds::from_vec(element.nodes.clone()),
-        //                 one_way: element.tags.as_ref().map_or(false, |tags| {
-        //                     tags.oneway
-        //                         .as_ref()
-        //                         .map_or(false, |one_way| one_way == "yes")
+        //                 id: element.id.ok_or(ParserError::MissingValueForElement {
+        //                     element_type: OsmElementType::Way,
+        //                     value: String::from("id"),
+        //                 })?,
+        //                 node_ids: element.nodes.map_or(
+        //                     Err(ParserError::MissingValueForElement {
+        //                         element_type: OsmElementType::Way,
+        //                         value: String::from("node_ids"),
+        //                     }),
+        //                     |node_ids| Ok(MapDataWayNodeIds::from_vec(node_ids)),
+        //                 )?,
+        //                 one_way: element.tags.map_or(false, |tags| {
+        //                     tags.get("oneway").map_or(false, |one_way| true)
         //                 }),
         //             })
-        //             .unwrap();
+        //             .map_err(|error| ParserError::UnableToInsertWay { error })?,
+        //         OsmElementType::Relation => {}
         //     }
         // }
-        // let map_data_construct_duration = map_data_construct_start.elapsed();
-        // eprintln!(
-        //     "Map Data Construct took {} seconds",
-        //     map_data_construct_duration.as_secs()
-        // );
     }
 
-    // map_data
+    let std_read_duration = std_read_start.elapsed();
+    eprintln!(
+        "stdin read and serde took {} seconds",
+        std_read_duration.as_secs()
+    );
+
     Ok(map_data)
 }
 
@@ -550,12 +560,10 @@ mod test {
         let mut parser = OsmJsonParser::new();
         for line in test_data_osm_json {
             let elements = parser.parse_line(line.as_bytes().to_owned()).unwrap();
-            eprintln!("elements {:#?}", elements);
             for element in elements {
                 all_elements.push(element);
             }
         }
-        eprintln!("res: {:#?}", all_elements);
         assert!(false);
     }
 }

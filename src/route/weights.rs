@@ -30,7 +30,6 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         input.choice_segment.get_end_point().lat,
     );
     let choice_heading = choice_point_geo.haversine_bearing(choice_segment_point_geo);
-    eprintln!("end {}, choice {}", end_heading, choice_heading);
     match end_heading - choice_heading {
         -15.0..15.0 => WeightCalcResult::UseWithWeight(150),
         -45.0..-12.0 => WeightCalcResult::UseWithWeight(100),
