@@ -1,9 +1,9 @@
 use crate::map_data_graph::{
-    MapDataGraph, MapDataLine, MapDataNode, MapDataPoint, MapDataWay, MapDataWayNodeIds,
+    MapDataGraph, MapDataLine, MapDataPoint, MapDataWay, MapDataWayPoints, OsmNode, OsmWay,
 };
 use crate::route::walker::Route;
 
-pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
+pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
     //       1
     //       |
     //       |
@@ -18,100 +18,85 @@ pub fn get_test_data() -> (Vec<MapDataNode>, Vec<MapDataWay>) {
     //       11 - 12
     (
         vec![
-            MapDataNode {
+            OsmNode {
                 id: 1,
                 lat: 1.0,
                 lon: 1.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 2,
                 lat: 2.0,
                 lon: 2.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 3,
                 lat: 3.0,
                 lon: 3.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 4,
                 lat: 4.0,
                 lon: 4.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 5,
                 lat: 5.0,
                 lon: 5.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 6,
                 lat: 6.0,
                 lon: 6.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 7,
                 lat: 7.0,
                 lon: 7.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 8,
                 lat: 8.0,
                 lon: 8.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 9,
                 lat: 9.0,
                 lon: 9.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 11,
                 lat: 11.0,
                 lon: 11.0,
             },
-            MapDataNode {
+            OsmNode {
                 id: 12,
                 lat: 12.0,
                 lon: 12.0,
             },
         ],
         vec![
-            MapDataWay {
+            OsmWay {
                 id: 1234,
-                node_ids: MapDataWayNodeIds::from_vec(vec![1, 2, 3, 4]),
-                one_way: false,
+                point_ids: vec![1, 2, 3, 4],
             },
-            MapDataWay {
+            OsmWay {
                 id: 5367,
-                node_ids: MapDataWayNodeIds::from_vec(vec![5, 3, 6, 7]),
-                one_way: false,
+                point_ids: vec![5, 3, 6, 7],
             },
-            MapDataWay {
+            OsmWay {
                 id: 489,
-                node_ids: MapDataWayNodeIds::from_vec(vec![4, 8, 9]),
-                one_way: false,
+                point_ids: vec![4, 8, 9],
             },
-            MapDataWay {
+            OsmWay {
                 id: 68,
-                node_ids: MapDataWayNodeIds::from_vec(vec![6, 8]),
-                one_way: false,
+                point_ids: vec![6, 8],
             },
-            MapDataWay {
+            OsmWay {
                 id: 1112,
-                node_ids: MapDataWayNodeIds::from_vec(vec![11, 12]),
-                one_way: false,
+                point_ids: vec![11, 12],
             },
         ],
     )
-}
-
-pub fn get_point_with_id(id: u64) -> MapDataPoint {
-    MapDataPoint {
-        id,
-        lat: id as f64,
-        lon: id as f64,
-        fork: false,
-        part_of_ways: Vec::new(),
-    }
 }
 
 pub fn get_test_map_data_graph() -> MapDataGraph {
@@ -129,7 +114,7 @@ pub fn get_test_map_data_graph() -> MapDataGraph {
 }
 
 pub fn line_is_between_point_ids(line: MapDataLine, id1: u64, id2: u64) -> bool {
-    let ids = [line.point_ids.0, line.point_ids.1];
+    let ids = [line.points.0, line.points.1];
     line.id
         .split("-")
         .collect::<Vec<_>>()

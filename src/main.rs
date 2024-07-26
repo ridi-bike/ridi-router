@@ -7,7 +7,7 @@ use std::{
 use clap::{arg, value_parser, Command};
 
 use gpx_writer::RoutesWriter;
-use map_data_graph::{MapDataGraph, MapDataNode, MapDataWay, MapDataWayNodeIds};
+use map_data_graph::{MapDataGraph, MapDataWay, MapDataWayPoints, OsmNode};
 use osm::OsmData;
 use osm_data_reader::read_osm_data;
 use route::{

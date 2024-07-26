@@ -72,8 +72,8 @@ mod test {
         let choice_segment = RouteSegment::new(
             MapDataLine {
                 id: String::from("1"),
-                point_ids: (1, 1),
-                way_id: 1,
+                points: (1, 1),
+                way: 1,
                 one_way: false,
                 // length_m: 0.0,
                 // bearing_deg: 0.0,
