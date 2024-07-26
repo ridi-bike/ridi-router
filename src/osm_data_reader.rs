@@ -12,47 +12,21 @@ use crate::map_data_graph::{
     MapDataError, MapDataGraph, MapDataNode, MapDataWay, MapDataWayNodeIds,
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ParserError {
-    UnexpectedToken {
-        token: TokenType,
-        context: String,
-    },
-    Utf8ParseError {
-        error: Utf8Error,
-    },
+    UnexpectedToken { token: TokenType, context: String },
+    Utf8ParseError { error: Utf8Error },
     UnexpectedBuffer,
     ArrayFoundInRoot,
-    ListNotFoundInData,
-    ObjectNotFoundInData,
-    FailedToParseNodeId {
-        error: ParseIntError,
-    },
-    FailedToParseLat {
-        error: ParseFloatError,
-    },
-    FailedToParseLon {
-        error: ParseFloatError,
-    },
-    UnknownNodeType {
-        node_type: String,
-    },
-    UnknownMemberType {
-        member_type: String,
-    },
-    UnknownMemberRole {
-        role: String,
-    },
-    MissingElementType {
-        element: OsmElement,
-    },
-    MissingValueForElement {
-        element_type: OsmElementType,
-        value: String,
-    },
-    UnableToInsertWay {
-        error: MapDataError,
-    },
+    FailedToParseNodeId { error: ParseIntError },
+    FailedToParseLat { error: ParseFloatError },
+    FailedToParseLon { error: ParseFloatError },
+    UnknownNodeType { node_type: String },
+    UnknownMemberType { member_type: String },
+    MissingElementType { element: OsmElement },
+    MissingValueForElement { element_type: String, value: String },
+    UnableToInsertWay { error: MapDataError },
+    ParserInErrorState { error: Box<ParserError> },
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -73,6 +47,7 @@ enum OsmRelMemberRole {
     From,
     Via,
     To,
+    Other(String),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -119,6 +94,7 @@ struct OsmJsonParser {
     prev_key: Option<String>,
     prev_string: Option<String>,
     current_element: Option<OsmElement>,
+    prev_error: Option<ParserError>,
 }
 
 impl OsmJsonParser {
@@ -128,10 +104,27 @@ impl OsmJsonParser {
             prev_key: None,
             prev_string: None,
             current_element: None,
+            prev_error: None,
         }
     }
 
     pub fn parse_line(&mut self, line: Vec<u8>) -> Result<Vec<OsmElement>, ParserError> {
+        let parse_result = self.parse_line_internal(line);
+        if let Err(error) = parse_result {
+            match error {
+                ParserError::ParserInErrorState { error: _ } => {}
+                _ => self.prev_error = Some(error.clone()),
+            };
+            return Err(error);
+        }
+        parse_result
+    }
+    fn parse_line_internal(&mut self, line: Vec<u8>) -> Result<Vec<OsmElement>, ParserError> {
+        if let Some(error) = &self.prev_error {
+            return Err(ParserError::ParserInErrorState {
+                error: Box::new(error.clone()),
+            });
+        }
         let mut osm_elements = Vec::new();
         for token in Lexer::new(line, BufferType::Bytes(0)) {
             if token.kind == TokenType::BracketOpen {
@@ -192,9 +185,10 @@ impl OsmJsonParser {
                                     current_element.element_type = Some(OsmElementType::Relation)
                                 }
                                 _ => {
+                                    eprintln!("wrong type {}", val);
                                     return Err(ParserError::UnknownNodeType {
                                         node_type: val.clone(),
-                                    })
+                                    });
                                 }
                             },
                             "id" => {
@@ -264,10 +258,9 @@ impl OsmJsonParser {
                                         "from" => member.role = Some(OsmRelMemberRole::From),
                                         "to" => member.role = Some(OsmRelMemberRole::To),
                                         "via" => member.role = Some(OsmRelMemberRole::Via),
-                                        _ => {
-                                            return Err(ParserError::UnknownMemberRole {
-                                                role: val.to_string(),
-                                            })
+                                        role => {
+                                            member.role =
+                                                Some(OsmRelMemberRole::Other(role.to_string()))
                                         }
                                     },
                                     _ => {}
@@ -489,51 +482,51 @@ pub fn read_osm_data() -> Result<MapDataGraph, ParserError> {
             .expect("Could not read line from standard in")
             .as_bytes()
             .to_owned();
-        let _ = parser_state.parse_line(line)?;
-        // for element in elements {
-        //     let element_type =
-        //         element
-        //             .element_type
-        //             .to_owned()
-        //             .ok_or(ParserError::MissingElementType {
-        //                 element: element.clone(),
-        //             })?;
-        //     match element_type {
-        //         OsmElementType::Node => map_data.insert_node(MapDataNode {
-        //             id: element.id.ok_or(ParserError::MissingValueForElement {
-        //                 element_type: OsmElementType::Node,
-        //                 value: String::from("id"),
-        //             })?,
-        //             lat: element.lat.ok_or(ParserError::MissingValueForElement {
-        //                 element_type: OsmElementType::Node,
-        //                 value: String::from("lat"),
-        //             })?,
-        //             lon: element.lon.ok_or(ParserError::MissingValueForElement {
-        //                 element_type: OsmElementType::Node,
-        //                 value: String::from("lon"),
-        //             })?,
-        //         }),
-        //         OsmElementType::Way => map_data
-        //             .insert_way(MapDataWay {
-        //                 id: element.id.ok_or(ParserError::MissingValueForElement {
-        //                     element_type: OsmElementType::Way,
-        //                     value: String::from("id"),
-        //                 })?,
-        //                 node_ids: element.nodes.map_or(
-        //                     Err(ParserError::MissingValueForElement {
-        //                         element_type: OsmElementType::Way,
-        //                         value: String::from("node_ids"),
-        //                     }),
-        //                     |node_ids| Ok(MapDataWayNodeIds::from_vec(node_ids)),
-        //                 )?,
-        //                 one_way: element.tags.map_or(false, |tags| {
-        //                     tags.get("oneway").map_or(false, |one_way| true)
-        //                 }),
-        //             })
-        //             .map_err(|error| ParserError::UnableToInsertWay { error })?,
-        //         OsmElementType::Relation => {}
-        //     }
-        // }
+        let elements = parser_state.parse_line(line)?;
+        for element in elements {
+            let element_type =
+                element
+                    .element_type
+                    .to_owned()
+                    .ok_or(ParserError::MissingElementType {
+                        element: element.clone(),
+                    })?;
+            match element_type {
+                OsmElementType::Node => map_data.insert_node(MapDataNode {
+                    id: element.id.ok_or(ParserError::MissingValueForElement {
+                        element_type: String::from("node"),
+                        value: String::from("id"),
+                    })?,
+                    lat: element.lat.ok_or(ParserError::MissingValueForElement {
+                        element_type: String::from("node"),
+                        value: String::from("lat"),
+                    })?,
+                    lon: element.lon.ok_or(ParserError::MissingValueForElement {
+                        element_type: String::from("node"),
+                        value: String::from("lon"),
+                    })?,
+                }),
+                OsmElementType::Way => map_data
+                    .insert_way(MapDataWay {
+                        id: element.id.ok_or(ParserError::MissingValueForElement {
+                            element_type: String::from("way"),
+                            value: String::from("id"),
+                        })?,
+                        node_ids: element.nodes.map_or(
+                            Err(ParserError::MissingValueForElement {
+                                element_type: String::from("way"),
+                                value: String::from("node_ids"),
+                            }),
+                            |node_ids| Ok(MapDataWayNodeIds::from_vec(node_ids)),
+                        )?,
+                        one_way: element.tags.map_or(false, |tags| {
+                            tags.get("oneway").map_or(false, |one_way| one_way == "yes")
+                        }),
+                    })
+                    .map_err(|error| ParserError::UnableToInsertWay { error })?,
+                OsmElementType::Relation => {}
+            }
+        }
     }
 
     let std_read_duration = std_read_start.elapsed();
@@ -547,13 +540,91 @@ pub fn read_osm_data() -> Result<MapDataGraph, ParserError> {
 
 #[cfg(test)]
 mod test {
-    use crate::test_utils::get_test_data_osm_json_nodes;
+    use std::collections::HashMap;
 
-    use super::OsmJsonParser;
+    use crate::{
+        osm_data_reader::ParserError,
+        test_utils::{get_test_data_osm_json, get_test_data_osm_json_nodes},
+    };
+
+    use super::{OsmElement, OsmJsonParser, OsmRelMember, OsmRelMemberRole, OsmRelMemberType};
+    pub fn get_osm_element_node(
+        id: u64,
+        lat: f64,
+        lon: f64,
+        tags: Option<Vec<(&str, &str)>>,
+    ) -> OsmElement {
+        OsmElement {
+            element_type: Some(super::OsmElementType::Node),
+            id: Some(id),
+            lat: Some(lat),
+            lon: Some(lon),
+            tags: tags.map_or(None, |tags_vec| {
+                Some(tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+                    let mut map = map;
+                    map.insert(key.to_string(), val.to_string());
+                    map
+                }))
+            }),
+            nodes: None,
+            members: None,
+        }
+    }
+    pub fn get_osm_element_way(
+        id: u64,
+        nodes: Vec<u64>,
+        tags: Option<Vec<(&str, &str)>>,
+    ) -> OsmElement {
+        OsmElement {
+            element_type: Some(super::OsmElementType::Way),
+            id: Some(id),
+            lat: None,
+            lon: None,
+            nodes: Some(nodes),
+            tags: tags.map_or(None, |tags_vec| {
+                Some(tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+                    let mut map = map;
+                    map.insert(key.to_string(), val.to_string());
+                    map
+                }))
+            }),
+            members: None,
+        }
+    }
+    pub fn get_osm_element_rel(
+        id: u64,
+        members: Vec<(OsmRelMemberType, OsmRelMemberRole, u64)>,
+        tags: Option<Vec<(&str, &str)>>,
+    ) -> OsmElement {
+        OsmElement {
+            element_type: Some(super::OsmElementType::Relation),
+            id: Some(id),
+            members: Some(
+                members
+                    .iter()
+                    .map(|(t, r, i)| OsmRelMember {
+                        member_type: Some(t.clone()),
+                        role: Some(r.clone()),
+                        member_ref: Some(i.clone()),
+                    })
+                    .collect(),
+            ),
+            lat: None,
+            lon: None,
+            tags: tags.map_or(None, |tags_vec| {
+                Some(tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+                    let mut map = map;
+                    map.insert(key.to_string(), val.to_string());
+                    map
+                }))
+            }),
+            nodes: None,
+        }
+    }
 
     #[test]
     fn read_osm_json() {
-        let test_data_osm_json = get_test_data_osm_json_nodes();
+        let test_data_osm_json = get_test_data_osm_json();
 
         let mut all_elements = Vec::new();
 
@@ -564,6 +635,222 @@ mod test {
                 all_elements.push(element);
             }
         }
-        assert!(false);
+
+        assert_eq!(all_elements.len(), 7);
+
+        let el = get_osm_element_node(18483373, 57.1995635, 25.0419124, None);
+        assert_eq!(all_elements.get(0), Some(&el));
+
+        let el = get_osm_element_node(
+            18483475,
+            57.1455443,
+            24.8581908,
+            Some(vec![("highway", "traffic_signals")]),
+        );
+        assert_eq!(all_elements.get(1), Some(&el));
+
+        let el = get_osm_element_node(18483521, 57.1485002, 24.8561211, None);
+        assert_eq!(all_elements.get(2), Some(&el));
+
+        let el = get_osm_element_way(
+            80944232,
+            vec![1242609397, 923273378, 923273458],
+            Some(vec![
+                ("highway", "living_street"),
+                ("name", "Alūksnes iela"),
+            ]),
+        );
+        assert_eq!(all_elements.get(3), Some(&el));
+
+        let el = get_osm_element_way(
+            83402701,
+            vec![249790708, 1862710503],
+            Some(vec![("highway", "unclassified")]),
+        );
+        assert_eq!(all_elements.get(4), Some(&el));
+
+        let el = get_osm_element_rel(
+            14385700,
+            vec![
+                (OsmRelMemberType::Way, OsmRelMemberRole::From, 37854864),
+                (OsmRelMemberType::Node, OsmRelMemberRole::Via, 6721285159),
+                (OsmRelMemberType::Way, OsmRelMemberRole::To, 37854864),
+            ],
+            Some(vec![("restriction", "no_u_turn"), ("type", "restriction")]),
+        );
+        assert_eq!(all_elements.get(5), Some(&el));
+
+        let el = get_osm_element_rel(
+            16896043,
+            vec![
+                (OsmRelMemberType::Way, OsmRelMemberRole::From, 979880972),
+                (OsmRelMemberType::Node, OsmRelMemberRole::Via, 32705747),
+                (OsmRelMemberType::Way, OsmRelMemberRole::To, 69666743),
+            ],
+            Some(vec![
+                ("restriction", "no_right_turn"),
+                ("type", "restriction"),
+            ]),
+        );
+        assert_eq!(all_elements.get(6), Some(&el));
+    }
+
+    #[test]
+    fn ignore_other_keys() {
+        let input = vec![
+            r#"{"#,
+            r#"  "version": 0.6,"#,
+            r#"  "generator": "Overpass API 0.7.62.1 084b4234","#,
+            r#"  "osm3s": {"#,
+            r#"    "timestamp_osm_base": "2024-07-23T11:01:29Z","#,
+            r#"    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.""#,
+            r#"  },"#,
+            r#"  "elements": ["#,
+            r#""#,
+            r#"{"#,
+            r#"  "type": "node","#,
+            r#"  "id": 18483373,"#,
+            r#"  "lat": 57.1995635,"#,
+            r#"  "lon": 25.0419124",#,
+            r#"  "some": 25.0419124",#,
+            r#"  "other": "tags","#,
+            r#"  "tags": {"#,
+            r#"    "highway": "traffic_signals""#,
+            r#"  }"#,
+            r#"}"#,
+            r#"  ]"#,
+            r#"}"#,
+        ];
+
+        let mut all_elements = Vec::new();
+
+        let mut parser = OsmJsonParser::new();
+        for line in input {
+            let elements = parser.parse_line(line.as_bytes().to_owned()).unwrap();
+            for element in elements {
+                all_elements.push(element);
+            }
+        }
+
+        assert_eq!(all_elements.len(), 1);
+
+        let el = get_osm_element_node(
+            18483373,
+            57.1995635,
+            25.0419124,
+            Some(vec![("highway", "traffic_signals")]),
+        );
+        assert_eq!(all_elements.get(0), Some(&el));
+    }
+    #[test]
+    fn return_err_on_wrong_values() {
+        let input = vec![
+            r#"{"#,
+            r#"  "version": 0.6,"#,
+            r#"  "generator": "Overpass API 0.7.62.1 084b4234","#,
+            r#"  "osm3s": {"#,
+            r#"    "timestamp_osm_base": "2024-07-23T11:01:29Z","#,
+            r#"    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.""#,
+            r#"  },"#,
+            r#"  "elements": ["#,
+            r#""#,
+            r#"{"#,
+            r#"  "type": "wrong-value","#,
+            r#"  "id": 18483373,"#,
+            r#"  "lat": 57.1995635,"#,
+            r#"  "lon": 25.0419124",#,
+            r#"}"#,
+            r#"  ]"#,
+            r#"}"#,
+        ];
+
+        let mut parser = OsmJsonParser::new();
+        for (line_idx, &line) in input.iter().enumerate() {
+            let parse_result = parser.parse_line(line.as_bytes().to_owned());
+            eprintln!("{:?} {:?} {:#?}", line_idx, line, parse_result);
+            if line_idx < 10 {
+                assert_eq!(parse_result, Ok(Vec::new()));
+            } else if line_idx == 10 {
+                assert_eq!(
+                    parse_result,
+                    Err(ParserError::UnknownNodeType {
+                        node_type: String::from("wrong-value")
+                    })
+                );
+            } else if line_idx > 10 {
+                assert_eq!(
+                    parse_result,
+                    Err(ParserError::ParserInErrorState {
+                        error: Box::new(ParserError::UnknownNodeType {
+                            node_type: String::from("wrong-value")
+                        })
+                    })
+                );
+            }
+        }
+
+        let input = vec![
+            r#"{"#,
+            r#"  "version": 0.6,"#,
+            r#"  "generator": "Overpass API 0.7.62.1 084b4234","#,
+            r#"  "osm3s": {"#,
+            r#"    "timestamp_osm_base": "2024-07-23T11:01:29Z","#,
+            r#"    "copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL.""#,
+            r#"  },"#,
+            r#"  "elements": ["#,
+            r#""#,
+            r#"{"#,
+            r#"  "type": "relation","#,
+            r#"  "id": 16896043,"#,
+            r#"  "members": ["#,
+            r#"    {"#,
+            r#"      "type": "wrong-value","#,
+            r#"      "ref": 979880972,"#,
+            r#"      "role": "from""#,
+            r#"    },"#,
+            r#"    {"#,
+            r#"      "type": "node","#,
+            r#"      "ref": 32705747,"#,
+            r#"      "role": "via""#,
+            r#"    },"#,
+            r#"    {"#,
+            r#"      "type": "way","#,
+            r#"      "ref": 69666743,"#,
+            r#"      "role": "to""#,
+            r#"    }"#,
+            r#"  ],"#,
+            r#"  "tags": {"#,
+            r#"    "restriction": "no_right_turn","#,
+            r#"    "type": "restriction""#,
+            r#"  }"#,
+            r#"}"#,
+            r#"  ]"#,
+            r#"}"#,
+        ];
+
+        let mut parser = OsmJsonParser::new();
+        for (line_idx, &line) in input.iter().enumerate() {
+            let parse_result = parser.parse_line(line.as_bytes().to_owned());
+            eprintln!("{:?} {:?} {:#?}", line_idx, line, parse_result);
+            if line_idx < 14 {
+                assert_eq!(parse_result, Ok(Vec::new()));
+            } else if line_idx == 14 {
+                assert_eq!(
+                    parse_result,
+                    Err(ParserError::UnknownMemberType {
+                        member_type: String::from("wrong-value")
+                    })
+                );
+            } else if line_idx > 14 {
+                assert_eq!(
+                    parse_result,
+                    Err(ParserError::ParserInErrorState {
+                        error: Box::new(ParserError::UnknownMemberType {
+                            member_type: String::from("wrong-value")
+                        })
+                    })
+                );
+            }
+        }
     }
 }

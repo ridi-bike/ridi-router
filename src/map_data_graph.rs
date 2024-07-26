@@ -9,7 +9,7 @@ use std::{
 
 use crate::gps_hash::{get_gps_coords_hash, HashOffset};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum MapDataError {
     MissingPoint { point_id: u64 },
     MissingWay { way_id: u64 },
