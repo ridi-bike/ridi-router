@@ -15,9 +15,9 @@ pub enum MapDataError {
     MissingWay { way_id: u64 },
 }
 
-type MapDataWayRef = Rc<RefCell<MapDataWay>>;
-type MapDataPointRef = Rc<RefCell<MapDataPoint>>;
-type MapDataLineRef = Rc<RefCell<MapDataLine>>;
+pub type MapDataWayRef = Rc<RefCell<MapDataWay>>;
+pub type MapDataPointRef = Rc<RefCell<MapDataPoint>>;
+pub type MapDataLineRef = Rc<RefCell<MapDataLine>>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OsmNode {
@@ -317,7 +317,7 @@ impl MapDataGraph {
         // lines_and_points
     }
 
-    pub fn get_closest_to_coords(&self, lat: f64, lon: f64) -> Option<MapDataPoint> {
+    pub fn get_closest_to_coords(&self, lat: f64, lon: f64) -> Option<MapDataPointRef> {
         let search_hash = get_gps_coords_hash(lat, lon, HashOffset::None);
         let mut grid_points = HashMap::new();
 
@@ -361,7 +361,7 @@ impl MapDataGraph {
         }
 
         if grid_points.len() == 1 {
-            let point = grid_points.values().next().map(|p| p.borrow().clone());
+            let point = grid_points.values().next().map(|p| Rc::clone(p));
             return point;
         }
 
@@ -376,7 +376,7 @@ impl MapDataGraph {
             .collect();
 
         points_with_dist.sort_by(|(dist_a, _), (dist_b, _)| dist_a.cmp(dist_b));
-        points_with_dist.get(0).map(|(_, p)| p.borrow().clone())
+        points_with_dist.get(0).map(|(_, p)| Rc::clone(p))
     }
 }
 
@@ -686,9 +686,11 @@ mod tests {
             if let Some(closest) = closest {
                 eprintln!(
                     "{}: closest found id {} expected {}",
-                    i, closest.id, closest_id
+                    i,
+                    closest.borrow().id,
+                    closest_id
                 );
-                assert_eq!(closest.id, *closest_id);
+                assert_eq!(closest.borrow().id, *closest_id);
             } else {
                 panic!("No points found");
             }

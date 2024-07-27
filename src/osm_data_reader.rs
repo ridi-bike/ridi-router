@@ -8,7 +8,9 @@ use std::{
 
 use json_tools::{Buffer, BufferType, Lexer, Token, TokenType};
 
-use crate::map_data_graph::{MapDataError, MapDataGraph, MapDataWay, MapDataWayPoints, OsmNode};
+use crate::map_data_graph::{
+    MapDataError, MapDataGraph, MapDataWay, MapDataWayPoints, OsmNode, OsmWay,
+};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ParserError {
@@ -505,21 +507,21 @@ pub fn read_osm_data() -> Result<MapDataGraph, ParserError> {
                     })?,
                 }),
                 OsmElementType::Way => map_data
-                    .insert_way(MapDataWay {
+                    .insert_way(OsmWay {
                         id: element.id.ok_or(ParserError::MissingValueForElement {
                             element_type: String::from("way"),
                             value: String::from("id"),
                         })?,
-                        nodes: element.nodes.map_or(
+                        point_ids: element.nodes.map_or(
                             Err(ParserError::MissingValueForElement {
                                 element_type: String::from("way"),
                                 value: String::from("node_ids"),
                             }),
-                            |node_ids| Ok(MapDataWayPoints::from_vec(node_ids)),
+                            |node_ids| Ok(node_ids),
                         )?,
-                        one_way: element.tags.map_or(false, |tags| {
-                            tags.get("oneway").map_or(false, |one_way| one_way == "yes")
-                        }),
+                        // one_way: element.tags.map_or(false, |tags| {
+                        //     tags.get("oneway").map_or(false, |one_way| one_way == "yes")
+                        // }),
                     })
                     .map_err(|error| ParserError::UnableToInsertWay { error })?,
                 OsmElementType::Relation => {}

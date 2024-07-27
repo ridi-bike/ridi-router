@@ -2,7 +2,10 @@ use geo::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use std::{fs::File, io::Error};
 
-use crate::{map_data_graph::MapDataPoint, route::walker::Route};
+use crate::{
+    map_data_graph::{MapDataPoint, MapDataPointRef},
+    route::walker::Route,
+};
 
 #[derive(Debug)]
 pub enum RoutesWriterError {
@@ -10,7 +13,7 @@ pub enum RoutesWriterError {
 }
 
 pub struct RoutesWriter {
-    start_point: MapDataPoint,
+    start_point: MapDataPointRef,
     routes: Vec<Route>,
     file_name: Option<String>,
     from_lat: f64,
@@ -19,7 +22,7 @@ pub struct RoutesWriter {
 
 impl RoutesWriter {
     pub fn new(
-        start_point: MapDataPoint,
+        start_point: MapDataPointRef,
         routes: Vec<Route>,
         from_lat: f64,
         from_lon: f64,
@@ -43,13 +46,16 @@ impl RoutesWriter {
             let waypoint = Waypoint::new(Point::new(self.from_lon, self.from_lat));
             track_segment.points.push(waypoint);
 
-            let waypoint = Waypoint::new(Point::new(self.start_point.lon, self.start_point.lat));
+            let waypoint = Waypoint::new(Point::new(
+                self.start_point.borrow().lon,
+                self.start_point.borrow().lat,
+            ));
             track_segment.points.push(waypoint);
 
             for segment in route {
                 let waypoint = Waypoint::new(Point::new(
-                    segment.get_end_point().lon,
-                    segment.get_end_point().lat,
+                    segment.get_end_point().borrow().lon,
+                    segment.get_end_point().borrow().lat,
                 ));
                 track_segment.points.push(waypoint);
             }

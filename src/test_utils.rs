@@ -1,5 +1,8 @@
+use std::rc::Rc;
+
 use crate::map_data_graph::{
-    MapDataGraph, MapDataLine, MapDataPoint, MapDataWay, MapDataWayPoints, OsmNode, OsmWay,
+    MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataWay,
+    MapDataWayPoints, OsmNode, OsmWay,
 };
 use crate::route::walker::Route;
 
@@ -113,19 +116,24 @@ pub fn get_test_map_data_graph() -> MapDataGraph {
     map_data
 }
 
-pub fn line_is_between_point_ids(line: MapDataLine, id1: u64, id2: u64) -> bool {
-    let ids = [line.points.0, line.points.1];
-    line.id
+pub fn line_is_between_point_ids(line: &MapDataLineRef, id1: u64, id2: u64) -> bool {
+    let point_ids = [
+        line.borrow().points.0.borrow().id,
+        line.borrow().points.1.borrow().id,
+    ];
+    line.borrow()
+        .id
         .split("-")
         .collect::<Vec<_>>()
         .contains(&id1.to_string().as_str())
         && line
+            .borrow()
             .id
             .split("-")
             .collect::<Vec<_>>()
             .contains(&id2.to_string().as_str())
-        && ids.contains(&id1)
-        && ids.contains(&id2)
+        && point_ids.contains(&id1)
+        && point_ids.contains(&id2)
 }
 
 pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {
@@ -134,7 +142,7 @@ pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {
         .map(|(idx, &id)| {
             let route_segment = route.get_segment_by_index(idx);
             if let Some(route_segment) = route_segment {
-                if route_segment.get_end_point().id == id {
+                if route_segment.get_end_point().borrow().id == id {
                     return true;
                 }
             }

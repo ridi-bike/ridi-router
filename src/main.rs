@@ -1,6 +1,7 @@
 use std::{
     io::{self, BufRead},
     process,
+    rc::Rc,
     time::Instant,
 };
 
@@ -23,6 +24,10 @@ mod osm_data_reader;
 mod route;
 #[cfg(test)]
 mod test_utils;
+
+// riga-cesis-100km
+// serde 60 sek (25+35), 13gb
+// parse 33 sek, 600mb
 
 fn main() {
     let matches = Command::new("gps-router")
@@ -79,8 +84,8 @@ fn main() {
 
     let mut navigator = RouteNavigator::new(
         &map_data,
-        &start_point,
-        &end_point,
+        Rc::clone(&start_point),
+        end_point,
         vec![weight_heading, weight_no_loops],
     );
 
