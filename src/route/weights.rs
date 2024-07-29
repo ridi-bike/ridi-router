@@ -126,6 +126,8 @@ mod test {
 
         if let WeightCalcResult::UseWithWeight(weight) = weight {
             assert_eq!(weight, 10);
+        } else {
+            assert!(false);
         }
     }
 }

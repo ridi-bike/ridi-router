@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(
             walker.move_forward_to_next_fork(),
             Err(RouterWalkerError::WrongForkChoice {
-                id: 99,
+                id: 6,
                 available_fork_ids: vec![1, 3]
             })
         );
