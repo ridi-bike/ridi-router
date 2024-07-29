@@ -515,7 +515,6 @@ mod tests {
 
         let point = map_data.get_point_by_id(&3).unwrap();
         let points = map_data.get_adjacent(point);
-        eprintln!("{:#?}", points);
         let non_forks = vec![2, 5, 4];
         points.iter().for_each(|p| {
             assert!(
@@ -566,21 +565,7 @@ mod tests {
 
         for test in tests {
             let (test_id, point, expected_result) = test;
-            // let pp = point.clone();
-            // let ppp = pp.borrow();
-            // let lines = ppp
-            //     .lines
-            //     .iter()
-            //     .map(|l| l.borrow().clone().id)
-            //     .collect::<Vec<_>>();
-            // eprintln!("{:#?}", lines);
             let adj_elements = map_data.get_adjacent(point);
-            // eprintln!(
-            //     "id: {}, expected {} results, found {} results",
-            //     test_id,
-            //     expected_result.len(),
-            //     adj_elements.len()
-            // );
             assert_eq!(adj_elements.len(), expected_result.len());
             for (adj_line, adj_point) in &adj_elements {
                 let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
@@ -588,7 +573,6 @@ mod tests {
                         == adj_line.borrow().id.split("-").collect::<HashSet<_>>()
                         && point_id == &adj_point.borrow().id
                 });
-                eprintln!("id: {}, expected {:?}", test_id, expected_result);
                 assert_eq!(adj_match.is_some(), true);
             }
         }
@@ -672,23 +656,30 @@ mod tests {
             ),
             (
                 vec![
+                    // 57.16961885299059,24.875192642211914
+                    // 10231.8212 km
+                    // 223.61
                     OsmNode {
                         id: 1,
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
                     },
+                    // 57.159484808175435,24.877617359161377
+                    // 10231.6372 km
+                    // 223.61
                     OsmNode {
                         id: 2,
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
                     },
                 ],
+                // -10.660607953624762,-52.03125
                 OsmNode {
                     id: 0,
                     lat: -10.660607953624762,
                     lon: -52.03125,
                 },
-                1,
+                2,
             ),
             (
                 vec![
@@ -785,12 +776,6 @@ mod tests {
 
             let closest = coords.get_closest_to_coords(check_point.lat, check_point.lon);
             if let Some(closest) = closest {
-                eprintln!(
-                    "{}: closest found id {} expected {}",
-                    i,
-                    closest.borrow().id,
-                    closest_id
-                );
                 assert_eq!(closest.borrow().id, *closest_id);
             } else {
                 panic!("No points found");

@@ -47,6 +47,7 @@ impl DiscardedForkChoices {
     }
 }
 
+#[derive(Debug)]
 struct ForkWeights {
     weight_list: HashMap<u64, u32>,
 }
@@ -178,6 +179,7 @@ impl<'a> RouteNavigator<'a> {
                                 fork_weights
                             },
                         );
+
                         let chosen_fork_point = fork_weights
                             .get_choice_id_by_index_from_heaviest(0)
                             .map(|pid| self.map_data_graph.get_point_by_id(&pid))
@@ -190,10 +192,10 @@ impl<'a> RouteNavigator<'a> {
                             );
                             walker.set_fork_choice_point_id(chosen_fork_point);
                         } else {
+                            walker.move_backwards_to_prev_fork();
                             if walker.get_route().get_fork_before_last_segment() == None {
                                 stuck_walkers_idx.push(walker_idx);
                             }
-                            walker.move_backwards_to_prev_fork();
                         }
                     } else if move_result == Ok(RouteWalkerMoveResult::DeadEnd) {
                         walker.move_backwards_to_prev_fork();
