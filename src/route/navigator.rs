@@ -3,10 +3,13 @@ use std::{
     rc::Rc,
 };
 
-use crate::map_data_graph::{MapDataGraph, MapDataPointRef};
+use crate::{
+    gpx_writer::RoutesWriter,
+    map_data_graph::{MapDataGraph, MapDataPointRef},
+};
 
 use super::{
-    walker::{Route, RouteWalker, RouteWalkerMoveResult},
+    walker::{self, Route, RouteWalker, RouteWalkerMoveResult},
     weights::{WeightCalc, WeightCalcInput},
 };
 
@@ -130,6 +133,7 @@ impl<'a> RouteNavigator<'a> {
                 .enumerate()
                 .for_each(|(walker_idx, walker)| {
                     let move_result = walker.move_forward_to_next_fork();
+
                     if move_result == Ok(RouteWalkerMoveResult::Finish) {
                         return ();
                     }
@@ -205,6 +209,20 @@ impl<'a> RouteNavigator<'a> {
                 stuck_walkers_idx.pop();
                 self.walkers.remove(walker_idx);
             }
+            // self.walkers.iter().for_each(|w| {
+            //     let route = w.get_route();
+            //     let start = route.get_segment_by_index(0);
+            //     if let Some(start) = start {
+            //         let writer = RoutesWriter::new(
+            //             Rc::clone(&start.get_end_point()),
+            //             vec![route.clone()],
+            //             start.get_end_point().borrow().lat,
+            //             start.get_end_point().borrow().lon,
+            //             Some(format!("{}.gpx", loops)),
+            //         );
+            //         writer.write_gpx().unwrap();
+            //     }
+            // });
             if self.walkers.len() == 0
                 || self
                     .walkers

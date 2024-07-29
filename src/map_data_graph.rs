@@ -302,6 +302,12 @@ impl MapDataGraph {
                 let mut way_mut = way.borrow_mut();
                 way_mut.points.add(Rc::clone(&point));
             }
+
+            if let Some(point) = self.points.get(&point_id) {
+                let mut point_mut = point.borrow_mut();
+                point_mut.part_of_ways.push(Rc::clone(&way));
+            }
+
             if let Some(point) = self.points.get(&point_id) {
                 let point_fork = if point.borrow().part_of_ways.len() > 2 {
                     true
@@ -316,10 +322,12 @@ impl MapDataGraph {
                 } else {
                     false
                 };
-                let mut point_mut: RefMut<'_, _> = point.borrow_mut();
-
-                point_mut.part_of_ways.push(Rc::clone(&way));
+                let mut point_mut = point.borrow_mut();
                 point_mut.fork = point_fork;
+            }
+
+            if let Some(point) = self.points.get(&point_id) {
+                let mut point_mut = point.borrow_mut();
                 if let Some(prev_point) = &prev_point {
                     let line_id = get_line_id(&way.borrow().id, &prev_point.borrow().id, &point_id);
                     // let prev_point_geo = Point::new(prev_point.lon, prev_point.lat);
@@ -373,45 +381,6 @@ impl MapDataGraph {
                 (Rc::clone(&line), other_point)
             })
             .collect()
-        // let lines_and_points: Vec<_> = center_point
-        //     .borrow()
-        //     .part_of_ways
-        //     .iter()
-        //     .map(|way| {
-        //         let center_point_idx_on_way = way
-        //             .borrow()
-        //             .points
-        //             .iter()
-        //             .position(|&point| point == center_point);
-        //         if let Some(center_point_idx_on_way) = center_point_idx_on_way {
-        //             let point_before = way.borrow().points.get_before(center_point_idx_on_way);
-        //             let point_after = way.borrow().points.get_after(center_point_idx_on_way);
-        //             return [point_before, point_after]
-        //                 .iter()
-        //                 .filter_map(|&point| point)
-        //                 .map(|&point| {
-        //                     let line_id_bck =
-        //                         get_line_id(way.borrow().id, &point.id, &center_point.borrow().id);
-        //                     let line_id_fwd =
-        //                         get_line_id(&way.id, &center_point.borrow().id, &point.id);
-        //                     let line_bck = self.lines.get(&line_id_bck);
-        //                     let line_fwd = self.lines.get(&line_id_fwd);
-        //                     [line_bck, line_fwd]
-        //                         .iter()
-        //                         .filter_map(|&line| line)
-        //                         .map(|line| (line.clone(), point.clone()))
-        //                         .collect::<Vec<_>>()
-        //                 })
-        //                 .flatten()
-        //                 .collect::<Vec<_>>();
-        //         }
-        //
-        //         Vec::new()
-        //     })
-        //     .flatten()
-        //     .collect();
-        //
-        // lines_and_points
     }
 
     pub fn get_closest_to_coords(&self, lat: f64, lon: f64) -> Option<MapDataPointRef> {
@@ -485,6 +454,18 @@ mod tests {
     use crate::test_utils::{get_test_data, get_test_map_data_graph};
 
     use super::*;
+
+    #[test]
+    fn check_insert() {
+        eprintln!("check all inputs for correct values");
+        assert!(false);
+    }
+
+    #[test]
+    fn test_forks() {
+        eprintln!("test for fork bug that existing tests didn't catch");
+        assert!(false);
+    }
 
     #[test]
     fn check_missing_points() {

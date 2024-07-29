@@ -10,6 +10,7 @@ use crate::{
 #[derive(Debug)]
 pub enum RoutesWriterError {
     FileCreateError { error: Error },
+    CurrentDirError { error: Error },
 }
 
 pub struct RoutesWriter {
@@ -67,7 +68,7 @@ impl RoutesWriter {
         }
 
         if let Some(file_name) = self.file_name {
-            let file = File::create(file_name)
+            let file = File::create(format!("/home/toms/dev/moto-router/debug/{}", file_name))
                 .or_else(|error| Err(RoutesWriterError::FileCreateError { error }))?;
 
             write(&gpx, file).unwrap();

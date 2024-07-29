@@ -27,6 +27,7 @@ mod test_utils;
 // riga-cesis-100km
 // serde 60 sek (25+35), 13gb
 // parse 33 sek, 600mb
+// refs 29 sek, 630mb
 
 fn main() {
     let matches = Command::new("gps-router")
