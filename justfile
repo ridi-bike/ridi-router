@@ -22,17 +22,25 @@ overpass-query := '"[out:json];
                     );
                     out;"'
 
-map-data-file-name := "map-data-riga-cesis.json"
-
-run-and-load := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
-
 data-fetch:
   curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > map-data/{{map-data-file-name}}
 
-run:
-  {{run-and-load}}
+map-data-file-name := "map-data-riga-cesis.json"
 
-run-show:
-  {{run-and-load}} > map-data/output.gpx
+run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
+
+run-stdin:
+  {{run-and-load-stdin}}
+
+run-show-stdin:
+  {{run-and-load-stdin}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
   
+run-and-load-file := 'cargo run -- --data_file map-data' / map-data-file-name + ' --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
+
+run-file:
+  {{run-and-load-file}}
+
+run-show-file:
+  {{run-and-load-file}} > map-data/output.gpx
+  gpxsee map-data/output.gpx &

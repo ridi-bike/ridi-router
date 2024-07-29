@@ -8,9 +8,7 @@ use std::{
 use clap::{arg, value_parser, Command};
 
 use gpx_writer::RoutesWriter;
-use map_data_graph::{MapDataGraph, MapDataWay, MapDataWayPoints, OsmNode};
-use osm::OsmData;
-use osm_data_reader::read_osm_data;
+use osm_data_reader::OsmDataReader;
 use route::{
     navigator::RouteNavigator,
     weights::{weight_heading, weight_no_loops},
@@ -21,6 +19,7 @@ mod gpx_writer;
 mod map_data_graph;
 mod osm;
 mod osm_data_reader;
+mod osm_json_parser;
 mod route;
 #[cfg(test)]
 mod test_utils;
@@ -31,6 +30,12 @@ mod test_utils;
 
 fn main() {
     let matches = Command::new("gps-router")
+        .arg(
+            arg!(
+                -d --data_file <PATH> "File with OSM json data"
+            )
+            .value_parser(value_parser!(String)),
+        )
         .arg(
             arg!(
                 -f --from_lat <LAT> "From lat"
@@ -57,12 +62,20 @@ fn main() {
         )
         .get_matches();
 
-    let map_data = read_osm_data().unwrap();
-
     let from_lat = matches.get_one::<f64>("from_lat").unwrap();
     let from_lon = matches.get_one::<f64>("from_lon").unwrap();
     let to_lat = matches.get_one::<f64>("to_lat").unwrap();
     let to_lon = matches.get_one::<f64>("to_lon").unwrap();
+
+    let file_source = matches.get_one::<String>("data_file");
+
+    let data_reader = if let Some(file) = file_source {
+        OsmDataReader::new_file(file.clone())
+    } else {
+        OsmDataReader::new_stdin()
+    };
+
+    let map_data = data_reader.read_data().unwrap();
 
     let routes_generation_start = Instant::now();
 

@@ -33,6 +33,9 @@ pub struct OsmWay {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct OsmRelation {}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapDataPoint {
     pub id: u64,
     pub lat: f64,
@@ -53,6 +56,7 @@ impl MapDataWayPoints {
     pub fn from_vec(points: Vec<MapDataPointRef>) -> Self {
         Self { points }
     }
+
     pub fn is_first_or_last(&self, point: MapDataPointRef) -> bool {
         let is_first = if let Some(ref first) = self.points.first() {
             first.borrow().id == point.borrow().id
@@ -212,6 +216,10 @@ impl MapDataGraph {
         }));
         for point_id in &osm_way.point_ids {
             if let Some(point) = self.points.get(&point_id) {
+                // {
+                //     let mut way_mut = way.borrow_mut();
+                //     way_mut.points.add(Rc::clone(&point));
+                // }
                 let mut point_mut: RefMut<'_, _> = point.borrow_mut();
 
                 point_mut.part_of_ways.push(Rc::clone(&way));
@@ -257,7 +265,9 @@ impl MapDataGraph {
         Ok(())
     }
 
-    // pub fn insert_relation(&mut self, relation: MapDataRelation) -> Result<(), MapDataError> {}
+    pub fn insert_relation(&mut self, relation: OsmRelation) -> Result<(), MapDataError> {
+        Ok(())
+    }
 
     pub fn get_adjacent(
         &self,
@@ -470,6 +480,14 @@ mod tests {
 
         for test in tests {
             let (test_id, point, expected_result) = test;
+            let pp = point.clone();
+            let ppp = pp.borrow();
+            let lines = ppp
+                .lines
+                .iter()
+                .map(|l| l.borrow().clone().id)
+                .collect::<Vec<_>>();
+            eprintln!("{:#?}", lines);
             let adj_elements = map_data.get_adjacent(point);
             eprintln!(
                 "id: {}, expected {} results, found {} results",
