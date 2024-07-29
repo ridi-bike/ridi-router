@@ -2,6 +2,7 @@ use geo::{point, HaversineBearing, HaversineDistance, Point};
 use std::{
     cell::{RefCell, RefMut},
     collections::{BTreeMap, HashMap},
+    fmt::Debug,
     rc::Rc,
     slice::Iter,
     u64, usize,
@@ -35,7 +36,7 @@ pub struct OsmWay {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OsmRelation {}
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct MapDataPoint {
     pub id: u64,
     pub lat: f64,
@@ -43,6 +44,38 @@ pub struct MapDataPoint {
     pub part_of_ways: Vec<MapDataWayRef>,
     pub lines: Vec<MapDataLineRef>,
     pub fork: bool,
+}
+
+impl PartialEq for MapDataPoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Debug for MapDataPoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MapDataPoint
+    id={}
+    lat={}
+    lon={}
+    part_of_ways={:?}
+    lines={:?}
+    fork={}",
+            self.id,
+            self.lat,
+            self.lon,
+            self.part_of_ways
+                .iter()
+                .map(|w| w.borrow().id)
+                .collect::<Vec<_>>(),
+            self.lines
+                .iter()
+                .map(|l| l.borrow().id.clone())
+                .collect::<Vec<_>>(),
+            self.fork
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,7 +90,7 @@ impl MapDataWayPoints {
         Self { points }
     }
 
-    pub fn is_first_or_last(&self, point: MapDataPointRef) -> bool {
+    pub fn is_first_or_last(&self, point: &MapDataPointRef) -> bool {
         let is_first = if let Some(ref first) = self.points.first() {
             first.borrow().id == point.borrow().id
         } else {
@@ -112,10 +145,38 @@ impl<'a> IntoIterator for MapDataWayPoints {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct MapDataWay {
     pub id: u64,
     pub points: MapDataWayPoints,
+}
+
+impl MapDataWay {
+    pub fn add_point(way: MapDataWayRef, point: MapDataPointRef) -> () {
+        let mut way_mut = way.borrow_mut();
+        way_mut.points.add(point);
+    }
+}
+
+impl PartialEq for MapDataWay {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Debug for MapDataWay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MapDataWay
+    id={}
+    points={:?}",
+            self.id,
+            self.points
+                .iter()
+                .map(|p| p.borrow().id)
+                .collect::<Vec<_>>(),
+        )
+    }
 }
 
 // #[derive(Clone, Debug, PartialEq)]
@@ -133,7 +194,7 @@ pub struct MapDataWay {
 //     Via { node_id: u64 },
 // }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct MapDataLine {
     pub id: String,
     pub way: MapDataWayRef,
@@ -142,6 +203,28 @@ pub struct MapDataLine {
     // pub bearing_deg: f64,
     // pub one_way: bool,
     // pub accessible_from_line_ids: Vec<String>,
+}
+
+impl PartialEq for MapDataLine {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Debug for MapDataLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MapDataLine
+    id={}
+    way={}
+    points=({},{})",
+            self.id,
+            self.way.borrow().id,
+            self.points.0.borrow().id,
+            self.points.1.borrow().id,
+        )
+    }
 }
 
 type PointMap = BTreeMap<u64, MapDataPointRef>;
@@ -216,26 +299,27 @@ impl MapDataGraph {
         }));
         for point_id in &osm_way.point_ids {
             if let Some(point) = self.points.get(&point_id) {
-                // {
-                //     let mut way_mut = way.borrow_mut();
-                //     way_mut.points.add(Rc::clone(&point));
-                // }
-                let mut point_mut: RefMut<'_, _> = point.borrow_mut();
-
-                point_mut.part_of_ways.push(Rc::clone(&way));
-                if point_mut.part_of_ways.len() > 2 {
-                    point_mut.fork = true;
-                } else if let Some(other_way) = point_mut
+                let mut way_mut = way.borrow_mut();
+                way_mut.points.add(Rc::clone(&point));
+            }
+            if let Some(point) = self.points.get(&point_id) {
+                let point_fork = if point.borrow().part_of_ways.len() > 2 {
+                    true
+                } else if let Some(other_way) = point
+                    .borrow()
                     .part_of_ways
                     .iter()
                     .find(|&w| w.borrow().id != way.borrow().id)
                 {
-                    point_mut.fork = !other_way
-                        .borrow()
-                        .points
-                        .is_first_or_last(Rc::clone(&point))
-                        || !way.borrow().points.is_first_or_last(Rc::clone(&point));
-                }
+                    !other_way.borrow().points.is_first_or_last(&point)
+                        || !way.borrow().points.is_first_or_last(&point)
+                } else {
+                    false
+                };
+                let mut point_mut: RefMut<'_, _> = point.borrow_mut();
+
+                point_mut.part_of_ways.push(Rc::clone(&way));
+                point_mut.fork = point_fork;
                 if let Some(prev_point) = &prev_point {
                     let line_id = get_line_id(&way.borrow().id, &prev_point.borrow().id, &point_id);
                     // let prev_point_geo = Point::new(prev_point.lon, prev_point.lat);
@@ -251,7 +335,10 @@ impl MapDataGraph {
                     }));
                     self.lines
                         .insert(line.borrow().id.clone(), Rc::clone(&line));
-                    point_mut.lines.push(line);
+                    point_mut.lines.push(Rc::clone(&line));
+
+                    let mut prev_point_mut = prev_point.borrow_mut();
+                    prev_point_mut.lines.push(line);
                 }
                 prev_point = Some(Rc::clone(&point));
             } else {
@@ -422,15 +509,14 @@ mod tests {
         let map_data = get_test_map_data_graph();
         let point = map_data.get_point_by_id(&5).unwrap();
         let points = map_data.get_adjacent(point);
-        eprintln!("points {:#?}", points);
         points.iter().for_each(|p| {
             assert!((p.1.borrow().id == 3 && p.1.borrow().fork == true) || p.1.borrow().id != 3)
         });
 
         let point = map_data.get_point_by_id(&3).unwrap();
         let points = map_data.get_adjacent(point);
+        eprintln!("{:#?}", points);
         let non_forks = vec![2, 5, 4];
-        eprintln!("points {:#?}", points);
         points.iter().for_each(|p| {
             assert!(
                 ((non_forks.contains(&p.1.borrow().id) && p.1.borrow().fork == false)
@@ -480,21 +566,21 @@ mod tests {
 
         for test in tests {
             let (test_id, point, expected_result) = test;
-            let pp = point.clone();
-            let ppp = pp.borrow();
-            let lines = ppp
-                .lines
-                .iter()
-                .map(|l| l.borrow().clone().id)
-                .collect::<Vec<_>>();
-            eprintln!("{:#?}", lines);
+            // let pp = point.clone();
+            // let ppp = pp.borrow();
+            // let lines = ppp
+            //     .lines
+            //     .iter()
+            //     .map(|l| l.borrow().clone().id)
+            //     .collect::<Vec<_>>();
+            // eprintln!("{:#?}", lines);
             let adj_elements = map_data.get_adjacent(point);
-            eprintln!(
-                "id: {}, expected {} results, found {} results",
-                test_id,
-                expected_result.len(),
-                adj_elements.len()
-            );
+            // eprintln!(
+            //     "id: {}, expected {} results, found {} results",
+            //     test_id,
+            //     expected_result.len(),
+            //     adj_elements.len()
+            // );
             assert_eq!(adj_elements.len(), expected_result.len());
             for (adj_line, adj_point) in &adj_elements {
                 let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
@@ -502,10 +588,7 @@ mod tests {
                         == adj_line.borrow().id.split("-").collect::<HashSet<_>>()
                         && point_id == &adj_point.borrow().id
                 });
-                eprintln!(
-                    "id: {}, expected {:?}, found {:?}",
-                    test_id, expected_result, adj_elements
-                );
+                eprintln!("id: {}, expected {:?}", test_id, expected_result);
                 assert_eq!(adj_match.is_some(), true);
             }
         }

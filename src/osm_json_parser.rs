@@ -250,7 +250,6 @@ impl OsmJsonParser {
                                     current_element.element_type = Some(OsmElementType::Relation)
                                 }
                                 _ => {
-                                    eprintln!("wrong type {}", val);
                                     return Err(OsmJsonParserError::UnknownNodeType {
                                         node_type: val.clone(),
                                     });
@@ -766,7 +765,6 @@ mod test {
         let mut parser = OsmJsonParser::new();
         for (line_idx, &line) in input.iter().enumerate() {
             let parse_result = parser.parse_line(line.as_bytes().to_owned());
-            eprintln!("{:?} {:?} {:#?}", line_idx, line, parse_result);
             if line_idx < 10 {
                 assert_eq!(parse_result, Ok(Vec::new()));
             } else if line_idx == 10 {
@@ -830,7 +828,6 @@ mod test {
         let mut parser = OsmJsonParser::new();
         for (line_idx, &line) in input.iter().enumerate() {
             let parse_result = parser.parse_line(line.as_bytes().to_owned());
-            eprintln!("{:?} {:?} {:#?}", line_idx, line, parse_result);
             if line_idx < 14 {
                 assert_eq!(parse_result, Ok(Vec::new()));
             } else if line_idx == 14 {

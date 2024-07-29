@@ -77,6 +77,8 @@ fn main() {
 
     let map_data = data_reader.read_data().unwrap();
 
+    eprintln!("map data donw");
+
     let routes_generation_start = Instant::now();
 
     let start_point = match map_data.get_closest_to_coords(*from_lat, *from_lon) {
@@ -102,7 +104,11 @@ fn main() {
         vec![weight_heading, weight_no_loops],
     );
 
+    eprintln!("going to generate routes");
+
     let routes = navigator.generate_routes();
+
+    eprintln!("route gen done");
 
     let routes_generation_duration = routes_generation_start.elapsed();
     eprintln!(

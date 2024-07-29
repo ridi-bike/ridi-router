@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use crate::map_data_graph::{
     MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataWay,
     MapDataWayPoints, OsmNode, OsmWay,
