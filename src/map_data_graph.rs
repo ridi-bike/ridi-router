@@ -13,7 +13,6 @@ use crate::gps_hash::{get_gps_coords_hash, HashOffset};
 #[derive(Debug, PartialEq, Clone)]
 pub enum MapDataError {
     MissingPoint { point_id: u64 },
-    MissingWay { way_id: u64 },
 }
 
 pub type MapDataWayRef = Rc<RefCell<MapDataWay>>;
@@ -455,16 +454,225 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn check_insert() {
-        eprintln!("check all inputs for correct values");
-        assert!(false);
+    #[derive(Debug)]
+    struct PointTest {
+        lat: f64,
+        lon: f64,
+        ways: Vec<u64>,
+        lines: Vec<&'static str>,
+        fork: bool,
     }
 
     #[test]
-    fn test_forks() {
-        eprintln!("test for fork bug that existing tests didn't catch");
-        assert!(false);
+    fn check_point_consistency() {
+        fn point_is_ok(map_data: &MapDataGraph, id: &u64, test: PointTest) -> bool {
+            let point = map_data
+                .get_point_by_id(id)
+                .expect(format!("point {} must exist", id).as_str());
+            let point = point.borrow();
+            eprintln!("point {:#?}", point);
+            eprintln!("test {:#?}", test);
+            point.lat == test.lat
+                && point.lon == test.lon
+                && point.part_of_ways.len() == test.ways.len()
+                && point.part_of_ways.iter().enumerate().all(|(idx, w)| {
+                    let test_way_id = test
+                        .ways
+                        .get(idx)
+                        .expect(format!("{}: way at idx {} must exist", id, idx).as_str());
+                    w.borrow().id == *test_way_id
+                })
+                && point.lines.len() == test.lines.len()
+                && point.lines.iter().enumerate().all(|(idx, l)| {
+                    let test_line_id = test
+                        .lines
+                        .get(idx)
+                        .expect(format!("{}: line at idx {} must exist", id, idx).as_str());
+                    l.borrow().id == *test_line_id
+                })
+                && point.fork == test.fork
+        }
+        let map_data = get_test_map_data_graph();
+        assert!(point_is_ok(
+            &map_data,
+            &1,
+            PointTest {
+                lat: 1.0,
+                lon: 1.0,
+                ways: vec![1234],
+                lines: vec!["1234-1-2"],
+                fork: false
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &2,
+            PointTest {
+                lat: 2.0,
+                lon: 2.0,
+                ways: vec![1234],
+                lines: vec!["1234-1-2", "1234-2-3"],
+                fork: false
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &3,
+            PointTest {
+                lat: 3.0,
+                lon: 3.0,
+                ways: vec![1234, 5367],
+                lines: vec!["1234-2-3", "1234-3-4", "5367-5-3", "5367-3-6"],
+                fork: true
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &4,
+            PointTest {
+                lat: 4.0,
+                lon: 4.0,
+                ways: vec![1234, 489],
+                lines: vec!["1234-3-4", "489-4-8"],
+                fork: false
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &5,
+            PointTest {
+                lat: 5.0,
+                lon: 5.0,
+                ways: vec![5367],
+                lines: vec!["5367-5-3"],
+                fork: false
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &6,
+            PointTest {
+                lat: 6.0,
+                lon: 6.0,
+                ways: vec![5367, 68],
+                lines: vec!["5367-3-6", "5367-6-7", "68-6-8"],
+                fork: true
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &7,
+            PointTest {
+                lat: 7.0,
+                lon: 7.0,
+                ways: vec![5367],
+                lines: vec!["5367-6-7"],
+                fork: false
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &8,
+            PointTest {
+                lat: 8.0,
+                lon: 8.0,
+                ways: vec![489, 68],
+                lines: vec!["489-4-8", "489-8-9", "68-6-8"],
+                fork: true
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &9,
+            PointTest {
+                lat: 9.0,
+                lon: 9.0,
+                ways: vec![489],
+                lines: vec!["489-8-9"],
+                fork: false
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &11,
+            PointTest {
+                lat: 11.0,
+                lon: 11.0,
+                ways: vec![1112],
+                lines: vec!["1112-11-12"],
+                fork: false
+            }
+        ));
+        assert!(point_is_ok(
+            &map_data,
+            &12,
+            PointTest {
+                lat: 12.0,
+                lon: 12.0,
+                ways: vec![1112],
+                lines: vec!["1112-11-12"],
+                fork: false
+            }
+        ));
+    }
+
+    #[test]
+    fn check_way_consistency() {
+        fn way_is_ok(map_data: &MapDataGraph, id: &u64, test_points: Vec<u64>) -> bool {
+            let way = map_data
+                .ways
+                .get(id)
+                .expect(format!("way {} must exist", id).as_str());
+            let way = way.borrow();
+            eprintln!("way {:#?}", way);
+            eprintln!("test {:#?}", test_points);
+            way.points.points.len() == test_points.len()
+                && way.points.points.iter().enumerate().all(|(idx, p)| {
+                    let p = p.borrow();
+                    p.id == *test_points
+                        .get(idx)
+                        .expect(format!("point at idx {} must exist", idx).as_str())
+                })
+        }
+        let map_data = get_test_map_data_graph();
+
+        assert!(way_is_ok(&map_data, &1234, vec![1, 2, 3, 4]));
+        assert!(way_is_ok(&map_data, &5367, vec![5, 3, 6, 7]));
+        assert!(way_is_ok(&map_data, &489, vec![4, 8, 9]));
+        assert!(way_is_ok(&map_data, &68, vec![6, 8]));
+        assert!(way_is_ok(&map_data, &1112, vec![11, 12]));
+    }
+
+    #[test]
+    fn check_line_consistency() {
+        fn line_is_ok(
+            map_data: &MapDataGraph,
+            id: &str,
+            test_way: u64,
+            test_points: (u64, u64),
+        ) -> bool {
+            let line = map_data
+                .lines
+                .get(id)
+                .expect(format!("line {} must exist", id).as_str());
+            let line = line.borrow();
+            eprintln!("line {:#?}", line);
+            eprintln!("test {:#?}", test_points);
+            line.way.borrow().id == test_way
+                && line.points.0.borrow().id == test_points.0
+                && line.points.1.borrow().id == test_points.1
+        }
+        let map_data = get_test_map_data_graph();
+        assert!(line_is_ok(&map_data, "1234-1-2", 1234, (1, 2)));
+        assert!(line_is_ok(&map_data, "1234-2-3", 1234, (2, 3)));
+        assert!(line_is_ok(&map_data, "1234-3-4", 1234, (3, 4)));
+        assert!(line_is_ok(&map_data, "5367-5-3", 5367, (5, 3)));
+        assert!(line_is_ok(&map_data, "5367-3-6", 5367, (3, 6)));
+        assert!(line_is_ok(&map_data, "5367-6-7", 5367, (6, 7)));
+        assert!(line_is_ok(&map_data, "489-4-8", 489, (4, 8)));
+        assert!(line_is_ok(&map_data, "489-8-9", 489, (8, 9)));
+        assert!(line_is_ok(&map_data, "68-6-8", 68, (6, 8)));
+        assert!(line_is_ok(&map_data, "1112-11-12", 1112, (11, 12)));
     }
 
     #[test]
