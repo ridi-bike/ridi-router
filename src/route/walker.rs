@@ -1,7 +1,7 @@
 use std::{rc::Rc, usize, vec};
 
 use crate::map_data_graph::{
-    MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef,
+    MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataRuleType,
 };
 
 #[derive(Debug, PartialEq)]
@@ -210,20 +210,74 @@ impl<'a> RouteWalker<'a> {
     }
 
     fn get_available_fork_segments(&self, point: MapDataPointRef) -> RouteSegmentList {
-        let prev_point = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
-            if let Some(p) = self.route_walked.get_segment_by_index(idx) {
-                &p.get_end_point()
+        let (prev_point, prev_line) =
+            if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
+                if let Some(p) = self.route_walked.get_segment_by_index(idx) {
+                    (&p.get_end_point().borrow(), Some(p.get_line()))
+                } else {
+                    (&self.start.borrow(), None)
+                }
             } else {
-                &self.start
-            }
+                (&self.start.borrow(), None)
+            };
+
+        let only_allow_rules = if let Some(prev_line) = prev_line {
+            prev_point
+                .rules
+                .iter()
+                .filter(|rule| {
+                    rule.rule_type == MapDataRuleType::OnlyAllowed
+                        && rule.from_lines.contains(&prev_line)
+                })
+                .collect::<Vec<_>>()
         } else {
-            &self.start
+            Vec::new()
+        };
+
+        let not_allow_rules = if let Some(prev_line) = prev_line {
+            prev_point
+                .rules
+                .iter()
+                .filter(|rule| {
+                    rule.rule_type == MapDataRuleType::NotAllowed
+                        && rule.from_lines.contains(&prev_line)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
         };
 
         self.map_data_graph
             .get_adjacent(point)
             .into_iter()
-            .filter(|(_, p)| p.borrow().id != prev_point.borrow().id)
+            .filter(|(line_next, point_next)| {
+                // do not offer the same line as you came from
+                if point_next.borrow().id == prev_point.id {
+                    return false;
+                }
+                // if no rules exist, don't check anything further
+                if prev_point.rules.len() == 0 {
+                    return true;
+                }
+
+                // if not allow rules exist, make sure next line is not in them
+                if not_allow_rules
+                    .iter()
+                    .any(|rule| rule.to_lines.contains(line_next))
+                {
+                    return false;
+                }
+
+                // if only allow rules exist, only check those
+                if only_allow_rules.len() > 0 {
+                    return only_allow_rules
+                        .iter()
+                        .any(|rule| rule.to_lines.contains(line_next));
+                }
+
+                // must not be in not allow rules
+                true
+            })
             .map(|(line, end_point)| RouteSegment::new(line, end_point))
             .collect()
     }

@@ -1,3 +1,4 @@
+use core::panic;
 use geo::{point, HaversineBearing, HaversineDistance, Point};
 use std::{
     cell::{RefCell, RefMut},
@@ -12,7 +13,27 @@ use crate::gps_hash::{get_gps_coords_hash, HashOffset};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum MapDataError {
-    MissingPoint { point_id: u64 },
+    MissingPoint {
+        point_id: u64,
+    },
+    MissingRestriction {
+        relation_id: u64,
+    },
+    UnknownRestriction {
+        relation_id: u64,
+        restriction: String,
+    },
+    MissingViaNode {
+        relation_id: u64,
+    },
+    MissingViaPoint {
+        point_id: u64,
+    },
+    WayIdNotLinkedWithViaPoint {
+        relation_id: u64,
+        point_id: u64,
+        way_id: u64,
+    },
 }
 
 pub type MapDataWayRef = Rc<RefCell<MapDataWay>>;
@@ -32,8 +53,46 @@ pub struct OsmWay {
     pub point_ids: Vec<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum OsmRelationMemberType {
+    Way,
+    Node,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum OsmRelationMemberRole {
+    From,
+    To,
+    Via,
+    Other(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OsmRelationMember {
+    pub member_type: OsmRelationMemberType,
+    pub role: OsmRelationMemberRole,
+    pub member_ref: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MapDataRuleType {
+    OnlyAllowed,
+    NotAllowed,
+}
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct OsmRelation {}
+pub struct OsmRelation {
+    pub id: u64,
+    pub members: Vec<OsmRelationMember>,
+    pub tags: HashMap<String, String>,
+}
+
+#[derive(Clone)]
+pub struct MapDataRule {
+    pub from_lines: Vec<MapDataLineRef>,
+    pub to_lines: Vec<MapDataLineRef>,
+    pub rule_type: MapDataRuleType,
+}
 
 #[derive(Clone)]
 pub struct MapDataPoint {
@@ -43,6 +102,7 @@ pub struct MapDataPoint {
     pub part_of_ways: Vec<MapDataWayRef>,
     pub lines: Vec<MapDataLineRef>,
     pub fork: bool,
+    pub rules: Vec<MapDataRule>,
 }
 
 impl PartialEq for MapDataPoint {
@@ -178,30 +238,11 @@ impl Debug for MapDataWay {
     }
 }
 
-// #[derive(Clone, Debug, PartialEq)]
-// pub struct MapDataRelation {
-//     pub id: u64,
-//     pub node_ids: MapDataWayNodes,
-//     pub one_way: bool,
-//     pub members: [MapDataRelationMember; 3],
-// }
-
-// #[derive(Clone, Debug, PartialEq)]
-// pub enum MapDataRelationMember {
-//     From { way_id: u64 },
-//     To { way_id: u64 },
-//     Via { node_id: u64 },
-// }
-
 #[derive(Clone)]
 pub struct MapDataLine {
     pub id: String,
     pub way: MapDataWayRef,
     pub points: (MapDataPointRef, MapDataPointRef),
-    // pub length_m: f64,
-    // pub bearing_deg: f64,
-    // pub one_way: bool,
-    // pub accessible_from_line_ids: Vec<String>,
 }
 
 impl PartialEq for MapDataLine {
@@ -269,6 +310,7 @@ impl MapDataGraph {
             part_of_ways: Vec::new(),
             lines: Vec::new(),
             fork: false,
+            rules: Vec::new(),
         }));
         self.point_hashed_offset_none.insert(
             get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::None),
@@ -290,7 +332,14 @@ impl MapDataGraph {
         self.points.insert(id, point);
     }
 
+    fn way_is_ok(&self, _osm_way: &OsmWay) -> bool {
+        true
+    }
+
     pub fn insert_way(&mut self, osm_way: OsmWay) -> Result<(), MapDataError> {
+        if !self.way_is_ok(&osm_way) {
+            return Ok(());
+        }
         let mut prev_point: Option<MapDataPointRef> = None;
         let way = Rc::new(RefCell::new(MapDataWay {
             id: osm_way.id,
@@ -359,7 +408,112 @@ impl MapDataGraph {
         Ok(())
     }
 
+    fn relation_is_ok(&self, relation: &OsmRelation) -> bool {
+        if let Some(rel_type) = relation.tags.get("type") {
+            // https://wiki.openstreetmap.org/w/index.php?title=Relation:restriction&uselang=en
+            // currently only "restriction", but "restriction:bus" was in use until 2013
+            if rel_type.starts_with("restriction") {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn insert_relation(&mut self, relation: OsmRelation) -> Result<(), MapDataError> {
+        if !self.relation_is_ok(&relation) {
+            return Ok(());
+        }
+        let restriction = relation
+            .tags
+            .get("restriction")
+            .or(relation.tags.get("restriction:motorcycle"))
+            .ok_or(MapDataError::MissingRestriction {
+                relation_id: relation.id,
+            })?;
+        let rule_type = match restriction.as_str() {
+            "no_right_turn" => MapDataRuleType::NotAllowed,
+            "no_left_turn" => MapDataRuleType::NotAllowed,
+            "no_u_turn" => MapDataRuleType::NotAllowed,
+            "no_straight_on" => MapDataRuleType::NotAllowed,
+            "no_entry" => MapDataRuleType::NotAllowed,
+            "no_exit" => MapDataRuleType::NotAllowed,
+            "only_right_turn" => MapDataRuleType::OnlyAllowed,
+            "only_left_turn" => MapDataRuleType::OnlyAllowed,
+            "only_u_turn" => MapDataRuleType::OnlyAllowed,
+            "only_straight_on" => MapDataRuleType::OnlyAllowed,
+            restriction => {
+                return Err(MapDataError::UnknownRestriction {
+                    relation_id: relation.id,
+                    restriction: restriction.to_string(),
+                })
+            }
+        };
+
+        let via_members = relation
+            .members
+            .iter()
+            .filter(|member| member.role == OsmRelationMemberRole::Via)
+            .collect::<Vec<_>>();
+        if via_members.len() == 1 {
+            let via_node = via_members.first().ok_or(MapDataError::MissingViaNode {
+                relation_id: relation.id,
+            })?;
+            let via_point =
+                self.points
+                    .get(&via_node.member_ref)
+                    .ok_or(MapDataError::MissingViaPoint {
+                        point_id: via_node.member_ref,
+                    })?;
+            fn get_way_ids(
+                members: &Vec<OsmRelationMember>,
+                role: OsmRelationMemberRole,
+            ) -> Vec<u64> {
+                members
+                    .iter()
+                    .filter_map(|member| {
+                        if member.role == role {
+                            return Some(member.member_ref);
+                        }
+                        None
+                    })
+                    .collect::<Vec<_>>()
+            }
+            fn get_lines_from_way_ids(
+                way_ids: &Vec<u64>,
+                point: &MapDataPointRef,
+                relation_id: u64,
+            ) -> Result<Vec<MapDataLineRef>, MapDataError> {
+                way_ids
+                    .iter()
+                    .map(|way_id| {
+                        point
+                            .borrow()
+                            .lines
+                            .iter()
+                            .find(|line| line.borrow().way.borrow().id == *way_id)
+                            .ok_or(MapDataError::WayIdNotLinkedWithViaPoint {
+                                relation_id,
+                                point_id: point.borrow().id,
+                                way_id: *way_id,
+                            })
+                            .map(|line| Rc::clone(line))
+                    })
+                    .collect()
+            }
+            let from_way_ids = get_way_ids(&relation.members, OsmRelationMemberRole::From);
+            let from_lines = get_lines_from_way_ids(&from_way_ids, &via_point, relation.id)?;
+            let to_way_ids = get_way_ids(&relation.members, OsmRelationMemberRole::To);
+            let to_lines = get_lines_from_way_ids(&to_way_ids, &via_point, relation.id)?;
+            let mut point = via_point.borrow_mut();
+            let rule = MapDataRule {
+                from_lines,
+                to_lines,
+                rule_type,
+            };
+            point.rules.push(rule);
+        } else {
+            panic!("not yet implemented relations with via ways");
+        }
         Ok(())
     }
 

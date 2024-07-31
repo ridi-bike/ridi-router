@@ -9,7 +9,8 @@ use std::{
 use json_tools::{Buffer, BufferType, Lexer, Token, TokenType};
 
 use crate::map_data_graph::{
-    MapDataError, MapDataGraph, MapDataWay, MapDataWayPoints, OsmNode, OsmRelation, OsmWay,
+    MapDataError, OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole,
+    OsmRelationMemberType, OsmWay,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -137,7 +138,60 @@ impl OsmElement {
 
     pub fn get_relation_element(&self) -> Result<OsmRelation, OsmJsonParserError> {
         if let Ok(OsmElementType::Relation) = self.get_element_type() {
-            return Ok(OsmRelation {});
+            return Ok(OsmRelation {
+                id: self.id.ok_or(OsmJsonParserError::MissingValueForElement {
+                    element_type: String::from("relation"),
+                    value: String::from("id"),
+                })?,
+                tags: self
+                    .tags
+                    .clone()
+                    .ok_or(OsmJsonParserError::MissingValueForElement {
+                        element_type: String::from("relation"),
+                        value: String::from("tags"),
+                    })?,
+                members: self
+                    .members
+                    .clone()
+                    .ok_or(OsmJsonParserError::MissingValueForElement {
+                        element_type: String::from("relation"),
+                        value: String::from("members"),
+                    })?
+                    .iter()
+                    .map(|member| {
+                        Ok(OsmRelationMember {
+                            member_type: match member.member_type.clone().ok_or(
+                                OsmJsonParserError::MissingValueForElement {
+                                    element_type: String::from("member"),
+                                    value: String::from("member_type"),
+                                },
+                            )? {
+                                OsmRelMemberType::Way => OsmRelationMemberType::Way,
+                                OsmRelMemberType::Node => OsmRelationMemberType::Node,
+                            },
+                            role: match member.role.clone().ok_or(
+                                OsmJsonParserError::MissingValueForElement {
+                                    element_type: String::from("member"),
+                                    value: String::from("role"),
+                                },
+                            )? {
+                                OsmRelMemberRole::To => OsmRelationMemberRole::To,
+                                OsmRelMemberRole::From => OsmRelationMemberRole::From,
+                                OsmRelMemberRole::Via => OsmRelationMemberRole::Via,
+                                OsmRelMemberRole::Other(other) => {
+                                    OsmRelationMemberRole::Other(other)
+                                }
+                            },
+                            member_ref: member.member_ref.ok_or(
+                                OsmJsonParserError::MissingValueForElement {
+                                    element_type: String::from("member"),
+                                    value: String::from("member_role"),
+                                },
+                            )?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            });
         }
 
         Err(OsmJsonParserError::ElementIsNotWay)
