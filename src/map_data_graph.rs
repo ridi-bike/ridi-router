@@ -427,21 +427,22 @@ impl MapDataGraph {
             .tags
             .get("restriction")
             .or(relation.tags.get("restriction:motorcycle"))
+            .or(relation.tags.get("restriction:conditional"))
             .ok_or(MapDataError::MissingRestriction {
                 relation_id: relation.id,
             })?;
-        let rule_type = match restriction.as_str() {
-            "no_right_turn" => MapDataRuleType::NotAllowed,
-            "no_left_turn" => MapDataRuleType::NotAllowed,
-            "no_u_turn" => MapDataRuleType::NotAllowed,
-            "no_straight_on" => MapDataRuleType::NotAllowed,
-            "no_entry" => MapDataRuleType::NotAllowed,
-            "no_exit" => MapDataRuleType::NotAllowed,
-            "only_right_turn" => MapDataRuleType::OnlyAllowed,
-            "only_left_turn" => MapDataRuleType::OnlyAllowed,
-            "only_u_turn" => MapDataRuleType::OnlyAllowed,
-            "only_straight_on" => MapDataRuleType::OnlyAllowed,
-            restriction => {
+        let rule_type = match restriction.split(" ").collect::<Vec<_>>().get(0) {
+            Some(&"no_right_turn") => MapDataRuleType::NotAllowed,
+            Some(&"no_left_turn") => MapDataRuleType::NotAllowed,
+            Some(&"no_u_turn") => MapDataRuleType::NotAllowed,
+            Some(&"no_straight_on") => MapDataRuleType::NotAllowed,
+            Some(&"no_entry") => MapDataRuleType::NotAllowed,
+            Some(&"no_exit") => MapDataRuleType::NotAllowed,
+            Some(&"only_right_turn") => MapDataRuleType::OnlyAllowed,
+            Some(&"only_left_turn") => MapDataRuleType::OnlyAllowed,
+            Some(&"only_u_turn") => MapDataRuleType::OnlyAllowed,
+            Some(&"only_straight_on") => MapDataRuleType::OnlyAllowed,
+            _ => {
                 return Err(MapDataError::UnknownRestriction {
                     relation_id: relation.id,
                     restriction: restriction.to_string(),
@@ -512,7 +513,10 @@ impl MapDataGraph {
             };
             point.rules.push(rule);
         } else {
-            panic!("not yet implemented relations with via ways");
+            eprintln!(
+                "not yet implemented relations with via ways, rel {:#?}",
+                relation
+            );
         }
         Ok(())
     }

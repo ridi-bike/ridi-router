@@ -66,17 +66,25 @@ impl OsmDataReader {
                     let way = element
                         .get_way_element()
                         .map_err(|error| OsmDataReaderError::ParserError { error })?;
-                    self.map_data
+                    let res = self
+                        .map_data
                         .insert_way(way)
-                        .map_err(|error| OsmDataReaderError::MapDataError { error })?;
+                        .map_err(|error| OsmDataReaderError::MapDataError { error });
+                    if let Err(error) = res {
+                        eprint!("Error, skipping way {:#?}", error);
+                    }
                 }
                 OsmElementType::Relation => {
                     let rel = element
                         .get_relation_element()
                         .map_err(|error| OsmDataReaderError::ParserError { error })?;
-                    self.map_data
+                    let res = self
+                        .map_data
                         .insert_relation(rel)
-                        .map_err(|error| OsmDataReaderError::MapDataError { error })?;
+                        .map_err(|error| OsmDataReaderError::MapDataError { error });
+                    if let Err(error) = res {
+                        eprint!("Error, skipping relation {:#?}", error);
+                    }
                 }
             }
         }
