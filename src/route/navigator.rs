@@ -233,7 +233,13 @@ impl<'a> RouteNavigator<'a> {
             }
         }
 
-        self.walkers.iter().map(|w| w.get_route().clone()).collect()
+        self.walkers
+            .iter()
+            .map(|w| {
+                w.debug_writer.write_gpx();
+                w.get_route().clone()
+            })
+            .collect()
     }
 }
 

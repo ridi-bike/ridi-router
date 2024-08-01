@@ -28,7 +28,9 @@ data-fetch:
 map-data-file-name := "map-data-riga-cesis.json"
 # map-data-file-name := "test-map-data-formatted.json"
 
-run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
+# run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
+
+run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 56.8504714 --to_lon 24.2400742'
 
 run-stdin:
   {{run-and-load-stdin}}
@@ -37,7 +39,9 @@ run-show-stdin:
   {{run-and-load-stdin}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
   
-run-and-load-file := 'cargo run -- --data_file map-data' / map-data-file-name + ' --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
+# run-and-load-file := 'cargo run -- --data_file map-data' / map-data-file-name + ' --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
+
+run-and-load-file := 'cargo run -- --data_file map-data' / map-data-file-name + ' --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 56.8504714 --to_lon 24.2400742'
 
 run-file:
   {{run-and-load-file}}

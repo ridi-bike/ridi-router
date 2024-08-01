@@ -1,7 +1,10 @@
 use std::{rc::Rc, usize, vec};
 
-use crate::map_data_graph::{
-    MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataRuleType,
+use crate::{
+    debug_writer::DebugWriter,
+    map_data_graph::{
+        MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataRuleType,
+    },
 };
 
 #[derive(Debug, PartialEq)]
@@ -185,6 +188,7 @@ pub struct RouteWalker<'a> {
     end: MapDataPointRef,
     route_walked: Route,
     next_fork_choice_point: Option<MapDataPointRef>,
+    pub debug_writer: DebugWriter,
 }
 
 #[derive(Debug, PartialEq)]
@@ -202,10 +206,11 @@ impl<'a> RouteWalker<'a> {
     ) -> Self {
         Self {
             map_data_graph,
-            start,
+            start: Rc::clone(&start),
             end,
             route_walked: Route::new(),
             next_fork_choice_point: None,
+            debug_writer: DebugWriter::new(1, start),
         }
     }
 
@@ -295,12 +300,18 @@ impl<'a> RouteWalker<'a> {
                 None => &self.start,
             };
             if *point == self.end {
+                self.debug_writer
+                    .log_move(&RouteWalkerMoveResult::Finish, &self.route_walked);
                 return Ok(RouteWalkerMoveResult::Finish);
             }
 
             let available_segments = self.get_available_fork_segments(Rc::clone(&point));
 
             if available_segments.get_segment_count() > 1 && self.next_fork_choice_point.is_none() {
+                self.debug_writer.log_move(
+                    &RouteWalkerMoveResult::Fork(available_segments.clone()),
+                    &self.route_walked,
+                );
                 return Ok(RouteWalkerMoveResult::Fork(available_segments));
             }
 
@@ -321,7 +332,11 @@ impl<'a> RouteWalker<'a> {
             };
 
             let next_segment = match next_segment {
-                None => return Ok(RouteWalkerMoveResult::DeadEnd),
+                None => {
+                    self.debug_writer
+                        .log_move(&RouteWalkerMoveResult::DeadEnd, &self.route_walked);
+                    return Ok(RouteWalkerMoveResult::DeadEnd);
+                }
                 Some(segment) => segment,
             };
 

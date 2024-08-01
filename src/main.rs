@@ -14,6 +14,7 @@ use route::{
     weights::{weight_heading, weight_no_loops},
 };
 
+mod debug_writer;
 mod gps_hash;
 mod gpx_writer;
 mod map_data_graph;
