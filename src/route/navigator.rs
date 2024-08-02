@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Debug,
     rc::Rc,
 };
 
@@ -13,14 +14,14 @@ use super::{
     weights::{WeightCalc, WeightCalcInput},
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WeightCalcResult {
     UseWithWeight(u8),
     DoNotUse,
 }
 
 #[derive(Debug)]
-struct DiscardedForkChoices {
+pub struct DiscardedForkChoices {
     choices: HashMap<u64, HashSet<u64>>,
 }
 impl DiscardedForkChoices {
@@ -50,8 +51,8 @@ impl DiscardedForkChoices {
     }
 }
 
-#[derive(Debug)]
-struct ForkWeights {
+#[derive(Clone)]
+pub struct ForkWeights {
     weight_list: HashMap<u64, u32>,
 }
 
@@ -95,6 +96,21 @@ impl ForkWeights {
     }
 }
 
+impl Debug for ForkWeights {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.weight_list
+                .iter()
+                .fold(String::new(), |all, el| format!(
+                    "{}\n\t{}:{}",
+                    all, el.0, el.1
+                ))
+        )
+    }
+}
+
 pub struct RouteNavigator<'a> {
     map_data_graph: &'a MapDataGraph,
     walkers: Vec<RouteWalker<'a>>,
@@ -133,11 +149,20 @@ impl<'a> RouteNavigator<'a> {
                 .enumerate()
                 .for_each(|(walker_idx, walker)| {
                     let move_result = walker.move_forward_to_next_fork();
+                    if let Ok(move_result) = &move_result {
+                        walker
+                            .debug_writer
+                            .log_move(move_result, &walker.get_route().clone());
+                    }
 
                     if move_result == Ok(RouteWalkerMoveResult::Finish) {
                         return ();
                     }
                     if let Ok(RouteWalkerMoveResult::Fork(fork_choices)) = move_result {
+                        walker.debug_writer.log_choices(&fork_choices);
+                        walker
+                            .debug_writer
+                            .log_discarded(&self.discarded_fork_choices);
                         let (fork_choices, last_point_id) = {
                             let last_element = walker.get_route().get_segment_last();
                             let last_point_id = match last_element {
@@ -176,6 +201,10 @@ impl<'a> RouteNavigator<'a> {
                                         })
                                     })
                                     .collect::<Vec<_>>();
+                                walker.debug_writer.log_weight(
+                                    fork_route_segment.get_end_point().borrow().id,
+                                    fork_weight_calc_results.clone(),
+                                );
                                 fork_weights.add_calc_result(
                                     &fork_route_segment.get_end_point().borrow().id,
                                     &fork_weight_calc_results,
@@ -183,6 +212,8 @@ impl<'a> RouteNavigator<'a> {
                                 fork_weights
                             },
                         );
+
+                        walker.debug_writer.log_weights(&fork_weights);
 
                         let chosen_fork_point = fork_weights
                             .get_choice_id_by_index_from_heaviest(0)
@@ -194,9 +225,13 @@ impl<'a> RouteNavigator<'a> {
                                 &last_point_id,
                                 &chosen_fork_point.borrow().id,
                             );
+                            walker
+                                .debug_writer
+                                .log_fork_action(Some(chosen_fork_point.borrow().id));
                             walker.set_fork_choice_point_id(chosen_fork_point);
                         } else {
                             walker.move_backwards_to_prev_fork();
+                            walker.debug_writer.log_fork_action(None);
                             if walker.get_route().get_fork_before_last_segment() == None {
                                 stuck_walkers_idx.push(walker_idx);
                             }
@@ -207,7 +242,8 @@ impl<'a> RouteNavigator<'a> {
                 });
             while let Some(&walker_idx) = stuck_walkers_idx.last() {
                 stuck_walkers_idx.pop();
-                self.walkers.remove(walker_idx);
+                let removed_walker = self.walkers.remove(walker_idx);
+                removed_walker.debug_writer.write();
             }
             // self.walkers.iter().for_each(|w| {
             //     let route = w.get_route();
@@ -236,7 +272,7 @@ impl<'a> RouteNavigator<'a> {
         self.walkers
             .iter()
             .map(|w| {
-                w.debug_writer.write_gpx();
+                w.debug_writer.write();
                 w.get_route().clone()
             })
             .collect()

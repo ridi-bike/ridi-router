@@ -1,4 +1,4 @@
-use std::{rc::Rc, usize, vec};
+use std::{fmt::Debug, rc::Rc, usize, vec};
 
 use crate::{
     debug_writer::DebugWriter,
@@ -15,7 +15,7 @@ pub enum RouterWalkerError {
     },
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct RouteSegment {
     line: MapDataLineRef,
     end_point: MapDataPointRef,
@@ -30,6 +30,14 @@ impl RouteSegment {
     }
     pub fn get_line(&self) -> &MapDataLineRef {
         &self.line
+    }
+}
+
+impl Debug for RouteSegment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let line = self.get_line().borrow().clone();
+        let point = self.get_end_point().borrow().clone();
+        write!(f, "line:\n\t{:#?}\npoint:\n\t{:#?}", line, point)
     }
 }
 
@@ -104,7 +112,7 @@ impl IntoIterator for Route {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 pub struct RouteSegmentList {
     segment_list: Vec<RouteSegment>,
 }
@@ -179,6 +187,11 @@ impl<'a> FromIterator<&'a RouteSegment> for RouteSegmentList {
         RouteSegmentList {
             segment_list: Vec::from_iter(iter.into_iter().cloned()),
         }
+    }
+}
+impl Debug for RouteSegmentList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RouteSegmentList {:#?}", self.segment_list)
     }
 }
 
@@ -300,18 +313,12 @@ impl<'a> RouteWalker<'a> {
                 None => &self.start,
             };
             if *point == self.end {
-                self.debug_writer
-                    .log_move(&RouteWalkerMoveResult::Finish, &self.route_walked);
                 return Ok(RouteWalkerMoveResult::Finish);
             }
 
             let available_segments = self.get_available_fork_segments(Rc::clone(&point));
 
             if available_segments.get_segment_count() > 1 && self.next_fork_choice_point.is_none() {
-                self.debug_writer.log_move(
-                    &RouteWalkerMoveResult::Fork(available_segments.clone()),
-                    &self.route_walked,
-                );
                 return Ok(RouteWalkerMoveResult::Fork(available_segments));
             }
 
@@ -333,8 +340,6 @@ impl<'a> RouteWalker<'a> {
 
             let next_segment = match next_segment {
                 None => {
-                    self.debug_writer
-                        .log_move(&RouteWalkerMoveResult::DeadEnd, &self.route_walked);
                     return Ok(RouteWalkerMoveResult::DeadEnd);
                 }
                 Some(segment) => segment,

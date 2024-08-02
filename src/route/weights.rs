@@ -36,9 +36,9 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         15.0..45.0 => WeightCalcResult::UseWithWeight(100),
         -90.0..45.0 => WeightCalcResult::UseWithWeight(50),
         45.0..90.0 => WeightCalcResult::UseWithWeight(50),
-        -135.0..-90.0 => WeightCalcResult::UseWithWeight(1),
-        90.0..135.0 => WeightCalcResult::UseWithWeight(1),
-        _ => WeightCalcResult::DoNotUse,
+        -135.0..-90.0 => WeightCalcResult::UseWithWeight(10),
+        90.0..135.0 => WeightCalcResult::UseWithWeight(10),
+        _ => WeightCalcResult::UseWithWeight(1),
     }
 }
 
