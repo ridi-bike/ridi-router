@@ -51,6 +51,7 @@ pub struct OsmNode {
 pub struct OsmWay {
     pub id: u64,
     pub point_ids: Vec<u64>,
+    pub one_way: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,6 +244,7 @@ pub struct MapDataLine {
     pub id: String,
     pub way: MapDataWayRef,
     pub points: (MapDataPointRef, MapDataPointRef),
+    pub one_way: bool,
 }
 
 impl PartialEq for MapDataLine {
@@ -258,11 +260,13 @@ impl Debug for MapDataLine {
             "MapDataLine
     id={}
     way={}
-    points=({},{})",
+    points=({},{})
+    one_way={}",
             self.id,
             self.way.borrow().id,
             self.points.0.borrow().id,
             self.points.1.borrow().id,
+            self.one_way
         )
     }
 }
@@ -384,6 +388,7 @@ impl MapDataGraph {
                         id: line_id,
                         way: Rc::clone(&way),
                         points: (Rc::clone(&prev_point), Rc::clone(&point)),
+                        one_way: osm_way.one_way,
                         // length_m: prev_point_geo.haversine_distance(&point_geo),
                         // bearing_deg: prev_point_geo.haversine_bearing(point_geo),
                         // one_way: way.one_way,

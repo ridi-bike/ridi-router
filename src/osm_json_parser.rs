@@ -127,9 +127,11 @@ impl OsmElement {
                     }),
                     |node_ids| Ok(node_ids),
                 )?,
-                // one_way: element.tags.map_or(false, |tags| {
-                //     tags.get("oneway").map_or(false, |one_way| one_way == "yes")
-                // }),
+                one_way: if let Some(tags) = &self.tags {
+                    tags.get("oneway").map_or(false, |one_way| one_way == "yes")
+                } else {
+                    false
+                },
             });
         }
 

@@ -266,13 +266,19 @@ impl<'a> RouteWalker<'a> {
         };
 
         self.map_data_graph
-            .get_adjacent(point)
+            .get_adjacent(Rc::clone(&point))
             .into_iter()
             .filter(|(line_next, point_next)| {
                 // do not offer the same line as you came from
                 if point_next.borrow().id == prev_point.id {
                     return false;
                 }
+
+                // exclude if next line is one way and the direction is backwards
+                if line_next.borrow().one_way && line_next.borrow().points.1 == point {
+                    return false;
+                }
+
                 // if no rules exist, don't check anything further
                 if prev_point.rules.len() == 0 {
                     return true;

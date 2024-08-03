@@ -227,11 +227,13 @@ impl<'a> RouteNavigator<'a> {
                             );
                             walker
                                 .debug_writer
-                                .log_fork_action(Some(chosen_fork_point.borrow().id));
+                                .log_fork_action_choice(chosen_fork_point.borrow().id);
                             walker.set_fork_choice_point_id(chosen_fork_point);
                         } else {
-                            walker.move_backwards_to_prev_fork();
-                            walker.debug_writer.log_fork_action(None);
+                            let move_back_segment_list = walker.move_backwards_to_prev_fork();
+                            walker
+                                .debug_writer
+                                .log_fork_action_back(move_back_segment_list);
                             if walker.get_route().get_fork_before_last_segment() == None {
                                 stuck_walkers_idx.push(walker_idx);
                             }
@@ -276,6 +278,10 @@ impl<'a> RouteNavigator<'a> {
                 w.get_route().clone()
             })
             .collect()
+    }
+
+    pub fn write_debug(&self) -> () {
+        self.walkers.iter().for_each(|w| w.debug_writer.write());
     }
 }
 

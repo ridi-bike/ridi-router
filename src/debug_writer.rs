@@ -23,11 +23,12 @@ use crate::{
 #[derive(Debug, Clone)]
 enum ForkAction {
     SetChoice(u64),
-    MoveBack,
+    MoveBack(Option<RouteSegmentList>),
 }
 
 #[derive(Debug, Clone)]
 struct StepData {
+    point: Option<MapDataPointRef>,
     fork_weights: Option<ForkWeights>,
     fork_action: Option<ForkAction>,
     discarded_point_ids: Option<Vec<u64>>,
@@ -38,6 +39,7 @@ struct StepData {
 impl StepData {
     pub fn new() -> Self {
         Self {
+            point: None,
             fork_weights: None,
             fork_action: None,
             discarded_point_ids: None,
@@ -106,18 +108,25 @@ impl DebugWriter {
             self.step_data.insert(self.step_id, step_data);
         }
     }
-    pub fn log_fork_action(&mut self, id: Option<u64>) -> () {
+    pub fn log_fork_action_choice(&mut self, id: u64) -> () {
         if self.step_data.get(&self.step_id).is_none() {
             self.step_data.insert(self.step_id, StepData::new());
         }
         let step_data = self.step_data.get(&self.step_id);
         if let Some(step_data) = step_data {
             let mut step_data = step_data.clone();
-            step_data.fork_action = if let Some(id) = id {
-                Some(ForkAction::SetChoice(id))
-            } else {
-                Some(ForkAction::MoveBack)
-            };
+            step_data.fork_action = Some(ForkAction::SetChoice(id));
+            self.step_data.insert(self.step_id, step_data);
+        }
+    }
+    pub fn log_fork_action_back(&mut self, segment_list: Option<RouteSegmentList>) -> () {
+        if self.step_data.get(&self.step_id).is_none() {
+            self.step_data.insert(self.step_id, StepData::new());
+        }
+        let step_data = self.step_data.get(&self.step_id);
+        if let Some(step_data) = step_data {
+            let mut step_data = step_data.clone();
+            step_data.fork_action = Some(ForkAction::MoveBack(segment_list));
             self.step_data.insert(self.step_id, step_data);
         }
     }
@@ -154,6 +163,13 @@ impl DebugWriter {
         let last_segment = route.get_segment_last();
         if let Some(last_segment) = last_segment {
             let point = last_segment.get_end_point();
+
+            if let Some(step_data) = self.step_data.get(&self.step_id) {
+                let mut step_data = step_data.clone();
+                step_data.point = Some(Rc::clone(&point));
+                self.step_data.insert(self.step_id, step_data);
+            }
+
             let mut waypoint = if let Some(wp) = self.forks.get(&point.borrow().id) {
                 wp.clone()
             } else {
@@ -164,7 +180,9 @@ impl DebugWriter {
                 RouteWalkerMoveResult::DeadEnd => "DeadEnd",
                 RouteWalkerMoveResult::Fork(_) => "Fork",
             };
-            let comment_data = format!("step: {}\nMoveResult: {}", self.step_id, move_result_type);
+            let comment_data =
+                format!("Step: {}\nMoveResult: {}\n", self.step_id, move_result_type);
+            waypoint.name = Some(point.borrow().id.to_string());
             waypoint.comment = if let Some(comment) = waypoint.comment {
                 Some(format!("{}\n{}", comment, comment_data))
             } else {
@@ -205,6 +223,8 @@ impl DebugWriter {
             }
         }
         self.route = route.clone();
+
+        self.write();
     }
 
     fn get_dir(&self) -> String {
@@ -256,7 +276,7 @@ impl DebugWriter {
 
         let dir = self.get_dir();
 
-        match File::create(format!("{}/{}.gpx", dir, self.walker_id)) {
+        match File::create(format!("{}/{}_{}.gpx", dir, self.walker_id, self.step_id)) {
             Ok(file) => write(&gpx, file).unwrap(),
             Err(error) => panic!("Debug write error {}", error),
         };
@@ -264,10 +284,11 @@ impl DebugWriter {
 
     fn write_log(&self) -> () {
         let dir = self.get_dir();
-        let mut log_file = match File::create(format!("{}/{}.log", dir, self.walker_id)) {
-            Ok(file) => file,
-            Err(error) => panic!("Debug write error {}", error),
-        };
+        let mut log_file =
+            match File::create(format!("{}/{}_{}.log", dir, self.walker_id, self.step_id)) {
+                Ok(file) => file,
+                Err(error) => panic!("Debug write error {}", error),
+            };
 
         let mut step_data: Vec<_> = self.step_data.iter().collect();
         step_data.sort_by(|(step_num, _), (step_num2, _)| step_num.cmp(step_num2));
@@ -276,8 +297,9 @@ impl DebugWriter {
             let (step_num, step_data) = step_data;
             writeln!(
                 log_file,
-                "\nStep num: {}\n\tFork Choices: {:?}\n\t Discarded Points: {:?}\n\tFork Point Weights: {:?}\n\tFork Weights: {:?}\n\t Fork Action: {:?}",
+                "\nStep num: {}\n\tPoint: {:?}\n\tFork Choices: {:?}\n\t Discarded Points: {:?}\n\tFork Point Weights: {:?}\n\tFork Weights: {:?}\n\t Fork Action: {:?}",
                 step_num,
+                step_data.point,
                 step_data.fork_choices,
                 step_data.discarded_point_ids,
                 step_data.fork_point_weights,
