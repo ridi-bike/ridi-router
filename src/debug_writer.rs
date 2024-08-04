@@ -1,4 +1,5 @@
 use core::panic;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::{
     collections::HashMap,
@@ -21,35 +22,6 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
-enum ForkAction {
-    SetChoice(u64),
-    MoveBack(Option<RouteSegment>, Option<RouteSegmentList>),
-}
-
-#[derive(Debug, Clone)]
-struct StepData {
-    last_segment: Option<RouteSegment>,
-    fork_weights: Option<ForkWeights>,
-    fork_action: Option<ForkAction>,
-    discarded_point_ids: Option<Vec<u64>>,
-    fork_choices: Option<RouteSegmentList>,
-    fork_point_weights: Option<Vec<(u64, Vec<WeightCalcResult>)>>,
-}
-
-impl StepData {
-    pub fn new() -> Self {
-        Self {
-            last_segment: None,
-            fork_weights: None,
-            fork_action: None,
-            discarded_point_ids: None,
-            fork_choices: None,
-            fork_point_weights: None,
-        }
-    }
-}
-
 pub struct DebugWriter {
     id: u64,
     step_id: u64,
@@ -59,7 +31,6 @@ pub struct DebugWriter {
     dead_end_tracks: Vec<Track>,
     forks: HashMap<u64, Waypoint>,
     route: Route,
-    step_data: HashMap<u64, StepData>,
 }
 
 impl DebugWriter {
@@ -78,102 +49,19 @@ impl DebugWriter {
             dead_end_tracks: Vec::new(),
             route: Route::new(),
             forks: HashMap::new(),
-            step_data: HashMap::new(),
         }
     }
 
-    pub fn log_weight(&mut self, point_id: u64, weights: Vec<WeightCalcResult>) -> () {
-        if self.step_data.get(&self.step_id).is_none() {
-            self.step_data.insert(self.step_id, StepData::new());
-        }
-        let step_data = self.step_data.get(&self.step_id);
-        if let Some(step_data) = step_data {
-            let mut step_data = step_data.clone();
-            if let Some(ref mut point_weights) = step_data.fork_point_weights {
-                point_weights.push((point_id, weights));
-            } else {
-                step_data.fork_point_weights = Some(vec![(point_id, weights)]);
-            }
-            self.step_data.insert(self.step_id, step_data);
-        }
-    }
-
-    pub fn log_choices(&mut self, choices: &RouteSegmentList) -> () {
-        if self.step_data.get(&self.step_id).is_none() {
-            self.step_data.insert(self.step_id, StepData::new());
-        }
-        let step_data = self.step_data.get(&self.step_id);
-        if let Some(step_data) = step_data {
-            let mut step_data = step_data.clone();
-            step_data.fork_choices = Some(choices.clone());
-            self.step_data.insert(self.step_id, step_data);
-        }
-    }
-    pub fn log_fork_action_choice(&mut self, id: u64) -> () {
-        if self.step_data.get(&self.step_id).is_none() {
-            self.step_data.insert(self.step_id, StepData::new());
-        }
-        let step_data = self.step_data.get(&self.step_id);
-        if let Some(step_data) = step_data {
-            let mut step_data = step_data.clone();
-            step_data.fork_action = Some(ForkAction::SetChoice(id));
-            self.step_data.insert(self.step_id, step_data);
-        }
-    }
-    pub fn log_fork_action_back(
-        &mut self,
-        last_segment: Option<RouteSegment>,
-        segment_list: Option<RouteSegmentList>,
-    ) -> () {
-        if self.step_data.get(&self.step_id).is_none() {
-            self.step_data.insert(self.step_id, StepData::new());
-        }
-        let step_data = self.step_data.get(&self.step_id);
-        if let Some(step_data) = step_data {
-            let mut step_data = step_data.clone();
-            step_data.fork_action = Some(ForkAction::MoveBack(last_segment, segment_list));
-            self.step_data.insert(self.step_id, step_data);
-        }
-    }
-    pub fn log_weights(&mut self, weights: &ForkWeights) -> () {
-        if self.step_data.get(&self.step_id).is_none() {
-            self.step_data.insert(self.step_id, StepData::new());
-        }
-        let step_data = self.step_data.get(&self.step_id);
-        if let Some(step_data) = step_data {
-            let mut step_data = step_data.clone();
-            step_data.fork_weights = Some(weights.clone());
-            self.step_data.insert(self.step_id, step_data);
-        }
-    }
-
-    pub fn log_discarded(&mut self, discarded: &DiscardedForkChoices) -> () {
-        if self.step_data.get(&self.step_id).is_none() {
-            self.step_data.insert(self.step_id, StepData::new());
-        }
-        let step_data = self.step_data.get(&self.step_id);
-        if let Some(step_data) = step_data {
-            let mut step_data = step_data.clone();
-            step_data.discarded_point_ids =
-                discarded.get_discarded_choices_for_pont(&self.last_pont.borrow().id);
-            self.step_data.insert(self.step_id, step_data);
-        }
+    pub fn log_step(&mut self) -> () {
+        self.step_id += 1;
+        self.log_to_file(format!("Step: {}", self.step_id));
     }
 
     pub fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> () {
-        self.step_id += 1;
-        if self.step_data.get(&self.step_id).is_none() {
-            self.step_data.insert(self.step_id, StepData::new());
-        }
+        self.log_to_file(format!("\tLast Point: {:#?}", route.get_segment_last()));
         let last_segment = route.get_segment_last();
         if let Some(last_segment) = last_segment {
             let point = last_segment.get_end_point();
-
-            if let Some(step_data) = self.step_data.get(&self.step_id) {
-                let mut step_data = step_data.clone();
-                step_data.last_segment = Some(last_segment.clone());
-                self.step_data.insert(self.step_id, step_data);
-            }
 
             let mut waypoint = if let Some(wp) = self.forks.get(&point.borrow().id) {
                 wp.clone()
@@ -229,7 +117,7 @@ impl DebugWriter {
         }
         self.route = route.clone();
 
-        self.write();
+        self.write_gpx();
     }
 
     fn get_dir(&self) -> String {
@@ -238,8 +126,6 @@ impl DebugWriter {
             std::env::temp_dir().to_str().expect("Temp dir not found"),
             self.id,
         );
-
-        eprintln!("writing file {}/{}.(gpx|log)", dir, self.walker_id);
 
         create_dir_all(dir.clone()).expect("unable to create dirs");
 
@@ -287,36 +173,22 @@ impl DebugWriter {
         };
     }
 
-    fn write_log(&self) -> () {
-        let dir = self.get_dir();
-        let mut log_file =
-            match File::create(format!("{}/{}_{}.log", dir, self.walker_id, self.step_id)) {
-                Ok(file) => file,
-                Err(error) => panic!("Debug write error {}", error),
-            };
-
-        let mut step_data: Vec<_> = self.step_data.iter().collect();
-        step_data.sort_by(|(step_num, _), (step_num2, _)| step_num.cmp(step_num2));
-
-        for step_data in step_data {
-            let (step_num, step_data) = step_data;
-            writeln!(
-                log_file,
-                "\nStep num: {}\n\tLast Segment: {:?}\n\tFork Choices: {:?}\n\t Discarded Points: {:?}\n\tFork Point Weights: {:?}\n\tFork Weights: {:?}\n\t Fork Action: {:?}",
-                step_num,
-                step_data.last_segment,
-                step_data.fork_choices,
-                step_data.discarded_point_ids,
-                step_data.fork_point_weights,
-                step_data.fork_weights,
-                step_data.fork_action
-            )
-            .expect("could not write log file");
-        }
+    pub fn log(&self, msg: String) -> () {
+        let msg = msg.replace("\n", "\t\n");
+        self.log_to_file(format!("\t{}", msg));
     }
 
-    pub fn write(&self) -> () {
-        self.write_log();
-        self.write_gpx();
+    fn log_to_file(&self, msg: String) -> () {
+        let dir = self.get_dir();
+        let file_path = format!("{}/{}_logfile.log", dir, self.walker_id);
+        let mut log_file = match File::create_new(file_path.clone()) {
+            Ok(file) => file,
+            Err(_) => match OpenOptions::new().append(true).open(file_path) {
+                Err(error) => panic!("cant open for appending: {}", error),
+                Ok(file) => file,
+            },
+        };
+
+        writeln!(log_file, "{}", msg).expect("could not write log file");
     }
 }

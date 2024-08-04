@@ -239,8 +239,9 @@ impl<'a> RouteWalker<'a> {
                 (&self.start.borrow(), None)
             };
 
+        let point_borrowed = point.borrow();
         let only_allow_rules = if let Some(prev_line) = prev_line {
-            prev_point
+            point_borrowed
                 .rules
                 .iter()
                 .filter(|rule| {
@@ -253,7 +254,7 @@ impl<'a> RouteWalker<'a> {
         };
 
         let not_allow_rules = if let Some(prev_line) = prev_line {
-            prev_point
+            point_borrowed
                 .rules
                 .iter()
                 .filter(|rule| {
@@ -280,7 +281,7 @@ impl<'a> RouteWalker<'a> {
                 }
 
                 // if no rules exist, don't check anything further
-                if prev_point.rules.len() == 0 {
+                if point_borrowed.rules.len() == 0 {
                     return true;
                 }
 
@@ -321,8 +322,18 @@ impl<'a> RouteWalker<'a> {
             if *point == self.end {
                 return Ok(RouteWalkerMoveResult::Finish);
             }
+            self.debug_writer.log(format!(
+                "raw choices for {:#?} : {:#?}",
+                point,
+                self.map_data_graph.get_adjacent(point.clone())
+            ));
 
             let available_segments = self.get_available_junction_segments(Rc::clone(&point));
+
+            self.debug_writer.log(format!(
+                "processed choices {:#?} : {:#?}",
+                point, available_segments
+            ));
 
             if available_segments.get_segment_count() > 1 && self.next_fork_choice_point.is_none() {
                 return Ok(RouteWalkerMoveResult::Fork(available_segments));

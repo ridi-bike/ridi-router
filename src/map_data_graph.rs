@@ -360,6 +360,7 @@ impl MapDataGraph {
     }
 
     fn way_is_ok(&self, _osm_way: &OsmWay) -> bool {
+        _osm_way.tags.get("highway") != "proposed   "
         true
     }
 
