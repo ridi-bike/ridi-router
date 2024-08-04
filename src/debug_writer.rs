@@ -29,7 +29,7 @@ enum ForkAction {
 
 #[derive(Debug, Clone)]
 struct StepData {
-    point: Option<MapDataPointRef>,
+    last_segment: Option<RouteSegment>,
     fork_weights: Option<ForkWeights>,
     fork_action: Option<ForkAction>,
     discarded_point_ids: Option<Vec<u64>>,
@@ -40,7 +40,7 @@ struct StepData {
 impl StepData {
     pub fn new() -> Self {
         Self {
-            point: None,
+            last_segment: None,
             fork_weights: None,
             fork_action: None,
             discarded_point_ids: None,
@@ -171,7 +171,7 @@ impl DebugWriter {
 
             if let Some(step_data) = self.step_data.get(&self.step_id) {
                 let mut step_data = step_data.clone();
-                step_data.point = Some(Rc::clone(&point));
+                step_data.last_segment = Some(last_segment.clone());
                 self.step_data.insert(self.step_id, step_data);
             }
 
@@ -302,9 +302,9 @@ impl DebugWriter {
             let (step_num, step_data) = step_data;
             writeln!(
                 log_file,
-                "\nStep num: {}\n\tPoint: {:?}\n\tFork Choices: {:?}\n\t Discarded Points: {:?}\n\tFork Point Weights: {:?}\n\tFork Weights: {:?}\n\t Fork Action: {:?}",
+                "\nStep num: {}\n\tLast Segment: {:?}\n\tFork Choices: {:?}\n\t Discarded Points: {:?}\n\tFork Point Weights: {:?}\n\tFork Weights: {:?}\n\t Fork Action: {:?}",
                 step_num,
-                step_data.point,
+                step_data.last_segment,
                 step_data.fork_choices,
                 step_data.discarded_point_ids,
                 step_data.fork_point_weights,
