@@ -231,15 +231,21 @@ impl<'a> RouteNavigator<'a> {
                             walker.set_fork_choice_point_id(chosen_fork_point);
                         } else {
                             let move_back_segment_list = walker.move_backwards_to_prev_fork();
+                            let last_segment =
+                                walker.get_route().get_segment_last().map(|s| s.clone());
                             walker
                                 .debug_writer
-                                .log_fork_action_back(move_back_segment_list);
-                            if walker.get_route().get_fork_before_last_segment() == None {
+                                .log_fork_action_back(last_segment, move_back_segment_list);
+                            if walker.get_route().get_junction_before_last_segment() == None {
                                 stuck_walkers_idx.push(walker_idx);
                             }
                         }
                     } else if move_result == Ok(RouteWalkerMoveResult::DeadEnd) {
-                        walker.move_backwards_to_prev_fork();
+                        let move_back_segment_list = walker.move_backwards_to_prev_fork();
+                        let last_segment = walker.get_route().get_segment_last().map(|s| s.clone());
+                        walker
+                            .debug_writer
+                            .log_fork_action_back(last_segment, move_back_segment_list);
                     }
                 });
             while let Some(&walker_idx) = stuck_walkers_idx.last() {

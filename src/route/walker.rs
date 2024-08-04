@@ -73,11 +73,11 @@ impl Route {
     pub fn add_segment(&mut self, segment: RouteSegment) -> () {
         self.route_segments.push(segment)
     }
-    pub fn get_fork_before_last_segment(&self) -> Option<&RouteSegment> {
+    pub fn get_junction_before_last_segment(&self) -> Option<&RouteSegment> {
         match self.get_segment_last() {
             None => None,
             Some(last_segment) => self.route_segments.iter().rev().find(|route_segment| {
-                route_segment.end_point.borrow().fork == true
+                route_segment.end_point.borrow().junction == true
                     && route_segment.end_point.borrow().id != last_segment.end_point.borrow().id
             }),
         }
@@ -227,7 +227,7 @@ impl<'a> RouteWalker<'a> {
         }
     }
 
-    fn get_available_fork_segments(&self, point: MapDataPointRef) -> RouteSegmentList {
+    fn get_available_junction_segments(&self, point: MapDataPointRef) -> RouteSegmentList {
         let (prev_point, prev_line) =
             if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
                 if let Some(p) = self.route_walked.get_segment_by_index(idx) {
@@ -322,7 +322,7 @@ impl<'a> RouteWalker<'a> {
                 return Ok(RouteWalkerMoveResult::Finish);
             }
 
-            let available_segments = self.get_available_fork_segments(Rc::clone(&point));
+            let available_segments = self.get_available_junction_segments(Rc::clone(&point));
 
             if available_segments.get_segment_count() > 1 && self.next_fork_choice_point.is_none() {
                 return Ok(RouteWalkerMoveResult::Fork(available_segments));
@@ -364,15 +364,22 @@ impl<'a> RouteWalker<'a> {
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
-                if last_segment.get_end_point().borrow().fork {
+                if last_segment.get_end_point().borrow().junction
+                    && self
+                        .get_available_junction_segments(Rc::clone(&last_segment.get_end_point()))
+                        .get_segment_count()
+                        > 1
+                {
                     break;
                 }
+            } else {
+                break;
             }
             self.route_walked.remove_last_segment();
         }
 
         if let Some(RouteSegment { line: _, end_point }) = self.route_walked.get_segment_last() {
-            return Some(self.get_available_fork_segments(Rc::clone(&end_point)));
+            return Some(self.get_available_junction_segments(Rc::clone(&end_point)));
         }
 
         None

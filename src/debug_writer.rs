@@ -11,6 +11,7 @@ use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::route::navigator::WeightCalcResult;
+use crate::route::walker::RouteSegment;
 use crate::{
     map_data_graph::MapDataPointRef,
     route::{
@@ -23,7 +24,7 @@ use crate::{
 #[derive(Debug, Clone)]
 enum ForkAction {
     SetChoice(u64),
-    MoveBack(Option<RouteSegmentList>),
+    MoveBack(Option<RouteSegment>, Option<RouteSegmentList>),
 }
 
 #[derive(Debug, Clone)]
@@ -119,14 +120,18 @@ impl DebugWriter {
             self.step_data.insert(self.step_id, step_data);
         }
     }
-    pub fn log_fork_action_back(&mut self, segment_list: Option<RouteSegmentList>) -> () {
+    pub fn log_fork_action_back(
+        &mut self,
+        last_segment: Option<RouteSegment>,
+        segment_list: Option<RouteSegmentList>,
+    ) -> () {
         if self.step_data.get(&self.step_id).is_none() {
             self.step_data.insert(self.step_id, StepData::new());
         }
         let step_data = self.step_data.get(&self.step_id);
         if let Some(step_data) = step_data {
             let mut step_data = step_data.clone();
-            step_data.fork_action = Some(ForkAction::MoveBack(segment_list));
+            step_data.fork_action = Some(ForkAction::MoveBack(last_segment, segment_list));
             self.step_data.insert(self.step_id, step_data);
         }
     }

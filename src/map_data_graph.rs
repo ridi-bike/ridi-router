@@ -102,7 +102,7 @@ pub struct MapDataPoint {
     pub lon: f64,
     pub part_of_ways: Vec<MapDataWayRef>,
     pub lines: Vec<MapDataLineRef>,
-    pub fork: bool,
+    pub junction: bool,
     pub rules: Vec<MapDataRule>,
 }
 
@@ -121,7 +121,7 @@ impl Debug for MapDataPoint {
     lon={}
     part_of_ways={:?}
     lines={:?}
-    fork={}",
+    junction={}",
             self.id,
             self.lat,
             self.lon,
@@ -133,7 +133,7 @@ impl Debug for MapDataPoint {
                 .iter()
                 .map(|l| l.borrow().id.clone())
                 .collect::<Vec<_>>(),
-            self.fork
+            self.junction
         )
     }
 }
@@ -313,7 +313,7 @@ impl MapDataGraph {
             lon: value.lon,
             part_of_ways: Vec::new(),
             lines: Vec::new(),
-            fork: false,
+            junction: false,
             rules: Vec::new(),
         }));
         self.point_hashed_offset_none.insert(
@@ -361,24 +361,6 @@ impl MapDataGraph {
             }
 
             if let Some(point) = self.points.get(&point_id) {
-                let point_fork = if point.borrow().part_of_ways.len() > 2 {
-                    true
-                } else if let Some(other_way) = point
-                    .borrow()
-                    .part_of_ways
-                    .iter()
-                    .find(|&w| w.borrow().id != way.borrow().id)
-                {
-                    !other_way.borrow().points.is_first_or_last(&point)
-                        || !way.borrow().points.is_first_or_last(&point)
-                } else {
-                    false
-                };
-                let mut point_mut = point.borrow_mut();
-                point_mut.fork = point_fork;
-            }
-
-            if let Some(point) = self.points.get(&point_id) {
                 let mut point_mut = point.borrow_mut();
                 if let Some(prev_point) = &prev_point {
                     let line_id = get_line_id(&way.borrow().id, &prev_point.borrow().id, &point_id);
@@ -397,9 +379,12 @@ impl MapDataGraph {
                     self.lines
                         .insert(line.borrow().id.clone(), Rc::clone(&line));
                     point_mut.lines.push(Rc::clone(&line));
+                    point_mut.junction = point_mut.lines.len() > 2;
 
                     let mut prev_point_mut = prev_point.borrow_mut();
                     prev_point_mut.lines.push(line);
+
+                    prev_point_mut.junction = prev_point_mut.lines.len() > 2;
                 }
                 prev_point = Some(Rc::clone(&point));
             } else {
@@ -623,7 +608,7 @@ mod tests {
         lon: f64,
         ways: Vec<u64>,
         lines: Vec<&'static str>,
-        fork: bool,
+        junction: bool,
     }
 
     #[test]
@@ -653,7 +638,7 @@ mod tests {
                         .expect(format!("{}: line at idx {} must exist", id, idx).as_str());
                     l.borrow().id == *test_line_id
                 })
-                && point.fork == test.fork
+                && point.junction == test.junction
         }
         let map_data = get_test_map_data_graph();
         assert!(point_is_ok(
@@ -664,7 +649,7 @@ mod tests {
                 lon: 1.0,
                 ways: vec![1234],
                 lines: vec!["1234-1-2"],
-                fork: false
+                junction: false
             }
         ));
         assert!(point_is_ok(
@@ -675,7 +660,7 @@ mod tests {
                 lon: 2.0,
                 ways: vec![1234],
                 lines: vec!["1234-1-2", "1234-2-3"],
-                fork: false
+                junction: false
             }
         ));
         assert!(point_is_ok(
@@ -686,7 +671,7 @@ mod tests {
                 lon: 3.0,
                 ways: vec![1234, 5367],
                 lines: vec!["1234-2-3", "1234-3-4", "5367-5-3", "5367-3-6"],
-                fork: true
+                junction: true
             }
         ));
         assert!(point_is_ok(
@@ -697,7 +682,7 @@ mod tests {
                 lon: 4.0,
                 ways: vec![1234, 489],
                 lines: vec!["1234-3-4", "489-4-8"],
-                fork: false
+                junction: false
             }
         ));
         assert!(point_is_ok(
@@ -708,7 +693,7 @@ mod tests {
                 lon: 5.0,
                 ways: vec![5367],
                 lines: vec!["5367-5-3"],
-                fork: false
+                junction: false
             }
         ));
         assert!(point_is_ok(
@@ -719,7 +704,7 @@ mod tests {
                 lon: 6.0,
                 ways: vec![5367, 68],
                 lines: vec!["5367-3-6", "5367-6-7", "68-6-8"],
-                fork: true
+                junction: true
             }
         ));
         assert!(point_is_ok(
@@ -730,7 +715,7 @@ mod tests {
                 lon: 7.0,
                 ways: vec![5367],
                 lines: vec!["5367-6-7"],
-                fork: false
+                junction: false
             }
         ));
         assert!(point_is_ok(
@@ -741,7 +726,7 @@ mod tests {
                 lon: 8.0,
                 ways: vec![489, 68],
                 lines: vec!["489-4-8", "489-8-9", "68-6-8"],
-                fork: true
+                junction: true
             }
         ));
         assert!(point_is_ok(
@@ -752,7 +737,7 @@ mod tests {
                 lon: 9.0,
                 ways: vec![489],
                 lines: vec!["489-8-9"],
-                fork: false
+                junction: false
             }
         ));
         assert!(point_is_ok(
@@ -763,7 +748,7 @@ mod tests {
                 lon: 11.0,
                 ways: vec![1112],
                 lines: vec!["1112-11-12"],
-                fork: false
+                junction: false
             }
         ));
         assert!(point_is_ok(
@@ -774,7 +759,7 @@ mod tests {
                 lon: 12.0,
                 ways: vec![1112],
                 lines: vec!["1112-11-12"],
-                fork: false
+                junction: false
             }
         ));
     }
@@ -844,6 +829,7 @@ mod tests {
         let res = map_data.insert_way(OsmWay {
             id: 1,
             point_ids: vec![1],
+            one_way: false,
         });
         if let Ok(_) = res {
             assert!(false);
@@ -857,25 +843,25 @@ mod tests {
     }
 
     #[test]
-    fn mark_forks() {
+    fn mark_junction() {
         let map_data = get_test_map_data_graph();
         let point = map_data.get_point_by_id(&5).unwrap();
         let points = map_data.get_adjacent(point);
         points.iter().for_each(|p| {
-            assert!((p.1.borrow().id == 3 && p.1.borrow().fork == true) || p.1.borrow().id != 3)
+            assert!((p.1.borrow().id == 3 && p.1.borrow().junction == true) || p.1.borrow().id != 3)
         });
 
         let point = map_data.get_point_by_id(&3).unwrap();
         let points = map_data.get_adjacent(point);
-        let non_forks = vec![2, 5, 4];
+        let non_junctions = vec![2, 5, 4];
         points.iter().for_each(|p| {
             assert!(
-                ((non_forks.contains(&p.1.borrow().id) && p.1.borrow().fork == false)
-                    || !non_forks.contains(&p.1.borrow().id))
+                ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().junction == false)
+                    || !non_junctions.contains(&p.1.borrow().id))
             )
         });
         points.iter().for_each(|p| {
-            assert!((p.1.borrow().id == 6 && p.1.borrow().fork == true) || p.1.borrow().id != 6)
+            assert!((p.1.borrow().id == 6 && p.1.borrow().junction == true) || p.1.borrow().id != 6)
         });
     }
 
