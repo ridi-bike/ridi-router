@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::{
+    debug_writer::DebugWriter,
     gpx_writer::RoutesWriter,
     map_data_graph::{MapDataGraph, MapDataPointRef},
 };
@@ -133,6 +134,7 @@ impl<'a> RouteNavigator<'a> {
                 map_data_graph,
                 Rc::clone(&start),
                 Rc::clone(&end),
+                DebugWriter::new(1, Rc::clone(&start), Rc::clone(&end)),
             )],
             start,
             end,
@@ -164,16 +166,17 @@ impl<'a> RouteNavigator<'a> {
                         walker
                             .debug_writer
                             .log(format!("choices: {:#?}", fork_choices));
-                        walker.debug_writer.log(format!(
-                            "discarded choices: {:#?}",
-                            self.discarded_fork_choices
-                        ));
                         let (fork_choices, last_point_id) = {
                             let last_element = walker.get_route().get_segment_last();
                             let last_point_id = match last_element {
                                 None => self.start.borrow().id,
                                 Some(route_segment) => route_segment.get_end_point().borrow().id,
                             };
+                            walker.debug_writer.log(format!(
+                                "discarded choices: {:#?}",
+                                self.discarded_fork_choices
+                                    .get_discarded_choices_for_pont(&last_point_id)
+                            ));
                             (
                                 fork_choices.exclude_segments_where_points_in(
                                     &self
@@ -201,8 +204,17 @@ impl<'a> RouteNavigator<'a> {
                                             route: walker.get_route(),
                                             start_point: Rc::clone(&self.start),
                                             end_point: Rc::clone(&self.end),
-                                            choice_segment: &fork_route_segment,
-                                            all_choice_segments: &fork_choices,
+                                            eval_fork_segment: &fork_route_segment,
+                                            all_fork_segments: &fork_choices,
+                                            walker: RouteWalker::new(
+                                                self.map_data_graph,
+                                                Rc::clone(&fork_route_segment.get_end_point()),
+                                                Rc::clone(&self.end),
+                                                DebugWriter::disabled(
+                                                    Rc::clone(&self.start),
+                                                    Rc::clone(&self.end),
+                                                ),
+                                            ),
                                         })
                                     })
                                     .collect::<Vec<_>>();
@@ -301,7 +313,8 @@ mod test {
                 Some(segment) => segment.get_end_point(),
                 None => &input.end_point,
             };
-            if prev_point.borrow().id == 3 && input.choice_segment.get_end_point().borrow().id == 6
+            if prev_point.borrow().id == 3
+                && input.eval_fork_segment.get_end_point().borrow().id == 6
             {
                 return WeightCalcResult::UseWithWeight(10);
             }
@@ -329,7 +342,8 @@ mod test {
                 None => &input.end_point,
             };
 
-            if prev_point.borrow().id == 3 && input.choice_segment.get_end_point().borrow().id == 4
+            if prev_point.borrow().id == 3
+                && input.eval_fork_segment.get_end_point().borrow().id == 4
             {
                 return WeightCalcResult::UseWithWeight(10);
             }
@@ -357,14 +371,15 @@ mod test {
             };
 
             if prev_point.borrow().id == 3 {
-                if input.choice_segment.get_end_point().borrow().id == 5 {
+                if input.eval_fork_segment.get_end_point().borrow().id == 5 {
                     return WeightCalcResult::UseWithWeight(10);
                 }
-                if input.choice_segment.get_end_point().borrow().id == 6 {
+                if input.eval_fork_segment.get_end_point().borrow().id == 6 {
                     return WeightCalcResult::UseWithWeight(5);
                 }
             }
-            if prev_point.borrow().id == 6 && input.choice_segment.get_end_point().borrow().id == 7
+            if prev_point.borrow().id == 6
+                && input.eval_fork_segment.get_end_point().borrow().id == 7
             {
                 return WeightCalcResult::UseWithWeight(10);
             }
@@ -402,7 +417,7 @@ mod test {
     #[test]
     fn navigate_no_routes_with_do_not_use_weight() {
         fn weight(input: WeightCalcInput) -> WeightCalcResult {
-            if input.choice_segment.get_end_point().borrow().id == 7 {
+            if input.eval_fork_segment.get_end_point().borrow().id == 7 {
                 return WeightCalcResult::DoNotUse;
             }
             WeightCalcResult::UseWithWeight(1)
@@ -422,7 +437,8 @@ mod test {
                 Some(segment) => segment.get_end_point(),
                 None => &input.end_point,
             };
-            if prev_point.borrow().id == 3 && input.choice_segment.get_end_point().borrow().id == 6
+            if prev_point.borrow().id == 3
+                && input.eval_fork_segment.get_end_point().borrow().id == 6
             {
                 return WeightCalcResult::UseWithWeight(10);
             }
@@ -434,7 +450,8 @@ mod test {
                 None => &input.end_point,
             };
 
-            if prev_point.borrow().id == 3 && input.choice_segment.get_end_point().borrow().id == 6
+            if prev_point.borrow().id == 3
+                && input.eval_fork_segment.get_end_point().borrow().id == 6
             {
                 return WeightCalcResult::UseWithWeight(1);
             }

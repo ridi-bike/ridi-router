@@ -216,6 +216,7 @@ impl<'a> RouteWalker<'a> {
         map_data_graph: &'a MapDataGraph,
         start: MapDataPointRef,
         end: MapDataPointRef,
+        debug_writer: DebugWriter,
     ) -> Self {
         Self {
             map_data_graph,
@@ -223,51 +224,93 @@ impl<'a> RouteWalker<'a> {
             end,
             route_walked: Route::new(),
             next_fork_choice_point: None,
-            debug_writer: DebugWriter::new(1, start),
+            debug_writer,
         }
     }
 
-    fn get_available_junction_segments(&self, point: MapDataPointRef) -> RouteSegmentList {
-        let (prev_point, prev_line) =
-            if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
+    fn get_next_segments(&self) -> RouteSegmentList {
+        let (center_point, center_line) =
+            if let Some(idx) = self.route_walked.get_segment_count().checked_sub(1) {
                 if let Some(p) = self.route_walked.get_segment_by_index(idx) {
-                    (&p.get_end_point().borrow(), Some(p.get_line()))
+                    (p.get_end_point(), Some(p.get_line()))
                 } else {
-                    (&self.start.borrow(), None)
+                    (&self.start, None)
                 }
             } else {
-                (&self.start.borrow(), None)
+                (&self.start, None)
             };
 
-        let point_borrowed = point.borrow();
-        let only_allow_rules = if let Some(prev_line) = prev_line {
-            point_borrowed
-                .rules
-                .iter()
-                .filter(|rule| {
-                    rule.rule_type == MapDataRuleType::OnlyAllowed
-                        && rule.from_lines.contains(&prev_line)
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+        let center_line = match center_line {
+            Some(l) => l,
+            None => {
+                let center_point_borrowed = center_point.borrow();
+
+                let not_allow_rules = center_point_borrowed
+                    .rules
+                    .iter()
+                    .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
+                    .collect::<Vec<_>>();
+                let segments = self.map_data_graph.get_adjacent(Rc::clone(&center_point));
+                let segment_list = segments
+                    .iter()
+                    .filter_map(|(l, p)| {
+                        if l.borrow().one_way && &l.borrow().points.1 == center_point {
+                            return None;
+                        }
+                        if not_allow_rules.len() > 0 {
+                            let not_allow_rules_for_segment = not_allow_rules
+                                .iter()
+                                .filter(|rule| rule.to_lines.contains(&l))
+                                .collect::<Vec<_>>();
+                            let other_segments =
+                                segments.iter().filter(|s| &s.0 != l).collect::<Vec<_>>();
+
+                            if not_allow_rules_for_segment.iter().any(|rule| {
+                                other_segments
+                                    .iter()
+                                    .all(|seg| rule.to_lines.contains(&seg.0))
+                            }) {
+                                return None;
+                            }
+                        }
+                        Some(RouteSegment::new(Rc::clone(&l), Rc::clone(&p)))
+                    })
+                    .collect::<RouteSegmentList>();
+                return segment_list;
+            }
         };
 
-        let not_allow_rules = if let Some(prev_line) = prev_line {
-            point_borrowed
-                .rules
-                .iter()
-                .filter(|rule| {
-                    rule.rule_type == MapDataRuleType::NotAllowed
-                        && rule.from_lines.contains(&prev_line)
-                })
-                .collect::<Vec<_>>()
+        let prev_point = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
+            if let Some(p) = self.route_walked.get_segment_by_index(idx) {
+                &p.get_end_point().borrow()
+            } else {
+                &self.start.borrow()
+            }
         } else {
-            Vec::new()
+            &self.start.borrow()
         };
+
+        let center_point_borrowed = center_point.borrow();
+        let only_allow_rules = center_point_borrowed
+            .rules
+            .iter()
+            .filter(|rule| {
+                rule.rule_type == MapDataRuleType::OnlyAllowed
+                    && rule.from_lines.contains(&center_line)
+            })
+            .collect::<Vec<_>>();
+
+        let not_allow_rules = center_point_borrowed
+            .rules
+            .iter()
+            .filter(|rule| {
+                rule.rule_type == MapDataRuleType::NotAllowed
+                    && rule.from_lines.contains(&center_line)
+            })
+            .collect::<Vec<_>>();
 
         self.map_data_graph
-            .get_adjacent(Rc::clone(&point))
+            .get_adjacent(Rc::clone(&center_point))
             .into_iter()
             .filter(|(line_next, point_next)| {
                 // do not offer the same line as you came from
@@ -276,12 +319,12 @@ impl<'a> RouteWalker<'a> {
                 }
 
                 // exclude if next line is one way and the direction is backwards
-                if line_next.borrow().one_way && line_next.borrow().points.1 == point {
+                if line_next.borrow().one_way && &line_next.borrow().points.1 == center_point {
                     return false;
                 }
 
                 // if no rules exist, don't check anything further
-                if point_borrowed.rules.len() == 0 {
+                if center_point.borrow().rules.len() == 0 {
                     return true;
                 }
 
@@ -328,7 +371,7 @@ impl<'a> RouteWalker<'a> {
                 self.map_data_graph.get_adjacent(point.clone())
             ));
 
-            let available_segments = self.get_available_junction_segments(Rc::clone(&point));
+            let available_segments = self.get_next_segments();
 
             self.debug_writer.log(format!(
                 "processed choices {:#?} : {:#?}",
@@ -376,10 +419,7 @@ impl<'a> RouteWalker<'a> {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
                 if last_segment.get_end_point().borrow().junction
-                    && self
-                        .get_available_junction_segments(Rc::clone(&last_segment.get_end_point()))
-                        .get_segment_count()
-                        > 1
+                    && self.get_next_segments().get_segment_count() > 1
                 {
                     break;
                 }
@@ -389,8 +429,8 @@ impl<'a> RouteWalker<'a> {
             self.route_walked.remove_last_segment();
         }
 
-        if let Some(RouteSegment { line: _, end_point }) = self.route_walked.get_segment_last() {
-            return Some(self.get_available_junction_segments(Rc::clone(&end_point)));
+        if self.route_walked.get_segment_last().is_some() {
+            return Some(self.get_next_segments());
         }
 
         None

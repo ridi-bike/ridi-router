@@ -52,6 +52,7 @@ pub struct OsmWay {
     pub id: u64,
     pub point_ids: Vec<u64>,
     pub one_way: bool,
+    pub tags: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -268,6 +269,8 @@ pub struct MapDataLine {
     pub way: MapDataWayRef,
     pub points: (MapDataPointRef, MapDataPointRef),
     pub one_way: bool,
+    pub tags_ref: Option<String>,
+    pub tags_name: Option<String>,
 }
 
 impl PartialEq for MapDataLine {
@@ -359,8 +362,12 @@ impl MapDataGraph {
         self.points.insert(id, point);
     }
 
-    fn way_is_ok(&self, _osm_way: &OsmWay) -> bool {
-        _osm_way.tags.get("highway") != "proposed   "
+    fn way_is_ok(&self, osm_way: &OsmWay) -> bool {
+        if let Some(tags) = &osm_way.tags {
+            if let Some(highway) = tags.get("highway") {
+                return highway != "proposed";
+            }
+        }
         true
     }
 
@@ -388,17 +395,19 @@ impl MapDataGraph {
                 let mut point_mut = point.borrow_mut();
                 if let Some(prev_point) = &prev_point {
                     let line_id = get_line_id(&way.borrow().id, &prev_point.borrow().id, &point_id);
-                    // let prev_point_geo = Point::new(prev_point.lon, prev_point.lat);
-                    // let point_geo = Point::new(point_mut.lon, point_mut.lat);
                     let line = Rc::new(RefCell::new(MapDataLine {
                         id: line_id,
                         way: Rc::clone(&way),
                         points: (Rc::clone(&prev_point), Rc::clone(&point)),
                         one_way: osm_way.one_way,
-                        // length_m: prev_point_geo.haversine_distance(&point_geo),
-                        // bearing_deg: prev_point_geo.haversine_bearing(point_geo),
-                        // one_way: way.one_way,
-                        // accessible_from_line_ids: Vec::new(),
+                        tags_name: osm_way
+                            .tags
+                            .as_ref()
+                            .map_or(None, |t| t.get("name").cloned()),
+                        tags_ref: osm_way
+                            .tags
+                            .as_ref()
+                            .map_or(None, |t| t.get("ref").cloned()),
                     }));
                     self.lines
                         .insert(line.borrow().id.clone(), Rc::clone(&line));

@@ -1,4 +1,5 @@
 use core::panic;
+use std::cell::RefCell;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::{
@@ -11,6 +12,7 @@ use geo::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::map_data_graph::MapDataPoint;
 use crate::route::navigator::WeightCalcResult;
 use crate::route::walker::RouteSegment;
 use crate::{
@@ -23,10 +25,12 @@ use crate::{
 };
 
 pub struct DebugWriter {
+    enabled: bool,
     id: u64,
     step_id: u64,
     walker_id: u16,
     start_point: MapDataPointRef,
+    end_point: MapDataPointRef,
     last_pont: MapDataPointRef,
     dead_end_tracks: Vec<Track>,
     forks: HashMap<u64, Waypoint>,
@@ -34,18 +38,35 @@ pub struct DebugWriter {
 }
 
 impl DebugWriter {
-    pub fn new(walker_id: u16, start_point: MapDataPointRef) -> Self {
+    pub fn new(walker_id: u16, start_point: MapDataPointRef, end_point: MapDataPointRef) -> Self {
         let start = SystemTime::now();
         let since_the_epoch = start
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards");
 
         Self {
+            enabled: true,
             id: since_the_epoch.as_secs(),
             step_id: 0,
             walker_id,
             last_pont: Rc::clone(&start_point),
             start_point,
+            end_point,
+            dead_end_tracks: Vec::new(),
+            route: Route::new(),
+            forks: HashMap::new(),
+        }
+    }
+
+    pub fn disabled(start_point: MapDataPointRef, end_point: MapDataPointRef) -> Self {
+        Self {
+            enabled: false,
+            id: 0,
+            step_id: 0,
+            walker_id: 0,
+            last_pont: Rc::clone(&start_point),
+            start_point,
+            end_point,
             dead_end_tracks: Vec::new(),
             route: Route::new(),
             forks: HashMap::new(),
@@ -53,11 +74,17 @@ impl DebugWriter {
     }
 
     pub fn log_step(&mut self) -> () {
+        if !self.enabled {
+            return ();
+        }
         self.step_id += 1;
         self.log_to_file(format!("Step: {}", self.step_id));
     }
 
     pub fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> () {
+        if !self.enabled {
+            return ();
+        }
         self.log_to_file(format!("\tLast Point: {:#?}", route.get_segment_last()));
         let last_segment = route.get_segment_last();
         if let Some(last_segment) = last_segment {
@@ -161,6 +188,13 @@ impl DebugWriter {
             gpx.waypoints.push(wp.1);
         }
 
+        let mut end_point = Waypoint::new(Point::new(
+            self.end_point.borrow().lon,
+            self.end_point.borrow().lat,
+        ));
+        end_point.name = Some(String::from("END"));
+        gpx.waypoints.push(end_point);
+
         for track in self.dead_end_tracks.clone() {
             gpx.tracks.push(track);
         }
@@ -174,6 +208,9 @@ impl DebugWriter {
     }
 
     pub fn log(&self, msg: String) -> () {
+        if !self.enabled {
+            return ();
+        }
         let msg = msg.replace("\n", "\t\n");
         self.log_to_file(format!("\t{}", msg));
     }

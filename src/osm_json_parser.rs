@@ -135,6 +135,7 @@ impl OsmElement {
                 } else {
                     false
                 },
+                tags: self.tags.clone(),
             });
         }
 
