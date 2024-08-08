@@ -82,11 +82,17 @@ impl Route {
             }),
         }
     }
-    pub fn contains_point_id(&self, id: u64) -> bool {
-        self.route_segments
-            .iter()
-            .find(|segment| segment.end_point.borrow().id == id)
-            .is_some()
+    pub fn has_looped(&self) -> bool {
+        let last_segment = self.route_segments.last();
+        if let Some(last_segment) = last_segment {
+            let end_index = self.route_segments.len().checked_sub(1);
+            if let Some(end_index) = end_index {
+                return self.route_segments[..end_index].iter().any(|segment| {
+                    segment.end_point.borrow().id == last_segment.get_end_point().borrow().id
+                });
+            }
+        }
+        false
     }
 }
 
