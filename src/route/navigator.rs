@@ -206,7 +206,7 @@ impl<'a> RouteNavigator<'a> {
                                             end_point: Rc::clone(&self.end),
                                             eval_fork_segment: &fork_route_segment,
                                             all_fork_segments: &fork_choices,
-                                            walker: RouteWalker::new(
+                                            fork_walker: RouteWalker::new(
                                                 self.map_data_graph,
                                                 Rc::clone(&fork_route_segment.get_end_point()),
                                                 Rc::clone(&self.end),

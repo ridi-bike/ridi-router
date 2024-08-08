@@ -452,6 +452,7 @@ mod tests {
     use core::panic;
 
     use crate::{
+        debug_writer::DebugWriter,
         route::walker::{Route, RouteWalkerMoveResult, RouterWalkerError},
         test_utils::{get_test_map_data_graph, line_is_between_point_ids},
     };
@@ -464,7 +465,12 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&1).unwrap();
 
-        let mut walker = RouteWalker::new(&map_data, point1, point2);
+        let mut walker = RouteWalker::new(
+            &map_data,
+            point1.clone(),
+            point2.clone(),
+            DebugWriter::disabled(point1, point2),
+        );
 
         assert_eq!(
             walker.move_forward_to_next_fork(),
@@ -479,7 +485,12 @@ mod tests {
         let point1 = map_data.get_point_by_id(&2).unwrap();
         let point2 = map_data.get_point_by_id(&3).unwrap();
 
-        let mut walker = RouteWalker::new(&map_data, point1, point2);
+        let mut walker = RouteWalker::new(
+            &map_data,
+            point1.clone(),
+            point2.clone(),
+            DebugWriter::disabled(point1, point2),
+        );
 
         let choice = map_data.get_point_by_id(&6).unwrap();
         walker.set_fork_choice_point_id(choice);
@@ -503,7 +514,12 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&2).unwrap();
 
-        let mut walker = RouteWalker::new(&map_data, point1, point2);
+        let mut walker = RouteWalker::new(
+            &map_data,
+            point1.clone(),
+            point2.clone(),
+            DebugWriter::disabled(point1, point2),
+        );
         assert_eq!(
             walker.move_forward_to_next_fork(),
             Ok(RouteWalkerMoveResult::Finish)
@@ -530,7 +546,12 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&7).unwrap();
 
-        let mut walker = RouteWalker::new(&map_data, point1, point2);
+        let mut walker = RouteWalker::new(
+            &map_data,
+            point1.clone(),
+            point2.clone(),
+            DebugWriter::disabled(point1, point2),
+        );
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),
@@ -615,7 +636,12 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&4).unwrap();
 
-        let mut walker = RouteWalker::new(&map_data, point1, point2);
+        let mut walker = RouteWalker::new(
+            &map_data,
+            point1.clone(),
+            point2.clone(),
+            DebugWriter::disabled(point1, point2),
+        );
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),

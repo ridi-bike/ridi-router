@@ -24,6 +24,7 @@ use crate::{
     },
 };
 
+#[derive(Clone)]
 pub struct DebugWriter {
     enabled: bool,
     id: u64,

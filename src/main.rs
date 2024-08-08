@@ -11,14 +11,15 @@ use gpx_writer::RoutesWriter;
 use osm_data_reader::OsmDataReader;
 use route::{
     navigator::RouteNavigator,
-    weights::{weight_heading, weight_no_loops, weight_prefer_same_road},
+    weights::{
+        weight_check_distance_to_end, weight_heading, weight_no_loops, weight_prefer_same_road,
+    },
 };
 
 mod debug_writer;
 mod gps_hash;
 mod gpx_writer;
 mod map_data_graph;
-mod osm;
 mod osm_data_reader;
 mod osm_json_parser;
 mod route;
@@ -101,7 +102,12 @@ fn main() {
         &map_data,
         Rc::clone(&start_point),
         end_point,
-        vec![weight_prefer_same_road, weight_heading, weight_no_loops],
+        vec![
+            weight_check_distance_to_end,
+            weight_prefer_same_road,
+            weight_heading,
+            weight_no_loops,
+        ],
     );
 
     let routes = navigator.generate_routes();

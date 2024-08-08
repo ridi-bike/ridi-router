@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use geo::{HaversineBearing, Point};
+use geo::{HaversineBearing, HaversineDistance, Point};
 
 use crate::map_data_graph::{MapDataPoint, MapDataPointRef};
 
@@ -15,13 +15,13 @@ pub struct WeightCalcInput<'a> {
     pub all_fork_segments: &'a RouteSegmentList,
     pub start_point: MapDataPointRef,
     pub end_point: MapDataPointRef,
-    pub walker: RouteWalker<'a>,
+    pub fork_walker: RouteWalker<'a>,
 }
 
 pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
 
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
-    let mut walker = input.walker;
+    let mut walker = input.fork_walker;
     let next_fork = match walker.move_forward_to_next_fork() {
         Ok(v) => v,
         Err(e) => {
@@ -44,43 +44,35 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     );
     let end_point_geo = Point::new(input.end_point.borrow().lon, input.end_point.borrow().lat);
     let end_bearing = fork_point_geo.haversine_bearing(end_point_geo);
-    // let (fork_point_one, fork_point_two) =
-    //     if &fork_segment.get_line().borrow().points.0 == fork_segment.get_end_point() {
-    //         (
-    //             Rc::clone(&fork_segment.get_line().borrow().points.1),
-    //             Rc::clone(&fork_segment.get_line().borrow().points.0),
-    //         )
-    //     } else {
-    //         (
-    //             Rc::clone(&fork_segment.get_line().borrow().points.0),
-    //             Rc::clone(&fork_segment.get_line().borrow().points.1),
-    //         )
-    //     };
-    let fork_point_one_geo = Point::new(
+    let fork_line_one_geo = Point::new(
         fork_segment.get_line().borrow().points.0.borrow().lon,
         fork_segment.get_line().borrow().points.0.borrow().lat,
     );
-    let fork_point_two_geo = Point::new(
+    let fork_line_two_geo = Point::new(
         fork_segment.get_line().borrow().points.1.borrow().lon,
         fork_segment.get_line().borrow().points.1.borrow().lat,
     );
     let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
     {
-        fork_point_one_geo.haversine_bearing(fork_point_two_geo)
+        fork_line_one_geo.haversine_bearing(fork_line_two_geo)
     } else {
-        fork_point_two_geo.haversine_bearing(fork_point_one_geo)
+        fork_line_two_geo.haversine_bearing(fork_line_one_geo)
     };
 
-    match end_bearing - fork_bearing {
-        -15.0..15.0 => WeightCalcResult::UseWithWeight(150),
-        -45.0..-12.0 => WeightCalcResult::UseWithWeight(100),
-        15.0..45.0 => WeightCalcResult::UseWithWeight(100),
-        -90.0..45.0 => WeightCalcResult::UseWithWeight(50),
-        45.0..90.0 => WeightCalcResult::UseWithWeight(50),
-        -135.0..-90.0 => WeightCalcResult::UseWithWeight(10),
-        90.0..135.0 => WeightCalcResult::UseWithWeight(10),
-        _ => WeightCalcResult::UseWithWeight(1),
-    }
+    let degree_offset_from_end = (fork_bearing - end_bearing).abs();
+
+    let ratio: f64 = 255.0 / 180.0;
+    // eprintln!(
+    //     "point_id: {}, end_bearing: {}, fork_bearing: {}, ratio: {}, degree_offset: {}, res: {}",
+    //     input.eval_fork_segment.get_end_point().borrow().id,
+    //     end_bearing,
+    //     fork_bearing,
+    //     ratio,
+    //     degree_offset_from_end,
+    //     255.0 - (degree_offset_from_end * ratio).round()
+    // );
+
+    WeightCalcResult::UseWithWeight(255 - (degree_offset_from_end * ratio).round() as u8)
 }
 
 pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
@@ -101,20 +93,56 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
         .clone();
 
     if current_ref == fork_ref || current_name == fork_name {
-        return WeightCalcResult::UseWithWeight(150);
+        return WeightCalcResult::UseWithWeight(80);
     }
 
     WeightCalcResult::UseWithWeight(0)
 }
 
 pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
-    if input
-        .route
-        .contains_point_id(input.eval_fork_segment.get_end_point().borrow().id)
-    {
+    if input.route.has_looped() {
         return WeightCalcResult::DoNotUse;
     }
 
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_check_distance_to_end(input: WeightCalcInput) -> WeightCalcResult {
+    let check_steps_back = 10;
+    let route_len = input.route.get_segment_count();
+    if route_len < check_steps_back {
+        return WeightCalcResult::UseWithWeight(0);
+    }
+    let distance_to_end_current = match input.route.get_segment_last() {
+        None => return WeightCalcResult::UseWithWeight(0),
+        Some(point) => {
+            let geo = Point::new(
+                point.get_end_point().borrow().lon,
+                point.get_end_point().borrow().lat,
+            );
+            let end_geo = Point::new(input.end_point.borrow().lon, input.end_point.borrow().lat);
+            geo.haversine_distance(&end_geo)
+        }
+    };
+
+    let distance_to_end_steps_back = match input
+        .route
+        .get_segment_by_index(route_len - 1 - check_steps_back)
+    {
+        None => return WeightCalcResult::UseWithWeight(0),
+        Some(point) => {
+            let geo = Point::new(
+                point.get_end_point().borrow().lon,
+                point.get_end_point().borrow().lat,
+            );
+            let end_geo = Point::new(input.end_point.borrow().lon, input.end_point.borrow().lat);
+            geo.haversine_distance(&end_geo)
+        }
+    };
+
+    if distance_to_end_current > distance_to_end_steps_back {
+        return WeightCalcResult::DoNotUse;
+    }
     WeightCalcResult::UseWithWeight(0)
 }
 
@@ -124,78 +152,96 @@ mod test {
     use std::{cell::RefCell, rc::Rc};
 
     use crate::{
-        map_data_graph::{MapDataLine, MapDataPoint, MapDataWay, MapDataWayPoints},
+        debug_writer::DebugWriter,
+        map_data_graph::{
+            MapDataGraph, MapDataLine, MapDataPoint, MapDataPointRef, MapDataWay, MapDataWayPoints,
+        },
+        osm_data_reader::OsmDataReader,
         route::{
-            navigator::WeightCalcResult,
-            walker::{Route, RouteSegment, RouteSegmentList},
+            navigator::{RouteNavigator, WeightCalcResult},
+            walker::{Route, RouteSegment, RouteSegmentList, RouteWalker},
         },
     };
 
     use super::{weight_heading, WeightCalcInput};
 
+    fn get_route_segment(
+        end_point: MapDataPointRef,
+        opposite_point_for_line: MapDataPointRef,
+    ) -> RouteSegment {
+        let end_point_borrowed = end_point.borrow();
+        let line = end_point_borrowed
+            .lines
+            .iter()
+            .find(|line| {
+                let line = line.borrow();
+                (line.points.0 == end_point && line.points.1 == opposite_point_for_line)
+                    || (line.points.1 == end_point && line.points.0 == opposite_point_for_line)
+            })
+            .expect("line to be found");
+
+        RouteSegment::new(line.clone(), end_point.clone())
+    }
+
     #[test]
     fn weight_heading_test() {
-        let route = Route::new();
-        let end_point = Rc::new(RefCell::new(MapDataPoint {
-            // 57.15651, 24.84966
-            id: 2,
-            lat: 57.15651,
-            lon: 24.84966,
-            junction: false,
-            lines: Vec::new(),
-            part_of_ways: Vec::new(),
-            rules: Vec::new(),
-        }));
-        let start_point = Rc::new(RefCell::new(MapDataPoint {
-            // 57.15471, 24.84954
-            id: 1,
-            lat: 57.15471,
-            lon: 24.84954,
-            junction: true,
-            lines: Vec::new(),
-            part_of_ways: Vec::new(),
-            rules: Vec::new(),
-        }));
-        let way = Rc::new(RefCell::new(MapDataWay {
-            id: 1,
-            points: MapDataWayPoints::from_vec(vec![
-                Rc::clone(&start_point),
-                Rc::clone(&end_point),
-            ]),
-        }));
-        let choice_segment = RouteSegment::new(
-            Rc::new(RefCell::new(MapDataLine {
-                id: String::from("1"),
-                points: (Rc::clone(&start_point), Rc::clone(&start_point)),
-                way: Rc::clone(&way),
-                one_way: false, // one_way: false,
-                                // length_m: 0.0,
-                                // bearing_deg: 0.0,
-            })),
-            Rc::new(RefCell::new(MapDataPoint {
-                // 57.15514, 24.85033
-                id: 3,
-                lat: 57.15514,
-                lon: 24.85033,
-                junction: false,
-                lines: Vec::new(),
-                part_of_ways: Vec::new(),
-                rules: Vec::new(),
-            })),
+        let data_reader = OsmDataReader::new_file(String::from("src/test_data/sig-500.json"));
+        let map_data = data_reader.read_data().expect("to load test file");
+        let start = map_data
+            .get_point_by_id(&885564366)
+            .expect("to find start point");
+        let end = map_data
+            .get_point_by_id(&7535100633)
+            .expect("to find end point");
+        let disabled_debug_writer = DebugWriter::disabled(start.clone(), end.clone());
+        let walker = RouteWalker::new(
+            &map_data,
+            start.clone(),
+            end.clone(),
+            disabled_debug_writer.clone(),
         );
-        let all_choice_segments = RouteSegmentList::new();
-        let weight = weight_heading(WeightCalcInput {
-            route: &route,
-            eval_fork_segment: &choice_segment,
-            all_fork_segments: &all_choice_segments,
-            start_point: Rc::clone(&start_point),
-            end_point: Rc::clone(&end_point),
-        });
 
-        if let WeightCalcResult::UseWithWeight(weight) = weight {
-            assert_eq!(weight, 100);
-        } else {
-            assert!(false);
-        }
+        let fork_point = map_data
+            .get_point_by_id(&81272994)
+            .expect("to find fork point");
+
+        let segment = get_route_segment(fork_point, start.clone());
+
+        let fork_weight = weight_heading(WeightCalcInput {
+            route: walker.get_route(),
+            start_point: start.clone(),
+            end_point: end.clone(),
+            all_fork_segments: &RouteSegmentList::from(vec![]),
+            eval_fork_segment: &segment,
+            fork_walker: RouteWalker::new(
+                &map_data,
+                start.clone(),
+                end.clone(),
+                disabled_debug_writer.clone(),
+            ),
+        });
+        eprintln!("{:#?}", fork_weight);
+
+        let fork_point = map_data
+            .get_point_by_id(&9212889586)
+            .expect("to find fork point");
+
+        let segment = get_route_segment(fork_point, start.clone());
+
+        let fork_weight = weight_heading(WeightCalcInput {
+            route: walker.get_route(),
+            start_point: start.clone(),
+            end_point: end.clone(),
+            all_fork_segments: &RouteSegmentList::from(vec![]),
+            eval_fork_segment: &segment,
+            fork_walker: RouteWalker::new(
+                &map_data,
+                start.clone(),
+                end.clone(),
+                disabled_debug_writer.clone(),
+            ),
+        });
+        eprintln!("{:#?}", fork_weight);
+        assert_eq!(fork_weight, WeightCalcResult::DoNotUse);
     }
 }

@@ -863,6 +863,7 @@ mod tests {
             id: 1,
             point_ids: vec![1],
             one_way: false,
+            tags: None,
         });
         if let Ok(_) = res {
             assert!(false);
