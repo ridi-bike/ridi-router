@@ -1,7 +1,7 @@
 use std::{fmt::Debug, rc::Rc, usize, vec};
 
 use crate::{
-    debug_writer::DebugWriter,
+    debug_writer::{DebugLogger, DebugLoggerFileSink},
     map_data_graph::{
         MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataRuleType,
     },
@@ -93,6 +93,14 @@ impl Route {
             }
         }
         false
+    }
+    pub fn get_steps_from_end(&self, num_of_steps: usize) -> Option<RouteSegment> {
+        if self.route_segments.len() < num_of_steps + 1 {
+            return None;
+        }
+        self.route_segments
+            .get(self.route_segments.len() - 1 - num_of_steps)
+            .cloned()
     }
 }
 
@@ -202,12 +210,13 @@ impl Debug for RouteSegmentList {
 }
 
 pub struct RouteWalker<'a> {
+    walker_id: u16,
     map_data_graph: &'a MapDataGraph,
     start: MapDataPointRef,
     end: MapDataPointRef,
     route_walked: Route,
     next_fork_choice_point: Option<MapDataPointRef>,
-    pub debug_writer: DebugWriter,
+    pub debug_logger: Box<dyn DebugLogger>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -222,15 +231,28 @@ impl<'a> RouteWalker<'a> {
         map_data_graph: &'a MapDataGraph,
         start: MapDataPointRef,
         end: MapDataPointRef,
-        debug_writer: DebugWriter,
+        debug_logger: Box<dyn DebugLogger>,
     ) -> Self {
         Self {
+            walker_id: 1,
             map_data_graph,
             start: Rc::clone(&start),
             end,
             route_walked: Route::new(),
             next_fork_choice_point: None,
-            debug_writer,
+            debug_logger,
+        }
+    }
+
+    pub fn split(&self) -> Self {
+        Self {
+            walker_id: self.walker_id + 1,
+            map_data_graph: self.map_data_graph,
+            start: Rc::clone(&self.start),
+            end: Rc::clone(&self.end),
+            route_walked: self.route_walked.clone(),
+            next_fork_choice_point: None,
+            debug_logger: self.debug_logger.split(),
         }
     }
 
@@ -371,7 +393,7 @@ impl<'a> RouteWalker<'a> {
             if *point == self.end {
                 return Ok(RouteWalkerMoveResult::Finish);
             }
-            self.debug_writer.log(format!(
+            self.debug_logger.log(format!(
                 "raw choices for {:#?} : {:#?}",
                 point,
                 self.map_data_graph.get_adjacent(point.clone())
@@ -379,7 +401,7 @@ impl<'a> RouteWalker<'a> {
 
             let available_segments = self.get_next_segments();
 
-            self.debug_writer.log(format!(
+            self.debug_logger.log(format!(
                 "processed choices {:#?} : {:#?}",
                 point, available_segments
             ));
@@ -452,7 +474,7 @@ mod tests {
     use core::panic;
 
     use crate::{
-        debug_writer::DebugWriter,
+        debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
         route::walker::{Route, RouteWalkerMoveResult, RouterWalkerError},
         test_utils::{get_test_map_data_graph, line_is_between_point_ids},
     };
@@ -469,7 +491,7 @@ mod tests {
             &map_data,
             point1.clone(),
             point2.clone(),
-            DebugWriter::disabled(point1, point2),
+            Box::new(DebugLoggerVoidSink::default()),
         );
 
         assert_eq!(
@@ -489,7 +511,7 @@ mod tests {
             &map_data,
             point1.clone(),
             point2.clone(),
-            DebugWriter::disabled(point1, point2),
+            Box::new(DebugLoggerVoidSink::default()),
         );
 
         let choice = map_data.get_point_by_id(&6).unwrap();
@@ -518,7 +540,7 @@ mod tests {
             &map_data,
             point1.clone(),
             point2.clone(),
-            DebugWriter::disabled(point1, point2),
+            Box::new(DebugLoggerVoidSink::default()),
         );
         assert_eq!(
             walker.move_forward_to_next_fork(),
@@ -550,7 +572,7 @@ mod tests {
             &map_data,
             point1.clone(),
             point2.clone(),
-            DebugWriter::disabled(point1, point2),
+            Box::new(DebugLoggerVoidSink::default()),
         );
 
         let choices = match walker.move_forward_to_next_fork() {
@@ -640,7 +662,7 @@ mod tests {
             &map_data,
             point1.clone(),
             point2.clone(),
-            DebugWriter::disabled(point1, point2),
+            Box::new(DebugLoggerVoidSink::default()),
         );
 
         let choices = match walker.move_forward_to_next_fork() {

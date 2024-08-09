@@ -128,6 +128,19 @@ pub struct MapDataPoint {
     pub rules: Vec<MapDataRule>,
 }
 
+impl MapDataPoint {
+    pub fn distance_between(&self, point: &MapDataPointRef) -> f64 {
+        let self_geo = Point::new(self.lon, self.lat);
+        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
+        self_geo.haversine_distance(&point_geo)
+    }
+    pub fn bearing_to(&self, point: &MapDataPointRef) -> f64 {
+        let self_geo = Point::new(self.lon, self.lat);
+        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
+        self_geo.haversine_bearing(point_geo)
+    }
+}
+
 impl PartialEq for MapDataPoint {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id

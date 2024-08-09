@@ -71,6 +71,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     //     degree_offset_from_end,
     //     255.0 - (degree_offset_from_end * ratio).round()
     // );
+    //
 
     WeightCalcResult::UseWithWeight(255 - (degree_offset_from_end * ratio).round() as u8)
 }
@@ -108,41 +109,57 @@ pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_check_distance_to_end(input: WeightCalcInput) -> WeightCalcResult {
-    let check_steps_back = 10;
-    let route_len = input.route.get_segment_count();
-    if route_len < check_steps_back {
-        return WeightCalcResult::UseWithWeight(0);
-    }
+    let check_steps_back = 100;
+
     let distance_to_end_current = match input.route.get_segment_last() {
         None => return WeightCalcResult::UseWithWeight(0),
-        Some(point) => {
-            let geo = Point::new(
-                point.get_end_point().borrow().lon,
-                point.get_end_point().borrow().lat,
-            );
-            let end_geo = Point::new(input.end_point.borrow().lon, input.end_point.borrow().lat);
-            geo.haversine_distance(&end_geo)
-        }
+        Some(segment) => segment
+            .get_end_point()
+            .borrow()
+            .distance_between(&input.end_point),
     };
 
-    let distance_to_end_steps_back = match input
-        .route
-        .get_segment_by_index(route_len - 1 - check_steps_back)
-    {
+    let distance_to_end_steps_back = match input.route.get_steps_from_end(check_steps_back) {
         None => return WeightCalcResult::UseWithWeight(0),
-        Some(point) => {
-            let geo = Point::new(
-                point.get_end_point().borrow().lon,
-                point.get_end_point().borrow().lat,
-            );
-            let end_geo = Point::new(input.end_point.borrow().lon, input.end_point.borrow().lat);
-            geo.haversine_distance(&end_geo)
-        }
+        Some(segment) => segment
+            .get_end_point()
+            .borrow()
+            .distance_between(&input.end_point),
     };
 
     if distance_to_end_current > distance_to_end_steps_back {
         return WeightCalcResult::DoNotUse;
     }
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
+    let check_steps_back = 100;
+
+    let current_point = match input.route.get_segment_last() {
+        None => return WeightCalcResult::UseWithWeight(0),
+        Some(segment) => segment.get_end_point(),
+    };
+
+    let total_distance = input
+        .start_point
+        .borrow()
+        .distance_between(&input.end_point);
+    let point_steps_back = match input.route.get_steps_from_end(check_steps_back) {
+        None => return WeightCalcResult::UseWithWeight(0),
+        Some(segment) => Rc::clone(segment.get_end_point()),
+    };
+
+    let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f64);
+
+    let distance_last_points = point_steps_back.borrow().distance_between(&current_point);
+    let average_distance_last_points = distance_last_points / (check_steps_back as f64);
+
+    if average_distance_last_points < average_distance_per_segment * 0.3 {
+        // return WeightCalcResult::DoNotUse;
+        return WeightCalcResult::UseWithWeight(0);
+    }
+
     WeightCalcResult::UseWithWeight(0)
 }
 
@@ -152,7 +169,7 @@ mod test {
     use std::{cell::RefCell, rc::Rc};
 
     use crate::{
-        debug_writer::DebugWriter,
+        debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
         map_data_graph::{
             MapDataGraph, MapDataLine, MapDataPoint, MapDataPointRef, MapDataWay, MapDataWayPoints,
         },
@@ -193,7 +210,7 @@ mod test {
         let end = map_data
             .get_point_by_id(&7535100633)
             .expect("to find end point");
-        let disabled_debug_writer = DebugWriter::disabled(start.clone(), end.clone());
+        let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
         let walker = RouteWalker::new(
             &map_data,
             start.clone(),

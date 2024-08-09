@@ -10,6 +10,7 @@ use std::{
 
 use geo::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
+use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::map_data_graph::MapDataPoint;
@@ -24,12 +25,34 @@ use crate::{
     },
 };
 
+pub trait DebugLogger {
+    fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> ();
+    fn log_step(&mut self) -> ();
+    fn log(&self, msg: String) -> ();
+    fn split(&self) -> Box<dyn DebugLogger>;
+}
+
+#[derive(Clone, Default)]
+pub struct DebugLoggerVoidSink;
+
+impl DebugLogger for DebugLoggerVoidSink {
+    fn log_move(&mut self, _move_result: &RouteWalkerMoveResult, _route: &Route) -> () {}
+
+    fn log_step(&mut self) -> () {}
+
+    fn log(&self, _msg: String) -> () {}
+
+    fn split(&self) -> Box<dyn DebugLogger> {
+        Box::new(Self)
+    }
+}
+
 #[derive(Clone)]
-pub struct DebugWriter {
-    enabled: bool,
+pub struct DebugLoggerFileSink {
+    gpx_every_n: u64,
     id: u64,
     step_id: u64,
-    walker_id: u16,
+    walker_id: u64,
     start_point: MapDataPointRef,
     end_point: MapDataPointRef,
     last_pont: MapDataPointRef,
@@ -38,54 +61,34 @@ pub struct DebugWriter {
     route: Route,
 }
 
-impl DebugWriter {
-    pub fn new(walker_id: u16, start_point: MapDataPointRef, end_point: MapDataPointRef) -> Self {
-        let start = SystemTime::now();
-        let since_the_epoch = start
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-
-        Self {
-            enabled: true,
-            id: since_the_epoch.as_secs(),
-            step_id: 0,
+impl DebugLogger for DebugLoggerFileSink {
+    fn split(&self) -> Box<dyn DebugLogger> {
+        let mut rng = rand::thread_rng();
+        let walker_id = (rng.gen::<f64>() * 10000000.0) as u64;
+        Box::new(Self {
+            gpx_every_n: self.gpx_every_n,
+            id: self.id,
+            step_id: self.step_id,
             walker_id,
-            last_pont: Rc::clone(&start_point),
-            start_point,
-            end_point,
-            dead_end_tracks: Vec::new(),
-            route: Route::new(),
-            forks: HashMap::new(),
-        }
+            last_pont: Rc::clone(&self.last_pont),
+            start_point: Rc::clone(&self.start_point),
+            end_point: Rc::clone(&self.end_point),
+            dead_end_tracks: self.dead_end_tracks.clone(),
+            route: self.route.clone(),
+            forks: self.forks.clone(),
+        })
+    }
+    fn log(&self, msg: String) -> () {
+        let msg = msg.replace("\n", "\t\n");
+        self.log_to_file(format!("\t{}", msg));
     }
 
-    pub fn disabled(start_point: MapDataPointRef, end_point: MapDataPointRef) -> Self {
-        Self {
-            enabled: false,
-            id: 0,
-            step_id: 0,
-            walker_id: 0,
-            last_pont: Rc::clone(&start_point),
-            start_point,
-            end_point,
-            dead_end_tracks: Vec::new(),
-            route: Route::new(),
-            forks: HashMap::new(),
-        }
-    }
-
-    pub fn log_step(&mut self) -> () {
-        if !self.enabled {
-            return ();
-        }
+    fn log_step(&mut self) -> () {
         self.step_id += 1;
         self.log_to_file(format!("Step: {}", self.step_id));
     }
 
-    pub fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> () {
-        if !self.enabled {
-            return ();
-        }
+    fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> () {
         self.log_to_file(format!("\tLast Point: {:#?}", route.get_segment_last()));
         let last_segment = route.get_segment_last();
         if let Some(last_segment) = last_segment {
@@ -145,7 +148,32 @@ impl DebugWriter {
         }
         self.route = route.clone();
 
-        self.write_gpx();
+        if self.step_id % self.gpx_every_n == 0 {
+            self.write_gpx();
+        }
+    }
+}
+
+impl DebugLoggerFileSink {
+    pub fn new(gpx_every_n: u64, start_point: MapDataPointRef, end_point: MapDataPointRef) -> Self {
+        let start = SystemTime::now();
+        let since_the_epoch = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        let mut rng = rand::thread_rng();
+        let walker_id = (rng.gen::<f64>() * 10000000.0) as u64;
+        Self {
+            gpx_every_n,
+            id: since_the_epoch.as_secs(),
+            step_id: 0,
+            walker_id,
+            last_pont: Rc::clone(&start_point),
+            start_point,
+            end_point,
+            dead_end_tracks: Vec::new(),
+            route: Route::new(),
+            forks: HashMap::new(),
+        }
     }
 
     fn get_dir(&self) -> String {
@@ -206,14 +234,6 @@ impl DebugWriter {
             Ok(file) => write(&gpx, file).unwrap(),
             Err(error) => panic!("Debug write error {}", error),
         };
-    }
-
-    pub fn log(&self, msg: String) -> () {
-        if !self.enabled {
-            return ();
-        }
-        let msg = msg.replace("\n", "\t\n");
-        self.log_to_file(format!("\t{}", msg));
     }
 
     fn log_to_file(&self, msg: String) -> () {

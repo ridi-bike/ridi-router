@@ -13,6 +13,7 @@ use route::{
     navigator::RouteNavigator,
     weights::{
         weight_check_distance_to_end, weight_heading, weight_no_loops, weight_prefer_same_road,
+        weight_progress_speed,
     },
 };
 
@@ -105,8 +106,9 @@ fn main() {
         vec![
             weight_check_distance_to_end,
             weight_prefer_same_road,
-            weight_heading,
             weight_no_loops,
+            weight_heading,
+            weight_progress_speed,
         ],
     );
 
