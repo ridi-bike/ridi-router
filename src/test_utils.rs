@@ -4,6 +4,62 @@ use crate::map_data_graph::{
 };
 use crate::route::walker::Route;
 
+pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
+    // 1 - - 2 - - 3 - - 4 - - 5
+    //       |     |
+    //       /\    \/
+    //       |     |
+    // 6 - - 7 -<- 8 - - 9 - - 10
+    //      /r\
+    //     /r r\
+    //   11     13
+    //    \r  r/
+    //     \rr/
+    //      12
+
+    (
+        Vec::new(),
+        vec![
+            OsmWay {
+                id: 12345,
+                one_way: false,
+                point_ids: vec![1, 2, 3, 4, 5],
+                tags: None,
+            },
+            OsmWay {
+                id: 67,
+                one_way: false,
+                point_ids: vec![6, 7],
+                tags: None,
+            },
+            OsmWay {
+                id: 87,
+                one_way: true,
+                point_ids: vec![8, 7],
+                tags: None,
+            },
+            OsmWay {
+                id: 8910,
+                one_way: false,
+                point_ids: vec![8, 9, 10],
+                tags: None,
+            },
+            OsmWay {
+                id: 72,
+                one_way: true,
+                point_ids: vec![7, 2],
+                tags: None,
+            },
+            OsmWay {
+                id: 38,
+                one_way: true,
+                point_ids: vec![3, 8],
+                tags: None,
+            },
+        ],
+    )
+}
+
 pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
     //       1
     //       |
@@ -79,22 +135,32 @@ pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
             OsmWay {
                 id: 1234,
                 point_ids: vec![1, 2, 3, 4],
+                one_way: false,
+                tags: None,
             },
             OsmWay {
                 id: 5367,
                 point_ids: vec![5, 3, 6, 7],
+                tags: None,
+                one_way: false,
             },
             OsmWay {
                 id: 489,
                 point_ids: vec![4, 8, 9],
+                one_way: false,
+                tags: None,
             },
             OsmWay {
                 id: 68,
                 point_ids: vec![6, 8],
+                one_way: false,
+                tags: None,
             },
             OsmWay {
                 id: 1112,
                 point_ids: vec![11, 12],
+                one_way: false,
+                tags: None,
             },
         ],
     )
