@@ -1,16 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet},
-    io::BufRead,
+    collections::HashMap,
     num::{ParseFloatError, ParseIntError},
     str::Utf8Error,
-    time::Instant,
 };
 
-use json_tools::{Buffer, BufferType, Lexer, Token, TokenType};
+use json_tools::{Buffer, BufferType, Lexer, TokenType};
 
 use crate::map_data_graph::{
-    MapDataError, OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole,
-    OsmRelationMemberType, OsmWay,
+    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -26,7 +23,6 @@ pub enum OsmJsonParserError {
     UnknownMemberType { member_type: String },
     MissingElementType { element: OsmElement },
     MissingValueForElement { element_type: String, value: String },
-    UnableToInsertWay { error: MapDataError },
     ParserInErrorState { error: Box<OsmJsonParserError> },
     ElementIsNotNode,
     ElementIsNotWay,
@@ -498,27 +494,27 @@ impl OsmJsonParser {
         false
     }
 
-    fn is_in_members_list(&self) -> bool {
-        if let Some(ParserStateLocation::InObject(None)) = self.location.first() {
-            if let Some(ParserStateLocation::InList(list_key)) = self.location.get(1) {
-                if list_key == "elements" {
-                    if let Some(ParserStateLocation::InObject(Some(obj_key))) = self.location.get(2)
-                    {
-                        if obj_key == "elements" {
-                            if let Some(ParserStateLocation::InList(list_key)) =
-                                self.location.get(3)
-                            {
-                                if list_key == "members" && self.location.len() == 4 {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
+    // fn is_in_members_list(&self) -> bool {
+    //     if let Some(ParserStateLocation::InObject(None)) = self.location.first() {
+    //         if let Some(ParserStateLocation::InList(list_key)) = self.location.get(1) {
+    //             if list_key == "elements" {
+    //                 if let Some(ParserStateLocation::InObject(Some(obj_key))) = self.location.get(2)
+    //                 {
+    //                     if obj_key == "elements" {
+    //                         if let Some(ParserStateLocation::InList(list_key)) =
+    //                             self.location.get(3)
+    //                         {
+    //                             if list_key == "members" && self.location.len() == 4 {
+    //                                 return true;
+    //                             }
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     false
+    // }
     fn is_in_members_obj(&self) -> bool {
         if let Some(ParserStateLocation::InObject(None)) = self.location.first() {
             if let Some(ParserStateLocation::InList(list_key)) = self.location.get(1) {
@@ -600,10 +596,7 @@ impl OsmJsonParser {
 mod test {
     use std::collections::HashMap;
 
-    use crate::{
-        osm_json_parser::OsmJsonParserError,
-        test_utils::{get_test_data_osm_json, get_test_data_osm_json_nodes},
-    };
+    use crate::{osm_json_parser::OsmJsonParserError, test_utils::get_test_data_osm_json};
 
     use super::{OsmElement, OsmJsonParser, OsmRelMember, OsmRelMemberRole, OsmRelMemberType};
     pub fn get_osm_element_node(

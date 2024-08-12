@@ -1,7 +1,6 @@
-use core::panic;
-use geo::{point, HaversineBearing, HaversineDistance, Point};
+use geo::{HaversineBearing, HaversineDistance, Point};
 use std::{
-    cell::{RefCell, RefMut},
+    cell::RefCell,
     collections::{BTreeMap, HashMap},
     fmt::Debug,
     rc::Rc,
@@ -949,7 +948,7 @@ mod tests {
         ];
 
         for test in tests {
-            let (test_id, point, expected_result) = test;
+            let (_test_id, point, expected_result) = test;
             let adj_elements = map_data.get_adjacent(point);
             assert_eq!(adj_elements.len(), expected_result.len());
             for (adj_line, adj_point) in &adj_elements {
@@ -1152,7 +1151,7 @@ mod tests {
                 4,
             ),
         ];
-        for (i, test) in tests.iter().enumerate() {
+        for (_i, test) in tests.iter().enumerate() {
             let (points, check_point, closest_id) = test;
             let mut coords = MapDataGraph::new();
             for point in points {

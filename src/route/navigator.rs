@@ -6,13 +6,13 @@ use std::{
 
 use crate::{
     debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
-    gpx_writer::RoutesWriter,
     map_data_graph::{MapDataGraph, MapDataPointRef},
 };
 
 use super::{
-    walker::{self, Route, RouteWalker, RouteWalkerMoveResult},
+    walker::{RouteWalker, RouteWalkerMoveResult},
     weights::{WeightCalc, WeightCalcInput},
+    Route,
 };
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,8 +1,10 @@
-use crate::map_data_graph::{
-    MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataWay,
-    MapDataWayPoints, OsmNode, OsmWay,
+use crate::{
+    map_data_graph::{
+        MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataWay,
+        MapDataWayPoints, OsmNode, OsmWay,
+    },
+    route::Route,
 };
-use crate::route::walker::Route;
 
 pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
     // 1 - - 2 - - 3 - - 4 - - 5

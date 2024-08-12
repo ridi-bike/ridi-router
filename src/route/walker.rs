@@ -1,11 +1,11 @@
-use std::{fmt::Debug, rc::Rc, usize, vec};
+use std::{fmt::Debug, rc::Rc};
 
 use crate::{
-    debug_writer::{DebugLogger, DebugLoggerFileSink},
-    map_data_graph::{
-        MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataRuleType,
-    },
+    debug_writer::DebugLogger,
+    map_data_graph::{MapDataGraph, MapDataPointRef, MapDataRuleType},
 };
+
+use super::{segment::RouteSegment, segment_list::RouteSegmentList, Route};
 
 #[derive(Debug, PartialEq)]
 pub enum RouterWalkerError {
@@ -13,200 +13,6 @@ pub enum RouterWalkerError {
         id: u64,
         available_fork_ids: Vec<u64>,
     },
-}
-
-#[derive(PartialEq, Clone)]
-pub struct RouteSegment {
-    line: MapDataLineRef,
-    end_point: MapDataPointRef,
-}
-
-impl RouteSegment {
-    pub fn new(line: MapDataLineRef, end_point: MapDataPointRef) -> Self {
-        Self { line, end_point }
-    }
-    pub fn get_end_point(&self) -> &MapDataPointRef {
-        &self.end_point
-    }
-    pub fn get_line(&self) -> &MapDataLineRef {
-        &self.line
-    }
-}
-
-impl Debug for RouteSegment {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let line = self.get_line().borrow().clone();
-        let point = self.get_end_point().borrow().clone();
-        write!(f, "line:\n\t{:#?}\npoint:\n\t{:#?}", line, point)
-    }
-}
-
-impl From<(MapDataLineRef, MapDataPointRef)> for RouteSegment {
-    fn from(value: (MapDataLineRef, MapDataPointRef)) -> Self {
-        RouteSegment::new(value.0, value.1)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Route {
-    route_segments: Vec<RouteSegment>,
-}
-
-impl Route {
-    pub fn new() -> Self {
-        Route {
-            route_segments: Vec::new(),
-        }
-    }
-    pub fn get_segment_last(&self) -> Option<&RouteSegment> {
-        self.route_segments.last()
-    }
-    pub fn get_segment_by_index(&self, idx: usize) -> Option<&RouteSegment> {
-        self.route_segments.get(idx)
-    }
-    pub fn get_segment_count(&self) -> usize {
-        self.route_segments.len()
-    }
-    pub fn remove_last_segment(&mut self) -> Option<RouteSegment> {
-        self.route_segments.pop()
-    }
-    pub fn add_segment(&mut self, segment: RouteSegment) -> () {
-        self.route_segments.push(segment)
-    }
-    pub fn get_junction_before_last_segment(&self) -> Option<&RouteSegment> {
-        match self.get_segment_last() {
-            None => None,
-            Some(last_segment) => self.route_segments.iter().rev().find(|route_segment| {
-                route_segment.end_point.borrow().junction == true
-                    && route_segment.end_point.borrow().id != last_segment.end_point.borrow().id
-            }),
-        }
-    }
-    pub fn has_looped(&self) -> bool {
-        let last_segment = self.route_segments.last();
-        if let Some(last_segment) = last_segment {
-            let end_index = self.route_segments.len().checked_sub(1);
-            if let Some(end_index) = end_index {
-                return self.route_segments[..end_index].iter().any(|segment| {
-                    segment.end_point.borrow().id == last_segment.get_end_point().borrow().id
-                });
-            }
-        }
-        false
-    }
-    pub fn get_steps_from_end(&self, num_of_steps: usize) -> Option<RouteSegment> {
-        if self.route_segments.len() < num_of_steps + 1 {
-            return None;
-        }
-        self.route_segments
-            .get(self.route_segments.len() - 1 - num_of_steps)
-            .cloned()
-    }
-}
-
-impl From<Vec<RouteSegment>> for Route {
-    fn from(route_segments: Vec<RouteSegment>) -> Self {
-        Route { route_segments }
-    }
-}
-
-impl FromIterator<(MapDataLine, MapDataPoint)> for Route {
-    fn from_iter<T: IntoIterator<Item = (MapDataLine, MapDataPoint)>>(iter: T) -> Self {
-        iter.into_iter().collect::<Route>()
-    }
-}
-
-impl IntoIterator for Route {
-    type Item = RouteSegment;
-
-    type IntoIter = std::vec::IntoIter<RouteSegment>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.route_segments.into_iter()
-    }
-}
-
-#[derive(PartialEq, Clone)]
-pub struct RouteSegmentList {
-    segment_list: Vec<RouteSegment>,
-}
-
-impl RouteSegmentList {
-    pub fn new() -> Self {
-        Self {
-            segment_list: Vec::new(),
-        }
-    }
-    pub fn get_segment_count(&self) -> usize {
-        self.segment_list.len()
-    }
-    pub fn has_segment_with_point(&self, point: &MapDataPointRef) -> bool {
-        self.segment_list
-            .iter()
-            .position(|route_segment| route_segment.get_end_point() == point)
-            != None
-    }
-    pub fn get_all_segment_points(&self) -> Vec<MapDataPointRef> {
-        self.segment_list
-            .iter()
-            .map(|segment| Rc::clone(&segment.end_point))
-            .collect()
-    }
-    pub fn get_segment_from_point(&self, point: &MapDataPointRef) -> Option<&RouteSegment> {
-        self.segment_list
-            .iter()
-            .find(|segment| segment.end_point == *point)
-    }
-    pub fn exclude_segments_where_points_in(
-        &self,
-        points: &Vec<MapDataPointRef>,
-    ) -> RouteSegmentList {
-        self.segment_list
-            .iter()
-            .filter(|segment| !points.contains(&&segment.end_point))
-            .collect()
-    }
-    pub fn get_first_segment(&self) -> Option<&RouteSegment> {
-        self.segment_list.get(0)
-    }
-}
-
-impl IntoIterator for RouteSegmentList {
-    type Item = RouteSegment;
-
-    type IntoIter = vec::IntoIter<RouteSegment>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.segment_list.into_iter()
-    }
-}
-
-impl From<Vec<RouteSegment>> for RouteSegmentList {
-    fn from(value: Vec<RouteSegment>) -> Self {
-        Self {
-            segment_list: value,
-        }
-    }
-}
-
-impl FromIterator<RouteSegment> for RouteSegmentList {
-    fn from_iter<T: IntoIterator<Item = RouteSegment>>(iter: T) -> Self {
-        RouteSegmentList {
-            segment_list: iter.into_iter().collect(),
-        }
-    }
-}
-impl<'a> FromIterator<&'a RouteSegment> for RouteSegmentList {
-    fn from_iter<T: IntoIterator<Item = &'a RouteSegment>>(iter: T) -> Self {
-        RouteSegmentList {
-            segment_list: Vec::from_iter(iter.into_iter().cloned()),
-        }
-    }
-}
-impl Debug for RouteSegmentList {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "RouteSegmentList {:#?}", self.segment_list)
-    }
 }
 
 pub struct RouteWalker<'a> {
@@ -474,7 +280,7 @@ mod tests {
     use core::panic;
 
     use crate::{
-        debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
+        debug_writer::DebugLoggerVoidSink,
         route::walker::{Route, RouteWalkerMoveResult, RouterWalkerError},
         test_utils::{get_test_map_data_graph, line_is_between_point_ids},
     };
@@ -551,11 +357,11 @@ mod tests {
         let el = route.get_segment_by_index(0);
         if let Some(route_segment) = el {
             assert!(line_is_between_point_ids(
-                &route_segment.line,
+                &route_segment.get_line(),
                 from_id,
                 to_id
             ));
-            assert_eq!(route_segment.end_point.borrow().id, to_id);
+            assert_eq!(route_segment.get_end_point().borrow().id, to_id);
         } else {
             assert!(false)
         }
@@ -585,14 +391,14 @@ mod tests {
 
         choices.into_iter().for_each(|route_segment| {
             assert!(
-                route_segment.end_point.borrow().id == 5
-                    || route_segment.end_point.borrow().id == 4
-                    || route_segment.end_point.borrow().id == 6
+                route_segment.get_end_point().borrow().id == 5
+                    || route_segment.get_end_point().borrow().id == 4
+                    || route_segment.get_end_point().borrow().id == 6
             );
             assert!(
-                line_is_between_point_ids(&route_segment.line, 5, 3)
-                    || line_is_between_point_ids(&route_segment.line, 4, 3)
-                    || line_is_between_point_ids(&route_segment.line, 6, 3)
+                line_is_between_point_ids(&route_segment.get_line(), 5, 3)
+                    || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
+                    || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
             )
         });
 
@@ -607,12 +413,12 @@ mod tests {
         assert_eq!(choices.get_segment_count(), 2);
         choices.into_iter().for_each(|route_segment| {
             assert!(
-                route_segment.end_point.borrow().id == 8
-                    || route_segment.end_point.borrow().id == 7
+                route_segment.get_end_point().borrow().id == 8
+                    || route_segment.get_end_point().borrow().id == 7
             );
             assert!(
-                line_is_between_point_ids(&route_segment.line, 8, 6)
-                    || line_is_between_point_ids(&route_segment.line, 7, 6)
+                line_is_between_point_ids(&route_segment.get_line(), 8, 6)
+                    || line_is_between_point_ids(&route_segment.get_line(), 7, 6)
             )
         });
         let choice = map_data.get_point_by_id(&7).unwrap();
@@ -626,28 +432,28 @@ mod tests {
         let el = route.get_segment_by_index(0);
         assert!(el.is_some());
         if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.line, 2, 1));
-            assert_eq!(route_segment.end_point.borrow().id, 2);
+            assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
+            assert_eq!(route_segment.get_end_point().borrow().id, 2);
         }
 
         let el = route.get_segment_by_index(1);
         assert!(el.is_some());
         if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.line, 3, 2));
-            assert_eq!(route_segment.end_point.borrow().id, 3);
+            assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
+            assert_eq!(route_segment.get_end_point().borrow().id, 3);
         }
 
         let el = route.get_segment_by_index(2);
         assert!(el.is_some());
         if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.line, 6, 3));
-            assert_eq!(route_segment.end_point.borrow().id, 6);
+            assert!(line_is_between_point_ids(&route_segment.get_line(), 6, 3));
+            assert_eq!(route_segment.get_end_point().borrow().id, 6);
         }
         let el = route.get_segment_by_index(3);
         assert!(el.is_some());
         if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.line, 7, 6));
-            assert_eq!(route_segment.end_point.borrow().id, 7);
+            assert!(line_is_between_point_ids(&route_segment.get_line(), 7, 6));
+            assert_eq!(route_segment.get_end_point().borrow().id, 7);
         }
     }
 
@@ -674,14 +480,14 @@ mod tests {
 
         choices.into_iter().for_each(|route_segment| {
             assert!(
-                route_segment.end_point.borrow().id == 5
-                    || route_segment.end_point.borrow().id == 4
-                    || route_segment.end_point.borrow().id == 6
+                route_segment.get_end_point().borrow().id == 5
+                    || route_segment.get_end_point().borrow().id == 4
+                    || route_segment.get_end_point().borrow().id == 6
             );
             assert!(
-                line_is_between_point_ids(&route_segment.line, 5, 3)
-                    || line_is_between_point_ids(&route_segment.line, 4, 3)
-                    || line_is_between_point_ids(&route_segment.line, 6, 3)
+                line_is_between_point_ids(&route_segment.get_line(), 5, 3)
+                    || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
+                    || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
             )
         });
 
@@ -698,14 +504,14 @@ mod tests {
 
         choices.into_iter().for_each(|route_segment| {
             assert!(
-                route_segment.end_point.borrow().id == 5
-                    || route_segment.end_point.borrow().id == 4
-                    || route_segment.end_point.borrow().id == 6
+                route_segment.get_end_point().borrow().id == 5
+                    || route_segment.get_end_point().borrow().id == 4
+                    || route_segment.get_end_point().borrow().id == 6
             );
             assert!(
-                line_is_between_point_ids(&route_segment.line, 5, 3)
-                    || line_is_between_point_ids(&route_segment.line, 4, 3)
-                    || line_is_between_point_ids(&route_segment.line, 6, 3)
+                line_is_between_point_ids(&route_segment.get_line(), 5, 3)
+                    || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
+                    || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
             )
         });
 
@@ -720,22 +526,22 @@ mod tests {
         let el = route.get_segment_by_index(0);
         assert!(el.is_some());
         if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.line, 2, 1));
-            assert_eq!(route_segment.end_point.borrow().id, 2);
+            assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
+            assert_eq!(route_segment.get_end_point().borrow().id, 2);
         }
 
         let el = route.get_segment_by_index(1);
         assert!(el.is_some());
         if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.line, 3, 2));
-            assert_eq!(route_segment.end_point.borrow().id, 3);
+            assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
+            assert_eq!(route_segment.get_end_point().borrow().id, 3);
         }
 
         let el = route.get_segment_by_index(2);
         assert!(el.is_some());
         if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.line, 4, 3));
-            assert_eq!(route_segment.end_point.borrow().id, 4);
+            assert!(line_is_between_point_ids(&route_segment.get_line(), 4, 3));
+            assert_eq!(route_segment.get_end_point().borrow().id, 4);
         }
     }
 }

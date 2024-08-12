@@ -2,15 +2,11 @@ use geo::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use std::{fs::File, io::Error};
 
-use crate::{
-    map_data_graph::{MapDataPoint, MapDataPointRef},
-    route::walker::Route,
-};
+use crate::{map_data_graph::MapDataPointRef, route::Route};
 
 #[derive(Debug)]
 pub enum RoutesWriterError {
     FileCreateError { error: Error },
-    CurrentDirError { error: Error },
 }
 
 pub struct RoutesWriter {

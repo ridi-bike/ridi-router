@@ -1,5 +1,4 @@
 use core::panic;
-use std::cell::RefCell;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::{
@@ -13,17 +12,8 @@ use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::map_data_graph::MapDataPoint;
-use crate::route::navigator::WeightCalcResult;
-use crate::route::walker::RouteSegment;
-use crate::{
-    map_data_graph::MapDataPointRef,
-    route::{
-        navigator::{DiscardedForkChoices, ForkWeights},
-        walker::{Route, RouteSegmentList, RouteWalkerMoveResult},
-        weights,
-    },
-};
+use crate::route::Route;
+use crate::{map_data_graph::MapDataPointRef, route::walker::RouteWalkerMoveResult};
 
 pub trait DebugLogger {
     fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> ();

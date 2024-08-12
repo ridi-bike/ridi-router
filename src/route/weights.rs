@@ -1,12 +1,15 @@
 use std::rc::Rc;
 
-use geo::{HaversineBearing, HaversineDistance, Point};
+use geo::{HaversineBearing, Point};
 
-use crate::map_data_graph::{MapDataPoint, MapDataPointRef};
+use crate::map_data_graph::MapDataPointRef;
 
 use super::{
     navigator::WeightCalcResult,
-    walker::{Route, RouteSegment, RouteSegmentList, RouteWalker, RouteWalkerMoveResult},
+    segment::RouteSegment,
+    segment_list::RouteSegmentList,
+    walker::{RouteWalker, RouteWalkerMoveResult},
+    Route,
 };
 
 pub struct WeightCalcInput<'a> {
@@ -166,17 +169,13 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 #[cfg(test)]
 mod test {
 
-    use std::{cell::RefCell, rc::Rc};
-
     use crate::{
-        debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
-        map_data_graph::{
-            MapDataGraph, MapDataLine, MapDataPoint, MapDataPointRef, MapDataWay, MapDataWayPoints,
-        },
+        debug_writer::DebugLoggerVoidSink,
+        map_data_graph::MapDataPointRef,
         osm_data_reader::OsmDataReader,
         route::{
-            navigator::{RouteNavigator, WeightCalcResult},
-            walker::{Route, RouteSegment, RouteSegmentList, RouteWalker},
+            navigator::WeightCalcResult, segment::RouteSegment, segment_list::RouteSegmentList,
+            walker::RouteWalker,
         },
     };
 

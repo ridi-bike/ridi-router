@@ -1,9 +1,4 @@
-use std::{
-    io::{self, BufRead},
-    process,
-    rc::Rc,
-    time::Instant,
-};
+use std::{process, rc::Rc, time::Instant};
 
 use clap::{arg, value_parser, Command};
 
