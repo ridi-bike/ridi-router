@@ -1,3 +1,8 @@
+gps-query-range := '100000' # 100km
+gps-query-from := '56.951861,24.113821' # riga
+gps-query-to := '57.313103,25.281460' # cesis
+map-data-file-name := "map-data-riga-cesis.json"
+
 overpass-query := '"[out:json];
                     way
                       [highway]
@@ -12,10 +17,10 @@ overpass-query := '"[out:json];
                       [access!=no]
                       [highway!=path]
                       [highway!=service]
-                      (around:100000,57.15368,24.85370,57.31337,25.28080)->.roads;
+                      (around:' + gps-query-range + ',' + gps-query-from + ',' + gps-query-to + ')->.roads;
                     relation
                       [type=restriction]
-                      (around:100000,57.15368,24.85370,57.31337,25.28080)->.rules;
+                      (around:' + gps-query-range + ',' + gps-query-from + ',' + gps-query-to + ')->.rules;
                     (
                       .roads;>>;
                       .rules;>>;
@@ -25,12 +30,13 @@ overpass-query := '"[out:json];
 data-fetch:
   curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > map-data/{{map-data-file-name}}
 
-map-data-file-name := "map-data-riga-cesis.json"
-# map-data-file-name := "test-map-data-formatted.json"
+gps-test-from-lat := '57.154260' # sigulda
+gps-test-from-lon := '24.853496' # sigulda
+gps-test-to-lat := '56.856551'		# doles sala
+gps-test-to-lon := '24.253038'		# doles sala
 
-run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
 
-# run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 56.8504714 --to_lon 24.2400742'
+run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat ' + gps-test-from-lat + ' --from_lon ' + gps-test-from-lon + ' --to_lat ' + gps-test-to-lat + ' --to_lon ' + gps-test-to-lon
 
 run-stdin:
   {{run-and-load-stdin}}
@@ -39,9 +45,7 @@ run-show-stdin:
   {{run-and-load-stdin}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
   
-# run-and-load-file := 'cargo run -- --data_file map-data' / map-data-file-name + ' --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 57.31337 --to_lon 25.28080'
-
-run-and-load-file := 'cargo run -- --data_file map-data' / map-data-file-name + ' --from_lat 57.1542058021927 --from_lon 24.853520393371586 --to_lat 56.8504714 --to_lon 24.2400742'
+run-and-load-file := 'cargo run -- --data_file map-data' / map-data-file-name + ' --from_lat ' + gps-test-from-lat + ' --from_lon ' + gps-test-from-lon + ' --to_lat ' + gps-test-to-lat + ' --to_lon ' + gps-test-to-lon
 
 run-file:
   {{run-and-load-file}}
