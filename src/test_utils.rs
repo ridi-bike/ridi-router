@@ -3,7 +3,7 @@ use crate::{
         MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataWay,
         MapDataWayPoints, OsmNode, OsmWay,
     },
-    route::Route,
+    router::route::Route,
 };
 
 pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {

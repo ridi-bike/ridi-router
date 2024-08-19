@@ -12,7 +12,7 @@ use crate::{
 use super::{
     itinerary::{self, Itinerary},
     route::Route,
-    walker::{RouteWalker, RouteWalkerMoveResult},
+    walker::{Walker, WalkerMoveResult},
     weights::{WeightCalc, WeightCalcInput},
 };
 
@@ -118,15 +118,15 @@ impl Debug for ForkWeights {
     }
 }
 
-pub enum NavigatorRoute {
-    Stuck(Route),
+pub enum NavigationResult {
+    Stuck,
     Finished(Route),
 }
 
 pub struct Navigator<'a> {
     map_data_graph: &'a MapDataGraph,
     itinerary: Itinerary,
-    walker: RouteWalker<'a>,
+    walker: Walker<'a>,
     weight_calcs: Vec<WeightCalc>,
     discarded_fork_choices: DiscardedForkChoices,
 }
@@ -139,7 +139,7 @@ impl<'a> Navigator<'a> {
     ) -> Self {
         Navigator {
             map_data_graph,
-            walker: RouteWalker::new(
+            walker: Walker::new(
                 map_data_graph,
                 Rc::clone(itinerary.get_from()),
                 Rc::clone(itinerary.get_to()),
@@ -155,7 +155,7 @@ impl<'a> Navigator<'a> {
         }
     }
 
-    pub fn generate_routes(mut self) -> NavigatorRoute {
+    pub fn generate_routes(mut self) -> NavigationResult {
         loop {
             self.walker.debug_logger.log_step();
 
@@ -166,10 +166,10 @@ impl<'a> Navigator<'a> {
                     .log_move(move_result, &self.walker.get_route().clone());
             }
 
-            if move_result == Ok(RouteWalkerMoveResult::Finish) {
-                return NavigatorRoute::Finished(self.walker.get_route().clone());
+            if move_result == Ok(WalkerMoveResult::Finish) {
+                return NavigationResult::Finished(self.walker.get_route().clone());
             }
-            if let Ok(RouteWalkerMoveResult::Fork(fork_choices)) = move_result {
+            if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
                 self.walker
                     .debug_logger
                     .log(format!("choices: {:#?}", fork_choices));
@@ -206,7 +206,7 @@ impl<'a> Navigator<'a> {
                                     itinerary: &self.itinerary,
                                     current_fork_segment: &fork_route_segment,
                                     all_fork_segments: &fork_choices,
-                                    walker_from_fork: RouteWalker::new(
+                                    walker_from_fork: Walker::new(
                                         self.map_data_graph,
                                         Rc::clone(&fork_route_segment.get_end_point()),
                                         Rc::clone(&self.itinerary.get_next()),
@@ -262,9 +262,11 @@ impl<'a> Navigator<'a> {
                         "fork action go back:\n\tlast:\n\t\t{:#?}\n\tfork:\n\t\t{:#?}",
                         last_segment, move_back_segment_list
                     ));
-                    return NavigatorRoute::Stuck(self.walker.get_route().clone());
+                    if self.walker.get_route().get_junction_before_last_segment() == None {
+                        return NavigationResult::Stuck;
+                    }
                 }
-            } else if move_result == Ok(RouteWalkerMoveResult::DeadEnd) {
+            } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
                 let move_back_segment_list = self.walker.move_backwards_to_prev_fork();
                 let last_segment = self
                     .walker
@@ -283,7 +285,11 @@ impl<'a> Navigator<'a> {
 #[cfg(test)]
 mod test {
     use crate::{
-        router::{itinerary::Itinerary, navigator::WeightCalcResult, weights::WeightCalcInput},
+        router::{
+            itinerary::Itinerary,
+            navigator::{NavigationResult, WeightCalcResult},
+            weights::WeightCalcInput,
+        },
         test_utils::{get_test_map_data_graph, route_matches_ids},
     };
 
@@ -294,7 +300,7 @@ mod test {
         fn weight(input: WeightCalcInput) -> WeightCalcResult {
             let prev_point = match input.route.get_segment_last() {
                 Some(segment) => segment.get_end_point(),
-                None => &input.itinerary.get_to().clone(),
+                None => &input.itinerary.get_from().clone(),
             };
             if prev_point.borrow().id == 3
                 && input.current_fork_segment.get_end_point().borrow().id == 6
@@ -308,19 +314,12 @@ mod test {
         let to = map_data.get_point_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary.clone(), vec![weight]);
-        let routes = match navigator.generate_routes() {
-            crate::router::navigator::NavigatorRoute::Finished(r) => r,
-            crate::router::navigator::NavigatorRoute::Stuck(_) => {
+        let route = match navigator.generate_routes() {
+            crate::router::navigator::NavigationResult::Finished(r) => r,
+            crate::router::navigator::NavigationResult::Stuck => {
                 assert!(false);
                 return ();
             }
-        };
-        let route = routes.get_segment_by_index(0);
-        let route = if let Some(r) = route {
-            r
-        } else {
-            assert!(false);
-            return ();
         };
 
         assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
@@ -339,19 +338,12 @@ mod test {
             WeightCalcResult::UseWithWeight(1)
         }
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight2]);
-        let routes = match navigator.generate_routes() {
-            crate::router::navigator::NavigatorRoute::Finished(r) => r,
-            crate::router::navigator::NavigatorRoute::Stuck(_) => {
+        let route = match navigator.generate_routes() {
+            crate::router::navigator::NavigationResult::Finished(r) => r,
+            crate::router::navigator::NavigationResult::Stuck => {
                 assert!(false);
                 return ();
             }
-        };
-        let route = routes.get_segment_by_index(0);
-        let route = if let Some(r) = route {
-            r
-        } else {
-            assert!(false);
-            return ();
         };
 
         assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
@@ -385,19 +377,12 @@ mod test {
         let to = map_data.get_point_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
-        let routes = match navigator.generate_routes() {
-            crate::router::navigator::NavigatorRoute::Finished(r) => r,
-            crate::router::navigator::NavigatorRoute::Stuck(_) => {
+        let route = match navigator.generate_routes() {
+            crate::router::navigator::NavigationResult::Finished(r) => r,
+            crate::router::navigator::NavigationResult::Stuck => {
                 assert!(false);
                 return ();
             }
-        };
-        let route = routes.get_segment_by_index(0);
-        let route = if let Some(r) = route {
-            r
-        } else {
-            assert!(false);
-            return ();
         };
 
         assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
@@ -413,14 +398,10 @@ mod test {
         let to = map_data.get_point_by_id(&11).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
-        let routes = match navigator.generate_routes() {
-            crate::router::navigator::NavigatorRoute::Finished(r) => r,
-            crate::router::navigator::NavigatorRoute::Stuck(_) => {
-                assert!(false);
-                return ();
-            }
-        };
-        assert_eq!(routes.get_segment_count(), 0);
+
+        if let NavigationResult::Finished(_) = navigator.generate_routes() {
+            assert!(false);
+        }
     }
 
     #[test]
@@ -436,14 +417,9 @@ mod test {
         let to = map_data.get_point_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
-        let routes = match navigator.generate_routes() {
-            crate::router::navigator::NavigatorRoute::Finished(r) => r,
-            crate::router::navigator::NavigatorRoute::Stuck(_) => {
-                assert!(false);
-                return ();
-            }
-        };
-        assert_eq!(routes.get_segment_count(), 0);
+        if let NavigationResult::Finished(_) = navigator.generate_routes() {
+            assert!(false);
+        }
     }
 
     #[test]
@@ -478,19 +454,12 @@ mod test {
         let to = map_data.get_point_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight1, weight2]);
-        let routes = match navigator.generate_routes() {
-            crate::router::navigator::NavigatorRoute::Finished(r) => r,
-            crate::router::navigator::NavigatorRoute::Stuck(_) => {
+        let route = match navigator.generate_routes() {
+            crate::router::navigator::NavigationResult::Finished(r) => r,
+            crate::router::navigator::NavigationResult::Stuck => {
                 assert!(false);
                 return ();
             }
-        };
-        let route = routes.get_segment_by_index(0);
-        let route = if let Some(r) = route {
-            r
-        } else {
-            assert!(false);
-            return ();
         };
         assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
     }

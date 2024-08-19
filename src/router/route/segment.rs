@@ -2,12 +2,12 @@ use crate::map_data_graph::{MapDataLineRef, MapDataPointRef};
 use std::fmt::Debug;
 
 #[derive(PartialEq, Clone)]
-pub struct RouteSegment {
+pub struct Segment {
     line: MapDataLineRef,
     end_point: MapDataPointRef,
 }
 
-impl RouteSegment {
+impl Segment {
     pub fn new(line: MapDataLineRef, end_point: MapDataPointRef) -> Self {
         Self { line, end_point }
     }
@@ -19,7 +19,7 @@ impl RouteSegment {
     }
 }
 
-impl Debug for RouteSegment {
+impl Debug for Segment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let line = self.get_line().borrow().clone();
         let point = self.get_end_point().borrow().clone();
@@ -27,8 +27,8 @@ impl Debug for RouteSegment {
     }
 }
 
-impl From<(MapDataLineRef, MapDataPointRef)> for RouteSegment {
+impl From<(MapDataLineRef, MapDataPointRef)> for Segment {
     fn from(value: (MapDataLineRef, MapDataPointRef)) -> Self {
-        RouteSegment::new(value.0, value.1)
+        Segment::new(value.0, value.1)
     }
 }

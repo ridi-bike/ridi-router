@@ -5,17 +5,17 @@ use crate::{
     map_data_graph::{MapDataGraph, MapDataPointRef, MapDataRuleType},
 };
 
-use super::route::{segment::RouteSegment, segment_list::RouteSegmentList, Route};
+use super::route::{segment::Segment, segment_list::SegmentList, Route};
 
 #[derive(Debug, PartialEq)]
-pub enum RouterWalkerError {
+pub enum WalkerError {
     WrongForkChoice {
         id: u64,
         available_fork_ids: Vec<u64>,
     },
 }
 
-pub struct RouteWalker<'a> {
+pub struct Walker<'a> {
     walker_id: u16,
     map_data_graph: &'a MapDataGraph,
     start: MapDataPointRef,
@@ -26,13 +26,13 @@ pub struct RouteWalker<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum RouteWalkerMoveResult {
-    Fork(RouteSegmentList),
+pub enum WalkerMoveResult {
+    Fork(SegmentList),
     DeadEnd,
     Finish,
 }
 
-impl<'a> RouteWalker<'a> {
+impl<'a> Walker<'a> {
     pub fn new(
         map_data_graph: &'a MapDataGraph,
         start: MapDataPointRef,
@@ -59,7 +59,7 @@ impl<'a> RouteWalker<'a> {
         last_point_id
     }
 
-    fn get_next_segments(&self) -> RouteSegmentList {
+    fn get_next_segments(&self) -> SegmentList {
         let (center_point, center_line) =
             if let Some(idx) = self.route_walked.get_segment_count().checked_sub(1) {
                 if let Some(p) = self.route_walked.get_segment_by_index(idx) {
@@ -104,9 +104,9 @@ impl<'a> RouteWalker<'a> {
                                 return None;
                             }
                         }
-                        Some(RouteSegment::new(Rc::clone(&l), Rc::clone(&p)))
+                        Some(Segment::new(Rc::clone(&l), Rc::clone(&p)))
                     })
-                    .collect::<RouteSegmentList>();
+                    .collect::<SegmentList>();
                 return segment_list;
             }
         };
@@ -177,7 +177,7 @@ impl<'a> RouteWalker<'a> {
                 // must not be in not allow rules
                 true
             })
-            .map(|(line, end_point)| RouteSegment::new(line, end_point))
+            .map(|(line, end_point)| Segment::new(line, end_point))
             .collect()
     }
 
@@ -185,16 +185,14 @@ impl<'a> RouteWalker<'a> {
         self.next_fork_choice_point = Some(point);
     }
 
-    pub fn move_forward_to_next_fork(
-        &mut self,
-    ) -> Result<RouteWalkerMoveResult, RouterWalkerError> {
+    pub fn move_forward_to_next_fork(&mut self) -> Result<WalkerMoveResult, WalkerError> {
         loop {
             let point = match self.route_walked.get_segment_last() {
                 Some(route_segment) => &route_segment.get_end_point(),
                 None => &self.start,
             };
             if *point == self.end {
-                return Ok(RouteWalkerMoveResult::Finish);
+                return Ok(WalkerMoveResult::Finish);
             }
             self.debug_logger.log(format!(
                 "raw choices for {:#?} : {:#?}",
@@ -210,12 +208,12 @@ impl<'a> RouteWalker<'a> {
             ));
 
             if available_segments.get_segment_count() > 1 && self.next_fork_choice_point.is_none() {
-                return Ok(RouteWalkerMoveResult::Fork(available_segments));
+                return Ok(WalkerMoveResult::Fork(available_segments));
             }
 
             let next_segment = if let Some(next_point) = self.next_fork_choice_point.take() {
                 if !available_segments.has_segment_with_point(&next_point) {
-                    return Err(RouterWalkerError::WrongForkChoice {
+                    return Err(WalkerError::WrongForkChoice {
                         id: next_point.borrow().id,
                         available_fork_ids: available_segments
                             .get_all_segment_points()
@@ -231,7 +229,7 @@ impl<'a> RouteWalker<'a> {
 
             let next_segment = match next_segment {
                 None => {
-                    return Ok(RouteWalkerMoveResult::DeadEnd);
+                    return Ok(WalkerMoveResult::DeadEnd);
                 }
                 Some(segment) => segment,
             };
@@ -240,7 +238,7 @@ impl<'a> RouteWalker<'a> {
         }
     }
 
-    pub fn move_backwards_to_prev_fork(&mut self) -> Option<RouteSegmentList> {
+    pub fn move_backwards_to_prev_fork(&mut self) -> Option<SegmentList> {
         self.next_fork_choice_point = None;
         let current_fork = self.route_walked.remove_last_segment();
         if current_fork.is_none() {
@@ -280,12 +278,12 @@ mod tests {
         debug_writer::DebugLoggerVoidSink,
         router::{
             route::Route,
-            walker::{RouteWalkerMoveResult, RouterWalkerError},
+            walker::{WalkerError, WalkerMoveResult},
         },
         test_utils::{get_test_map_data_graph, line_is_between_point_ids},
     };
 
-    use super::RouteWalker;
+    use super::Walker;
 
     #[test]
     fn walker_same_start_end() {
@@ -293,7 +291,7 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&1).unwrap();
 
-        let mut walker = RouteWalker::new(
+        let mut walker = Walker::new(
             &map_data,
             point1.clone(),
             point2.clone(),
@@ -302,7 +300,7 @@ mod tests {
 
         assert_eq!(
             walker.move_forward_to_next_fork(),
-            Ok(RouteWalkerMoveResult::Finish)
+            Ok(WalkerMoveResult::Finish)
         );
         assert_eq!(walker.get_route().clone(), Route::new());
     }
@@ -313,7 +311,7 @@ mod tests {
         let point1 = map_data.get_point_by_id(&2).unwrap();
         let point2 = map_data.get_point_by_id(&3).unwrap();
 
-        let mut walker = RouteWalker::new(
+        let mut walker = Walker::new(
             &map_data,
             point1.clone(),
             point2.clone(),
@@ -325,7 +323,7 @@ mod tests {
 
         assert_eq!(
             walker.move_forward_to_next_fork(),
-            Err(RouterWalkerError::WrongForkChoice {
+            Err(WalkerError::WrongForkChoice {
                 id: 6,
                 available_fork_ids: vec![1, 3]
             })
@@ -342,7 +340,7 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&2).unwrap();
 
-        let mut walker = RouteWalker::new(
+        let mut walker = Walker::new(
             &map_data,
             point1.clone(),
             point2.clone(),
@@ -350,7 +348,7 @@ mod tests {
         );
         assert_eq!(
             walker.move_forward_to_next_fork(),
-            Ok(RouteWalkerMoveResult::Finish)
+            Ok(WalkerMoveResult::Finish)
         );
         let route = walker.get_route().clone();
         assert_eq!(route.get_segment_count(), 1);
@@ -374,7 +372,7 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&7).unwrap();
 
-        let mut walker = RouteWalker::new(
+        let mut walker = Walker::new(
             &map_data,
             point1.clone(),
             point2.clone(),
@@ -383,7 +381,7 @@ mod tests {
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),
-            Ok(RouteWalkerMoveResult::Fork(c)) => c,
+            Ok(WalkerMoveResult::Fork(c)) => c,
             _ => panic!("did not get choices for routes"),
         };
 
@@ -407,7 +405,7 @@ mod tests {
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),
-            Ok(RouteWalkerMoveResult::Fork(c)) => c,
+            Ok(WalkerMoveResult::Fork(c)) => c,
             _ => panic!("did not get choices for routes"),
         };
         assert_eq!(choices.get_segment_count(), 2);
@@ -424,7 +422,7 @@ mod tests {
         let choice = map_data.get_point_by_id(&7).unwrap();
         walker.set_fork_choice_point_id(choice);
 
-        assert!(walker.move_forward_to_next_fork() == Ok(RouteWalkerMoveResult::Finish));
+        assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
 
         let route = walker.get_route().clone();
         assert_eq!(route.get_segment_count(), 4);
@@ -464,7 +462,7 @@ mod tests {
         let point1 = map_data.get_point_by_id(&1).unwrap();
         let point2 = map_data.get_point_by_id(&4).unwrap();
 
-        let mut walker = RouteWalker::new(
+        let mut walker = Walker::new(
             &map_data,
             point1.clone(),
             point2.clone(),
@@ -473,7 +471,7 @@ mod tests {
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),
-            Ok(RouteWalkerMoveResult::Fork(c)) => c,
+            Ok(WalkerMoveResult::Fork(c)) => c,
             _ => panic!("did not get choices for routes"),
         };
         assert_eq!(choices.get_segment_count(), 3);
@@ -495,7 +493,7 @@ mod tests {
 
         walker.set_fork_choice_point_id(choice1);
 
-        assert!(walker.move_forward_to_next_fork() == Ok(RouteWalkerMoveResult::DeadEnd));
+        assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::DeadEnd));
 
         let choices = match walker.move_backwards_to_prev_fork() {
             None => panic!("Expected to be back at point 3 with choices"),
@@ -518,7 +516,7 @@ mod tests {
         let choice2 = map_data.get_point_by_id(&4).unwrap();
         walker.set_fork_choice_point_id(choice2);
 
-        assert!(walker.move_forward_to_next_fork() == Ok(RouteWalkerMoveResult::Finish));
+        assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
 
         let route = walker.get_route().clone();
         assert_eq!(route.get_segment_count(), 3);

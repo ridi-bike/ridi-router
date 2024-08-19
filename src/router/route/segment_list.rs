@@ -1,14 +1,14 @@
 use crate::map_data_graph::MapDataPointRef;
 use std::{fmt::Debug, rc::Rc};
 
-use super::segment::RouteSegment;
+use super::segment::Segment;
 
 #[derive(PartialEq, Clone)]
-pub struct RouteSegmentList {
-    segment_list: Vec<RouteSegment>,
+pub struct SegmentList {
+    segment_list: Vec<Segment>,
 }
 
-impl RouteSegmentList {
+impl SegmentList {
     pub fn new() -> Self {
         Self {
             segment_list: Vec::new(),
@@ -29,58 +29,55 @@ impl RouteSegmentList {
             .map(|segment| Rc::clone(&segment.get_end_point()))
             .collect()
     }
-    pub fn get_segment_from_point(&self, point: &MapDataPointRef) -> Option<&RouteSegment> {
+    pub fn get_segment_from_point(&self, point: &MapDataPointRef) -> Option<&Segment> {
         self.segment_list
             .iter()
             .find(|segment| segment.get_end_point() == point)
     }
-    pub fn exclude_segments_where_points_in(
-        &self,
-        points: &Vec<MapDataPointRef>,
-    ) -> RouteSegmentList {
+    pub fn exclude_segments_where_points_in(&self, points: &Vec<MapDataPointRef>) -> SegmentList {
         self.segment_list
             .iter()
             .filter(|segment| !points.contains(&&segment.get_end_point()))
             .collect()
     }
-    pub fn get_first_segment(&self) -> Option<&RouteSegment> {
+    pub fn get_first_segment(&self) -> Option<&Segment> {
         self.segment_list.get(0)
     }
 }
 
-impl IntoIterator for RouteSegmentList {
-    type Item = RouteSegment;
+impl IntoIterator for SegmentList {
+    type Item = Segment;
 
-    type IntoIter = std::vec::IntoIter<RouteSegment>;
+    type IntoIter = std::vec::IntoIter<Segment>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.segment_list.into_iter()
     }
 }
 
-impl From<Vec<RouteSegment>> for RouteSegmentList {
-    fn from(value: Vec<RouteSegment>) -> Self {
+impl From<Vec<Segment>> for SegmentList {
+    fn from(value: Vec<Segment>) -> Self {
         Self {
             segment_list: value,
         }
     }
 }
 
-impl FromIterator<RouteSegment> for RouteSegmentList {
-    fn from_iter<T: IntoIterator<Item = RouteSegment>>(iter: T) -> Self {
-        RouteSegmentList {
+impl FromIterator<Segment> for SegmentList {
+    fn from_iter<T: IntoIterator<Item = Segment>>(iter: T) -> Self {
+        SegmentList {
             segment_list: iter.into_iter().collect(),
         }
     }
 }
-impl<'a> FromIterator<&'a RouteSegment> for RouteSegmentList {
-    fn from_iter<T: IntoIterator<Item = &'a RouteSegment>>(iter: T) -> Self {
-        RouteSegmentList {
+impl<'a> FromIterator<&'a Segment> for SegmentList {
+    fn from_iter<T: IntoIterator<Item = &'a Segment>>(iter: T) -> Self {
+        SegmentList {
             segment_list: Vec::from_iter(iter.into_iter().cloned()),
         }
     }
 }
-impl Debug for RouteSegmentList {
+impl Debug for SegmentList {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "RouteSegmentList {:#?}", self.segment_list)
     }

@@ -14,10 +14,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::map_data_graph::MapDataPointRef;
 use crate::router::route::Route;
-use crate::router::walker::RouteWalkerMoveResult;
+use crate::router::walker::WalkerMoveResult;
 
 pub trait DebugLogger {
-    fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> ();
+    fn log_move(&mut self, move_result: &WalkerMoveResult, route: &Route) -> ();
     fn log_step(&mut self) -> ();
     fn log(&self, msg: String) -> ();
     fn split(&self) -> Box<dyn DebugLogger>;
@@ -27,7 +27,7 @@ pub trait DebugLogger {
 pub struct DebugLoggerVoidSink;
 
 impl DebugLogger for DebugLoggerVoidSink {
-    fn log_move(&mut self, _move_result: &RouteWalkerMoveResult, _route: &Route) -> () {}
+    fn log_move(&mut self, _move_result: &WalkerMoveResult, _route: &Route) -> () {}
 
     fn log_step(&mut self) -> () {}
 
@@ -79,7 +79,7 @@ impl DebugLogger for DebugLoggerFileSink {
         self.log_to_file(format!("Step: {}", self.step_id));
     }
 
-    fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> () {
+    fn log_move(&mut self, move_result: &WalkerMoveResult, route: &Route) -> () {
         self.log_to_file(format!("\tLast Point: {:#?}", route.get_segment_last()));
         let last_segment = route.get_segment_last();
         if let Some(last_segment) = last_segment {
@@ -91,9 +91,9 @@ impl DebugLogger for DebugLoggerFileSink {
                 Waypoint::new(Point::new(point.borrow().lon, point.borrow().lat))
             };
             let move_result_type = match move_result {
-                RouteWalkerMoveResult::Finish => "Finish",
-                RouteWalkerMoveResult::DeadEnd => "DeadEnd",
-                RouteWalkerMoveResult::Fork(_) => "Fork",
+                WalkerMoveResult::Finish => "Finish",
+                WalkerMoveResult::DeadEnd => "DeadEnd",
+                WalkerMoveResult::Fork(_) => "Fork",
             };
             let comment_data =
                 format!("Step: {}\nMoveResult: {}\n", self.step_id, move_result_type);

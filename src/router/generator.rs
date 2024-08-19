@@ -51,8 +51,8 @@ impl<'a> Generator<'a> {
                 .generate_routes()
             })
             .filter_map(|nav_route| match nav_route {
-                super::navigator::NavigatorRoute::Stuck(_) => None,
-                super::navigator::NavigatorRoute::Finished(route) => Some(route),
+                super::navigator::NavigationResult::Stuck => None,
+                super::navigator::NavigationResult::Finished(route) => Some(route),
             })
             .collect::<Vec<_>>()
     }

@@ -5,16 +5,16 @@ use geo::{HaversineBearing, Point};
 use super::{
     itinerary::Itinerary,
     navigator::WeightCalcResult,
-    route::{segment::RouteSegment, segment_list::RouteSegmentList, Route},
-    walker::{RouteWalker, RouteWalkerMoveResult},
+    route::{segment::Segment, segment_list::SegmentList, Route},
+    walker::{Walker, WalkerMoveResult},
 };
 
 pub struct WeightCalcInput<'a> {
-    pub current_fork_segment: &'a RouteSegment,
+    pub current_fork_segment: &'a Segment,
     pub route: &'a Route,
-    pub all_fork_segments: &'a RouteSegmentList,
+    pub all_fork_segments: &'a SegmentList,
     pub itinerary: &'a Itinerary,
-    pub walker_from_fork: RouteWalker<'a>,
+    pub walker_from_fork: Walker<'a>,
 }
 
 pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
@@ -29,9 +29,9 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         }
     };
     let _ = match next_fork {
-        RouteWalkerMoveResult::DeadEnd => return WeightCalcResult::DoNotUse,
-        RouteWalkerMoveResult::Finish => return WeightCalcResult::UseWithWeight(255),
-        RouteWalkerMoveResult::Fork(f) => f,
+        WalkerMoveResult::DeadEnd => return WeightCalcResult::DoNotUse,
+        WalkerMoveResult::Finish => return WeightCalcResult::UseWithWeight(255),
+        WalkerMoveResult::Fork(f) => f,
     };
     let fork_segment = match walker.get_route().get_segment_last() {
         Some(last_segment) => last_segment,
@@ -168,9 +168,11 @@ mod test {
         debug_writer::DebugLoggerVoidSink,
         map_data_graph::MapDataPointRef,
         osm_data_reader::OsmDataReader,
-        route::{
-            navigator::WeightCalcResult, segment::RouteSegment, segment_list::RouteSegmentList,
-            walker::RouteWalker,
+        router::{
+            itinerary::Itinerary,
+            navigator::WeightCalcResult,
+            route::{segment::Segment, segment_list::SegmentList},
+            walker::Walker,
         },
     };
 
@@ -179,7 +181,7 @@ mod test {
     fn get_route_segment(
         end_point: MapDataPointRef,
         opposite_point_for_line: MapDataPointRef,
-    ) -> RouteSegment {
+    ) -> Segment {
         let end_point_borrowed = end_point.borrow();
         let line = end_point_borrowed
             .lines
@@ -191,24 +193,24 @@ mod test {
             })
             .expect("line to be found");
 
-        RouteSegment::new(line.clone(), end_point.clone())
+        Segment::new(line.clone(), end_point.clone())
     }
 
     #[test]
     fn weight_heading_test() {
         let data_reader = OsmDataReader::new_file(String::from("src/test_data/sig-500.json"));
         let map_data = data_reader.read_data().expect("to load test file");
-        let start = map_data
+        let from = map_data
             .get_point_by_id(&885564366)
             .expect("to find start point");
-        let end = map_data
+        let to = map_data
             .get_point_by_id(&7535100633)
             .expect("to find end point");
         let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
-        let walker = RouteWalker::new(
+        let walker = Walker::new(
             &map_data,
-            start.clone(),
-            end.clone(),
+            from.clone(),
+            to.clone(),
             disabled_debug_writer.clone(),
         );
 
@@ -216,18 +218,19 @@ mod test {
             .get_point_by_id(&81272994)
             .expect("to find fork point");
 
-        let segment = get_route_segment(fork_point, start.clone());
+        let segment = get_route_segment(fork_point, from.clone());
+
+        let itinerary = Itinerary::new(from.clone(), to.clone(), Vec::new(), 0.);
 
         let fork_weight = weight_heading(WeightCalcInput {
             route: walker.get_route(),
-            start_point: start.clone(),
-            end_point: end.clone(),
-            all_fork_segments: &RouteSegmentList::from(vec![]),
+            itinerary: &itinerary,
+            all_fork_segments: &SegmentList::from(vec![]),
             current_fork_segment: &segment,
-            walker_from_fork: RouteWalker::new(
+            walker_from_fork: Walker::new(
                 &map_data,
-                start.clone(),
-                end.clone(),
+                from.clone(),
+                to.clone(),
                 disabled_debug_writer.clone(),
             ),
         });
@@ -237,18 +240,17 @@ mod test {
             .get_point_by_id(&9212889586)
             .expect("to find fork point");
 
-        let segment = get_route_segment(fork_point, start.clone());
+        let segment = get_route_segment(fork_point, from.clone());
 
         let fork_weight = weight_heading(WeightCalcInput {
             route: walker.get_route(),
-            start_point: start.clone(),
-            end_point: end.clone(),
-            all_fork_segments: &RouteSegmentList::from(vec![]),
+            itinerary: &itinerary,
+            all_fork_segments: &SegmentList::from(vec![]),
             current_fork_segment: &segment,
-            walker_from_fork: RouteWalker::new(
+            walker_from_fork: Walker::new(
                 &map_data,
-                start.clone(),
-                end.clone(),
+                from.clone(),
+                to.clone(),
                 disabled_debug_writer.clone(),
             ),
         });
