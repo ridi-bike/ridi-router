@@ -12,8 +12,9 @@ use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::route::Route;
-use crate::{map_data_graph::MapDataPointRef, route::walker::RouteWalkerMoveResult};
+use crate::map_data_graph::MapDataPointRef;
+use crate::router::route::Route;
+use crate::router::walker::RouteWalkerMoveResult;
 
 pub trait DebugLogger {
     fn log_move(&mut self, move_result: &RouteWalkerMoveResult, route: &Route) -> ();

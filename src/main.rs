@@ -4,13 +4,8 @@ use clap::{arg, value_parser, Command};
 
 use gpx_writer::RoutesWriter;
 use osm_data_reader::OsmDataReader;
-use route::{
-    navigator::RouteNavigator,
-    weights::{
-        weight_check_distance_to_end, weight_heading, weight_no_loops, weight_prefer_same_road,
-        weight_progress_speed,
-    },
-};
+
+use crate::router::generator::Generator;
 
 mod debug_writer;
 mod gps_hash;
@@ -18,7 +13,7 @@ mod gpx_writer;
 mod map_data_graph;
 mod osm_data_reader;
 mod osm_json_parser;
-mod route;
+mod router;
 #[cfg(test)]
 mod test_utils;
 
@@ -94,20 +89,8 @@ fn main() {
         Some(p) => p,
     };
 
-    let mut navigator = RouteNavigator::new(
-        &map_data,
-        Rc::clone(&start_point),
-        end_point,
-        vec![
-            weight_check_distance_to_end,
-            weight_prefer_same_road,
-            weight_no_loops,
-            weight_heading,
-            weight_progress_speed,
-        ],
-    );
-
-    let routes = navigator.generate_routes();
+    let route_generator = Generator::new(&map_data, Rc::clone(&start_point), Rc::clone(&end_point));
+    let routes = route_generator.generate_routes();
 
     let routes_generation_duration = routes_generation_start.elapsed();
     eprintln!(
