@@ -45,7 +45,7 @@ impl<'a> Generator<'a> {
                         weight_prefer_same_road,
                         weight_no_loops,
                         weight_heading,
-                        weight_progress_speed,
+                        // weight_progress_speed,
                     ],
                 )
                 .generate_routes()

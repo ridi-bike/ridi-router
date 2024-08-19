@@ -45,6 +45,12 @@ impl SegmentList {
     }
 }
 
+impl Into<Vec<Segment>> for SegmentList {
+    fn into(self) -> Vec<Segment> {
+        self.segment_list
+    }
+}
+
 impl IntoIterator for SegmentList {
     type Item = Segment;
 

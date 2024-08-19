@@ -59,57 +59,46 @@ impl<'a> Walker<'a> {
         last_point_id
     }
 
-    fn get_next_segments(&self) -> SegmentList {
-        let (center_point, center_line) =
-            if let Some(idx) = self.route_walked.get_segment_count().checked_sub(1) {
-                if let Some(p) = self.route_walked.get_segment_by_index(idx) {
-                    (p.get_end_point(), Some(p.get_line()))
-                } else {
-                    (&self.start, None)
+    fn get_fork_segments_for_point(&self, center_point: &MapDataPointRef) -> SegmentList {
+        let center_point_borrowed = center_point.borrow();
+
+        let not_allow_rules = center_point_borrowed
+            .rules
+            .iter()
+            .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
+            .collect::<Vec<_>>();
+        let segments = self.map_data_graph.get_adjacent(Rc::clone(&center_point));
+        let segment_list = segments
+            .iter()
+            .filter_map(|(l, p)| {
+                if l.borrow().one_way && &l.borrow().points.1 == center_point {
+                    return None;
                 }
-            } else {
-                (&self.start, None)
-            };
+                if not_allow_rules.len() > 0 {
+                    let not_allow_rules_for_segment = not_allow_rules
+                        .iter()
+                        .filter(|rule| rule.to_lines.contains(&l))
+                        .collect::<Vec<_>>();
+                    let other_segments = segments.iter().filter(|s| &s.0 != l).collect::<Vec<_>>();
 
-        let center_line = match center_line {
-            Some(l) => l,
-            None => {
-                let center_point_borrowed = center_point.borrow();
+                    if not_allow_rules_for_segment.iter().any(|rule| {
+                        other_segments
+                            .iter()
+                            .all(|seg| rule.to_lines.contains(&seg.0))
+                    }) {
+                        return None;
+                    }
+                }
+                Some(Segment::new(Rc::clone(&l), Rc::clone(&p)))
+            })
+            .collect::<SegmentList>();
 
-                let not_allow_rules = center_point_borrowed
-                    .rules
-                    .iter()
-                    .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
-                    .collect::<Vec<_>>();
-                let segments = self.map_data_graph.get_adjacent(Rc::clone(&center_point));
-                let segment_list = segments
-                    .iter()
-                    .filter_map(|(l, p)| {
-                        if l.borrow().one_way && &l.borrow().points.1 == center_point {
-                            return None;
-                        }
-                        if not_allow_rules.len() > 0 {
-                            let not_allow_rules_for_segment = not_allow_rules
-                                .iter()
-                                .filter(|rule| rule.to_lines.contains(&l))
-                                .collect::<Vec<_>>();
-                            let other_segments =
-                                segments.iter().filter(|s| &s.0 != l).collect::<Vec<_>>();
+        segment_list
+    }
 
-                            if not_allow_rules_for_segment.iter().any(|rule| {
-                                other_segments
-                                    .iter()
-                                    .all(|seg| rule.to_lines.contains(&seg.0))
-                            }) {
-                                return None;
-                            }
-                        }
-                        Some(Segment::new(Rc::clone(&l), Rc::clone(&p)))
-                    })
-                    .collect::<SegmentList>();
-                return segment_list;
-            }
-        };
+    fn get_fork_segments_for_segment(&self, segment: &Segment) -> SegmentList {
+        let center_point = segment.get_end_point();
+        let center_line = segment.get_line();
 
         let prev_point = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
             if let Some(p) = self.route_walked.get_segment_by_index(idx) {
@@ -185,6 +174,91 @@ impl<'a> Walker<'a> {
         self.next_fork_choice_point = Some(point);
     }
 
+    fn get_roundabout_exits(&self, segment: &Segment) -> SegmentList {
+        if !segment.get_line().borrow().roundabout {
+            return SegmentList::new();
+        }
+
+        let mut segments = Vec::new();
+
+        let mut current_segment = segment.clone();
+
+        loop {
+            let fork_segments = self.get_fork_segments_for_segment(&current_segment);
+            let fork_segments: Vec<_> = fork_segments.into();
+
+            segments.push(
+                fork_segments
+                    .iter()
+                    .filter_map(|f| {
+                        if !f.get_line().borrow().roundabout {
+                            return None;
+                        }
+                        Some(f.clone())
+                    })
+                    .collect::<Vec<_>>(),
+            );
+
+            current_segment = match fork_segments
+                .iter()
+                .find(|s| s.get_line().borrow().roundabout)
+            {
+                None => break,
+                Some(s) => {
+                    if s.get_end_point() == segment.get_end_point() {
+                        break;
+                    }
+                    s.clone()
+                }
+            };
+        }
+
+        SegmentList::from(segments.into_iter().flatten().collect::<Vec<_>>())
+    }
+
+    fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) -> () {
+        let last_segment = match self.route_walked.get_segment_last() {
+            Some(seg) => {
+                if !seg.get_line().borrow().roundabout {
+                    return ();
+                }
+                seg.clone()
+            }
+            None => return (),
+        };
+
+        // let mut segments = Vec::new();
+
+        let mut current_segment = last_segment.clone();
+
+        loop {
+            let fork_segments = self.get_fork_segments_for_segment(&current_segment);
+            let fork_segments: Vec<_> = fork_segments.into();
+
+            if fork_segments
+                .iter()
+                .any(|s| s.get_end_point() == exit_point)
+            {
+                break;
+            }
+
+            current_segment = match fork_segments
+                .iter()
+                .find(|s| s.get_line().borrow().roundabout)
+            {
+                None => break,
+                Some(s) => {
+                    if s.get_end_point() == last_segment.get_end_point() {
+                        break;
+                    }
+                    s.clone()
+                }
+            };
+
+            self.route_walked.add_segment(current_segment.clone());
+        }
+    }
+
     pub fn move_forward_to_next_fork(&mut self) -> Result<WalkerMoveResult, WalkerError> {
         loop {
             let point = match self.route_walked.get_segment_last() {
@@ -200,7 +274,16 @@ impl<'a> Walker<'a> {
                 self.map_data_graph.get_adjacent(point.clone())
             ));
 
-            let available_segments = self.get_next_segments();
+            let available_segments = match self.route_walked.get_segment_last() {
+                None => self.get_fork_segments_for_point(&self.start),
+                Some(segment) => {
+                    if segment.get_line().borrow().roundabout {
+                        self.get_roundabout_exits(&segment)
+                    } else {
+                        self.get_fork_segments_for_segment(&segment)
+                    }
+                }
+            };
 
             self.debug_logger.log(format!(
                 "processed choices {:#?} : {:#?}",
@@ -222,6 +305,7 @@ impl<'a> Walker<'a> {
                             .collect(),
                     });
                 }
+
                 available_segments.get_segment_from_point(&next_point)
             } else {
                 available_segments.get_first_segment()
@@ -233,6 +317,8 @@ impl<'a> Walker<'a> {
                 }
                 Some(segment) => segment,
             };
+
+            self.move_to_roundabout_exit(next_segment.get_end_point());
 
             self.route_walked.add_segment(next_segment.clone());
         }
@@ -248,7 +334,10 @@ impl<'a> Walker<'a> {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
                 if last_segment.get_end_point().borrow().junction
-                    && self.get_next_segments().get_segment_count() > 1
+                    && self
+                        .get_fork_segments_for_segment(&last_segment)
+                        .get_segment_count()
+                        > 1
                 {
                     break;
                 }
@@ -258,8 +347,8 @@ impl<'a> Walker<'a> {
             self.route_walked.remove_last_segment();
         }
 
-        if self.route_walked.get_segment_last().is_some() {
-            return Some(self.get_next_segments());
+        if let Some(last_segment) = self.route_walked.get_segment_last() {
+            return Some(self.get_fork_segments_for_segment(&last_segment));
         }
 
         None
@@ -280,7 +369,10 @@ mod tests {
             route::Route,
             walker::{WalkerError, WalkerMoveResult},
         },
-        test_utils::{get_test_map_data_graph, line_is_between_point_ids},
+        test_utils::{
+            get_test_data_with_rules, get_test_map_data_graph, get_test_map_data_graph_with_rules,
+            line_is_between_point_ids,
+        },
     };
 
     use super::Walker;
@@ -541,5 +633,71 @@ mod tests {
             assert!(line_is_between_point_ids(&route_segment.get_line(), 4, 3));
             assert_eq!(route_segment.get_end_point().borrow().id, 4);
         }
+    }
+
+    #[test]
+    fn handle_roundabout() {
+        let map_data = get_test_map_data_graph_with_rules();
+
+        let from = map_data.get_point_by_id(&6).unwrap();
+        let to = map_data.get_point_by_id(&131).unwrap();
+
+        let mut walker = Walker::new(
+            &map_data,
+            from.clone(),
+            to.clone(),
+            Box::new(DebugLoggerVoidSink::default()),
+        );
+
+        let choices = match walker.move_forward_to_next_fork() {
+            Err(_) => panic!("Error received from move"),
+            Ok(WalkerMoveResult::Fork(c)) => c,
+            _ => panic!("did not get choices for routes"),
+        };
+        assert_eq!(choices.get_segment_count(), 2);
+
+        choices.into_iter().for_each(|route_segment| {
+            assert!(
+                route_segment.get_end_point().borrow().id == 2
+                    || route_segment.get_end_point().borrow().id == 11
+            );
+            assert!(
+                line_is_between_point_ids(&route_segment.get_line(), 7, 2)
+                    || line_is_between_point_ids(&route_segment.get_line(), 7, 11)
+            )
+        });
+
+        let choice = map_data.get_point_by_id(&11).unwrap();
+        walker.set_fork_choice_point_id(choice);
+
+        let choices = match walker.move_forward_to_next_fork() {
+            Err(_) => panic!("Error received from move"),
+            Ok(WalkerMoveResult::Fork(c)) => c,
+            _ => panic!("did not get choices for routes"),
+        };
+        eprintln!("choices {:#?}", choices);
+        assert_eq!(choices.get_segment_count(), 3);
+
+        choices.into_iter().for_each(|route_segment| {
+            assert!(
+                route_segment.get_end_point().borrow().id == 111
+                    || route_segment.get_end_point().borrow().id == 121
+                    || route_segment.get_end_point().borrow().id == 131
+            );
+            assert!(
+                line_is_between_point_ids(&route_segment.get_line(), 11, 111)
+                    || line_is_between_point_ids(&route_segment.get_line(), 12, 121)
+                    || line_is_between_point_ids(&route_segment.get_line(), 13, 131)
+            )
+        });
+
+        let choice = map_data.get_point_by_id(&131).unwrap();
+        walker.set_fork_choice_point_id(choice);
+
+        match walker.move_forward_to_next_fork() {
+            Err(_) => panic!("Error received from move"),
+            Ok(WalkerMoveResult::Finish) => {}
+            _ => panic!("expected to reach finish"),
+        };
     }
 }

@@ -50,8 +50,29 @@ pub struct OsmNode {
 pub struct OsmWay {
     pub id: u64,
     pub point_ids: Vec<u64>,
-    pub one_way: bool,
     pub tags: Option<HashMap<String, String>>,
+}
+
+impl OsmWay {
+    pub fn is_one_way(&self) -> bool {
+        if let Some(tags) = &self.tags {
+            tags.get("oneway").map_or(false, |one_way| one_way == "yes")
+                || tags
+                    .get("junction")
+                    .map_or(false, |junction| junction == "roundabout")
+        } else {
+            false
+        }
+    }
+
+    pub fn is_roundabout(&self) -> bool {
+        if let Some(tags) = &self.tags {
+            tags.get("junction")
+                .map_or(false, |junction| junction == "roundabout")
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -281,6 +302,7 @@ pub struct MapDataLine {
     pub way: MapDataWayRef,
     pub points: (MapDataPointRef, MapDataPointRef),
     pub one_way: bool,
+    pub roundabout: bool,
     pub tags_ref: Option<String>,
     pub tags_name: Option<String>,
 }
@@ -411,7 +433,8 @@ impl MapDataGraph {
                         id: line_id,
                         way: Rc::clone(&way),
                         points: (Rc::clone(&prev_point), Rc::clone(&point)),
-                        one_way: osm_way.one_way,
+                        one_way: osm_way.is_one_way(),
+                        roundabout: osm_way.is_roundabout(),
                         tags_name: osm_way
                             .tags
                             .as_ref()
@@ -874,7 +897,6 @@ mod tests {
         let res = map_data.insert_way(OsmWay {
             id: 1,
             point_ids: vec![1],
-            one_way: false,
             tags: None,
         });
         if let Ok(_) = res {

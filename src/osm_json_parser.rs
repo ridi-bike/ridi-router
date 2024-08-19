@@ -123,14 +123,6 @@ impl OsmElement {
                     }),
                     |node_ids| Ok(node_ids),
                 )?,
-                one_way: if let Some(tags) = &self.tags {
-                    tags.get("oneway").map_or(false, |one_way| one_way == "yes")
-                        || tags
-                            .get("junction")
-                            .map_or(false, |junction| junction == "roundabout")
-                } else {
-                    false
-                },
                 tags: self.tags.clone(),
             });
         }

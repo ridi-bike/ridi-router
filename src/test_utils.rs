@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     map_data_graph::{
         MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataWay,
@@ -5,6 +7,14 @@ use crate::{
     },
     router::route::Route,
 };
+
+fn make_osm_point_with_id(id: u64) -> OsmNode {
+    OsmNode {
+        lat: id as f64,
+        lon: id as f64,
+        id,
+    }
+}
 
 pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
     // 1 - - 2 - - 3 - - 4 - - 5
@@ -14,52 +24,113 @@ pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
     // 6 - - 7 -<- 8 - - 9 - - 10
     //      /r\
     //     /r r\
-    //   11     13
+    //111-11     13-131
     //    \r  r/
     //     \rr/
     //      12
+    //      |
+    //      121
 
     (
-        Vec::new(),
+        vec![
+            make_osm_point_with_id(1),
+            make_osm_point_with_id(2),
+            make_osm_point_with_id(3),
+            make_osm_point_with_id(4),
+            make_osm_point_with_id(5),
+            make_osm_point_with_id(6),
+            make_osm_point_with_id(7),
+            make_osm_point_with_id(8),
+            make_osm_point_with_id(9),
+            make_osm_point_with_id(10),
+            make_osm_point_with_id(11),
+            make_osm_point_with_id(12),
+            make_osm_point_with_id(13),
+            make_osm_point_with_id(111),
+            make_osm_point_with_id(121),
+            make_osm_point_with_id(131),
+        ],
         vec![
             OsmWay {
                 id: 12345,
-                one_way: false,
                 point_ids: vec![1, 2, 3, 4, 5],
                 tags: None,
             },
             OsmWay {
                 id: 67,
-                one_way: false,
                 point_ids: vec![6, 7],
-                tags: None,
+                tags: Some(HashMap::from([(
+                    String::from("oneway"),
+                    String::from("yes"),
+                )])),
             },
             OsmWay {
                 id: 87,
-                one_way: true,
                 point_ids: vec![8, 7],
-                tags: None,
+                tags: Some(HashMap::from([(
+                    String::from("oneway"),
+                    String::from("yes"),
+                )])),
             },
             OsmWay {
                 id: 8910,
-                one_way: false,
                 point_ids: vec![8, 9, 10],
                 tags: None,
             },
             OsmWay {
                 id: 72,
-                one_way: true,
                 point_ids: vec![7, 2],
-                tags: None,
+                tags: Some(HashMap::from([(
+                    String::from("oneway"),
+                    String::from("yes"),
+                )])),
             },
             OsmWay {
                 id: 38,
-                one_way: true,
                 point_ids: vec![3, 8],
+                tags: Some(HashMap::from([(
+                    String::from("oneway"),
+                    String::from("yes"),
+                )])),
+            },
+            OsmWay {
+                id: 7111213,
+                point_ids: vec![7, 11, 12, 13],
+                tags: Some(HashMap::from([(
+                    String::from("junction"),
+                    String::from("roundabout"),
+                )])),
+            },
+            OsmWay {
+                id: 11111,
+                point_ids: vec![111, 11],
+                tags: None,
+            },
+            OsmWay {
+                id: 12121,
+                point_ids: vec![121, 12],
+                tags: None,
+            },
+            OsmWay {
+                id: 13131,
+                point_ids: vec![131, 13],
                 tags: None,
             },
         ],
     )
+}
+pub fn get_test_map_data_graph_with_rules() -> MapDataGraph {
+    let test_data = get_test_data_with_rules();
+    let mut map_data = MapDataGraph::new();
+    let (test_nodes, test_ways) = &test_data;
+    for test_node in test_nodes {
+        map_data.insert_node(test_node.clone());
+    }
+    for test_way in test_ways {
+        map_data.insert_way(test_way.clone()).unwrap();
+    }
+
+    map_data
 }
 
 pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
@@ -137,31 +208,26 @@ pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
             OsmWay {
                 id: 1234,
                 point_ids: vec![1, 2, 3, 4],
-                one_way: false,
                 tags: None,
             },
             OsmWay {
                 id: 5367,
                 point_ids: vec![5, 3, 6, 7],
                 tags: None,
-                one_way: false,
             },
             OsmWay {
                 id: 489,
                 point_ids: vec![4, 8, 9],
-                one_way: false,
                 tags: None,
             },
             OsmWay {
                 id: 68,
                 point_ids: vec![6, 8],
-                one_way: false,
                 tags: None,
             },
             OsmWay {
                 id: 1112,
                 point_ids: vec![11, 12],
-                one_way: false,
                 tags: None,
             },
         ],
