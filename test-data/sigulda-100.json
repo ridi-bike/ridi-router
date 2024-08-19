@@ -1,0 +1,269 @@
+{
+	"version": 0.6,
+	"generator": "Overpass API 0.7.62.1 084b4234",
+	"osm3s": {
+		"timestamp_osm_base": "2024-08-19T19:45:30Z",
+		"copyright": "The data included in this document is from www.openstreetmap.org. The data is made available under ODbL."
+	},
+	"elements": [
+		{
+			"type": "node",
+			"id": 33136662,
+			"lat": 57.1539600,
+			"lon": 24.8543548
+		},
+		{
+			"type": "node",
+			"id": 33136664,
+			"lat": 57.1563546,
+			"lon": 24.8543820
+		},
+		{
+			"type": "node",
+			"id": 33416711,
+			"lat": 57.1536898,
+			"lon": 24.8531450
+		},
+		{
+			"type": "node",
+			"id": 33416712,
+			"lat": 57.1560798,
+			"lon": 24.8509236
+		},
+		{
+			"type": "node",
+			"id": 33416714,
+			"lat": 57.1550593,
+			"lon": 24.8522784
+		},
+		{
+			"type": "node",
+			"id": 34039001,
+			"lat": 57.1568971,
+			"lon": 24.8541844,
+			"tags": {
+				"crossing": "uncontrolled",
+				"crossing:island": "no",
+				"crossing_ref": "zebra",
+				"highway": "crossing",
+				"tactile_paving": "incorrect"
+			}
+		},
+		{
+			"type": "node",
+			"id": 81272994,
+			"lat": 57.1557927,
+			"lon": 24.8543733
+		},
+		{
+			"type": "node",
+			"id": 287243484,
+			"lat": 57.1560065,
+			"lon": 24.8509720,
+			"tags": {
+				"crossing": "uncontrolled",
+				"crossing:island": "no",
+				"crossing_ref": "zebra",
+				"highway": "crossing",
+				"tactile_paving": "no"
+			}
+		},
+		{
+			"type": "node",
+			"id": 287243485,
+			"lat": 57.1557920,
+			"lon": 24.8511870
+		},
+		{
+			"type": "node",
+			"id": 508294785,
+			"lat": 57.1546776,
+			"lon": 24.8543431,
+			"tags": {
+				"crossing": "uncontrolled",
+				"crossing:island": "no",
+				"crossing_ref": "zebra",
+				"highway": "crossing",
+				"tactile_paving": "no"
+			}
+		},
+		{
+			"type": "node",
+			"id": 603889003,
+			"lat": 57.1587518,
+			"lon": 24.8530046
+		},
+		{
+			"type": "node",
+			"id": 885562178,
+			"lat": 57.1540586,
+			"lon": 24.8543437,
+			"tags": {
+				"crossing": "uncontrolled",
+				"crossing:island": "no",
+				"crossing_ref": "zebra",
+				"highway": "crossing",
+				"tactile_paving": "yes"
+			}
+		},
+		{
+			"type": "node",
+			"id": 885564366,
+			"lat": 57.1558730,
+			"lon": 24.8543780
+		},
+		{
+			"type": "node",
+			"id": 923273276,
+			"lat": 57.1547531,
+			"lon": 24.8525310,
+			"tags": {
+				"crossing": "marked",
+				"crossing:island": "no",
+				"highway": "crossing",
+				"tactile_paving": "no"
+			}
+		},
+		{
+			"type": "node",
+			"id": 1275830078,
+			"lat": 57.1537952,
+			"lon": 24.8530873,
+			"tags": {
+				"crossing": "marked",
+				"crossing:island": "no",
+				"crossing_ref": "zebra",
+				"highway": "crossing",
+				"kerb": "lowered",
+				"tactile_paving": "no"
+			}
+		},
+		{
+			"type": "node",
+			"id": 1378692490,
+			"lat": 57.1555024,
+			"lon": 24.8516211
+		},
+		{
+			"type": "node",
+			"id": 2229601085,
+			"lat": 57.1547599,
+			"lon": 24.8543456
+		},
+		{
+			"type": "node",
+			"id": 8415375286,
+			"lat": 57.1555534,
+			"lon": 24.8543659
+		},
+		{
+			"type": "node",
+			"id": 8415387535,
+			"lat": 57.1564936,
+			"lon": 24.8543622
+		},
+		{
+			"type": "node",
+			"id": 8415387536,
+			"lat": 57.1566650,
+			"lon": 24.8543023
+		},
+		{
+			"type": "node",
+			"id": 9212889560,
+			"lat": 57.1549144,
+			"lon": 24.8524204
+		},
+		{
+			"type": "node",
+			"id": 9212889561,
+			"lat": 57.1558960,
+			"lon": 24.8510749
+		},
+		{
+			"type": "node",
+			"id": 9212889586,
+			"lat": 57.1561479,
+			"lon": 24.8543906
+		},
+		{
+			"type": "node",
+			"id": 9915122278,
+			"lat": 57.1562485,
+			"lon": 24.8543864
+		},
+		{
+			"type": "node",
+			"id": 11092314746,
+			"lat": 57.1545150,
+			"lon": 24.8543433
+		},
+		{
+			"type": "node",
+			"id": 12067776285,
+			"lat": 57.1544798,
+			"lon": 24.8526897
+		},
+		{
+			"type": "node",
+			"id": 12067788954,
+			"lat": 57.1543863,
+			"lon": 24.8527440
+		},
+		{
+			"type": "way",
+			"id": 4992194,
+			"nodes": [
+				33136662,
+				885562178,
+				11092314746,
+				508294785,
+				2229601085,
+				8415375286,
+				81272994,
+				885564366,
+				9212889586,
+				9915122278,
+				33136664,
+				8415387535,
+				8415387536,
+				34039001,
+				603889003
+			],
+			"tags": {
+				"highway": "primary",
+				"lanes": "2",
+				"maxspeed": "30",
+				"name": "Raiņa iela",
+				"ref": "P8",
+				"surface": "asphalt"
+			}
+		},
+		{
+			"type": "way",
+			"id": 5016445,
+			"nodes": [
+				33416712,
+				287243484,
+				9212889561,
+				287243485,
+				1378692490,
+				33416714,
+				9212889560,
+				923273276,
+				12067776285,
+				12067788954,
+				1275830078,
+				33416711
+			],
+			"tags": {
+				"cyclestreet": "yes",
+				"highway": "tertiary",
+				"lanes": "2",
+				"maxspeed": "30",
+				"name": "Pils iela",
+				"surface": "asphalt"
+			}
+		}
+	]
+}

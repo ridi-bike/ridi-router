@@ -3,6 +3,11 @@ gps-query-from := '56.951861,24.113821' # riga
 gps-query-to := '57.313103,25.281460' # cesis
 map-data-file-name := "map-data-riga-cesis.json"
 
+# gps-query-range := '100' # 100m
+# gps-query-from := '57.155453,24.853327' # sigulda
+# gps-query-to := '57.155453,24.853327' # sigulda
+# map-data-file-name := "test-data-sig-100.json"
+
 overpass-query := '"[out:json];
                     way
                       [highway]

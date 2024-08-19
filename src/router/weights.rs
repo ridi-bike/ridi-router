@@ -198,13 +198,13 @@ mod test {
 
     #[test]
     fn weight_heading_test() {
-        let data_reader = OsmDataReader::new_file(String::from("src/test_data/sig-500.json"));
+        let data_reader = OsmDataReader::new_file(String::from("test-data/sigulda-100.json"));
         let map_data = data_reader.read_data().expect("to load test file");
         let from = map_data
             .get_point_by_id(&885564366)
             .expect("to find start point");
         let to = map_data
-            .get_point_by_id(&7535100633)
+            .get_point_by_id(&33416714)
             .expect("to find end point");
         let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
         let walker = Walker::new(
@@ -235,6 +235,7 @@ mod test {
             ),
         });
         eprintln!("{:#?}", fork_weight);
+        assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(177));
 
         let fork_point = map_data
             .get_point_by_id(&9212889586)
@@ -255,6 +256,6 @@ mod test {
             ),
         });
         eprintln!("{:#?}", fork_weight);
-        assert_eq!(fork_weight, WeightCalcResult::DoNotUse);
+        assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(64));
     }
 }
