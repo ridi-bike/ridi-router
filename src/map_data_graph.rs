@@ -321,12 +321,14 @@ impl Debug for MapDataLine {
     id={}
     way={}
     points=({},{})
-    one_way={}",
+    one_way={}
+    roundabout={}",
             self.id,
             self.way.borrow().id,
             self.points.0.borrow().id,
             self.points.1.borrow().id,
-            self.one_way
+            self.one_way,
+            self.roundabout
         )
     }
 }

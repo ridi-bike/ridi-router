@@ -191,7 +191,7 @@ impl<'a> Walker<'a> {
                 fork_segments
                     .iter()
                     .filter_map(|f| {
-                        if !f.get_line().borrow().roundabout {
+                        if f.get_line().borrow().roundabout {
                             return None;
                         }
                         Some(f.clone())
@@ -371,7 +371,7 @@ mod tests {
         },
         test_utils::{
             get_test_data_with_rules, get_test_map_data_graph, get_test_map_data_graph_with_rules,
-            line_is_between_point_ids,
+            line_is_between_point_ids, route_matches_ids,
         },
     };
 
@@ -675,7 +675,7 @@ mod tests {
             Ok(WalkerMoveResult::Fork(c)) => c,
             _ => panic!("did not get choices for routes"),
         };
-        eprintln!("choices {:#?}", choices);
+
         assert_eq!(choices.get_segment_count(), 3);
 
         choices.into_iter().for_each(|route_segment| {
@@ -699,5 +699,8 @@ mod tests {
             Ok(WalkerMoveResult::Finish) => {}
             _ => panic!("expected to reach finish"),
         };
+
+        let route = walker.get_route().clone();
+        assert!(route_matches_ids(route, vec![7, 11, 12, 13, 131]));
     }
 }
