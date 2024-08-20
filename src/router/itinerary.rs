@@ -27,12 +27,12 @@ impl Itinerary {
         }
     }
 
-    pub fn set_get_next(&mut self, current: MapDataPointRef) -> &MapDataPointRef {
+    pub fn check_set_next(&mut self, current: MapDataPointRef) -> &MapDataPointRef {
         if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 self.next = self
                     .waypoints
-                    .get(idx)
+                    .get(idx + 1)
                     .map_or(Rc::clone(&self.to), |w| Rc::clone(w))
             } else {
                 self.next = Rc::clone(&self.to);

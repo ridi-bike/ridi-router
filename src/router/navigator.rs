@@ -173,27 +173,30 @@ impl<'a> Navigator<'a> {
                 self.walker
                     .debug_logger
                     .log(format!("choices: {:#?}", fork_choices));
-                let (fork_choices, last_point_id) = {
-                    let last_point_id = self.walker.get_last_point_id();
+                let (fork_choices, last_point) = {
+                    let last_point = self.walker.get_last_point();
                     self.walker.debug_logger.log(format!(
                         "discarded choices: {:#?}",
                         self.discarded_fork_choices
-                            .get_discarded_choices_for_pont(&last_point_id)
+                            .get_discarded_choices_for_pont(&last_point.borrow().id)
                     ));
                     (
                         fork_choices.exclude_segments_where_points_in(
                             &self
                                 .discarded_fork_choices
-                                .get_discarded_choices_for_pont(&last_point_id)
+                                .get_discarded_choices_for_pont(&last_point.borrow().id)
                                 .map_or(Vec::new(), |d| {
                                     d.iter()
                                         .filter_map(|p| self.map_data_graph.get_point_by_id(&p))
                                         .collect()
                                 }),
                         ),
-                        last_point_id,
+                        last_point,
                     )
                 };
+
+                self.itinerary.check_set_next(Rc::clone(last_point));
+
                 let fork_weights = fork_choices.clone().into_iter().fold(
                     ForkWeights::new(),
                     |mut fork_weights, fork_route_segment| {
@@ -244,8 +247,10 @@ impl<'a> Navigator<'a> {
                     .flatten();
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
-                    self.discarded_fork_choices
-                        .add_discarded_choice(&last_point_id, &chosen_fork_point.borrow().id);
+                    self.discarded_fork_choices.add_discarded_choice(
+                        &last_point.borrow().id,
+                        &chosen_fork_point.borrow().id,
+                    );
                     self.walker.debug_logger.log(format!(
                         "fork action choice: {:#?}",
                         chosen_fork_point.borrow().id

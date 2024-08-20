@@ -50,13 +50,13 @@ impl<'a> Walker<'a> {
         }
     }
 
-    pub fn get_last_point_id(&self) -> u64 {
+    pub fn get_last_point(&self) -> &MapDataPointRef {
         let last_element = self.get_route().get_segment_last();
-        let last_point_id = match last_element {
-            None => self.start.borrow().id,
-            Some(route_segment) => route_segment.get_end_point().borrow().id,
+        let last_point = match last_element {
+            None => &self.start,
+            Some(route_segment) => route_segment.get_end_point(),
         };
-        last_point_id
+        last_point
     }
 
     fn get_fork_segments_for_point(&self, center_point: &MapDataPointRef) -> SegmentList {

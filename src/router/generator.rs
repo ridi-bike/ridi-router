@@ -1,5 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
+use geo::{HaversineDestination, Point};
 use crate::map_data::{
     graph::MapDataGraph,
     point::{MapDataPoint, MapDataPointRef},
@@ -15,6 +16,9 @@ use super::{
     },
 };
 
+const ITINERARY_VARIATION_DISTANCES: [f64; 2] = [10., 20.];
+const ITINERARY_VARIATION_DEGREES: [f64; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
+
 pub struct Generator<'a> {
     map_data: &'a MapDataGraph,
     from: MapDataPointRef,
@@ -26,13 +30,43 @@ impl<'a> Generator<'a> {
         Self { map_data, from, to }
     }
 
+    fn create_waypoints_around(&self, point: &MapDataPointRef) -> Vec<MapDataPointRef> {
+        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
+        ITINERARY_VARIATION_DEGREES
+            .iter()
+            .map(|bearing| {
+                ITINERARY_VARIATION_DISTANCES
+                    .iter()
+                    .map(|distance| {
+                        let wp_geo = point_geo.haversine_destination(*bearing, *distance);
+                        let wp = self.map_data.get_closest_to_coords(wp_geo.y(), wp_geo.x());
+                        wp
+                    })
+                    .filter_map(|maybe_wp| maybe_wp)
+            })
+            .flatten()
+            .collect()
+    }
+
     fn generate_itineraries(&self) -> Vec<Itinerary> {
-        vec![Itinerary::new(
+        let to_waypoints = self.create_waypoints_around(&self.to);
+        let mut itineraries = vec![Itinerary::new(
             Rc::clone(&self.from),
             Rc::clone(&self.to),
             Vec::new(),
             10.,
-        )]
+        )];
+
+        to_waypoints.iter().for_each(|wp| {
+            itineraries.push(Itinerary::new(
+                Rc::clone(&self.from),
+                Rc::clone(&self.to),
+                vec![Rc::clone(wp)],
+                5.0,
+            ))
+        });
+
+        itineraries
     }
 
     pub fn generate_routes(self) -> Vec<Route> {
