@@ -120,6 +120,7 @@ impl Debug for ForkWeights {
 
 pub enum NavigationResult {
     Stuck,
+    Stopped(Route),
     Finished(Route),
 }
 
@@ -147,6 +148,7 @@ impl<'a> Navigator<'a> {
                     1,
                     Rc::clone(itinerary.get_from()),
                     Rc::clone(itinerary.get_to()),
+                    itinerary.get_waypoints().clone(),
                 )),
             ),
             itinerary,
@@ -156,7 +158,9 @@ impl<'a> Navigator<'a> {
     }
 
     pub fn generate_routes(mut self) -> NavigationResult {
+        let mut loop_counter = 0;
         loop {
+            loop_counter += 1;
             self.walker.debug_logger.log_step();
 
             let move_result = self.walker.move_forward_to_next_fork();
@@ -215,6 +219,7 @@ impl<'a> Navigator<'a> {
                                         Rc::clone(&self.itinerary.get_next()),
                                         Box::new(DebugLoggerVoidSink::default()),
                                     ),
+                                    debug_logger: &self.walker.debug_logger,
                                 })
                             })
                             .collect::<Vec<_>>();
@@ -283,6 +288,10 @@ impl<'a> Navigator<'a> {
                     last_segment, move_back_segment_list
                 ));
             }
+
+            if loop_counter >= 1000 {
+                return NavigationResult::Stopped(self.walker.get_route().clone());
+            }
         }
     }
 }
@@ -321,7 +330,7 @@ mod test {
         let mut navigator = Navigator::new(&map_data, itinerary.clone(), vec![weight]);
         let route = match navigator.generate_routes() {
             crate::router::navigator::NavigationResult::Finished(r) => r,
-            crate::router::navigator::NavigationResult::Stuck => {
+            _ => {
                 assert!(false);
                 return ();
             }
@@ -345,7 +354,7 @@ mod test {
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight2]);
         let route = match navigator.generate_routes() {
             crate::router::navigator::NavigationResult::Finished(r) => r,
-            crate::router::navigator::NavigationResult::Stuck => {
+            _ => {
                 assert!(false);
                 return ();
             }
@@ -384,7 +393,7 @@ mod test {
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
         let route = match navigator.generate_routes() {
             crate::router::navigator::NavigationResult::Finished(r) => r,
-            crate::router::navigator::NavigationResult::Stuck => {
+            _ => {
                 assert!(false);
                 return ();
             }
@@ -461,7 +470,7 @@ mod test {
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight1, weight2]);
         let route = match navigator.generate_routes() {
             crate::router::navigator::NavigationResult::Finished(r) => r,
-            crate::router::navigator::NavigationResult::Stuck => {
+            _ => {
                 assert!(false);
                 return ();
             }

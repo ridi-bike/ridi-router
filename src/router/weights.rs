@@ -2,6 +2,8 @@ use std::rc::Rc;
 
 use geo::{HaversineBearing, Point};
 
+use crate::debug_writer::DebugLogger;
+
 use super::{
     itinerary::Itinerary,
     navigator::WeightCalcResult,
@@ -15,6 +17,7 @@ pub struct WeightCalcInput<'a> {
     pub all_fork_segments: &'a SegmentList,
     pub itinerary: &'a Itinerary,
     pub walker_from_fork: Walker<'a>,
+    pub debug_logger: &'a Box<dyn DebugLogger>,
 }
 
 pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
@@ -61,11 +64,28 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         fork_line_two_geo.haversine_bearing(fork_line_one_geo)
     };
 
-    let degree_offset_from_next = (fork_bearing - next_bearing).abs();
+    let degree_offset_from_next =
+        ((180.0 - fork_bearing.abs()) - (180.0 - next_bearing.abs())).abs();
 
     let ratio: f64 = 255.0 / 180.0;
 
-    WeightCalcResult::UseWithWeight(255 - (degree_offset_from_next * ratio).round() as u8)
+    input
+        .debug_logger
+        .log(format!("fork_bearing: {:#?}", fork_bearing));
+    input
+        .debug_logger
+        .log(format!("next_bearing: {:#?}", next_bearing));
+    input.debug_logger.log(format!(
+        "degree_offset_from_next: {:#?}",
+        degree_offset_from_next
+    ));
+    input.debug_logger.log(format!("ration: {:#?}", ratio));
+    input.debug_logger.log(format!(
+        "res: {:#?}",
+        255 - (degree_offset_from_next / ratio).round() as u8
+    ));
+
+    WeightCalcResult::UseWithWeight(255 - (degree_offset_from_next / ratio).round() as u8)
 }
 
 pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
@@ -90,8 +110,10 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
         .tags_name
         .clone();
 
-    if current_ref == fork_ref || current_name == fork_name {
-        return WeightCalcResult::UseWithWeight(80);
+    if (current_ref.is_some() && fork_ref.is_some() && current_ref == fork_ref)
+        || (current_name.is_some() && fork_name.is_some() && current_name == fork_name)
+    {
+        return WeightCalcResult::UseWithWeight(60);
     }
 
     WeightCalcResult::UseWithWeight(0)

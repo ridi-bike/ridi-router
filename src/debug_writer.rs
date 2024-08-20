@@ -46,6 +46,7 @@ pub struct DebugLoggerFileSink {
     walker_id: u64,
     start_point: MapDataPointRef,
     end_point: MapDataPointRef,
+    waypoints: Vec<MapDataPointRef>,
     last_pont: MapDataPointRef,
     dead_end_tracks: Vec<Track>,
     forks: HashMap<u64, Waypoint>,
@@ -64,6 +65,7 @@ impl DebugLogger for DebugLoggerFileSink {
             last_pont: Rc::clone(&self.last_pont),
             start_point: Rc::clone(&self.start_point),
             end_point: Rc::clone(&self.end_point),
+            waypoints: self.waypoints.clone(),
             dead_end_tracks: self.dead_end_tracks.clone(),
             route: self.route.clone(),
             forks: self.forks.clone(),
@@ -146,7 +148,12 @@ impl DebugLogger for DebugLoggerFileSink {
 }
 
 impl DebugLoggerFileSink {
-    pub fn new(gpx_every_n: u64, start_point: MapDataPointRef, end_point: MapDataPointRef) -> Self {
+    pub fn new(
+        gpx_every_n: u64,
+        start_point: MapDataPointRef,
+        end_point: MapDataPointRef,
+        waypoints: Vec<MapDataPointRef>,
+    ) -> Self {
         let start = SystemTime::now();
         let since_the_epoch = start
             .duration_since(UNIX_EPOCH)
@@ -161,6 +168,7 @@ impl DebugLoggerFileSink {
             last_pont: Rc::clone(&start_point),
             start_point,
             end_point,
+            waypoints,
             dead_end_tracks: Vec::new(),
             route: Route::new(),
             forks: HashMap::new(),
@@ -214,6 +222,12 @@ impl DebugLoggerFileSink {
         ));
         end_point.name = Some(String::from("END"));
         gpx.waypoints.push(end_point);
+
+        for (idx, wp) in self.waypoints.clone().iter().enumerate() {
+            let mut end_point = Waypoint::new(Point::new(wp.borrow().lon, wp.borrow().lat));
+            end_point.name = Some(format!("WP-{}", idx));
+            gpx.waypoints.push(end_point);
+        }
 
         for track in self.dead_end_tracks.clone() {
             gpx.tracks.push(track);

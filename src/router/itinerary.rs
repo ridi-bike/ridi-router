@@ -27,8 +27,12 @@ impl Itinerary {
         }
     }
 
-    pub fn check_set_next(&mut self, current: MapDataPointRef) -> &MapDataPointRef {
-        if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
+    pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {
+        if current.borrow().distance_between(&self.to)
+            < current.borrow().distance_between(&self.next)
+        {
+            self.next = Rc::clone(&self.to);
+        } else if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 self.next = self
                     .waypoints
@@ -38,7 +42,6 @@ impl Itinerary {
                 self.next = Rc::clone(&self.to);
             }
         }
-        &self.next
     }
 
     pub fn get_next(&self) -> &MapDataPointRef {
@@ -51,5 +54,9 @@ impl Itinerary {
 
     pub fn get_to(&self) -> &MapDataPointRef {
         &self.to
+    }
+
+    pub fn get_waypoints(&self) -> &Vec<MapDataPointRef> {
+        &self.waypoints
     }
 }

@@ -1,14 +1,11 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
+use crate::map_data::{graph::MapDataGraph, point::MapDataPointRef};
 use geo::{HaversineDestination, Point};
-use crate::map_data::{
-    graph::MapDataGraph,
-    point::{MapDataPoint, MapDataPointRef},
-};
 
 use super::{
     itinerary::Itinerary,
-    navigator::Navigator,
+    navigator::{NavigationResult, Navigator},
     route::Route,
     weights::{
         weight_check_distance_to_next, weight_heading, weight_no_loops, weight_prefer_same_road,
@@ -16,7 +13,7 @@ use super::{
     },
 };
 
-const ITINERARY_VARIATION_DISTANCES: [f64; 2] = [10., 20.];
+const ITINERARY_VARIATION_DISTANCES: [f64; 2] = [10000., 20000.];
 const ITINERARY_VARIATION_DEGREES: [f64; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
 
 pub struct Generator<'a> {
@@ -62,7 +59,7 @@ impl<'a> Generator<'a> {
                 Rc::clone(&self.from),
                 Rc::clone(&self.to),
                 vec![Rc::clone(wp)],
-                5.0,
+                1000.,
             ))
         });
 
@@ -88,8 +85,9 @@ impl<'a> Generator<'a> {
                 .generate_routes()
             })
             .filter_map(|nav_route| match nav_route {
-                super::navigator::NavigationResult::Stuck => None,
-                super::navigator::NavigationResult::Finished(route) => Some(route),
+                NavigationResult::Stuck => None,
+                NavigationResult::Finished(route) => Some(route),
+                NavigationResult::Stopped(route) => Some(route),
             })
             .collect::<Vec<_>>()
     }
