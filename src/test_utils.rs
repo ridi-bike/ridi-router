@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    map_data_graph::{
-        MapDataGraph, MapDataLine, MapDataLineRef, MapDataPoint, MapDataPointRef, MapDataWay,
-        MapDataWayPoints, OsmNode, OsmWay,
+    map_data::{
+        graph::MapDataGraph,
+        line::MapDataLineRef,
+        osm::{OsmNode, OsmWay},
     },
     router::route::Route,
 };

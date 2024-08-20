@@ -1,7 +1,7 @@
-use crate::map_data_graph::{MapDataLine, MapDataPoint};
-
 pub mod segment;
 pub mod segment_list;
+
+use crate::map_data::{line::MapDataLine, point::MapDataPoint};
 
 use self::segment::Segment;
 

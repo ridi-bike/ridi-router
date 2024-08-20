@@ -1,6 +1,6 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use crate::map_data_graph::MapDataPointRef;
+use crate::map_data::point::{MapDataPoint, MapDataPointRef};
 
 #[derive(Clone, Debug)]
 pub struct Itinerary {

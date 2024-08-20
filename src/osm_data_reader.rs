@@ -1,5 +1,5 @@
 use crate::{
-    map_data_graph::{MapDataError, MapDataGraph},
+    map_data::{graph::MapDataGraph, MapDataError},
     osm_json_parser::{OsmElement, OsmElementType, OsmJsonParser, OsmJsonParserError},
 };
 use std::{

@@ -1,337 +1,28 @@
-use geo::{HaversineBearing, HaversineDistance, Point};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
-    fmt::Debug,
     rc::Rc,
-    slice::Iter,
-    u64, usize,
 };
 
-use crate::gps_hash::{get_gps_coords_hash, HashOffset};
+use geo::HaversineDistance;
+use geo::Point;
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum MapDataError {
-    MissingPoint {
-        point_id: u64,
+use crate::{
+    gps_hash::{get_gps_coords_hash, HashOffset},
+    map_data::{
+        osm::{OsmRelationMember, OsmRelationMemberRole},
+        rule::MapDataRule,
     },
-    MissingRestriction {
-        relation_id: u64,
-    },
-    UnknownRestriction {
-        relation_id: u64,
-        restriction: String,
-    },
-    MissingViaNode {
-        relation_id: u64,
-    },
-    MissingViaPoint {
-        point_id: u64,
-    },
-    WayIdNotLinkedWithViaPoint {
-        relation_id: u64,
-        point_id: u64,
-        way_id: u64,
-    },
-}
+};
 
-pub type MapDataWayRef = Rc<RefCell<MapDataWay>>;
-pub type MapDataPointRef = Rc<RefCell<MapDataPoint>>;
-pub type MapDataLineRef = Rc<RefCell<MapDataLine>>;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OsmNode {
-    pub id: u64,
-    pub lat: f64,
-    pub lon: f64,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OsmWay {
-    pub id: u64,
-    pub point_ids: Vec<u64>,
-    pub tags: Option<HashMap<String, String>>,
-}
-
-impl OsmWay {
-    pub fn is_one_way(&self) -> bool {
-        if let Some(tags) = &self.tags {
-            tags.get("oneway").map_or(false, |one_way| one_way == "yes")
-                || tags
-                    .get("junction")
-                    .map_or(false, |junction| junction == "roundabout")
-        } else {
-            false
-        }
-    }
-
-    pub fn is_roundabout(&self) -> bool {
-        if let Some(tags) = &self.tags {
-            tags.get("junction")
-                .map_or(false, |junction| junction == "roundabout")
-        } else {
-            false
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum OsmRelationMemberType {
-    Way,
-    Node,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum OsmRelationMemberRole {
-    From,
-    To,
-    Via,
-    Other(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct OsmRelationMember {
-    pub member_type: OsmRelationMemberType,
-    pub role: OsmRelationMemberRole,
-    pub member_ref: u64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum MapDataRuleType {
-    OnlyAllowed,
-    NotAllowed,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OsmRelation {
-    pub id: u64,
-    pub members: Vec<OsmRelationMember>,
-    pub tags: HashMap<String, String>,
-}
-
-#[derive(Clone)]
-pub struct MapDataRule {
-    pub from_lines: Vec<MapDataLineRef>,
-    pub to_lines: Vec<MapDataLineRef>,
-    pub rule_type: MapDataRuleType,
-}
-impl Debug for MapDataRule {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "({:?}){}({:?})",
-            self.from_lines
-                .iter()
-                .map(|l| l.borrow().id.clone())
-                .collect::<Vec<_>>(),
-            if self.rule_type == MapDataRuleType::OnlyAllowed {
-                "--->"
-            } else {
-                "-x->"
-            },
-            self.to_lines
-                .iter()
-                .map(|l| l.borrow().id.clone())
-                .collect::<Vec<_>>(),
-        )
-    }
-}
-
-#[derive(Clone)]
-pub struct MapDataPoint {
-    pub id: u64,
-    pub lat: f64,
-    pub lon: f64,
-    pub part_of_ways: Vec<MapDataWayRef>,
-    pub lines: Vec<MapDataLineRef>,
-    pub junction: bool,
-    pub rules: Vec<MapDataRule>,
-}
-
-impl MapDataPoint {
-    pub fn distance_between(&self, point: &MapDataPointRef) -> f64 {
-        let self_geo = Point::new(self.lon, self.lat);
-        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
-        self_geo.haversine_distance(&point_geo)
-    }
-    pub fn bearing_to(&self, point: &MapDataPointRef) -> f64 {
-        let self_geo = Point::new(self.lon, self.lat);
-        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
-        self_geo.haversine_bearing(point_geo)
-    }
-}
-
-impl PartialEq for MapDataPoint {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-impl Debug for MapDataPoint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "MapDataPoint
-    id={}
-    lat={}
-    lon={}
-    part_of_ways={:?}
-    lines={:?}
-    junction={}
-    rules={:#?}",
-            self.id,
-            self.lat,
-            self.lon,
-            self.part_of_ways
-                .iter()
-                .map(|w| w.borrow().id)
-                .collect::<Vec<_>>(),
-            self.lines
-                .iter()
-                .map(|l| l.borrow().id.clone())
-                .collect::<Vec<_>>(),
-            self.junction,
-            self.rules
-        )
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct MapDataWayPoints {
-    points: Vec<MapDataPointRef>,
-}
-impl MapDataWayPoints {
-    pub fn new() -> Self {
-        Self { points: Vec::new() }
-    }
-    pub fn from_vec(points: Vec<MapDataPointRef>) -> Self {
-        Self { points }
-    }
-
-    pub fn is_first_or_last(&self, point: &MapDataPointRef) -> bool {
-        let is_first = if let Some(ref first) = self.points.first() {
-            first.borrow().id == point.borrow().id
-        } else {
-            false
-        };
-        let is_last = if let Some(ref last) = self.points.last() {
-            last.borrow().id == point.borrow().id
-        } else {
-            false
-        };
-
-        is_first || is_last
-    }
-
-    pub fn get_after(&self, idx: usize) -> Option<&MapDataPointRef> {
-        self.points.get(idx + 1)
-    }
-
-    pub fn get_before(&self, idx: usize) -> Option<&MapDataPointRef> {
-        if idx == 0 {
-            return None;
-        }
-        self.points.get(idx - 1)
-    }
-
-    pub fn iter(&self) -> Iter<'_, MapDataPointRef> {
-        self.points.iter()
-    }
-
-    pub fn add(&mut self, point: MapDataPointRef) -> () {
-        self.points.push(point);
-    }
-}
-
-impl<'a> IntoIterator for &'a MapDataWayPoints {
-    type Item = &'a MapDataPointRef;
-
-    type IntoIter = std::slice::Iter<'a, MapDataPointRef>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.points.iter()
-    }
-}
-
-impl<'a> IntoIterator for MapDataWayPoints {
-    type Item = MapDataPointRef;
-
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.points.into_iter()
-    }
-}
-
-#[derive(Clone)]
-pub struct MapDataWay {
-    pub id: u64,
-    pub points: MapDataWayPoints,
-}
-
-impl MapDataWay {
-    pub fn add_point(way: MapDataWayRef, point: MapDataPointRef) -> () {
-        let mut way_mut = way.borrow_mut();
-        way_mut.points.add(point);
-    }
-}
-
-impl PartialEq for MapDataWay {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-impl Debug for MapDataWay {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "MapDataWay
-    id={}
-    points={:?}",
-            self.id,
-            self.points
-                .iter()
-                .map(|p| p.borrow().id)
-                .collect::<Vec<_>>(),
-        )
-    }
-}
-
-#[derive(Clone)]
-pub struct MapDataLine {
-    pub id: String,
-    pub way: MapDataWayRef,
-    pub points: (MapDataPointRef, MapDataPointRef),
-    pub one_way: bool,
-    pub roundabout: bool,
-    pub tags_ref: Option<String>,
-    pub tags_name: Option<String>,
-}
-
-impl PartialEq for MapDataLine {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Debug for MapDataLine {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "MapDataLine
-    id={}
-    way={}
-    points=({},{})
-    one_way={}
-    roundabout={}",
-            self.id,
-            self.way.borrow().id,
-            self.points.0.borrow().id,
-            self.points.1.borrow().id,
-            self.one_way,
-            self.roundabout
-        )
-    }
-}
+use super::{
+    line::{MapDataLine, MapDataLineRef},
+    osm::{OsmNode, OsmRelation, OsmWay},
+    point::{MapDataPoint, MapDataPointRef},
+    rule::MapDataRuleType,
+    way::{MapDataWay, MapDataWayPoints, MapDataWayRef},
+    MapDataError,
+};
 
 type PointMap = BTreeMap<u64, MapDataPointRef>;
 
@@ -844,8 +535,8 @@ mod tests {
             let way = way.borrow();
             eprintln!("way {:#?}", way);
             eprintln!("test {:#?}", test_points);
-            way.points.points.len() == test_points.len()
-                && way.points.points.iter().enumerate().all(|(idx, p)| {
+            way.points.len() == test_points.len()
+                && way.points.iter().enumerate().all(|(idx, p)| {
                     let p = p.borrow();
                     p.id == *test_points
                         .get(idx)

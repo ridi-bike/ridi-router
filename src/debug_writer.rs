@@ -12,7 +12,7 @@ use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::map_data_graph::MapDataPointRef;
+use crate::map_data::point::MapDataPointRef;
 use crate::router::route::Route;
 use crate::router::walker::WalkerMoveResult;
 

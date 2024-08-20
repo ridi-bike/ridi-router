@@ -1,5 +1,6 @@
-use crate::map_data_graph::MapDataPointRef;
 use std::{fmt::Debug, rc::Rc};
+
+use crate::map_data::point::MapDataPointRef;
 
 use super::segment::Segment;
 

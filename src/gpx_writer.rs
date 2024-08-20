@@ -2,7 +2,7 @@ use geo::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use std::{fs::File, io::Error};
 
-use crate::{map_data_graph::MapDataPointRef, router::route::Route};
+use crate::{map_data::point::MapDataPointRef, router::route::Route};
 
 #[derive(Debug)]
 pub enum RoutesWriterError {

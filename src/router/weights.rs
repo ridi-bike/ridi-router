@@ -166,7 +166,7 @@ mod test {
 
     use crate::{
         debug_writer::DebugLoggerVoidSink,
-        map_data_graph::MapDataPointRef,
+        map_data::point::MapDataPointRef,
         osm_data_reader::OsmDataReader,
         router::{
             itinerary::Itinerary,

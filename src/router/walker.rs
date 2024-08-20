@@ -2,7 +2,7 @@ use std::{fmt::Debug, rc::Rc};
 
 use crate::{
     debug_writer::DebugLogger,
-    map_data_graph::{MapDataGraph, MapDataPointRef, MapDataRuleType},
+    map_data::{graph::MapDataGraph, point::MapDataPointRef, rule::MapDataRuleType},
 };
 
 use super::route::{segment::Segment, segment_list::SegmentList, Route};

@@ -6,7 +6,7 @@ use std::{
 
 use json_tools::{Buffer, BufferType, Lexer, TokenType};
 
-use crate::map_data_graph::{
+use crate::map_data::osm::{
     OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
 };
 

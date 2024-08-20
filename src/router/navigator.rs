@@ -6,11 +6,11 @@ use std::{
 
 use crate::{
     debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
-    map_data_graph::{MapDataGraph, MapDataPointRef},
+    map_data::graph::MapDataGraph,
 };
 
 use super::{
-    itinerary::{self, Itinerary},
+    itinerary::Itinerary,
     route::Route,
     walker::{Walker, WalkerMoveResult},
     weights::{WeightCalc, WeightCalcInput},

@@ -1,6 +1,9 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
-use crate::map_data_graph::{MapDataGraph, MapDataPointRef};
+use crate::map_data::{
+    graph::MapDataGraph,
+    point::{MapDataPoint, MapDataPointRef},
+};
 
 use super::{
     itinerary::Itinerary,

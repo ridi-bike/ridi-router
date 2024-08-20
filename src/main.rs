@@ -10,7 +10,7 @@ use crate::router::generator::Generator;
 mod debug_writer;
 mod gps_hash;
 mod gpx_writer;
-mod map_data_graph;
+mod map_data;
 mod osm_data_reader;
 mod osm_json_parser;
 mod router;

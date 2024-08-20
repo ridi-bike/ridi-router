@@ -1,5 +1,6 @@
-use crate::map_data_graph::{MapDataLineRef, MapDataPointRef};
 use std::fmt::Debug;
+
+use crate::map_data::{line::MapDataLineRef, point::MapDataPointRef};
 
 #[derive(PartialEq, Clone)]
 pub struct Segment {
