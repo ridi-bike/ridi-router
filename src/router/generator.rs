@@ -1,10 +1,6 @@
-use std::rc::Rc;
-
-use crate::{
-    map_data::graph::{MapDataGraph, MapDataPointRef},
-    MAP_DATA_GRAPH,
-};
+use crate::{map_data::graph::MapDataPointRef, MAP_DATA_GRAPH};
 use geo::{HaversineDestination, Point};
+use rayon::prelude::*;
 
 use super::{
     itinerary::Itinerary,
@@ -71,7 +67,7 @@ impl Generator {
     pub fn generate_routes(self) -> Vec<Route> {
         let itineraries = self.generate_itineraries();
         itineraries
-            .into_iter()
+            .into_par_iter()
             .map(|itinerary| {
                 Navigator::new(
                     itinerary,

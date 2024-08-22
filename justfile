@@ -37,10 +37,10 @@ data-fetch:
 
 gps-test-from-lat := '57.154260' # sigulda
 gps-test-from-lon := '24.853496' # sigulda
-# gps-test-to-lat := '56.856551'		# doles sala
-# gps-test-to-lon := '24.253038'		# doles sala
-gps-test-to-lat := '57.111708'		# garciems
-gps-test-to-lon := '24.192656'		# garciems
+gps-test-to-lat := '56.856551'		# doles sala
+gps-test-to-lon := '24.253038'		# doles sala
+# gps-test-to-lat := '57.111708'		# garciems
+# gps-test-to-lon := '24.192656'		# garciems
 
 run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat ' + gps-test-from-lat + ' --from_lon ' + gps-test-from-lon + ' --to_lat ' + gps-test-to-lat + ' --to_lon ' + gps-test-to-lon
 
