@@ -1,6 +1,8 @@
 use std::{
+    cmp::Eq,
     collections::{BTreeMap, HashMap},
-    fmt::Debug,
+    fmt::{Debug, Display},
+    hash::Hash,
     marker::PhantomData,
 };
 
@@ -79,6 +81,14 @@ impl<T: MapDataElement> PartialEq for MapDataElementRef<T> {
     }
 }
 
+impl<T: MapDataElement> Eq for MapDataElementRef<T> {}
+
+impl<T: MapDataElement> Hash for MapDataElementRef<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.idx.hash(state)
+    }
+}
+
 impl<T: MapDataElement + 'static> Debug for MapDataElementRef<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.borrow().fmt(f)
@@ -120,7 +130,7 @@ impl MapDataGraph {
         }
     }
 
-    pub fn get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
+    fn get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
         match self.points_map.get(id) {
             None => return None,
             Some(i) => Some(MapDataElementRef::new(i.clone())),

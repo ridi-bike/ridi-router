@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
+    map_data::graph::MapDataPointRef,
     MAP_DATA_GRAPH,
 };
 
@@ -23,7 +24,7 @@ pub enum WeightCalcResult {
 
 #[derive(Debug)]
 pub struct DiscardedForkChoices {
-    choices: HashMap<u64, HashSet<u64>>,
+    choices: HashMap<MapDataPointRef, HashSet<MapDataPointRef>>,
 }
 impl DiscardedForkChoices {
     pub fn new() -> Self {
@@ -32,20 +33,27 @@ impl DiscardedForkChoices {
         }
     }
 
-    pub fn add_discarded_choice(&mut self, point_id: &u64, choice_point_id: &u64) -> () {
-        let existing_choices = self.choices.get(point_id);
+    pub fn add_discarded_choice(
+        &mut self,
+        point_ref: &MapDataPointRef,
+        choice_point_ref: &MapDataPointRef,
+    ) -> () {
+        let existing_choices = self.choices.get(point_ref);
         if let Some(mut existing_choices) = existing_choices.cloned() {
-            existing_choices.insert(choice_point_id.clone());
-            self.choices.insert(point_id.clone(), existing_choices);
+            existing_choices.insert(choice_point_ref.clone());
+            self.choices.insert(point_ref.clone(), existing_choices);
         } else if existing_choices.is_none() {
             let mut ids = HashSet::new();
-            ids.insert(choice_point_id.clone());
-            self.choices.insert(point_id.clone(), ids);
+            ids.insert(choice_point_ref.clone());
+            self.choices.insert(point_ref.clone(), ids);
         }
     }
 
-    pub fn get_discarded_choices_for_pont(&self, point_id: &u64) -> Option<Vec<u64>> {
-        match self.choices.get(point_id) {
+    pub fn get_discarded_choices_for_point(
+        &self,
+        point_ref: &MapDataPointRef,
+    ) -> Option<Vec<MapDataPointRef>> {
+        match self.choices.get(point_ref) {
             None => None,
             Some(ids) => Some(ids.clone().into_iter().collect()),
         }
@@ -54,7 +62,7 @@ impl DiscardedForkChoices {
 
 #[derive(Clone)]
 pub struct ForkWeights {
-    weight_list: HashMap<u64, u32>,
+    weight_list: HashMap<MapDataPointRef, u32>,
 }
 
 impl ForkWeights {
@@ -65,19 +73,19 @@ impl ForkWeights {
     }
     pub fn add_calc_result(
         &mut self,
-        choice_point_id: &u64,
+        choice_point_ref: &MapDataPointRef,
         weights: &Vec<WeightCalcResult>,
     ) -> () {
         if weights
             .iter()
             .all(|weight| *weight != WeightCalcResult::DoNotUse)
         {
-            let existing_weight = match self.weight_list.get(choice_point_id) {
+            let existing_weight = match self.weight_list.get(choice_point_ref) {
                 None => 0u32,
                 Some(w) => w.clone(),
             };
             self.weight_list.insert(
-                choice_point_id.clone(),
+                choice_point_ref.clone(),
                 existing_weight
                     + weights
                         .into_iter()
@@ -90,15 +98,15 @@ impl ForkWeights {
         }
     }
 
-    fn get_choices_sorted_by_weight(&self) -> Vec<(&u64, &u32)> {
+    fn get_choices_sorted_by_weight(&self) -> Vec<(&MapDataPointRef, &u32)> {
         let mut vec = self.weight_list.iter().collect::<Vec<_>>();
         vec.sort_by(|v, v2| v2.1.cmp(v.1));
         vec
     }
 
-    pub fn get_choice_id_by_index_from_heaviest(&self, idx: usize) -> Option<u64> {
+    pub fn get_choice_id_by_index_from_heaviest(&self, idx: usize) -> Option<MapDataPointRef> {
         let vec = self.get_choices_sorted_by_weight();
-        vec.get(idx).map(|w| w.0).copied()
+        vec.get(idx).map(|w| w.0).cloned()
     }
 }
 
@@ -111,7 +119,9 @@ impl Debug for ForkWeights {
                 .iter()
                 .fold(String::new(), |all, el| format!(
                     "{}\n\t{}:{}",
-                    all, el.0, el.1
+                    all,
+                    el.0.borrow().id,
+                    el.1
                 ))
         )
     }
@@ -174,18 +184,14 @@ impl Navigator {
                     self.walker.debug_logger.log(format!(
                         "discarded choices: {:#?}",
                         self.discarded_fork_choices
-                            .get_discarded_choices_for_pont(&last_point.borrow().id)
+                            .get_discarded_choices_for_point(&last_point)
                     ));
                     (
                         fork_choices.exclude_segments_where_points_in(
                             &self
                                 .discarded_fork_choices
-                                .get_discarded_choices_for_pont(&last_point.borrow().id)
-                                .map_or(Vec::new(), |d| {
-                                    d.iter()
-                                        .filter_map(|p| MAP_DATA_GRAPH.get_point_ref_by_id(&p))
-                                        .collect()
-                                }),
+                                .get_discarded_choices_for_point(&last_point)
+                                .map_or(Vec::new(), |d| d),
                         ),
                         last_point,
                     )
@@ -221,7 +227,7 @@ impl Navigator {
                         ));
 
                         fork_weights.add_calc_result(
-                            &fork_route_segment.get_end_point().borrow().id,
+                            &fork_route_segment.get_end_point(),
                             &fork_weight_calc_results,
                         );
 
@@ -237,16 +243,11 @@ impl Navigator {
                     .debug_logger
                     .log(format!("all weights: {:#?}", &fork_weights));
 
-                let chosen_fork_point = fork_weights
-                    .get_choice_id_by_index_from_heaviest(0)
-                    .map(|pid| MAP_DATA_GRAPH.get_point_ref_by_id(&pid))
-                    .flatten();
+                let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
-                    self.discarded_fork_choices.add_discarded_choice(
-                        &last_point.borrow().id,
-                        &chosen_fork_point.borrow().id,
-                    );
+                    self.discarded_fork_choices
+                        .add_discarded_choice(&last_point, &chosen_fork_point);
                     self.walker.debug_logger.log(format!(
                         "fork action choice: {:#?}",
                         chosen_fork_point.borrow().id
