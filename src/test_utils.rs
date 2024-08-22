@@ -2,8 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     map_data::{
-        graph::MapDataGraph,
-        line::MapDataLineRef,
+        graph::{MapDataGraph, MapDataLineRef},
         osm::{OsmNode, OsmWay},
     },
     router::route::Route,

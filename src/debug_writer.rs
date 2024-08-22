@@ -4,7 +4,6 @@ use std::io::Write;
 use std::{
     collections::HashMap,
     fs::{create_dir_all, File},
-    rc::Rc,
 };
 
 use geo::Point;
@@ -12,7 +11,7 @@ use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
 use rand::Rng;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::map_data::point::MapDataPointRef;
+use crate::map_data::graph::MapDataPointRef;
 use crate::router::route::Route;
 use crate::router::walker::WalkerMoveResult;
 
@@ -62,9 +61,9 @@ impl DebugLogger for DebugLoggerFileSink {
             id: self.id,
             step_id: self.step_id,
             walker_id,
-            last_pont: Rc::clone(&self.last_pont),
-            start_point: Rc::clone(&self.start_point),
-            end_point: Rc::clone(&self.end_point),
+            last_pont: self.last_pont.clone(),
+            start_point: self.start_point.clone(),
+            end_point: self.end_point.clone(),
             waypoints: self.waypoints.clone(),
             dead_end_tracks: self.dead_end_tracks.clone(),
             route: self.route.clone(),
@@ -106,7 +105,7 @@ impl DebugLogger for DebugLoggerFileSink {
                 Some(format!("{}", comment_data))
             };
             self.forks.insert(point.borrow().id, waypoint);
-            self.last_pont = Rc::clone(&point);
+            self.last_pont = point.clone();
         }
 
         if self.dead_end_tracks.last().is_none() {
@@ -165,7 +164,7 @@ impl DebugLoggerFileSink {
             id: since_the_epoch.as_secs(),
             step_id: 0,
             walker_id,
-            last_pont: Rc::clone(&start_point),
+            last_pont: start_point.clone(),
             start_point,
             end_point,
             waypoints,
@@ -243,7 +242,7 @@ impl DebugLoggerFileSink {
 
     fn log_to_file(&self, msg: String) -> () {
         let dir = self.get_dir();
-        let file_path = format!("{}/{}_logfile.log", dir, self.walker_id);
+        let file_path = format!("{}/{}_log_file.log", dir, self.walker_id);
         let mut log_file = match File::create_new(file_path.clone()) {
             Ok(file) => file,
             Err(_) => match OpenOptions::new().append(true).open(file_path) {

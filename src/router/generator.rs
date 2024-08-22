@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::map_data::{graph::MapDataGraph, point::MapDataPointRef};
+use crate::map_data::graph::{MapDataGraph, MapDataPointRef};
 use geo::{HaversineDestination, Point};
 
 use super::{
@@ -48,17 +48,17 @@ impl<'a> Generator<'a> {
     fn generate_itineraries(&self) -> Vec<Itinerary> {
         let to_waypoints = self.create_waypoints_around(&self.to);
         let mut itineraries = vec![Itinerary::new(
-            Rc::clone(&self.from),
-            Rc::clone(&self.to),
+            self.from.clone(),
+            self.to.clone(),
             Vec::new(),
             10.,
         )];
 
         to_waypoints.iter().for_each(|wp| {
             itineraries.push(Itinerary::new(
-                Rc::clone(&self.from),
-                Rc::clone(&self.to),
-                vec![Rc::clone(wp)],
+                self.from.clone(),
+                self.to.clone(),
+                vec![wp.clone()],
                 1000.,
             ))
         });

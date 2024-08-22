@@ -167,7 +167,7 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
         .distance_between(&input.itinerary.get_next());
     let point_steps_back = match input.route.get_steps_from_end(check_steps_back) {
         None => return WeightCalcResult::UseWithWeight(0),
-        Some(segment) => Rc::clone(segment.get_end_point()),
+        Some(segment) => segment.get_end_point().clone(),
     };
 
     let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f64);

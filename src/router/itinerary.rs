@@ -1,6 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
-
-use crate::map_data::point::{MapDataPoint, MapDataPointRef};
+use crate::map_data::graph::MapDataPointRef;
 
 #[derive(Clone, Debug)]
 pub struct Itinerary {
@@ -21,7 +19,7 @@ impl Itinerary {
         Self {
             from,
             waypoint_radius,
-            next: waypoints.get(0).map_or(Rc::clone(&to), |w| Rc::clone(&w)),
+            next: waypoints.get(0).map_or(to.clone(), |w| w.clone()),
             waypoints,
             to,
         }
@@ -31,15 +29,15 @@ impl Itinerary {
         if current.borrow().distance_between(&self.to)
             < current.borrow().distance_between(&self.next)
         {
-            self.next = Rc::clone(&self.to);
+            self.next = self.to.clone();
         } else if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 self.next = self
                     .waypoints
                     .get(idx + 1)
-                    .map_or(Rc::clone(&self.to), |w| Rc::clone(w))
+                    .map_or(self.to.clone(), |w| w.clone())
             } else {
-                self.next = Rc::clone(&self.to);
+                self.next = self.to.clone();
             }
         }
     }

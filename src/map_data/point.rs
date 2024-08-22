@@ -2,9 +2,12 @@ use geo::HaversineBearing;
 use geo::HaversineDistance;
 use geo::Point;
 
-use std::{cell::RefCell, fmt::Debug, rc::Rc};
+use std::fmt::Debug;
 
-use super::{line::MapDataLineRef, rule::MapDataRule, way::MapDataWayRef};
+use super::graph::MapDataLineRef;
+use super::graph::MapDataPointRef;
+use super::graph::MapDataWayRef;
+use super::rule::MapDataRule;
 
 #[derive(Clone)]
 pub struct MapDataPoint {
@@ -63,5 +66,3 @@ impl Debug for MapDataPoint {
         )
     }
 }
-
-pub type MapDataPointRef = Rc<RefCell<MapDataPoint>>;

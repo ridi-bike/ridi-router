@@ -1,16 +1,12 @@
 use std::fmt::Debug;
-use std::{cell::RefCell, rc::Rc};
 
-use super::{
-    point::{MapDataPoint, MapDataPointRef},
-    way::MapDataWayRef,
-};
+use super::graph::{MapDataPointRef, MapDataWayRef};
 
 #[derive(Clone)]
 pub struct MapDataLine {
     pub id: String,
     pub way: MapDataWayRef,
-    pub points: (MapDataPointRef, Rc<RefCell<MapDataPoint>>),
+    pub points: (MapDataPointRef, MapDataPointRef),
     pub one_way: bool,
     pub roundabout: bool,
     pub tags_ref: Option<String>,
@@ -42,5 +38,3 @@ impl Debug for MapDataLine {
         )
     }
 }
-
-pub type MapDataLineRef = Rc<RefCell<MapDataLine>>;

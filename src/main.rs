@@ -1,4 +1,4 @@
-use std::{process, rc::Rc, time::Instant};
+use std::{process, time::Instant};
 
 use clap::{arg, value_parser, Command};
 
@@ -89,7 +89,7 @@ fn main() {
         Some(p) => p,
     };
 
-    let route_generator = Generator::new(&map_data, Rc::clone(&start_point), Rc::clone(&end_point));
+    let route_generator = Generator::new(&map_data, start_point.clone(), end_point.clone());
     let routes = route_generator.generate_routes();
 
     let routes_generation_duration = routes_generation_start.elapsed();

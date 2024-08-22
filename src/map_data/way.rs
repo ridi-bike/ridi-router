@@ -1,6 +1,6 @@
-use std::{cell::RefCell, fmt::Debug, rc::Rc, slice::Iter};
+use std::{cell::RefCell, fmt::Debug, slice::Iter};
 
-use super::point::MapDataPointRef;
+use super::graph::{MapDataPointRef, MapDataWayRef};
 
 #[derive(Clone)]
 pub struct MapDataWay {
@@ -10,7 +10,7 @@ pub struct MapDataWay {
 
 impl MapDataWay {
     pub fn add_point(way: MapDataWayRef, point: MapDataPointRef) -> () {
-        let mut way_mut = way.borrow_mut();
+        let mut way_mut = way.borrow();
         way_mut.points.add(point);
     }
 }
@@ -106,5 +106,3 @@ impl<'a> IntoIterator for MapDataWayPoints {
         self.points.into_iter()
     }
 }
-
-pub type MapDataWayRef = Rc<RefCell<MapDataWay>>;

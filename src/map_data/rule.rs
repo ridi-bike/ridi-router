@@ -1,5 +1,6 @@
-use super::line::MapDataLineRef;
 use std::fmt::Debug;
+
+use super::graph::MapDataLineRef;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MapDataRuleType {

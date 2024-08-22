@@ -1,6 +1,6 @@
 use std::{fmt::Debug, rc::Rc};
 
-use crate::map_data::point::MapDataPointRef;
+use crate::map_data::graph::MapDataPointRef;
 
 use super::segment::Segment;
 
@@ -27,7 +27,7 @@ impl SegmentList {
     pub fn get_all_segment_points(&self) -> Vec<MapDataPointRef> {
         self.segment_list
             .iter()
-            .map(|segment| Rc::clone(&segment.get_end_point()))
+            .map(|segment| segment.get_end_point().clone())
             .collect()
     }
     pub fn get_segment_from_point(&self, point: &MapDataPointRef) -> Option<&Segment> {

@@ -2,7 +2,10 @@ use std::{fmt::Debug, rc::Rc};
 
 use crate::{
     debug_writer::DebugLogger,
-    map_data::{graph::MapDataGraph, point::MapDataPointRef, rule::MapDataRuleType},
+    map_data::{
+        graph::{MapDataGraph, MapDataPointRef},
+        rule::MapDataRuleType,
+    },
 };
 
 use super::route::{segment::Segment, segment_list::SegmentList, Route};
@@ -42,7 +45,7 @@ impl<'a> Walker<'a> {
         Self {
             walker_id: 1,
             map_data_graph,
-            start: Rc::clone(&start),
+            start: start.clone(),
             end,
             route_walked: Route::new(),
             next_fork_choice_point: None,
@@ -67,7 +70,7 @@ impl<'a> Walker<'a> {
             .iter()
             .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
             .collect::<Vec<_>>();
-        let segments = self.map_data_graph.get_adjacent(Rc::clone(&center_point));
+        let segments = self.map_data_graph.get_adjacent(center_point.clone());
         let segment_list = segments
             .iter()
             .filter_map(|(l, p)| {
@@ -89,7 +92,7 @@ impl<'a> Walker<'a> {
                         return None;
                     }
                 }
-                Some(Segment::new(Rc::clone(&l), Rc::clone(&p)))
+                Some(Segment::new(l.clone(), p.clone()))
             })
             .collect::<SegmentList>();
 
@@ -130,7 +133,7 @@ impl<'a> Walker<'a> {
             .collect::<Vec<_>>();
 
         self.map_data_graph
-            .get_adjacent(Rc::clone(&center_point))
+            .get_adjacent(center_point.clone())
             .into_iter()
             .filter(|(line_next, point_next)| {
                 // do not offer the same line as you came from

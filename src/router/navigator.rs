@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
-    rc::Rc,
 };
 
 use crate::{
@@ -142,12 +141,12 @@ impl<'a> Navigator<'a> {
             map_data_graph,
             walker: Walker::new(
                 map_data_graph,
-                Rc::clone(itinerary.get_from()),
-                Rc::clone(itinerary.get_to()),
+                itinerary.get_from().clone(),
+                itinerary.get_to().clone(),
                 Box::new(DebugLoggerFileSink::new(
                     1,
-                    Rc::clone(itinerary.get_from()),
-                    Rc::clone(itinerary.get_to()),
+                    itinerary.get_from().clone(),
+                    itinerary.get_to().clone(),
                     itinerary.get_waypoints().clone(),
                 )),
             ),
@@ -191,7 +190,7 @@ impl<'a> Navigator<'a> {
                                 .get_discarded_choices_for_pont(&last_point.borrow().id)
                                 .map_or(Vec::new(), |d| {
                                     d.iter()
-                                        .filter_map(|p| self.map_data_graph.get_point_by_id(&p))
+                                        .filter_map(|p| self.map_data_graph.get_point_ref_by_id(&p))
                                         .collect()
                                 }),
                         ),
@@ -199,7 +198,7 @@ impl<'a> Navigator<'a> {
                     )
                 };
 
-                self.itinerary.check_set_next(Rc::clone(last_point));
+                self.itinerary.check_set_next(last_point.clone());
 
                 let fork_weights = fork_choices.clone().into_iter().fold(
                     ForkWeights::new(),
@@ -215,8 +214,8 @@ impl<'a> Navigator<'a> {
                                     all_fork_segments: &fork_choices,
                                     walker_from_fork: Walker::new(
                                         self.map_data_graph,
-                                        Rc::clone(&fork_route_segment.get_end_point()),
-                                        Rc::clone(&self.itinerary.get_next()),
+                                        fork_route_segment.get_end_point().clone(),
+                                        self.itinerary.get_next().clone(),
                                         Box::new(DebugLoggerVoidSink::default()),
                                     ),
                                     debug_logger: &self.walker.debug_logger,
@@ -248,7 +247,7 @@ impl<'a> Navigator<'a> {
 
                 let chosen_fork_point = fork_weights
                     .get_choice_id_by_index_from_heaviest(0)
-                    .map(|pid| self.map_data_graph.get_point_by_id(&pid))
+                    .map(|pid| self.map_data_graph.get_point_ref_by_id(&pid))
                     .flatten();
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
@@ -324,8 +323,8 @@ mod test {
             WeightCalcResult::UseWithWeight(1)
         }
         let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_by_id(&1).unwrap();
-        let to = map_data.get_point_by_id(&7).unwrap();
+        let from = map_data.get_point_ref_by_id(&1).unwrap();
+        let to = map_data.get_point_ref_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary.clone(), vec![weight]);
         let route = match navigator.generate_routes() {
@@ -387,8 +386,8 @@ mod test {
             WeightCalcResult::UseWithWeight(1)
         }
         let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_by_id(&1).unwrap();
-        let to = map_data.get_point_by_id(&7).unwrap();
+        let from = map_data.get_point_ref_by_id(&1).unwrap();
+        let to = map_data.get_point_ref_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
         let route = match navigator.generate_routes() {
@@ -408,8 +407,8 @@ mod test {
             WeightCalcResult::UseWithWeight(1)
         }
         let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_by_id(&1).unwrap();
-        let to = map_data.get_point_by_id(&11).unwrap();
+        let from = map_data.get_point_ref_by_id(&1).unwrap();
+        let to = map_data.get_point_ref_by_id(&11).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
 
@@ -427,8 +426,8 @@ mod test {
             WeightCalcResult::UseWithWeight(1)
         }
         let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_by_id(&1).unwrap();
-        let to = map_data.get_point_by_id(&7).unwrap();
+        let from = map_data.get_point_ref_by_id(&1).unwrap();
+        let to = map_data.get_point_ref_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
         if let NavigationResult::Finished(_) = navigator.generate_routes() {
@@ -464,8 +463,8 @@ mod test {
             WeightCalcResult::UseWithWeight(6)
         }
         let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_by_id(&1).unwrap();
-        let to = map_data.get_point_by_id(&7).unwrap();
+        let from = map_data.get_point_ref_by_id(&1).unwrap();
+        let to = map_data.get_point_ref_by_id(&7).unwrap();
         let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
         let mut navigator = Navigator::new(&map_data, itinerary, vec![weight1, weight2]);
         let route = match navigator.generate_routes() {
