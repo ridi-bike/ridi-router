@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
-    map_data::graph::MapDataGraph,
+    MAP_DATA_GRAPH,
 };
 
 use super::{
@@ -123,24 +123,17 @@ pub enum NavigationResult {
     Finished(Route),
 }
 
-pub struct Navigator<'a> {
-    map_data_graph: &'a MapDataGraph,
+pub struct Navigator {
     itinerary: Itinerary,
-    walker: Walker<'a>,
+    walker: Walker,
     weight_calcs: Vec<WeightCalc>,
     discarded_fork_choices: DiscardedForkChoices,
 }
 
-impl<'a> Navigator<'a> {
-    pub fn new(
-        map_data_graph: &'a MapDataGraph,
-        itinerary: Itinerary,
-        weight_calcs: Vec<WeightCalc>,
-    ) -> Self {
+impl Navigator {
+    pub fn new(itinerary: Itinerary, weight_calcs: Vec<WeightCalc>) -> Self {
         Navigator {
-            map_data_graph,
             walker: Walker::new(
-                map_data_graph,
                 itinerary.get_from().clone(),
                 itinerary.get_to().clone(),
                 Box::new(DebugLoggerFileSink::new(
@@ -190,7 +183,7 @@ impl<'a> Navigator<'a> {
                                 .get_discarded_choices_for_pont(&last_point.borrow().id)
                                 .map_or(Vec::new(), |d| {
                                     d.iter()
-                                        .filter_map(|p| self.map_data_graph.get_point_ref_by_id(&p))
+                                        .filter_map(|p| MAP_DATA_GRAPH.get_point_ref_by_id(&p))
                                         .collect()
                                 }),
                         ),
@@ -213,7 +206,6 @@ impl<'a> Navigator<'a> {
                                     current_fork_segment: &fork_route_segment,
                                     all_fork_segments: &fork_choices,
                                     walker_from_fork: Walker::new(
-                                        self.map_data_graph,
                                         fork_route_segment.get_end_point().clone(),
                                         self.itinerary.get_next().clone(),
                                         Box::new(DebugLoggerVoidSink::default()),
@@ -247,7 +239,7 @@ impl<'a> Navigator<'a> {
 
                 let chosen_fork_point = fork_weights
                     .get_choice_id_by_index_from_heaviest(0)
-                    .map(|pid| self.map_data_graph.get_point_ref_by_id(&pid))
+                    .map(|pid| MAP_DATA_GRAPH.get_point_ref_by_id(&pid))
                     .flatten();
 
                 if let Some(chosen_fork_point) = chosen_fork_point {

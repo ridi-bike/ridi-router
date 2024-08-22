@@ -1,6 +1,9 @@
 use std::rc::Rc;
 
-use crate::map_data::graph::{MapDataGraph, MapDataPointRef};
+use crate::{
+    map_data::graph::{MapDataGraph, MapDataPointRef},
+    MAP_DATA_GRAPH,
+};
 use geo::{HaversineDestination, Point};
 
 use super::{
@@ -16,15 +19,14 @@ use super::{
 const ITINERARY_VARIATION_DISTANCES: [f64; 2] = [10000., 20000.];
 const ITINERARY_VARIATION_DEGREES: [f64; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
 
-pub struct Generator<'a> {
-    map_data: &'a MapDataGraph,
+pub struct Generator {
     from: MapDataPointRef,
     to: MapDataPointRef,
 }
 
-impl<'a> Generator<'a> {
-    pub fn new(map_data: &'a MapDataGraph, from: MapDataPointRef, to: MapDataPointRef) -> Self {
-        Self { map_data, from, to }
+impl Generator {
+    pub fn new(from: MapDataPointRef, to: MapDataPointRef) -> Self {
+        Self { from, to }
     }
 
     fn create_waypoints_around(&self, point: &MapDataPointRef) -> Vec<MapDataPointRef> {
@@ -36,7 +38,7 @@ impl<'a> Generator<'a> {
                     .iter()
                     .map(|distance| {
                         let wp_geo = point_geo.haversine_destination(*bearing, *distance);
-                        let wp = self.map_data.get_closest_to_coords(wp_geo.y(), wp_geo.x());
+                        let wp = MAP_DATA_GRAPH.get_closest_to_coords(wp_geo.y(), wp_geo.x());
                         wp
                     })
                     .filter_map(|maybe_wp| maybe_wp)
@@ -72,7 +74,6 @@ impl<'a> Generator<'a> {
             .into_iter()
             .map(|itinerary| {
                 Navigator::new(
-                    &self.map_data,
                     itinerary,
                     vec![
                         weight_check_distance_to_next,

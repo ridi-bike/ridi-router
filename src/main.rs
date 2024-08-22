@@ -1,8 +1,9 @@
-use std::{process, time::Instant};
+use std::{process, sync::LazyLock, time::Instant};
 
 use clap::{arg, value_parser, Command};
 
 use gpx_writer::RoutesWriter;
+use map_data::graph::MapDataGraph;
 use osm_data_reader::OsmDataReader;
 
 use crate::router::generator::Generator;
@@ -21,6 +22,53 @@ mod test_utils;
 // serde 60 sek (25+35), 13gb
 // parse 33 sek, 600mb
 // refs 29 sek, 630mb
+
+pub static MAP_DATA_GRAPH: LazyLock<MapDataGraph> = LazyLock::new(|| {
+    let matches = Command::new("gps-router")
+        .arg(
+            arg!(
+                -d --data_file <PATH> "File with OSM json data"
+            )
+            .value_parser(value_parser!(String)),
+        )
+        .arg(
+            arg!(
+                -f --from_lat <LAT> "From lat"
+            )
+            .value_parser(value_parser!(f64)),
+        )
+        .arg(
+            arg!(
+                -F --from_lon <LON> "From lon"
+            )
+            .value_parser(value_parser!(f64)),
+        )
+        .arg(
+            arg!(
+                -t --to_lat <LAT> "To lat"
+            )
+            .value_parser(value_parser!(f64)),
+        )
+        .arg(
+            arg!(
+                -T --to_lon <LON> "To lon"
+            )
+            .value_parser(value_parser!(f64)),
+        )
+        .get_matches();
+
+    let file_source = matches.get_one::<String>("data_file");
+
+    let data_reader = if let Some(file) = file_source {
+        OsmDataReader::new_file(file.clone())
+    } else {
+        OsmDataReader::new_stdin()
+    };
+
+    let map_data = data_reader.read_data().unwrap();
+
+    map_data
+});
 
 fn main() {
     let matches = Command::new("gps-router")
@@ -61,19 +109,9 @@ fn main() {
     let to_lat = matches.get_one::<f64>("to_lat").unwrap();
     let to_lon = matches.get_one::<f64>("to_lon").unwrap();
 
-    let file_source = matches.get_one::<String>("data_file");
-
-    let data_reader = if let Some(file) = file_source {
-        OsmDataReader::new_file(file.clone())
-    } else {
-        OsmDataReader::new_stdin()
-    };
-
-    let map_data = data_reader.read_data().unwrap();
-
     let routes_generation_start = Instant::now();
 
-    let start_point = match map_data.get_closest_to_coords(*from_lat, *from_lon) {
+    let start_point = match MAP_DATA_GRAPH.get_closest_to_coords(*from_lat, *from_lon) {
         None => {
             eprintln!("no closest point found");
             process::exit(1);
@@ -81,7 +119,7 @@ fn main() {
         Some(p) => p,
     };
 
-    let end_point = match map_data.get_closest_to_coords(*to_lat, *to_lon) {
+    let end_point = match MAP_DATA_GRAPH.get_closest_to_coords(*to_lat, *to_lon) {
         None => {
             eprintln!("no closest point found");
             process::exit(1);
@@ -89,7 +127,7 @@ fn main() {
         Some(p) => p,
     };
 
-    let route_generator = Generator::new(&map_data, start_point.clone(), end_point.clone());
+    let route_generator = Generator::new(start_point.clone(), end_point.clone());
     let routes = route_generator.generate_routes();
 
     let routes_generation_duration = routes_generation_start.elapsed();

@@ -1,11 +1,9 @@
-use std::{fmt::Debug, rc::Rc};
+use std::fmt::Debug;
 
 use crate::{
     debug_writer::DebugLogger,
-    map_data::{
-        graph::{MapDataGraph, MapDataPointRef},
-        rule::MapDataRuleType,
-    },
+    map_data::{graph::MapDataPointRef, rule::MapDataRuleType},
+    MAP_DATA_GRAPH,
 };
 
 use super::route::{segment::Segment, segment_list::SegmentList, Route};
@@ -18,9 +16,8 @@ pub enum WalkerError {
     },
 }
 
-pub struct Walker<'a> {
+pub struct Walker {
     walker_id: u16,
-    map_data_graph: &'a MapDataGraph,
     start: MapDataPointRef,
     end: MapDataPointRef,
     route_walked: Route,
@@ -35,16 +32,14 @@ pub enum WalkerMoveResult {
     Finish,
 }
 
-impl<'a> Walker<'a> {
+impl Walker {
     pub fn new(
-        map_data_graph: &'a MapDataGraph,
         start: MapDataPointRef,
         end: MapDataPointRef,
         debug_logger: Box<dyn DebugLogger>,
     ) -> Self {
         Self {
             walker_id: 1,
-            map_data_graph,
             start: start.clone(),
             end,
             route_walked: Route::new(),
@@ -70,7 +65,7 @@ impl<'a> Walker<'a> {
             .iter()
             .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
             .collect::<Vec<_>>();
-        let segments = self.map_data_graph.get_adjacent(center_point.clone());
+        let segments = MAP_DATA_GRAPH.get_adjacent(center_point.clone());
         let segment_list = segments
             .iter()
             .filter_map(|(l, p)| {
@@ -132,7 +127,7 @@ impl<'a> Walker<'a> {
             })
             .collect::<Vec<_>>();
 
-        self.map_data_graph
+        MAP_DATA_GRAPH
             .get_adjacent(center_point.clone())
             .into_iter()
             .filter(|(line_next, point_next)| {
@@ -274,7 +269,7 @@ impl<'a> Walker<'a> {
             self.debug_logger.log(format!(
                 "raw choices for {:#?} : {:#?}",
                 point,
-                self.map_data_graph.get_adjacent(point.clone())
+                MAP_DATA_GRAPH.get_adjacent(point.clone())
             ));
 
             let available_segments = match self.route_walked.get_segment_last() {

@@ -16,7 +16,7 @@ pub struct WeightCalcInput<'a> {
     pub route: &'a Route,
     pub all_fork_segments: &'a SegmentList,
     pub itinerary: &'a Itinerary,
-    pub walker_from_fork: Walker<'a>,
+    pub walker_from_fork: Walker,
     pub debug_logger: &'a Box<dyn DebugLogger>,
 }
 

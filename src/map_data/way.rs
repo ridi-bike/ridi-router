@@ -8,12 +8,12 @@ pub struct MapDataWay {
     pub points: MapDataWayPoints,
 }
 
-impl MapDataWay {
-    pub fn add_point(way: MapDataWayRef, point: MapDataPointRef) -> () {
-        let mut way_mut = way.borrow();
-        way_mut.points.add(point);
-    }
-}
+// impl MapDataWay {
+//     pub fn add_point(way: MapDataWayRef, point: MapDataPointRef) -> () {
+//         let mut way_mut = way.borrow();
+//         way_mut.points.add(point);
+//     }
+// }
 
 impl PartialEq for MapDataWay {
     fn eq(&self, other: &Self) -> bool {
