@@ -178,11 +178,30 @@ impl MapDataGraph {
 
     fn way_is_ok(&self, osm_way: &OsmWay) -> bool {
         if let Some(tags) = &osm_way.tags {
+            if tags.get("service").is_some() {
+                return false;
+            }
+            if let Some(access) = tags.get("access") {
+                if access == "no" || access == "private" {
+                    return false;
+                }
+            }
+            if let Some(motor_vehicle) = tags.get("motor_vehicle") {
+                if motor_vehicle == "private" || motor_vehicle == "no" {
+                    return false;
+                }
+            }
             if let Some(highway) = tags.get("highway") {
-                return highway != "proposed";
+                return highway != "proposed"
+                    && highway != "cycleway"
+                    && highway != "steps"
+                    && highway != "pedestrian"
+                    && highway != "path"
+                    && highway != "service"
+                    && highway != "footway";
             }
         }
-        true
+        false
     }
 
     fn get_way_ref_by_idx(&self, idx: usize) -> &MapDataWay {
@@ -540,6 +559,195 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn check_way_ok() {
+        let map_data = MapDataGraph::new();
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "primary".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), true);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "proposed".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "cycleway".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "hhhighway".to_string(),
+                "primary".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "steps".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "pedestrian".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([("highway".to_string(), "path".to_string())])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "service".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "footway".to_string(),
+            )])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([("highway".to_string(), "omg".to_string())])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), true);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("motor_vehicle".to_string(), "yes".to_string()),
+            ])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), true);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("motor_vehicle".to_string(), "no".to_string()),
+            ])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("motor_vehicle".to_string(), "private".to_string()),
+            ])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("motor_vehicle".to_string(), "yes".to_string()),
+                ("service".to_string(), "yes".to_string()),
+            ])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("motor_vehicle".to_string(), "yes".to_string()),
+                ("access".to_string(), "yes".to_string()),
+            ])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), true);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("motor_vehicle".to_string(), "yes".to_string()),
+                ("access".to_string(), "no".to_string()),
+            ])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+
+        let osm_way = OsmWay {
+            id: 1,
+            point_ids: Vec::new(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("motor_vehicle".to_string(), "yes".to_string()),
+                ("access".to_string(), "private".to_string()),
+            ])),
+        };
+
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
+    }
+
     #[derive(Debug)]
     struct PointTest {
         lat: f64,
@@ -778,7 +986,7 @@ mod tests {
             let res = map_data.insert_way(OsmWay {
                 id: 1,
                 point_ids: vec![1],
-                tags: None,
+                tags:Some(HashMap::from([("highway".to_string(), "primary".to_string())]))
             });
             if let Ok(_) = res {
                 assert!(false);

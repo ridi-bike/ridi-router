@@ -32,6 +32,9 @@ pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
     //      12
     //      |
     //      121
+    //
+
+    let tags_with_highway = HashMap::from([("highway".to_string(), "primary".to_string())]);
 
     (
         vec![
@@ -56,67 +59,67 @@ pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
             OsmWay {
                 id: 12345,
                 point_ids: vec![1, 2, 3, 4, 5],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 67,
                 point_ids: vec![6, 7],
-                tags: Some(HashMap::from([(
-                    String::from("oneway"),
-                    String::from("yes"),
-                )])),
+                tags: Some(HashMap::from([
+                    ("oneway".to_string(), "yes".to_string()),
+                    ("highway".to_string(), "primary".to_string()),
+                ])),
             },
             OsmWay {
                 id: 87,
                 point_ids: vec![8, 7],
-                tags: Some(HashMap::from([(
-                    String::from("oneway"),
-                    String::from("yes"),
-                )])),
+                tags: Some(HashMap::from([
+                    ("oneway".to_string(), "yes".to_string()),
+                    ("highway".to_string(), "primary".to_string()),
+                ])),
             },
             OsmWay {
                 id: 8910,
                 point_ids: vec![8, 9, 10],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 72,
                 point_ids: vec![7, 2],
-                tags: Some(HashMap::from([(
-                    String::from("oneway"),
-                    String::from("yes"),
-                )])),
+                tags: Some(HashMap::from([
+                    ("oneway".to_string(), "yes".to_string()),
+                    ("highway".to_string(), "primary".to_string()),
+                ])),
             },
             OsmWay {
                 id: 38,
                 point_ids: vec![3, 8],
-                tags: Some(HashMap::from([(
-                    String::from("oneway"),
-                    String::from("yes"),
-                )])),
+                tags: Some(HashMap::from([
+                    ("oneway".to_string(), "yes".to_string()),
+                    ("highway".to_string(), "primary".to_string()),
+                ])),
             },
             OsmWay {
                 id: 7111213,
                 point_ids: vec![7, 11, 12, 13],
-                tags: Some(HashMap::from([(
-                    String::from("junction"),
-                    String::from("roundabout"),
-                )])),
+                tags: Some(HashMap::from([
+                    ("junction".to_string(), "roundabout".to_string()),
+                    ("highway".to_string(), "primary".to_string()),
+                ])),
             },
             OsmWay {
                 id: 11111,
                 point_ids: vec![111, 11],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 12121,
                 point_ids: vec![121, 12],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 13131,
                 point_ids: vec![131, 13],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
         ],
     )
@@ -135,6 +138,10 @@ pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
     //       4 - - 8 - - 9
     //
     //       11 - 12
+    //
+
+    let tags_with_highway = HashMap::from([("highway".to_string(), "primary".to_string())]);
+
     (
         vec![
             OsmNode {
@@ -197,27 +204,27 @@ pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
             OsmWay {
                 id: 1234,
                 point_ids: vec![1, 2, 3, 4],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 5367,
                 point_ids: vec![5, 3, 6, 7],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 489,
                 point_ids: vec![4, 8, 9],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 68,
                 point_ids: vec![6, 8],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
             OsmWay {
                 id: 1112,
                 point_ids: vec![11, 12],
-                tags: None,
+                tags: Some(tags_with_highway.clone()),
             },
         ],
     )
