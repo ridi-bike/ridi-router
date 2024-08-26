@@ -2,7 +2,10 @@ use std::fmt::Debug;
 
 use crate::{
     debug_writer::DebugLogger,
-    map_data::{graph::MapDataPointRef, rule::MapDataRuleType},
+    map_data::{
+        graph::{MapDataGraph, MapDataPointRef},
+        rule::MapDataRuleType,
+    },
     MAP_DATA_GRAPH,
 };
 
@@ -65,7 +68,7 @@ impl Walker {
             .iter()
             .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
             .collect::<Vec<_>>();
-        let segments = MAP_DATA_GRAPH.get_adjacent(center_point.clone());
+        let segments = MapDataGraph::get().get_adjacent(center_point.clone());
         let segment_list = segments
             .iter()
             .filter_map(|(l, p)| {
@@ -127,7 +130,7 @@ impl Walker {
             })
             .collect::<Vec<_>>();
 
-        MAP_DATA_GRAPH
+        MapDataGraph::get()
             .get_adjacent(center_point.clone())
             .into_iter()
             .filter(|(line_next, point_next)| {
@@ -269,7 +272,7 @@ impl Walker {
             self.debug_logger.log(format!(
                 "raw choices for {:#?} : {:#?}",
                 point,
-                MAP_DATA_GRAPH.get_adjacent(point.clone())
+                MapDataGraph::get().get_adjacent(point.clone())
             ));
 
             let available_segments = match self.route_walked.get_segment_last() {
@@ -361,344 +364,359 @@ impl Walker {
 mod tests {
     use core::panic;
 
+    use rusty_fork::rusty_fork_test;
+
     use crate::{
         debug_writer::DebugLoggerVoidSink,
+        map_data::graph::MapDataGraph,
         router::{
             route::Route,
             walker::{WalkerError, WalkerMoveResult},
         },
         test_utils::{
-            get_test_data_with_rules, get_test_map_data_graph, get_test_map_data_graph_with_rules,
-            line_is_between_point_ids, route_matches_ids,
+            get_map_data_graph_from_test_data, get_test_data, get_test_data_with_rules,
+            line_is_between_point_ids, route_matches_ids, set_map_data_graph_static,
         },
     };
 
     use super::Walker;
 
-    #[test]
-    fn walker_same_start_end() {
-        let map_data = get_test_map_data_graph();
-        let point1 = map_data.get_point_by_id(&1).unwrap();
-        let point2 = map_data.get_point_by_id(&1).unwrap();
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_same_start_end() {
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let point1 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let point2 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
 
-        let mut walker = Walker::new(
-            &map_data,
-            point1.clone(),
-            point2.clone(),
-            Box::new(DebugLoggerVoidSink::default()),
-        );
+            let mut walker = Walker::new(
+                point1.clone(),
+                point2.clone(),
+                Box::new(DebugLoggerVoidSink::default()),
+            );
 
-        assert_eq!(
-            walker.move_forward_to_next_fork(),
-            Ok(WalkerMoveResult::Finish)
-        );
-        assert_eq!(walker.get_route().clone(), Route::new());
-    }
-
-    #[test]
-    fn walker_error_on_wrong_choice() {
-        let map_data = get_test_map_data_graph();
-        let point1 = map_data.get_point_by_id(&2).unwrap();
-        let point2 = map_data.get_point_by_id(&3).unwrap();
-
-        let mut walker = Walker::new(
-            &map_data,
-            point1.clone(),
-            point2.clone(),
-            Box::new(DebugLoggerVoidSink::default()),
-        );
-
-        let choice = map_data.get_point_by_id(&6).unwrap();
-        walker.set_fork_choice_point_id(choice);
-
-        assert_eq!(
-            walker.move_forward_to_next_fork(),
-            Err(WalkerError::WrongForkChoice {
-                id: 6,
-                available_fork_ids: vec![1, 3]
-            })
-        );
-        assert_eq!(walker.get_route().clone(), Route::new());
-    }
-
-    #[test]
-    fn waker_one_step_no_fork() {
-        let map_data = get_test_map_data_graph();
-
-        let from_id = 1;
-        let to_id = 2;
-        let point1 = map_data.get_point_by_id(&1).unwrap();
-        let point2 = map_data.get_point_by_id(&2).unwrap();
-
-        let mut walker = Walker::new(
-            &map_data,
-            point1.clone(),
-            point2.clone(),
-            Box::new(DebugLoggerVoidSink::default()),
-        );
-        assert_eq!(
-            walker.move_forward_to_next_fork(),
-            Ok(WalkerMoveResult::Finish)
-        );
-        let route = walker.get_route().clone();
-        assert_eq!(route.get_segment_count(), 1);
-        let el = route.get_segment_by_index(0);
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(
-                &route_segment.get_line(),
-                from_id,
-                to_id
-            ));
-            assert_eq!(route_segment.get_end_point().borrow().id, to_id);
-        } else {
-            assert!(false)
+            assert_eq!(
+                walker.move_forward_to_next_fork(),
+                Ok(WalkerMoveResult::Finish)
+            );
+            assert_eq!(walker.get_route().clone(), Route::new());
         }
     }
 
-    #[test]
-    fn walker_choose_path() {
-        let map_data = get_test_map_data_graph();
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_error_on_wrong_choice() {
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let point1 = MapDataGraph::get().test_get_point_ref_by_id(&2).unwrap();
+            let point2 = MapDataGraph::get().test_get_point_ref_by_id(&3).unwrap();
 
-        let point1 = map_data.get_point_by_id(&1).unwrap();
-        let point2 = map_data.get_point_by_id(&7).unwrap();
-
-        let mut walker = Walker::new(
-            &map_data,
-            point1.clone(),
-            point2.clone(),
-            Box::new(DebugLoggerVoidSink::default()),
-        );
-
-        let choices = match walker.move_forward_to_next_fork() {
-            Err(_) => panic!("Error received from move"),
-            Ok(WalkerMoveResult::Fork(c)) => c,
-            _ => panic!("did not get choices for routes"),
-        };
-
-        assert_eq!(choices.get_segment_count(), 3);
-
-        choices.into_iter().for_each(|route_segment| {
-            assert!(
-                route_segment.get_end_point().borrow().id == 5
-                    || route_segment.get_end_point().borrow().id == 4
-                    || route_segment.get_end_point().borrow().id == 6
+            let mut walker = Walker::new(
+                point1.clone(),
+                point2.clone(),
+                Box::new(DebugLoggerVoidSink::default()),
             );
-            assert!(
-                line_is_between_point_ids(&route_segment.get_line(), 5, 3)
-                    || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
-                    || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
-            )
-        });
 
-        let choice = map_data.get_point_by_id(&6).unwrap();
-        walker.set_fork_choice_point_id(choice);
+            let choice = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
+            walker.set_fork_choice_point_id(choice);
 
-        let choices = match walker.move_forward_to_next_fork() {
-            Err(_) => panic!("Error received from move"),
-            Ok(WalkerMoveResult::Fork(c)) => c,
-            _ => panic!("did not get choices for routes"),
-        };
-        assert_eq!(choices.get_segment_count(), 2);
-        choices.into_iter().for_each(|route_segment| {
-            assert!(
-                route_segment.get_end_point().borrow().id == 8
-                    || route_segment.get_end_point().borrow().id == 7
+            assert_eq!(
+                walker.move_forward_to_next_fork(),
+                Err(WalkerError::WrongForkChoice {
+                    id: 6,
+                    available_fork_ids: vec![1, 3]
+                })
             );
-            assert!(
-                line_is_between_point_ids(&route_segment.get_line(), 8, 6)
-                    || line_is_between_point_ids(&route_segment.get_line(), 7, 6)
-            )
-        });
-        let choice = map_data.get_point_by_id(&7).unwrap();
-        walker.set_fork_choice_point_id(choice);
-
-        assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
-
-        let route = walker.get_route().clone();
-        assert_eq!(route.get_segment_count(), 4);
-
-        let el = route.get_segment_by_index(0);
-        assert!(el.is_some());
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
-            assert_eq!(route_segment.get_end_point().borrow().id, 2);
-        }
-
-        let el = route.get_segment_by_index(1);
-        assert!(el.is_some());
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
-            assert_eq!(route_segment.get_end_point().borrow().id, 3);
-        }
-
-        let el = route.get_segment_by_index(2);
-        assert!(el.is_some());
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.get_line(), 6, 3));
-            assert_eq!(route_segment.get_end_point().borrow().id, 6);
-        }
-        let el = route.get_segment_by_index(3);
-        assert!(el.is_some());
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.get_line(), 7, 6));
-            assert_eq!(route_segment.get_end_point().borrow().id, 7);
+            assert_eq!(walker.get_route().clone(), Route::new());
         }
     }
 
-    #[test]
-    fn walker_reach_dead_end_walk_back() {
-        let map_data = get_test_map_data_graph();
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn waker_one_step_no_fork() {
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
 
-        let point1 = map_data.get_point_by_id(&1).unwrap();
-        let point2 = map_data.get_point_by_id(&4).unwrap();
+            let from_id = 1;
+            let to_id = 2;
+            let point1 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let point2 = MapDataGraph::get().test_get_point_ref_by_id(&2).unwrap();
 
-        let mut walker = Walker::new(
-            &map_data,
-            point1.clone(),
-            point2.clone(),
-            Box::new(DebugLoggerVoidSink::default()),
-        );
-
-        let choices = match walker.move_forward_to_next_fork() {
-            Err(_) => panic!("Error received from move"),
-            Ok(WalkerMoveResult::Fork(c)) => c,
-            _ => panic!("did not get choices for routes"),
-        };
-        assert_eq!(choices.get_segment_count(), 3);
-
-        choices.into_iter().for_each(|route_segment| {
-            assert!(
-                route_segment.get_end_point().borrow().id == 5
-                    || route_segment.get_end_point().borrow().id == 4
-                    || route_segment.get_end_point().borrow().id == 6
+            let mut walker = Walker::new(
+                point1.clone(),
+                point2.clone(),
+                Box::new(DebugLoggerVoidSink::default()),
             );
-            assert!(
-                line_is_between_point_ids(&route_segment.get_line(), 5, 3)
-                    || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
-                    || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
-            )
-        });
-
-        let choice1 = map_data.get_point_by_id(&5).unwrap();
-
-        walker.set_fork_choice_point_id(choice1);
-
-        assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::DeadEnd));
-
-        let choices = match walker.move_backwards_to_prev_fork() {
-            None => panic!("Expected to be back at point 3 with choices"),
-            Some(c) => c,
-        };
-
-        choices.into_iter().for_each(|route_segment| {
-            assert!(
-                route_segment.get_end_point().borrow().id == 5
-                    || route_segment.get_end_point().borrow().id == 4
-                    || route_segment.get_end_point().borrow().id == 6
+            assert_eq!(
+                walker.move_forward_to_next_fork(),
+                Ok(WalkerMoveResult::Finish)
             );
-            assert!(
-                line_is_between_point_ids(&route_segment.get_line(), 5, 3)
-                    || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
-                    || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
-            )
-        });
-
-        let choice2 = map_data.get_point_by_id(&4).unwrap();
-        walker.set_fork_choice_point_id(choice2);
-
-        assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
-
-        let route = walker.get_route().clone();
-        assert_eq!(route.get_segment_count(), 3);
-
-        let el = route.get_segment_by_index(0);
-        assert!(el.is_some());
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
-            assert_eq!(route_segment.get_end_point().borrow().id, 2);
-        }
-
-        let el = route.get_segment_by_index(1);
-        assert!(el.is_some());
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
-            assert_eq!(route_segment.get_end_point().borrow().id, 3);
-        }
-
-        let el = route.get_segment_by_index(2);
-        assert!(el.is_some());
-        if let Some(route_segment) = el {
-            assert!(line_is_between_point_ids(&route_segment.get_line(), 4, 3));
-            assert_eq!(route_segment.get_end_point().borrow().id, 4);
+            let route = walker.get_route().clone();
+            assert_eq!(route.get_segment_count(), 1);
+            let el = route.get_segment_by_index(0);
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(
+                    &route_segment.get_line(),
+                    from_id,
+                    to_id
+                ));
+                assert_eq!(route_segment.get_end_point().borrow().id, to_id);
+            } else {
+                assert!(false)
+            }
         }
     }
 
-    #[test]
-    fn handle_roundabout() {
-        let map_data = get_test_map_data_graph_with_rules();
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_choose_path() {
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
 
-        let from = map_data.get_point_by_id(&6).unwrap();
-        let to = map_data.get_point_by_id(&131).unwrap();
+            let point1 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let point2 = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
 
-        let mut walker = Walker::new(
-            &map_data,
-            from.clone(),
-            to.clone(),
-            Box::new(DebugLoggerVoidSink::default()),
-        );
-
-        let choices = match walker.move_forward_to_next_fork() {
-            Err(_) => panic!("Error received from move"),
-            Ok(WalkerMoveResult::Fork(c)) => c,
-            _ => panic!("did not get choices for routes"),
-        };
-        assert_eq!(choices.get_segment_count(), 2);
-
-        choices.into_iter().for_each(|route_segment| {
-            assert!(
-                route_segment.get_end_point().borrow().id == 2
-                    || route_segment.get_end_point().borrow().id == 11
+            let mut walker = Walker::new(
+                point1.clone(),
+                point2.clone(),
+                Box::new(DebugLoggerVoidSink::default()),
             );
-            assert!(
-                line_is_between_point_ids(&route_segment.get_line(), 7, 2)
-                    || line_is_between_point_ids(&route_segment.get_line(), 7, 11)
-            )
-        });
 
-        let choice = map_data.get_point_by_id(&11).unwrap();
-        walker.set_fork_choice_point_id(choice);
+            let choices = match walker.move_forward_to_next_fork() {
+                Err(_) => panic!("Error received from move"),
+                Ok(WalkerMoveResult::Fork(c)) => c,
+                _ => panic!("did not get choices for routes"),
+            };
 
-        let choices = match walker.move_forward_to_next_fork() {
-            Err(_) => panic!("Error received from move"),
-            Ok(WalkerMoveResult::Fork(c)) => c,
-            _ => panic!("did not get choices for routes"),
-        };
+            assert_eq!(choices.get_segment_count(), 3);
 
-        assert_eq!(choices.get_segment_count(), 3);
+            choices.into_iter().for_each(|route_segment| {
+                assert!(
+                    route_segment.get_end_point().borrow().id == 5
+                        || route_segment.get_end_point().borrow().id == 4
+                        || route_segment.get_end_point().borrow().id == 6
+                );
+                assert!(
+                    line_is_between_point_ids(&route_segment.get_line(), 5, 3)
+                        || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
+                        || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
+                )
+            });
 
-        choices.into_iter().for_each(|route_segment| {
-            assert!(
-                route_segment.get_end_point().borrow().id == 111
-                    || route_segment.get_end_point().borrow().id == 121
-                    || route_segment.get_end_point().borrow().id == 131
+            let choice = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
+            walker.set_fork_choice_point_id(choice);
+
+            let choices = match walker.move_forward_to_next_fork() {
+                Err(_) => panic!("Error received from move"),
+                Ok(WalkerMoveResult::Fork(c)) => c,
+                _ => panic!("did not get choices for routes"),
+            };
+            assert_eq!(choices.get_segment_count(), 2);
+            choices.into_iter().for_each(|route_segment| {
+                assert!(
+                    route_segment.get_end_point().borrow().id == 8
+                        || route_segment.get_end_point().borrow().id == 7
+                );
+                assert!(
+                    line_is_between_point_ids(&route_segment.get_line(), 8, 6)
+                        || line_is_between_point_ids(&route_segment.get_line(), 7, 6)
+                )
+            });
+            let choice = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            walker.set_fork_choice_point_id(choice);
+
+            assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
+
+            let route = walker.get_route().clone();
+            assert_eq!(route.get_segment_count(), 4);
+
+            let el = route.get_segment_by_index(0);
+            assert!(el.is_some());
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
+                assert_eq!(route_segment.get_end_point().borrow().id, 2);
+            }
+
+            let el = route.get_segment_by_index(1);
+            assert!(el.is_some());
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
+                assert_eq!(route_segment.get_end_point().borrow().id, 3);
+            }
+
+            let el = route.get_segment_by_index(2);
+            assert!(el.is_some());
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(&route_segment.get_line(), 6, 3));
+                assert_eq!(route_segment.get_end_point().borrow().id, 6);
+            }
+            let el = route.get_segment_by_index(3);
+            assert!(el.is_some());
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(&route_segment.get_line(), 7, 6));
+                assert_eq!(route_segment.get_end_point().borrow().id, 7);
+            }
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_reach_dead_end_walk_back() {
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+
+            let point1 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let point2 = MapDataGraph::get().test_get_point_ref_by_id(&4).unwrap();
+
+            let mut walker = Walker::new(
+                point1.clone(),
+                point2.clone(),
+                Box::new(DebugLoggerVoidSink::default()),
             );
-            assert!(
-                line_is_between_point_ids(&route_segment.get_line(), 11, 111)
-                    || line_is_between_point_ids(&route_segment.get_line(), 12, 121)
-                    || line_is_between_point_ids(&route_segment.get_line(), 13, 131)
-            )
-        });
 
-        let choice = map_data.get_point_by_id(&131).unwrap();
-        walker.set_fork_choice_point_id(choice);
+            let choices = match walker.move_forward_to_next_fork() {
+                Err(_) => panic!("Error received from move"),
+                Ok(WalkerMoveResult::Fork(c)) => c,
+                _ => panic!("did not get choices for routes"),
+            };
+            assert_eq!(choices.get_segment_count(), 3);
 
-        match walker.move_forward_to_next_fork() {
-            Err(_) => panic!("Error received from move"),
-            Ok(WalkerMoveResult::Finish) => {}
-            _ => panic!("expected to reach finish"),
-        };
+            choices.into_iter().for_each(|route_segment| {
+                assert!(
+                    route_segment.get_end_point().borrow().id == 5
+                        || route_segment.get_end_point().borrow().id == 4
+                        || route_segment.get_end_point().borrow().id == 6
+                );
+                assert!(
+                    line_is_between_point_ids(&route_segment.get_line(), 5, 3)
+                        || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
+                        || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
+                )
+            });
 
-        let route = walker.get_route().clone();
-        assert!(route_matches_ids(route, vec![7, 11, 12, 13, 131]));
+            let choice1 = MapDataGraph::get().test_get_point_ref_by_id(&5).unwrap();
+
+            walker.set_fork_choice_point_id(choice1);
+
+            assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::DeadEnd));
+
+            let choices = match walker.move_backwards_to_prev_fork() {
+                None => panic!("Expected to be back at point 3 with choices"),
+                Some(c) => c,
+            };
+
+            choices.into_iter().for_each(|route_segment| {
+                assert!(
+                    route_segment.get_end_point().borrow().id == 5
+                        || route_segment.get_end_point().borrow().id == 4
+                        || route_segment.get_end_point().borrow().id == 6
+                );
+                assert!(
+                    line_is_between_point_ids(&route_segment.get_line(), 5, 3)
+                        || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
+                        || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
+                )
+            });
+
+            let choice2 = MapDataGraph::get().test_get_point_ref_by_id(&4).unwrap();
+            walker.set_fork_choice_point_id(choice2);
+
+            assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
+
+            let route = walker.get_route().clone();
+            assert_eq!(route.get_segment_count(), 3);
+
+            let el = route.get_segment_by_index(0);
+            assert!(el.is_some());
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
+                assert_eq!(route_segment.get_end_point().borrow().id, 2);
+            }
+
+            let el = route.get_segment_by_index(1);
+            assert!(el.is_some());
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
+                assert_eq!(route_segment.get_end_point().borrow().id, 3);
+            }
+
+            let el = route.get_segment_by_index(2);
+            assert!(el.is_some());
+            if let Some(route_segment) = el {
+                assert!(line_is_between_point_ids(&route_segment.get_line(), 4, 3));
+                assert_eq!(route_segment.get_end_point().borrow().id, 4);
+            }
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn handle_roundabout() {
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data_with_rules()));
+
+            let from = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
+            let to = MapDataGraph::get().test_get_point_ref_by_id(&131).unwrap();
+
+            let mut walker = Walker::new(
+                from.clone(),
+                to.clone(),
+                Box::new(DebugLoggerVoidSink::default()),
+            );
+
+            let choices = match walker.move_forward_to_next_fork() {
+                Err(_) => panic!("Error received from move"),
+                Ok(WalkerMoveResult::Fork(c)) => c,
+                _ => panic!("did not get choices for routes"),
+            };
+            assert_eq!(choices.get_segment_count(), 2);
+
+            choices.into_iter().for_each(|route_segment| {
+                assert!(
+                    route_segment.get_end_point().borrow().id == 2
+                        || route_segment.get_end_point().borrow().id == 11
+                );
+                assert!(
+                    line_is_between_point_ids(&route_segment.get_line(), 7, 2)
+                        || line_is_between_point_ids(&route_segment.get_line(), 7, 11)
+                )
+            });
+
+            let choice = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
+            walker.set_fork_choice_point_id(choice);
+
+            let choices = match walker.move_forward_to_next_fork() {
+                Err(_) => panic!("Error received from move"),
+                Ok(WalkerMoveResult::Fork(c)) => c,
+                _ => panic!("did not get choices for routes"),
+            };
+
+            assert_eq!(choices.get_segment_count(), 3);
+
+            choices.into_iter().for_each(|route_segment| {
+                assert!(
+                    route_segment.get_end_point().borrow().id == 111
+                        || route_segment.get_end_point().borrow().id == 121
+                        || route_segment.get_end_point().borrow().id == 131
+                );
+                assert!(
+                    line_is_between_point_ids(&route_segment.get_line(), 11, 111)
+                        || line_is_between_point_ids(&route_segment.get_line(), 12, 121)
+                        || line_is_between_point_ids(&route_segment.get_line(), 13, 131)
+                )
+            });
+
+            let choice = MapDataGraph::get().test_get_point_ref_by_id(&131).unwrap();
+            walker.set_fork_choice_point_id(choice);
+
+            match walker.move_forward_to_next_fork() {
+                Err(_) => panic!("Error received from move"),
+                Ok(WalkerMoveResult::Finish) => {}
+                _ => panic!("expected to reach finish"),
+            };
+
+            let route = walker.get_route().clone();
+            assert!(route_matches_ids(route, vec![7, 11, 12, 13, 131]));
+        }
     }
 }

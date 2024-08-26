@@ -186,16 +186,18 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 #[cfg(test)]
 mod test {
 
+    use rusty_fork::rusty_fork_test;
+
     use crate::{
-        debug_writer::DebugLoggerVoidSink,
-        map_data::point::MapDataPointRef,
-        osm_data_reader::OsmDataReader,
+        debug_writer::{DebugLogger, DebugLoggerVoidSink},
+        map_data::graph::{MapDataGraph, MapDataPointRef},
         router::{
             itinerary::Itinerary,
             navigator::WeightCalcResult,
             route::{segment::Segment, segment_list::SegmentList},
             walker::Walker,
         },
+        test_utils::{get_map_data_graph_from_test_file, set_map_data_graph_static},
     };
 
     use super::{weight_heading, WeightCalcInput};
@@ -218,66 +220,69 @@ mod test {
         Segment::new(line.clone(), end_point.clone())
     }
 
-    #[test]
-    fn weight_heading_test() {
-        let data_reader = OsmDataReader::new_file(String::from("test-data/sigulda-100.json"));
-        let map_data = data_reader.read_data().expect("to load test file");
-        let from = map_data
-            .get_point_by_id(&885564366)
-            .expect("to find start point");
-        let to = map_data
-            .get_point_by_id(&33416714)
-            .expect("to find end point");
-        let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
-        let walker = Walker::new(
-            &map_data,
-            from.clone(),
-            to.clone(),
-            disabled_debug_writer.clone(),
-        );
-
-        let fork_point = map_data
-            .get_point_by_id(&81272994)
-            .expect("to find fork point");
-
-        let segment = get_route_segment(fork_point, from.clone());
-
-        let itinerary = Itinerary::new(from.clone(), to.clone(), Vec::new(), 0.);
-
-        let fork_weight = weight_heading(WeightCalcInput {
-            route: walker.get_route(),
-            itinerary: &itinerary,
-            all_fork_segments: &SegmentList::from(vec![]),
-            current_fork_segment: &segment,
-            walker_from_fork: Walker::new(
-                &map_data,
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn weight_heading_test() {
+            set_map_data_graph_static(get_map_data_graph_from_test_file("test-data/sigulda-100.json"));
+            let from = MapDataGraph::get()
+                .test_get_point_ref_by_id(&885564366)
+                .expect("to find start point");
+            let to = MapDataGraph::get()
+                .test_get_point_ref_by_id(&33416714)
+                .expect("to find end point");
+            let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
+            let walker = Walker::new(
                 from.clone(),
                 to.clone(),
                 disabled_debug_writer.clone(),
-            ),
-        });
-        eprintln!("{:#?}", fork_weight);
-        assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(177));
+            );
 
-        let fork_point = map_data
-            .get_point_by_id(&9212889586)
-            .expect("to find fork point");
+            let fork_point = MapDataGraph::get()
+                .test_get_point_ref_by_id(&81272994)
+                .expect("to find fork point");
 
-        let segment = get_route_segment(fork_point, from.clone());
+            let segment = get_route_segment(fork_point, from.clone());
 
-        let fork_weight = weight_heading(WeightCalcInput {
-            route: walker.get_route(),
-            itinerary: &itinerary,
-            all_fork_segments: &SegmentList::from(vec![]),
-            current_fork_segment: &segment,
-            walker_from_fork: Walker::new(
-                &map_data,
-                from.clone(),
-                to.clone(),
-                disabled_debug_writer.clone(),
-            ),
-        });
-        eprintln!("{:#?}", fork_weight);
-        assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(64));
+            let itinerary = Itinerary::new(from.clone(), to.clone(), Vec::new(), 0.);
+
+            let debug_logger: Box<dyn DebugLogger> = Box::new(DebugLoggerVoidSink::default());
+
+            let fork_weight = weight_heading(WeightCalcInput {
+                route: walker.get_route(),
+                itinerary: &itinerary,
+                all_fork_segments: &SegmentList::from(vec![]),
+                current_fork_segment: &segment,
+                walker_from_fork: Walker::new(
+                    from.clone(),
+                    to.clone(),
+                    disabled_debug_writer.clone(),
+                ),
+                debug_logger: &debug_logger
+            });
+            eprintln!("{:#?}", fork_weight);
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(216));
+
+            let fork_point = MapDataGraph::get()
+                .test_get_point_ref_by_id(&9212889586)
+                .expect("to find fork point");
+
+            let segment = get_route_segment(fork_point, from.clone());
+
+            let fork_weight = weight_heading(WeightCalcInput {
+                route: walker.get_route(),
+                itinerary: &itinerary,
+                all_fork_segments: &SegmentList::from(vec![]),
+                current_fork_segment: &segment,
+                walker_from_fork: Walker::new(
+                    from.clone(),
+                    to.clone(),
+                    disabled_debug_writer.clone(),
+                ),
+                debug_logger: &debug_logger
+            });
+            eprintln!("{:#?}", fork_weight);
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(162));
+        }
     }
 }

@@ -292,182 +292,202 @@ impl Navigator {
 #[cfg(test)]
 mod test {
     use crate::{
+        map_data::graph::MapDataGraph,
         router::{
             itinerary::Itinerary,
             navigator::{NavigationResult, WeightCalcResult},
             weights::WeightCalcInput,
         },
-        test_utils::{get_test_map_data_graph, route_matches_ids},
+        test_utils::{
+            get_map_data_graph_from_test_data, get_test_data, route_matches_ids,
+            set_map_data_graph_static,
+        },
     };
 
     use super::Navigator;
+    use rusty_fork::rusty_fork_test;
 
-    #[test]
-    fn navigate_pick_best() {
-        fn weight(input: WeightCalcInput) -> WeightCalcResult {
-            let prev_point = match input.route.get_segment_last() {
-                Some(segment) => segment.get_end_point(),
-                None => &input.itinerary.get_from().clone(),
-            };
-            if prev_point.borrow().id == 3
-                && input.current_fork_segment.get_end_point().borrow().id == 6
-            {
-                return WeightCalcResult::UseWithWeight(10);
-            }
-            WeightCalcResult::UseWithWeight(1)
-        }
-        let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_ref_by_id(&1).unwrap();
-        let to = map_data.get_point_ref_by_id(&7).unwrap();
-        let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-        let mut navigator = Navigator::new(&map_data, itinerary.clone(), vec![weight]);
-        let route = match navigator.generate_routes() {
-            crate::router::navigator::NavigationResult::Finished(r) => r,
-            _ => {
-                assert!(false);
-                return ();
-            }
-        };
-
-        assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
-
-        fn weight2(input: WeightCalcInput) -> WeightCalcResult {
-            let prev_point = match input.route.get_segment_last() {
-                Some(segment) => segment.get_end_point(),
-                None => &input.itinerary.get_to().clone(),
-            };
-
-            if prev_point.borrow().id == 3
-                && input.current_fork_segment.get_end_point().borrow().id == 4
-            {
-                return WeightCalcResult::UseWithWeight(10);
-            }
-            WeightCalcResult::UseWithWeight(1)
-        }
-        let mut navigator = Navigator::new(&map_data, itinerary, vec![weight2]);
-        let route = match navigator.generate_routes() {
-            crate::router::navigator::NavigationResult::Finished(r) => r,
-            _ => {
-                assert!(false);
-                return ();
-            }
-        };
-
-        assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
-    }
-
-    #[test]
-    fn navigate_dead_end_pick_next_best() {
-        fn weight(input: WeightCalcInput) -> WeightCalcResult {
-            let prev_point = match input.route.get_segment_last() {
-                Some(segment) => segment.get_end_point(),
-                None => &input.itinerary.get_to().clone(),
-            };
-
-            if prev_point.borrow().id == 3 {
-                if input.current_fork_segment.get_end_point().borrow().id == 5 {
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn navigate_pick_best() {
+            fn weight(input: WeightCalcInput) -> WeightCalcResult {
+                let prev_point = match input.route.get_segment_last() {
+                    Some(segment) => segment.get_end_point(),
+                    None => &input.itinerary.get_from().clone(),
+                };
+                if prev_point.borrow().id == 3
+                    && input.current_fork_segment.get_end_point().borrow().id == 6
+                {
                     return WeightCalcResult::UseWithWeight(10);
                 }
-                if input.current_fork_segment.get_end_point().borrow().id == 6 {
-                    return WeightCalcResult::UseWithWeight(5);
+                WeightCalcResult::UseWithWeight(1)
+            }
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
+            let mut navigator = Navigator::new(itinerary.clone(), vec![weight]);
+            let route = match navigator.generate_routes() {
+                crate::router::navigator::NavigationResult::Finished(r) => r,
+                _ => {
+                    assert!(false);
+                    return ();
                 }
-            }
-            if prev_point.borrow().id == 6
-                && input.current_fork_segment.get_end_point().borrow().id == 7
-            {
-                return WeightCalcResult::UseWithWeight(10);
-            }
-            WeightCalcResult::UseWithWeight(1)
-        }
-        let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_ref_by_id(&1).unwrap();
-        let to = map_data.get_point_ref_by_id(&7).unwrap();
-        let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-        let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
-        let route = match navigator.generate_routes() {
-            crate::router::navigator::NavigationResult::Finished(r) => r,
-            _ => {
-                assert!(false);
-                return ();
-            }
-        };
-
-        assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
-    }
-
-    #[test]
-    fn navigate_all_stuck_return_no_routes() {
-        fn weight(_input: WeightCalcInput) -> WeightCalcResult {
-            WeightCalcResult::UseWithWeight(1)
-        }
-        let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_ref_by_id(&1).unwrap();
-        let to = map_data.get_point_ref_by_id(&11).unwrap();
-        let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-        let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
-
-        if let NavigationResult::Finished(_) = navigator.generate_routes() {
-            assert!(false);
-        }
-    }
-
-    #[test]
-    fn navigate_no_routes_with_do_not_use_weight() {
-        fn weight(input: WeightCalcInput) -> WeightCalcResult {
-            if input.current_fork_segment.get_end_point().borrow().id == 7 {
-                return WeightCalcResult::DoNotUse;
-            }
-            WeightCalcResult::UseWithWeight(1)
-        }
-        let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_ref_by_id(&1).unwrap();
-        let to = map_data.get_point_ref_by_id(&7).unwrap();
-        let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-        let mut navigator = Navigator::new(&map_data, itinerary, vec![weight]);
-        if let NavigationResult::Finished(_) = navigator.generate_routes() {
-            assert!(false);
-        }
-    }
-
-    #[test]
-    fn navigate_on_weight_sum() {
-        fn weight1(input: WeightCalcInput) -> WeightCalcResult {
-            let prev_point = match input.route.get_segment_last() {
-                Some(segment) => segment.get_end_point(),
-                None => &input.itinerary.get_to().clone(),
-            };
-            if prev_point.borrow().id == 3
-                && input.current_fork_segment.get_end_point().borrow().id == 6
-            {
-                return WeightCalcResult::UseWithWeight(10);
-            }
-            WeightCalcResult::UseWithWeight(6)
-        }
-        fn weight2(input: WeightCalcInput) -> WeightCalcResult {
-            let prev_point = match input.route.get_segment_last() {
-                Some(segment) => segment.get_end_point(),
-                None => &input.itinerary.get_to().clone(),
             };
 
-            if prev_point.borrow().id == 3
-                && input.current_fork_segment.get_end_point().borrow().id == 6
-            {
-                return WeightCalcResult::UseWithWeight(1);
+            assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
+
+            fn weight2(input: WeightCalcInput) -> WeightCalcResult {
+                let prev_point = match input.route.get_segment_last() {
+                    Some(segment) => segment.get_end_point(),
+                    None => &input.itinerary.get_to().clone(),
+                };
+
+                if prev_point.borrow().id == 3
+                    && input.current_fork_segment.get_end_point().borrow().id == 4
+                {
+                    return WeightCalcResult::UseWithWeight(10);
+                }
+                WeightCalcResult::UseWithWeight(1)
             }
-            WeightCalcResult::UseWithWeight(6)
+            let mut navigator = Navigator::new(itinerary, vec![weight2]);
+            let route = match navigator.generate_routes() {
+                crate::router::navigator::NavigationResult::Finished(r) => r,
+                _ => {
+                    assert!(false);
+                    return ();
+                }
+            };
+
+            assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
         }
-        let map_data = get_test_map_data_graph();
-        let from = map_data.get_point_ref_by_id(&1).unwrap();
-        let to = map_data.get_point_ref_by_id(&7).unwrap();
-        let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-        let mut navigator = Navigator::new(&map_data, itinerary, vec![weight1, weight2]);
-        let route = match navigator.generate_routes() {
-            crate::router::navigator::NavigationResult::Finished(r) => r,
-            _ => {
-                assert!(false);
-                return ();
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn navigate_dead_end_pick_next_best() {
+            fn weight(input: WeightCalcInput) -> WeightCalcResult {
+                let prev_point = match input.route.get_segment_last() {
+                    Some(segment) => segment.get_end_point(),
+                    None => &input.itinerary.get_to().clone(),
+                };
+
+                if prev_point.borrow().id == 3 {
+                    if input.current_fork_segment.get_end_point().borrow().id == 5 {
+                        return WeightCalcResult::UseWithWeight(10);
+                    }
+                    if input.current_fork_segment.get_end_point().borrow().id == 6 {
+                        return WeightCalcResult::UseWithWeight(5);
+                    }
+                }
+                if prev_point.borrow().id == 6
+                    && input.current_fork_segment.get_end_point().borrow().id == 7
+                {
+                    return WeightCalcResult::UseWithWeight(10);
+                }
+                WeightCalcResult::UseWithWeight(1)
             }
-        };
-        assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
+            let mut navigator = Navigator::new(itinerary, vec![weight]);
+            let route = match navigator.generate_routes() {
+                crate::router::navigator::NavigationResult::Finished(r) => r,
+                _ => {
+                    assert!(false);
+                    return ();
+                }
+            };
+
+            assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn navigate_all_stuck_return_no_routes() {
+            fn weight(_input: WeightCalcInput) -> WeightCalcResult {
+                WeightCalcResult::UseWithWeight(1)
+            }
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let to = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
+            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
+            let mut navigator = Navigator::new( itinerary, vec![weight]);
+
+            if let NavigationResult::Finished(_) = navigator.generate_routes() {
+                assert!(false);
+            }
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn navigate_no_routes_with_do_not_use_weight() {
+            fn weight(input: WeightCalcInput) -> WeightCalcResult {
+                if input.current_fork_segment.get_end_point().borrow().id == 7 {
+                    return WeightCalcResult::DoNotUse;
+                }
+                WeightCalcResult::UseWithWeight(1)
+            }
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
+            let mut navigator = Navigator::new(itinerary, vec![weight]);
+            if let NavigationResult::Finished(_) = navigator.generate_routes() {
+                assert!(false);
+            }
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn navigate_on_weight_sum() {
+            fn weight1(input: WeightCalcInput) -> WeightCalcResult {
+                let prev_point = match input.route.get_segment_last() {
+                    Some(segment) => segment.get_end_point(),
+                    None => &input.itinerary.get_to().clone(),
+                };
+                if prev_point.borrow().id == 3
+                    && input.current_fork_segment.get_end_point().borrow().id == 6
+                {
+                    return WeightCalcResult::UseWithWeight(10);
+                }
+                WeightCalcResult::UseWithWeight(6)
+            }
+            fn weight2(input: WeightCalcInput) -> WeightCalcResult {
+                let prev_point = match input.route.get_segment_last() {
+                    Some(segment) => segment.get_end_point(),
+                    None => &input.itinerary.get_to().clone(),
+                };
+
+                if prev_point.borrow().id == 3
+                    && input.current_fork_segment.get_end_point().borrow().id == 6
+                {
+                    return WeightCalcResult::UseWithWeight(1);
+                }
+                WeightCalcResult::UseWithWeight(6)
+            }
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
+            let mut navigator = Navigator::new(itinerary, vec![weight1, weight2]);
+            let route = match navigator.generate_routes() {
+                crate::router::navigator::NavigationResult::Finished(r) => r,
+                _ => {
+                    assert!(false);
+                    return ();
+                }
+            };
+            assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
+        }
     }
 }

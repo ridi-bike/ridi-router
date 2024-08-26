@@ -133,6 +133,11 @@ impl MapDataGraph {
         }
     }
 
+    #[cfg(test)]
+    pub fn test_get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
+        self.get_point_ref_by_id(id)
+    }
+
     fn get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
         match self.points_map.get(id) {
             None => return None,
@@ -472,7 +477,7 @@ impl MapDataGraph {
         points_with_dist.get(0).map(|(_, p)| p.clone())
     }
 
-    pub fn get() -> &MapDataGraph {
+    pub fn get() -> &'static MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| {
             let matches = Command::new("gps-router")
                 .arg(
@@ -527,7 +532,11 @@ mod tests {
     use core::panic;
     use std::{collections::HashSet, u8};
 
-    use crate::test_utils::{get_map_data_graph_from_test_data, get_test_data};
+    use rusty_fork::rusty_fork_test;
+
+    use crate::test_utils::{
+        get_map_data_graph_from_test_data, get_test_data, set_map_data_graph_static,
+    };
 
     use super::*;
 
@@ -540,499 +549,595 @@ mod tests {
         junction: bool,
     }
 
-    #[test]
-    fn check_point_consistency() {
-        fn point_is_ok(map_data: &MapDataGraph, id: &u64, test: PointTest) -> bool {
-            let point = map_data
-                .get_point_ref_by_id(id)
-                .expect(format!("point {} must exist", id).as_str());
-            let point = point.borrow();
-            eprintln!("point {:#?}", point);
-            eprintln!("test {:#?}", test);
-            point.lat == test.lat
-                && point.lon == test.lon
-                && point.part_of_ways.len() == test.ways.len()
-                && point.part_of_ways.iter().enumerate().all(|(idx, w)| {
-                    let test_way_id = test
-                        .ways
-                        .get(idx)
-                        .expect(format!("{}: way at idx {} must exist", id, idx).as_str());
-                    w.borrow().id == *test_way_id
-                })
-                && point.lines.len() == test.lines.len()
-                && point.lines.iter().enumerate().all(|(idx, l)| {
-                    let test_line_id = test
-                        .lines
-                        .get(idx)
-                        .expect(format!("{}: line at idx {} must exist", id, idx).as_str());
-                    l.borrow().id == *test_line_id
-                })
-                && point.junction == test.junction
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn check_point_consistency() {
+            fn point_is_ok(map_data: &MapDataGraph, id: &u64, test: PointTest) -> bool {
+                let point = map_data
+                    .get_point_ref_by_id(id)
+                    .expect(format!("point {} must exist", id).as_str());
+                let point = point.borrow();
+                eprintln!("point {:#?}", point);
+                eprintln!("test {:#?}", test);
+                point.lat == test.lat
+                    && point.lon == test.lon
+                    && point.part_of_ways.len() == test.ways.len()
+                    && point.part_of_ways.iter().enumerate().all(|(idx, w)| {
+                        let test_way_id = test
+                            .ways
+                            .get(idx)
+                            .expect(format!("{}: way at idx {} must exist", id, idx).as_str());
+                        w.borrow().id == *test_way_id
+                    })
+                    && point.lines.len() == test.lines.len()
+                    && point.lines.iter().enumerate().all(|(idx, l)| {
+                        let test_line_id = test
+                            .lines
+                            .get(idx)
+                            .expect(format!("{}: line at idx {} must exist", id, idx).as_str());
+                        l.borrow().id == *test_line_id
+                    })
+                    && point.junction == test.junction
+            }
+            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            assert!(point_is_ok(
+                &map_data,
+                &1,
+                PointTest {
+                    lat: 1.0,
+                    lon: 1.0,
+                    ways: vec![1234],
+                    lines: vec!["1234-1-2"],
+                    junction: false
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &2,
+                PointTest {
+                    lat: 2.0,
+                    lon: 2.0,
+                    ways: vec![1234],
+                    lines: vec!["1234-1-2", "1234-2-3"],
+                    junction: false
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &3,
+                PointTest {
+                    lat: 3.0,
+                    lon: 3.0,
+                    ways: vec![1234, 5367],
+                    lines: vec!["1234-2-3", "1234-3-4", "5367-5-3", "5367-3-6"],
+                    junction: true
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &4,
+                PointTest {
+                    lat: 4.0,
+                    lon: 4.0,
+                    ways: vec![1234, 489],
+                    lines: vec!["1234-3-4", "489-4-8"],
+                    junction: false
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &5,
+                PointTest {
+                    lat: 5.0,
+                    lon: 5.0,
+                    ways: vec![5367],
+                    lines: vec!["5367-5-3"],
+                    junction: false
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &6,
+                PointTest {
+                    lat: 6.0,
+                    lon: 6.0,
+                    ways: vec![5367, 68],
+                    lines: vec!["5367-3-6", "5367-6-7", "68-6-8"],
+                    junction: true
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &7,
+                PointTest {
+                    lat: 7.0,
+                    lon: 7.0,
+                    ways: vec![5367],
+                    lines: vec!["5367-6-7"],
+                    junction: false
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &8,
+                PointTest {
+                    lat: 8.0,
+                    lon: 8.0,
+                    ways: vec![489, 68],
+                    lines: vec!["489-4-8", "489-8-9", "68-6-8"],
+                    junction: true
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &9,
+                PointTest {
+                    lat: 9.0,
+                    lon: 9.0,
+                    ways: vec![489],
+                    lines: vec!["489-8-9"],
+                    junction: false
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &11,
+                PointTest {
+                    lat: 11.0,
+                    lon: 11.0,
+                    ways: vec![1112],
+                    lines: vec!["1112-11-12"],
+                    junction: false
+                }
+            ));
+            assert!(point_is_ok(
+                &map_data,
+                &12,
+                PointTest {
+                    lat: 12.0,
+                    lon: 12.0,
+                    ways: vec![1112],
+                    lines: vec!["1112-11-12"],
+                    junction: false
+                }
+            ));
         }
-        let map_data = get_map_data_graph_from_test_data(get_test_data());
-        assert!(point_is_ok(
-            &map_data,
-            &1,
-            PointTest {
-                lat: 1.0,
-                lon: 1.0,
-                ways: vec![1234],
-                lines: vec!["1234-1-2"],
-                junction: false
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &2,
-            PointTest {
-                lat: 2.0,
-                lon: 2.0,
-                ways: vec![1234],
-                lines: vec!["1234-1-2", "1234-2-3"],
-                junction: false
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &3,
-            PointTest {
-                lat: 3.0,
-                lon: 3.0,
-                ways: vec![1234, 5367],
-                lines: vec!["1234-2-3", "1234-3-4", "5367-5-3", "5367-3-6"],
-                junction: true
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &4,
-            PointTest {
-                lat: 4.0,
-                lon: 4.0,
-                ways: vec![1234, 489],
-                lines: vec!["1234-3-4", "489-4-8"],
-                junction: false
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &5,
-            PointTest {
-                lat: 5.0,
-                lon: 5.0,
-                ways: vec![5367],
-                lines: vec!["5367-5-3"],
-                junction: false
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &6,
-            PointTest {
-                lat: 6.0,
-                lon: 6.0,
-                ways: vec![5367, 68],
-                lines: vec!["5367-3-6", "5367-6-7", "68-6-8"],
-                junction: true
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &7,
-            PointTest {
-                lat: 7.0,
-                lon: 7.0,
-                ways: vec![5367],
-                lines: vec!["5367-6-7"],
-                junction: false
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &8,
-            PointTest {
-                lat: 8.0,
-                lon: 8.0,
-                ways: vec![489, 68],
-                lines: vec!["489-4-8", "489-8-9", "68-6-8"],
-                junction: true
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &9,
-            PointTest {
-                lat: 9.0,
-                lon: 9.0,
-                ways: vec![489],
-                lines: vec!["489-8-9"],
-                junction: false
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &11,
-            PointTest {
-                lat: 11.0,
-                lon: 11.0,
-                ways: vec![1112],
-                lines: vec!["1112-11-12"],
-                junction: false
-            }
-        ));
-        assert!(point_is_ok(
-            &map_data,
-            &12,
-            PointTest {
-                lat: 12.0,
-                lon: 12.0,
-                ways: vec![1112],
-                lines: vec!["1112-11-12"],
-                junction: false
-            }
-        ));
     }
 
-    #[test]
-    fn check_way_consistency() {
-        fn way_is_ok(id: &u64, test_points: Vec<u64>) -> bool {
-            let way = MapDataGraph::get()
-                .ways
-                .iter()
-                .find(|w| w.id == *id)
-                .expect(format!("way {} must exist", id).as_str());
-            eprintln!("way {:#?}", way);
-            eprintln!("test {:#?}", test_points);
-            way.points.len() == test_points.len()
-                && way.points.iter().enumerate().all(|(idx, p)| {
-                    let p = p.borrow();
-                    p.id == *test_points
-                        .get(idx)
-                        .expect(format!("point at idx {} must exist", idx).as_str())
-                })
-        }
-        get_map_data_graph_from_test_data(get_test_data());
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn check_way_consistency() {
+            fn way_is_ok(map_data: &MapDataGraph, id: &u64, test_points: Vec<u64>) -> bool {
+                let way = map_data
+                    .ways
+                    .iter()
+                    .find(|w| w.id == *id)
+                    .expect(format!("way {} must exist", id).as_str());
+                eprintln!("way {:#?}", way);
+                eprintln!("test {:#?}", test_points);
+                way.points.len() == test_points.len()
+                    && way.points.iter().enumerate().all(|(idx, p)| {
+                        let p = p.borrow();
+                        p.id == *test_points
+                            .get(idx)
+                            .expect(format!("point at idx {} must exist", idx).as_str())
+                    })
+            }
+            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
 
-        assert!(way_is_ok(&1234, vec![1, 2, 3, 4]));
-        assert!(way_is_ok(&5367, vec![5, 3, 6, 7]));
-        assert!(way_is_ok(&489, vec![4, 8, 9]));
-        assert!(way_is_ok(&68, vec![6, 8]));
-        assert!(way_is_ok(&1112, vec![11, 12]));
+            assert!(way_is_ok(&map_data, &1234, vec![1, 2, 3, 4]));
+            assert!(way_is_ok(&map_data, &5367, vec![5, 3, 6, 7]));
+            assert!(way_is_ok(&map_data, &489, vec![4, 8, 9]));
+            assert!(way_is_ok(&map_data, &68, vec![6, 8]));
+            assert!(way_is_ok(&map_data, &1112, vec![11, 12]));
+        }
     }
 
-    #[test]
-    fn check_line_consistency() {
-        fn line_is_ok(id: &str, test_way: u64, test_points: (u64, u64)) -> bool {
-            let line = MapDataGraph::get()
-                .lines
-                .iter()
-                .find(|l| l.id == *id)
-                .expect(format!("line {} must exist", id).as_str());
-            eprintln!("line {:#?}", line);
-            eprintln!("test {:#?}", test_points);
-            line.way.borrow().id == test_way
-                && line.points.0.borrow().id == test_points.0
-                && line.points.1.borrow().id == test_points.1
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn check_line_consistency() {
+            fn line_is_ok(
+                map_data: &MapDataGraph,
+                id: &str,
+                test_way: u64,
+                test_points: (u64, u64),
+            ) -> bool {
+                let line = map_data
+                    .lines
+                    .iter()
+                    .find(|l| l.id == *id)
+                    .expect(format!("line {} must exist", id).as_str());
+                eprintln!("line {:#?}", line);
+                eprintln!("test {:#?}", test_points);
+                line.way.borrow().id == test_way
+                    && line.points.0.borrow().id == test_points.0
+                    && line.points.1.borrow().id == test_points.1
+            }
+            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            assert!(line_is_ok(&map_data, "1234-1-2", 1234, (1, 2)));
+            assert!(line_is_ok(&map_data, "1234-2-3", 1234, (2, 3)));
+            assert!(line_is_ok(&map_data, "1234-3-4", 1234, (3, 4)));
+            assert!(line_is_ok(&map_data, "5367-5-3", 5367, (5, 3)));
+            assert!(line_is_ok(&map_data, "5367-3-6", 5367, (3, 6)));
+            assert!(line_is_ok(&map_data, "5367-6-7", 5367, (6, 7)));
+            assert!(line_is_ok(&map_data, "489-4-8", 489, (4, 8)));
+            assert!(line_is_ok(&map_data, "489-8-9", 489, (8, 9)));
+            assert!(line_is_ok(&map_data, "68-6-8", 68, (6, 8)));
+            assert!(line_is_ok(&map_data, "1112-11-12", 1112, (11, 12)));
         }
-        get_map_data_graph_from_test_data(get_test_data());
-        assert!(line_is_ok("1234-1-2", 1234, (1, 2)));
-        assert!(line_is_ok("1234-2-3", 1234, (2, 3)));
-        assert!(line_is_ok("1234-3-4", 1234, (3, 4)));
-        assert!(line_is_ok("5367-5-3", 5367, (5, 3)));
-        assert!(line_is_ok("5367-3-6", 5367, (3, 6)));
-        assert!(line_is_ok("5367-6-7", 5367, (6, 7)));
-        assert!(line_is_ok("489-4-8", 489, (4, 8)));
-        assert!(line_is_ok("489-8-9", 489, (8, 9)));
-        assert!(line_is_ok("68-6-8", 68, (6, 8)));
-        assert!(line_is_ok("1112-11-12", 1112, (11, 12)));
     }
 
-    #[test]
-    fn check_missing_points() {
-        let mut map_data = MapDataGraph::new();
-        let res = map_data.insert_way(OsmWay {
-            id: 1,
-            point_ids: vec![1],
-            tags: None,
-        });
-        if let Ok(_) = res {
-            assert!(false);
-        } else if let Err(e) = res {
-            if let MapDataError::MissingPoint { point_id: p } = e {
-                assert_eq!(p, 1);
-            } else {
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn check_missing_points() {
+            let mut map_data = MapDataGraph::new();
+            let res = map_data.insert_way(OsmWay {
+                id: 1,
+                point_ids: vec![1],
+                tags: None,
+            });
+            if let Ok(_) = res {
                 assert!(false);
+            } else if let Err(e) = res {
+                if let MapDataError::MissingPoint { point_id: p } = e {
+                    assert_eq!(p, 1);
+                } else {
+                    assert!(false);
+                }
             }
         }
     }
 
-    #[test]
-    fn mark_junction() {
-        get_map_data_graph_from_test_data(get_test_data());
-        let point = MapDataGraph::get().get_point_ref_by_id(&5).unwrap();
-        let points = MapDataGraph::get().get_adjacent(point);
-        points.iter().for_each(|p| {
-            assert!((p.1.borrow().id == 3 && p.1.borrow().junction == true) || p.1.borrow().id != 3)
-        });
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn mark_junction() {
+            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let point = map_data.get_point_ref_by_id(&5).unwrap();
+            let points = map_data.get_adjacent(point);
+            points.iter().for_each(|p| {
+                assert!((p.1.borrow().id == 3 && p.1.borrow().junction == true) || p.1.borrow().id != 3)
+            });
 
-        let point = MapDataGraph::get().get_point_ref_by_id(&3).unwrap();
-        let points = MapDataGraph::get().get_adjacent(point);
-        let non_junctions = vec![2, 5, 4];
-        points.iter().for_each(|p| {
-            assert!(
-                ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().junction == false)
-                    || !non_junctions.contains(&p.1.borrow().id))
-            )
-        });
-        points.iter().for_each(|p| {
-            assert!((p.1.borrow().id == 6 && p.1.borrow().junction == true) || p.1.borrow().id != 6)
-        });
+            let point = map_data.get_point_ref_by_id(&3).unwrap();
+            let points = map_data.get_adjacent(point);
+            let non_junctions = vec![2, 5, 4];
+            points.iter().for_each(|p| {
+                assert!(
+                    ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().junction == false)
+                        || !non_junctions.contains(&p.1.borrow().id))
+                )
+            });
+            points.iter().for_each(|p| {
+                assert!((p.1.borrow().id == 6 && p.1.borrow().junction == true) || p.1.borrow().id != 6)
+            });
+        }
     }
 
-    #[test]
-    fn adjacent_lookup() {
-        get_map_data_graph_from_test_data(get_test_data());
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn adjacent_lookup() {
+            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
 
-        let tests: Vec<(u8, MapDataPointRef, Vec<(String, u64)>)> = vec![
-            (
-                1,
-                MapDataGraph::get().get_point_ref_by_id(&2).unwrap(),
-                vec![(String::from("1234-1-2"), 1), (String::from("1234-2-3"), 3)],
-            ),
-            (
-                2,
-                MapDataGraph::get().get_point_ref_by_id(&3).unwrap(),
-                vec![
-                    (String::from("5367-5-3"), 5),
-                    (String::from("5367-6-3"), 6),
-                    (String::from("1234-2-3"), 2),
-                    (String::from("1234-4-3"), 4),
-                ],
-            ),
-            (
-                3,
-                MapDataGraph::get().get_point_ref_by_id(&1).unwrap(),
-                vec![(String::from("1234-1-2"), 2)],
-            ),
-        ];
+            let tests: Vec<(u8, MapDataPointRef, Vec<(String, u64)>)> = vec![
+                (
+                    1,
+                    MapDataGraph::get().get_point_ref_by_id(&2).unwrap(),
+                    vec![(String::from("1234-1-2"), 1), (String::from("1234-2-3"), 3)],
+                ),
+                (
+                    2,
+                    MapDataGraph::get().get_point_ref_by_id(&3).unwrap(),
+                    vec![
+                        (String::from("5367-5-3"), 5),
+                        (String::from("5367-6-3"), 6),
+                        (String::from("1234-2-3"), 2),
+                        (String::from("1234-4-3"), 4),
+                    ],
+                ),
+                (
+                    3,
+                    MapDataGraph::get().get_point_ref_by_id(&1).unwrap(),
+                    vec![(String::from("1234-1-2"), 2)],
+                ),
+            ];
 
-        for test in tests {
-            let (_test_id, point, expected_result) = test;
-            let adj_elements = MapDataGraph::get().get_adjacent(point);
-            assert_eq!(adj_elements.len(), expected_result.len());
-            for (adj_line, adj_point) in &adj_elements {
-                let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
-                    line_id.split("-").collect::<HashSet<_>>()
-                        == adj_line.borrow().id.split("-").collect::<HashSet<_>>()
-                        && point_id == &adj_point.borrow().id
-                });
-                assert_eq!(adj_match.is_some(), true);
+            for test in tests {
+                let (_test_id, point, expected_result) = test;
+                let adj_elements = map_data.get_adjacent(point);
+                assert_eq!(adj_elements.len(), expected_result.len());
+                for (adj_line, adj_point) in &adj_elements {
+                    let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
+                        line_id.split("-").collect::<HashSet<_>>()
+                            == adj_line.borrow().id.split("-").collect::<HashSet<_>>()
+                            && point_id == &adj_point.borrow().id
+                    });
+                    assert_eq!(adj_match.is_some(), true);
+                }
             }
         }
     }
 
-    #[test]
-    fn closest_lookup() {
-        let tests: Vec<(Vec<OsmNode>, OsmNode, u64)> = vec![
-            (
-                vec![OsmNode {
+    type ClosestTest = ([Option<OsmNode>; 4], OsmNode, u64);
+
+    const CLOSEST_TESTS: [ClosestTest; 8] = [
+        (
+            [
+                Some(OsmNode {
                     id: 1,
                     lat: 57.1640,
                     lon: 24.8652,
-                }],
-                OsmNode {
-                    id: 0,
-                    lat: 57.1670,
-                    lon: 24.8658,
-                },
-                1,
-            ),
-            (
-                vec![
-                    OsmNode {
-                        id: 1,
-                        lat: 57.1640,
-                        lon: 24.8652,
-                    },
-                    OsmNode {
-                        id: 2,
-                        lat: 57.1740,
-                        lon: 24.8630,
-                    },
-                ],
-                OsmNode {
-                    id: 0,
-                    lat: 57.1670,
-                    lon: 24.8658,
-                },
-                1,
-            ),
-            (
-                vec![
-                    OsmNode {
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                    },
-                    OsmNode {
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                    },
-                ],
-                OsmNode {
-                    id: 0,
-                    lat: 57.163429387682214,
-                    lon: 24.87742424011231,
-                },
-                2,
-            ),
-            (
-                vec![
-                    OsmNode {
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                    },
-                    OsmNode {
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                    },
-                ],
-                OsmNode {
-                    id: 0,
-                    lat: 57.193343289610794,
-                    lon: 24.872531890869144,
-                },
-                1,
-            ),
-            (
-                vec![
-                    // 57.16961885299059,24.875192642211914
-                    // 10231.8212 km
-                    // 223.61
-                    OsmNode {
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                    },
-                    // 57.159484808175435,24.877617359161377
-                    // 10231.6372 km
-                    // 223.61
-                    OsmNode {
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                    },
-                ],
-                // -10.660607953624762,-52.03125
-                OsmNode {
-                    id: 0,
-                    lat: -10.660607953624762,
-                    lon: -52.03125,
-                },
-                2,
-            ),
-            (
-                vec![
-                    OsmNode {
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                    },
-                    OsmNode {
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                    },
-                    OsmNode {
-                        id: 3,
-                        lat: 9.795677582829743,
-                        lon: -1.7578125000000002,
-                    },
-                    OsmNode {
-                        id: 4,
-                        lat: -36.03133177633188,
-                        lon: -65.21484375000001,
-                    },
-                ],
-                OsmNode {
-                    id: 0,
-                    lat: -10.660607953624762,
-                    lon: -52.03125,
-                },
-                4,
-            ),
-            (
-                vec![
-                    OsmNode {
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                    },
-                    OsmNode {
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                    },
-                    OsmNode {
-                        id: 3,
-                        lat: 9.795677582829743,
-                        lon: -1.7578125000000002,
-                    },
-                ],
-                OsmNode {
-                    id: 0,
-                    lat: -10.660607953624762,
-                    lon: -52.03125,
-                },
-                3,
-            ),
-            (
-                vec![
-                    OsmNode {
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                    },
-                    OsmNode {
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                    },
-                    OsmNode {
-                        id: 3,
-                        lat: 9.795677582829743,
-                        lon: -1.7578125000000002,
-                    },
-                    OsmNode {
-                        id: 4,
-                        lat: -36.03133177633188,
-                        lon: -65.21484375000001,
-                    },
-                ],
-                OsmNode {
-                    id: 0,
-                    lat: -28.92163128242129,
-                    lon: 144.14062500000003,
-                },
-                4,
-            ),
-        ];
-        for (_i, test) in tests.iter().enumerate() {
-            let (points, check_point, closest_id) = test;
-            let mut coords = MapDataGraph::new();
-            for point in points {
-                coords.insert_node(point.clone());
+                }),
+                None,
+                None,
+                None,
+            ],
+            OsmNode {
+                id: 0,
+                lat: 57.1670,
+                lon: 24.8658,
+            },
+            1,
+        ),
+        (
+            [
+                Some(OsmNode {
+                    id: 1,
+                    lat: 57.1640,
+                    lon: 24.8652,
+                }),
+                Some(OsmNode {
+                    id: 2,
+                    lat: 57.1740,
+                    lon: 24.8630,
+                }),
+                None,
+                None,
+            ],
+            OsmNode {
+                id: 0,
+                lat: 57.1670,
+                lon: 24.8658,
+            },
+            1,
+        ),
+        (
+            [
+                Some(OsmNode {
+                    id: 1,
+                    lat: 57.16961885299059,
+                    lon: 24.875192642211914,
+                }),
+                Some(OsmNode {
+                    id: 2,
+                    lat: 57.159484808175435,
+                    lon: 24.877617359161377,
+                }),
+                None,
+                None,
+            ],
+            OsmNode {
+                id: 0,
+                lat: 57.163429387682214,
+                lon: 24.87742424011231,
+            },
+            2,
+        ),
+        (
+            [
+                Some(OsmNode {
+                    id: 1,
+                    lat: 57.16961885299059,
+                    lon: 24.875192642211914,
+                }),
+                Some(OsmNode {
+                    id: 2,
+                    lat: 57.159484808175435,
+                    lon: 24.877617359161377,
+                }),
+                None,
+                None,
+            ],
+            OsmNode {
+                id: 0,
+                lat: 57.193343289610794,
+                lon: 24.872531890869144,
+            },
+            1,
+        ),
+        (
+            [
+                // 57.16961885299059,24.875192642211914
+                // 10231.8212 km
+                // 223.61
+                Some(OsmNode {
+                    id: 1,
+                    lat: 57.16961885299059,
+                    lon: 24.875192642211914,
+                }),
+                // 57.159484808175435,24.877617359161377
+                // 10231.6372 km
+                // 223.61
+                Some(OsmNode {
+                    id: 2,
+                    lat: 57.159484808175435,
+                    lon: 24.877617359161377,
+                }),
+                None,
+                None,
+            ],
+            // -10.660607953624762,-52.03125
+            OsmNode {
+                id: 0,
+                lat: -10.660607953624762,
+                lon: -52.03125,
+            },
+            2,
+        ),
+        (
+            [
+                Some(OsmNode {
+                    id: 1,
+                    lat: 57.16961885299059,
+                    lon: 24.875192642211914,
+                }),
+                Some(OsmNode {
+                    id: 2,
+                    lat: 57.159484808175435,
+                    lon: 24.877617359161377,
+                }),
+                Some(OsmNode {
+                    id: 3,
+                    lat: 9.795677582829743,
+                    lon: -1.7578125000000002,
+                }),
+                Some(OsmNode {
+                    id: 4,
+                    lat: -36.03133177633188,
+                    lon: -65.21484375000001,
+                }),
+            ],
+            OsmNode {
+                id: 0,
+                lat: -10.660607953624762,
+                lon: -52.03125,
+            },
+            4,
+        ),
+        (
+            [
+                Some(OsmNode {
+                    id: 1,
+                    lat: 57.16961885299059,
+                    lon: 24.875192642211914,
+                }),
+                Some(OsmNode {
+                    id: 2,
+                    lat: 57.159484808175435,
+                    lon: 24.877617359161377,
+                }),
+                Some(OsmNode {
+                    id: 3,
+                    lat: 9.795677582829743,
+                    lon: -1.7578125000000002,
+                }),
+                None,
+            ],
+            OsmNode {
+                id: 0,
+                lat: -10.660607953624762,
+                lon: -52.03125,
+            },
+            3,
+        ),
+        (
+            [
+                Some(OsmNode {
+                    id: 1,
+                    lat: 57.16961885299059,
+                    lon: 24.875192642211914,
+                }),
+                Some(OsmNode {
+                    id: 2,
+                    lat: 57.159484808175435,
+                    lon: 24.877617359161377,
+                }),
+                Some(OsmNode {
+                    id: 3,
+                    lat: 9.795677582829743,
+                    lon: -1.7578125000000002,
+                }),
+                Some(OsmNode {
+                    id: 4,
+                    lat: -36.03133177633188,
+                    lon: -65.21484375000001,
+                }),
+            ],
+            OsmNode {
+                id: 0,
+                lat: -28.92163128242129,
+                lon: 144.14062500000003,
+            },
+            4,
+        ),
+    ];
+    fn run_closest_test(test: ClosestTest) -> () {
+        let (points, check_point, closest_id) = test;
+        let mut map_data = MapDataGraph::new();
+        for point in points {
+            if let Some(point) = point {
+                map_data.insert_node(point.clone());
             }
+        }
 
-            let closest = coords.get_closest_to_coords(check_point.lat, check_point.lon);
-            if let Some(closest) = closest {
-                assert_eq!(closest.borrow().id, *closest_id);
-            } else {
-                panic!("No points found");
-            }
+        let map_data = set_map_data_graph_static(map_data);
+
+        let closest = map_data.get_closest_to_coords(check_point.lat, check_point.lon);
+        if let Some(closest) = closest {
+            assert_eq!(closest.borrow().id, closest_id);
+        } else {
+            panic!("No points found");
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_0() {
+            run_closest_test(CLOSEST_TESTS[0].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_1() {
+            run_closest_test(CLOSEST_TESTS[1].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_2() {
+            run_closest_test(CLOSEST_TESTS[2].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_3() {
+            run_closest_test(CLOSEST_TESTS[3].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_4() {
+            run_closest_test(CLOSEST_TESTS[4].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_5() {
+            run_closest_test(CLOSEST_TESTS[5].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_6() {
+            run_closest_test(CLOSEST_TESTS[6].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_7() {
+            run_closest_test(CLOSEST_TESTS[7].clone());
         }
     }
 }

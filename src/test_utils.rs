@@ -223,26 +223,26 @@ pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
     )
 }
 
-pub fn get_map_data_graph_from_test_file(file: &str) -> &MapDataGraph {
-    MAP_DATA_GRAPH.get_or_init(|| {
-        let data_reader = OsmDataReader::new_file(file.to_string());
-        data_reader.read_data().unwrap()
-    })
+pub fn get_map_data_graph_from_test_file(file: &str) -> MapDataGraph {
+    let data_reader = OsmDataReader::new_file(file.to_string());
+    data_reader.read_data().unwrap()
 }
 
-pub fn get_map_data_graph_from_test_data(test_data: (Vec<OsmNode>, Vec<OsmWay>)) -> &MapDataGraph {
-    MAP_DATA_GRAPH.get_or_init(|| {
-        let mut map_data = MapDataGraph::new();
-        let (test_nodes, test_ways) = &test_data;
-        for test_node in test_nodes {
-            map_data.insert_node(test_node.clone());
-        }
-        for test_way in test_ways {
-            map_data.insert_way(test_way.clone()).unwrap();
-        }
+pub fn get_map_data_graph_from_test_data(test_data: (Vec<OsmNode>, Vec<OsmWay>)) -> MapDataGraph {
+    let mut map_data = MapDataGraph::new();
+    let (test_nodes, test_ways) = &test_data;
+    for test_node in test_nodes {
+        map_data.insert_node(test_node.clone());
+    }
+    for test_way in test_ways {
+        map_data.insert_way(test_way.clone()).unwrap();
+    }
 
-        map_data
-    })
+    map_data
+}
+
+pub fn set_map_data_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
+    MAP_DATA_GRAPH.get_or_init(|| map_data)
 }
 
 pub fn line_is_between_point_ids(line: &MapDataLineRef, id1: u64, id2: u64) -> bool {

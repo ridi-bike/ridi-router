@@ -1,4 +1,7 @@
-use crate::{map_data::graph::MapDataPointRef, MAP_DATA_GRAPH};
+use crate::{
+    map_data::graph::{MapDataGraph, MapDataPointRef},
+    MAP_DATA_GRAPH,
+};
 use geo::{HaversineDestination, Point};
 use rayon::prelude::*;
 
@@ -34,7 +37,7 @@ impl Generator {
                     .iter()
                     .map(|distance| {
                         let wp_geo = point_geo.haversine_destination(*bearing, *distance);
-                        let wp = MAP_DATA_GRAPH.get_closest_to_coords(wp_geo.y(), wp_geo.x());
+                        let wp = MapDataGraph::get().get_closest_to_coords(wp_geo.y(), wp_geo.x());
                         wp
                     })
                     .filter_map(|maybe_wp| maybe_wp)
