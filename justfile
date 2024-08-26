@@ -11,17 +11,17 @@ map-data-file-name := "map-data-riga-cesis.json"
 overpass-query := '"[out:json];
                     way
                       [highway]
-                      [access!=private]
+                      [highway!=cycleway]
+                      [highway!=steps]
+                      [highway!=pedestrian]
+                      [highway!=path]
+                      [highway!=service]
                       [highway!=footway]
                       [motor_vehicle!=private]
                       [motor_vehicle!=no]
                       [!service]
-                      [highway!=cycleway]
-                      [highway!=steps]
-                      [highway!=pedestrian]
                       [access!=no]
-                      [highway!=path]
-                      [highway!=service]
+                      [access!=private]
                       (around:' + gps-query-range + ',' + gps-query-from + ',' + gps-query-to + ')->.roads;
                     relation
                       [type=restriction]

@@ -171,7 +171,7 @@ impl Walker {
             .collect()
     }
 
-    pub fn set_fork_choice_point_id(&mut self, point: MapDataPointRef) -> () {
+    pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) -> () {
         self.next_fork_choice_point = Some(point);
     }
 
@@ -418,7 +418,7 @@ mod tests {
             );
 
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
-            walker.set_fork_choice_point_id(choice);
+            walker.set_fork_choice_point_ref(choice);
 
             assert_eq!(
                 walker.move_forward_to_next_fork(),
@@ -504,7 +504,7 @@ mod tests {
             });
 
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
-            walker.set_fork_choice_point_id(choice);
+            walker.set_fork_choice_point_ref(choice);
 
             let choices = match walker.move_forward_to_next_fork() {
                 Err(_) => panic!("Error received from move"),
@@ -523,7 +523,7 @@ mod tests {
                 )
             });
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
-            walker.set_fork_choice_point_id(choice);
+            walker.set_fork_choice_point_ref(choice);
 
             assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
 
@@ -596,7 +596,7 @@ mod tests {
 
             let choice1 = MapDataGraph::get().test_get_point_ref_by_id(&5).unwrap();
 
-            walker.set_fork_choice_point_id(choice1);
+            walker.set_fork_choice_point_ref(choice1);
 
             assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::DeadEnd));
 
@@ -619,7 +619,7 @@ mod tests {
             });
 
             let choice2 = MapDataGraph::get().test_get_point_ref_by_id(&4).unwrap();
-            walker.set_fork_choice_point_id(choice2);
+            walker.set_fork_choice_point_ref(choice2);
 
             assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
 
@@ -683,7 +683,7 @@ mod tests {
             });
 
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
-            walker.set_fork_choice_point_id(choice);
+            walker.set_fork_choice_point_ref(choice);
 
             let choices = match walker.move_forward_to_next_fork() {
                 Err(_) => panic!("Error received from move"),
@@ -707,7 +707,7 @@ mod tests {
             });
 
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&131).unwrap();
-            walker.set_fork_choice_point_id(choice);
+            walker.set_fork_choice_point_ref(choice);
 
             match walker.move_forward_to_next_fork() {
                 Err(_) => panic!("Error received from move"),
@@ -717,6 +717,34 @@ mod tests {
 
             let route = walker.get_route().clone();
             assert!(route_matches_ids(route, vec![7, 11, 12, 13, 131]));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn follow_one_way() {
+            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data_with_rules()));
+
+            let from = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
+            let to = MapDataGraph::get().test_get_point_ref_by_id(&9).unwrap();
+
+            let mut walker = Walker::new(
+                from.clone(),
+                to.clone(),
+                Box::new(DebugLoggerVoidSink::default()),
+            );
+
+            let choices = match walker.move_forward_to_next_fork() {
+                Err(_) => panic!("Error received from move"),
+                Ok(WalkerMoveResult::Fork(c)) => c,
+                _ => panic!("did not get choices for routes"),
+            };
+            let next = MapDataGraph::get().test_get_point_ref_by_id(&2).unwrap();
+            assert!(choices.get_all_segment_points().contains(&next));
+
+            let wrong_way_point = MapDataGraph::get().test_get_point_ref_by_id(&8).unwrap();
+            assert!(!choices.get_all_segment_points().contains(&wrong_way_point));
         }
     }
 }

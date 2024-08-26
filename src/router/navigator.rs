@@ -253,7 +253,7 @@ impl Navigator {
                         "fork action choice: {:#?}",
                         chosen_fork_point.borrow().id
                     ));
-                    self.walker.set_fork_choice_point_id(chosen_fork_point);
+                    self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     let move_back_segment_list = self.walker.move_backwards_to_prev_fork();
                     let last_segment = self
