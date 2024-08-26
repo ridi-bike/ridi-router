@@ -1,10 +1,9 @@
-use std::{process, sync::LazyLock, time::Instant};
+use std::{process, sync::OnceLock, time::Instant};
 
 use clap::{arg, value_parser, Command};
 
 use gpx_writer::RoutesWriter;
 use map_data::graph::MapDataGraph;
-use osm_data_reader::OsmDataReader;
 
 use crate::router::generator::Generator;
 
@@ -23,52 +22,7 @@ mod test_utils;
 // parse 33 sek, 600mb
 // refs 29 sek, 630mb
 
-pub static MAP_DATA_GRAPH: LazyLock<MapDataGraph> = LazyLock::new(|| {
-    let matches = Command::new("gps-router")
-        .arg(
-            arg!(
-                -d --data_file <PATH> "File with OSM json data"
-            )
-            .value_parser(value_parser!(String)),
-        )
-        .arg(
-            arg!(
-                -f --from_lat <LAT> "From lat"
-            )
-            .value_parser(value_parser!(f64)),
-        )
-        .arg(
-            arg!(
-                -F --from_lon <LON> "From lon"
-            )
-            .value_parser(value_parser!(f64)),
-        )
-        .arg(
-            arg!(
-                -t --to_lat <LAT> "To lat"
-            )
-            .value_parser(value_parser!(f64)),
-        )
-        .arg(
-            arg!(
-                -T --to_lon <LON> "To lon"
-            )
-            .value_parser(value_parser!(f64)),
-        )
-        .get_matches();
-
-    let file_source = matches.get_one::<String>("data_file");
-
-    let data_reader = if let Some(file) = file_source {
-        OsmDataReader::new_file(file.clone())
-    } else {
-        OsmDataReader::new_stdin()
-    };
-
-    let map_data = data_reader.read_data().unwrap();
-
-    map_data
-});
+pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
 fn main() {
     let matches = Command::new("gps-router")
@@ -111,7 +65,11 @@ fn main() {
 
     let routes_generation_start = Instant::now();
 
-    let start_point = match MAP_DATA_GRAPH.get_closest_to_coords(*from_lat, *from_lon) {
+    let start_point = match MAP_DATA_GRAPH
+        .get()
+        .unwrap()
+        .get_closest_to_coords(*from_lat, *from_lon)
+    {
         None => {
             eprintln!("no closest point found");
             process::exit(1);
@@ -119,7 +77,11 @@ fn main() {
         Some(p) => p,
     };
 
-    let end_point = match MAP_DATA_GRAPH.get_closest_to_coords(*to_lat, *to_lon) {
+    let end_point = match MAP_DATA_GRAPH
+        .get()
+        .unwrap()
+        .get_closest_to_coords(*to_lat, *to_lon)
+    {
         None => {
             eprintln!("no closest point found");
             process::exit(1);

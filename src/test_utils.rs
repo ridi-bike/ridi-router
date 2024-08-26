@@ -5,7 +5,9 @@ use crate::{
         graph::{MapDataGraph, MapDataLineRef},
         osm::{OsmNode, OsmWay},
     },
+    osm_data_reader::OsmDataReader,
     router::route::Route,
+    MAP_DATA_GRAPH,
 };
 
 fn make_osm_point_with_id(id: u64) -> OsmNode {
@@ -119,19 +121,6 @@ pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
         ],
     )
 }
-pub fn get_test_map_data_graph_with_rules() -> MapDataGraph {
-    let test_data = get_test_data_with_rules();
-    let mut map_data = MapDataGraph::new();
-    let (test_nodes, test_ways) = &test_data;
-    for test_node in test_nodes {
-        map_data.insert_node(test_node.clone());
-    }
-    for test_way in test_ways {
-        map_data.insert_way(test_way.clone()).unwrap();
-    }
-
-    map_data
-}
 
 pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
     //       1
@@ -234,18 +223,26 @@ pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
     )
 }
 
-pub fn get_test_map_data_graph() -> MapDataGraph {
-    let test_data = get_test_data();
-    let mut map_data = MapDataGraph::new();
-    let (test_nodes, test_ways) = &test_data;
-    for test_node in test_nodes {
-        map_data.insert_node(test_node.clone());
-    }
-    for test_way in test_ways {
-        map_data.insert_way(test_way.clone()).unwrap();
-    }
+pub fn get_map_data_graph_from_test_file(file: &str) -> &MapDataGraph {
+    MAP_DATA_GRAPH.get_or_init(|| {
+        let data_reader = OsmDataReader::new_file(file.to_string());
+        data_reader.read_data().unwrap()
+    })
+}
 
-    map_data
+pub fn get_map_data_graph_from_test_data(test_data: (Vec<OsmNode>, Vec<OsmWay>)) -> &MapDataGraph {
+    MAP_DATA_GRAPH.get_or_init(|| {
+        let mut map_data = MapDataGraph::new();
+        let (test_nodes, test_ways) = &test_data;
+        for test_node in test_nodes {
+            map_data.insert_node(test_node.clone());
+        }
+        for test_way in test_ways {
+            map_data.insert_way(test_way.clone()).unwrap();
+        }
+
+        map_data
+    })
 }
 
 pub fn line_is_between_point_ids(line: &MapDataLineRef, id1: u64, id2: u64) -> bool {

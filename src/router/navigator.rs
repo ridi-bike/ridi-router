@@ -152,6 +152,7 @@ impl Navigator {
                     itinerary.get_to().clone(),
                     itinerary.get_waypoints().clone(),
                 )),
+                // Box::new(DebugLoggerVoidSink::default()),
             ),
             itinerary,
             weight_calcs,
@@ -281,7 +282,7 @@ impl Navigator {
                 ));
             }
 
-            if loop_counter >= 1000 {
+            if loop_counter >= 10000 {
                 return NavigationResult::Stopped(self.walker.get_route().clone());
             }
         }

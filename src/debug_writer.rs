@@ -140,9 +140,15 @@ impl DebugLogger for DebugLoggerFileSink {
         }
         self.route = route.clone();
 
-        if self.step_id % self.gpx_every_n == 0 {
-            self.write_gpx();
-        }
+        // if self.step_id % self.gpx_every_n == 0 {
+        //     self.write_gpx();
+        // }
+    }
+}
+
+impl Drop for DebugLoggerFileSink {
+    fn drop(&mut self) {
+        self.write_gpx();
     }
 }
 
