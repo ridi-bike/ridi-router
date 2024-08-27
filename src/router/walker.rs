@@ -363,19 +363,23 @@ impl Walker {
 #[cfg(test)]
 mod tests {
     use core::panic;
+    use std::collections::HashMap;
 
     use rusty_fork::rusty_fork_test;
 
     use crate::{
         debug_writer::DebugLoggerVoidSink,
-        map_data::graph::MapDataGraph,
+        map_data::{
+            graph::MapDataGraph,
+            osm::{OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
+        },
         router::{
             route::Route,
             walker::{WalkerError, WalkerMoveResult},
         },
         test_utils::{
-            get_map_data_graph_from_test_data, get_test_data, get_test_data_with_rules,
-            line_is_between_point_ids, route_matches_ids, set_map_data_graph_static,
+            graph_from_test_dataset, line_is_between_point_ids, route_matches_ids,
+            set_graph_static, test_dataset_1, test_dataset_2, test_dataset_3, OsmTestData,
         },
     };
 
@@ -385,7 +389,7 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn walker_same_start_end() {
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let point1 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let point2 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
 
@@ -407,7 +411,7 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn walker_error_on_wrong_choice() {
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let point1 = MapDataGraph::get().test_get_point_ref_by_id(&2).unwrap();
             let point2 = MapDataGraph::get().test_get_point_ref_by_id(&3).unwrap();
 
@@ -435,7 +439,7 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn waker_one_step_no_fork() {
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
 
             let from_id = 1;
             let to_id = 2;
@@ -471,7 +475,7 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn walker_choose_path() {
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
 
             let point1 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let point2 = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
@@ -563,7 +567,7 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn walker_reach_dead_end_walk_back() {
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
 
             let point1 = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let point2 = MapDataGraph::get().test_get_point_ref_by_id(&4).unwrap();
@@ -653,7 +657,11 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn handle_roundabout() {
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data_with_rules()));
+            set_graph_static(
+                graph_from_test_dataset(
+                    test_dataset_2()
+                )
+            );
 
             let from = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&131).unwrap();
@@ -724,7 +732,11 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn follow_one_way() {
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data_with_rules()));
+            set_graph_static(
+                graph_from_test_dataset(
+                    test_dataset_2()
+                )
+            );
 
             let from = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&9).unwrap();
@@ -745,6 +757,642 @@ mod tests {
 
             let wrong_way_point = MapDataGraph::get().test_get_point_ref_by_id(&8).unwrap();
             assert!(!choices.get_all_segment_points().contains(&wrong_way_point));
+        }
+    }
+
+    fn rule_test(test_data: OsmTestData, can_go_ids: Vec<u64>, cannot_go_ids: Vec<u64>) -> () {
+        set_graph_static(graph_from_test_dataset(test_data));
+
+        let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+        let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+
+        let mut walker = Walker::new(
+            from.clone(),
+            to.clone(),
+            Box::new(DebugLoggerVoidSink::default()),
+        );
+
+        let choices = match walker.move_forward_to_next_fork() {
+            Err(_) => panic!("Error received from move"),
+            Ok(WalkerMoveResult::Fork(c)) => c,
+            Ok(v) => {
+                if can_go_ids.is_empty() {
+                    return ();
+                }
+                panic!("did not get choices: {:#?}", v)
+            }
+        };
+
+        for can_go_id in can_go_ids {
+            let can_go = MapDataGraph::get()
+                .test_get_point_ref_by_id(&can_go_id)
+                .unwrap();
+            eprintln!("go {}", can_go_id);
+            assert!(choices.get_all_segment_points().contains(&can_go));
+        }
+
+        for cannot_go_id in cannot_go_ids {
+            let cannot_go = MapDataGraph::get()
+                .test_get_point_ref_by_id(&cannot_go_id)
+                .unwrap();
+            eprintln!("no go {}", cannot_go_id);
+            assert!(!choices.get_all_segment_points().contains(&cannot_go));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_no_left() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 36,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_left_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![5, 4],
+                vec![6]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_no_straight() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 34,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_straight_on".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![5,6],
+                vec![4]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_no_right() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 53,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_right_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![4, 6],
+                vec![5]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_no_u() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_u_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![4, 5, 6],
+                vec![]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_no_entry() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 34,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_entry".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![5, 6],
+                vec![4]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_no_exit() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 53,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 34,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_exit".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![4, 7], // only one left - 6th exit, it chooses that and stops at the next fork
+                vec![]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_only_right() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 53,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "only_right_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![4, 7], // only 5th exit, goes to next fork and finds 4 and 7
+                vec![]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_only_left() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 53,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "only_left_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![4, 7], // only 6th exit, it continues and find next fork of 4 and 7
+                vec![]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_only_straight() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 53,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "only_straight_on".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![4],
+                vec![5, 6]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rule_only_u() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "only_u_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![],
+                vec![4, 5, 6]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rules_only_left_and_no_left() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 36,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "only_left_turn".to_string())
+                    ])
+                },
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 36,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_left_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![],
+                vec![4, 5, 6]
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rules_no_left_and_no_right() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 53,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_right_turn".to_string())
+                    ])
+                },
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 36,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "no_left_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![5, 6], // 4th is the only exit, moves to next fork and finds 5 and 6
+                vec![]
+            );
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn rules_only_left_only_right() {
+            let test_data = test_dataset_3();
+            let rules: Vec<OsmRelation> = vec![
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 36,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "only_left_turn".to_string())
+                    ])
+                },
+                OsmRelation {
+                    id: 1,
+                    members: vec![
+                        OsmRelationMember {
+                            member_ref: 13,
+                            role: OsmRelationMemberRole::From,
+                            member_type: OsmRelationMemberType::Way
+                        },
+                        OsmRelationMember {
+                            member_ref: 3,
+                            role: OsmRelationMemberRole::Via,
+                            member_type: OsmRelationMemberType::Node
+                        },
+                        OsmRelationMember {
+                            member_ref: 53,
+                            role: OsmRelationMemberRole::To,
+                            member_type: OsmRelationMemberType::Way
+                        }
+                    ],
+                    tags: HashMap::from([
+                        ("type".to_string(), "restriction".to_string()),
+                        ("restriction".to_string(), "only_right_turn".to_string())
+                    ])
+                },
+            ];
+
+            rule_test(
+                (test_data.0.clone(), test_data.1.clone(), rules.clone()),
+                vec![5, 6],
+                vec![4]
+            );
         }
     }
 }

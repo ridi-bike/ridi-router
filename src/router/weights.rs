@@ -197,7 +197,7 @@ mod test {
             route::{segment::Segment, segment_list::SegmentList},
             walker::Walker,
         },
-        test_utils::{get_map_data_graph_from_test_file, set_map_data_graph_static},
+        test_utils::{graph_from_test_file, set_graph_static},
     };
 
     use super::{weight_heading, WeightCalcInput};
@@ -224,7 +224,7 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn weight_heading_test() {
-            set_map_data_graph_static(get_map_data_graph_from_test_file("test-data/sigulda-100.json"));
+            set_graph_static(graph_from_test_file("test-data/sigulda-100.json"));
             let from = MapDataGraph::get()
                 .test_get_point_ref_by_id(&885564366)
                 .expect("to find start point");

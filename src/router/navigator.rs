@@ -299,8 +299,7 @@ mod test {
             weights::WeightCalcInput,
         },
         test_utils::{
-            get_map_data_graph_from_test_data, get_test_data, route_matches_ids,
-            set_map_data_graph_static,
+            graph_from_test_dataset, route_matches_ids, set_graph_static, test_dataset_1,
         },
     };
 
@@ -323,7 +322,7 @@ mod test {
                 }
                 WeightCalcResult::UseWithWeight(1)
             }
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
@@ -389,7 +388,7 @@ mod test {
                 }
                 WeightCalcResult::UseWithWeight(1)
             }
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
@@ -413,7 +412,7 @@ mod test {
             fn weight(_input: WeightCalcInput) -> WeightCalcResult {
                 WeightCalcResult::UseWithWeight(1)
             }
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
@@ -435,7 +434,7 @@ mod test {
                 }
                 WeightCalcResult::UseWithWeight(1)
             }
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
@@ -475,7 +474,7 @@ mod test {
                 }
                 WeightCalcResult::UseWithWeight(6)
             }
-            set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);

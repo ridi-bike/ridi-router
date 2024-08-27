@@ -3,12 +3,14 @@ use std::collections::HashMap;
 use crate::{
     map_data::{
         graph::{MapDataGraph, MapDataLineRef},
-        osm::{OsmNode, OsmWay},
+        osm::{OsmNode, OsmRelation, OsmWay},
     },
     osm_data_reader::OsmDataReader,
     router::route::Route,
     MAP_DATA_GRAPH,
 };
+
+pub type OsmTestData = (Vec<OsmNode>, Vec<OsmWay>, Vec<OsmRelation>);
 
 fn make_osm_point_with_id(id: u64) -> OsmNode {
     OsmNode {
@@ -18,7 +20,7 @@ fn make_osm_point_with_id(id: u64) -> OsmNode {
     }
 }
 
-pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
+pub fn test_dataset_2() -> OsmTestData {
     // 1 - - 2 - - 3 - - 4 - - 5
     //       |     |
     //       /\    \/
@@ -32,7 +34,6 @@ pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
     //      12
     //      |
     //      121
-    //
 
     let tags_with_highway = HashMap::from([("highway".to_string(), "primary".to_string())]);
 
@@ -122,10 +123,11 @@ pub fn get_test_data_with_rules() -> (Vec<OsmNode>, Vec<OsmWay>) {
                 tags: Some(tags_with_highway.clone()),
             },
         ],
+        Vec::new(),
     )
 }
 
-pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
+pub fn test_dataset_1() -> OsmTestData {
     //       1
     //       |
     //       |
@@ -227,28 +229,123 @@ pub fn get_test_data() -> (Vec<OsmNode>, Vec<OsmWay>) {
                 tags: Some(tags_with_highway.clone()),
             },
         ],
+        Vec::new(),
     )
 }
 
-pub fn get_map_data_graph_from_test_file(file: &str) -> MapDataGraph {
+pub fn test_dataset_3() -> OsmTestData {
+    //          1
+    //          |
+    //          |
+    //    5 - - 3 - - 6
+    //   /|     |     |\
+    //  | |     |     | |
+    //  | \ - - 4 - - / |
+    //  |               |
+    //  \ - - - 7 - - - /
+
+    let tags_with_highway = HashMap::from([("highway".to_string(), "primary".to_string())]);
+
+    (
+        vec![
+            OsmNode {
+                id: 1,
+                lat: 1.0,
+                lon: 1.0,
+            },
+            OsmNode {
+                id: 3,
+                lat: 3.0,
+                lon: 3.0,
+            },
+            OsmNode {
+                id: 4,
+                lat: 4.0,
+                lon: 4.0,
+            },
+            OsmNode {
+                id: 5,
+                lat: 5.0,
+                lon: 5.0,
+            },
+            OsmNode {
+                id: 6,
+                lat: 6.0,
+                lon: 6.0,
+            },
+            OsmNode {
+                id: 7,
+                lat: 7.0,
+                lon: 7.0,
+            },
+        ],
+        vec![
+            OsmWay {
+                id: 13,
+                point_ids: vec![1, 3],
+                tags: Some(tags_with_highway.clone()),
+            },
+            OsmWay {
+                id: 34,
+                point_ids: vec![3, 4],
+                tags: Some(tags_with_highway.clone()),
+            },
+            OsmWay {
+                id: 53,
+                point_ids: vec![5, 3],
+                tags: Some(tags_with_highway.clone()),
+            },
+            OsmWay {
+                id: 36,
+                point_ids: vec![3, 6],
+                tags: Some(tags_with_highway.clone()),
+            },
+            OsmWay {
+                id: 54,
+                point_ids: vec![5, 4],
+                tags: Some(tags_with_highway.clone()),
+            },
+            OsmWay {
+                id: 64,
+                point_ids: vec![6, 4],
+                tags: Some(tags_with_highway.clone()),
+            },
+            OsmWay {
+                id: 576,
+                point_ids: vec![5, 7, 6],
+                tags: Some(tags_with_highway.clone()),
+            },
+        ],
+        Vec::new(),
+    )
+}
+
+pub fn graph_from_test_file(file: &str) -> MapDataGraph {
     let data_reader = OsmDataReader::new_file(file.to_string());
     data_reader.read_data().unwrap()
 }
 
-pub fn get_map_data_graph_from_test_data(test_data: (Vec<OsmNode>, Vec<OsmWay>)) -> MapDataGraph {
+pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
     let mut map_data = MapDataGraph::new();
-    let (test_nodes, test_ways) = &test_data;
+    let (test_nodes, test_ways, test_relations) = &test_data;
     for test_node in test_nodes {
         map_data.insert_node(test_node.clone());
     }
     for test_way in test_ways {
-        map_data.insert_way(test_way.clone()).unwrap();
+        map_data
+            .insert_way(test_way.clone())
+            .expect("failed to insert way");
+    }
+    for test_relation in test_relations {
+        map_data
+            .insert_relation(test_relation.clone())
+            .expect("failed to insert relation");
     }
 
     map_data
 }
 
-pub fn set_map_data_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
+pub fn set_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
     MAP_DATA_GRAPH.get_or_init(|| map_data)
 }
 

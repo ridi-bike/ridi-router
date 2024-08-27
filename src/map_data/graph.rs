@@ -553,8 +553,9 @@ mod tests {
 
     use rusty_fork::rusty_fork_test;
 
-    use crate::test_utils::{
-        get_map_data_graph_from_test_data, get_test_data, set_map_data_graph_static,
+    use crate::{
+        map_data::osm::OsmRelationMemberType,
+        test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1},
     };
 
     use super::*;
@@ -788,7 +789,7 @@ mod tests {
                     })
                     && point.junction == test.junction
             }
-            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
             assert!(point_is_ok(
                 &map_data,
                 &1,
@@ -933,7 +934,7 @@ mod tests {
                             .expect(format!("point at idx {} must exist", idx).as_str())
                     })
             }
-            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
 
             assert!(way_is_ok(&map_data, &1234, vec![1, 2, 3, 4]));
             assert!(way_is_ok(&map_data, &5367, vec![5, 3, 6, 7]));
@@ -964,7 +965,7 @@ mod tests {
                     && line.points.0.borrow().id == test_points.0
                     && line.points.1.borrow().id == test_points.1
             }
-            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
             assert!(line_is_ok(&map_data, "1234-1-2", 1234, (1, 2)));
             assert!(line_is_ok(&map_data, "1234-2-3", 1234, (2, 3)));
             assert!(line_is_ok(&map_data, "1234-3-4", 1234, (3, 4)));
@@ -1004,7 +1005,7 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn mark_junction() {
-            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let point = map_data.get_point_ref_by_id(&5).unwrap();
             let points = map_data.get_adjacent(point);
             points.iter().for_each(|p| {
@@ -1030,7 +1031,7 @@ mod tests {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn adjacent_lookup() {
-            let map_data = set_map_data_graph_static(get_map_data_graph_from_test_data(get_test_data()));
+            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
 
             let tests: Vec<(u8, MapDataPointRef, Vec<(String, u64)>)> = vec![
                 (
@@ -1283,7 +1284,7 @@ mod tests {
             }
         }
 
-        let map_data = set_map_data_graph_static(map_data);
+        let map_data = set_graph_static(map_data);
 
         let closest = map_data.get_closest_to_coords(check_point.lat, check_point.lon);
         if let Some(closest) = closest {
