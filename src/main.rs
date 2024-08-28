@@ -65,11 +65,7 @@ fn main() {
 
     let routes_generation_start = Instant::now();
 
-    let start_point = match MAP_DATA_GRAPH
-        .get()
-        .unwrap()
-        .get_closest_to_coords(*from_lat, *from_lon)
-    {
+    let start_point = match MapDataGraph::get().get_closest_to_coords(*from_lat, *from_lon) {
         None => {
             eprintln!("no closest point found");
             process::exit(1);
@@ -77,11 +73,7 @@ fn main() {
         Some(p) => p,
     };
 
-    let end_point = match MAP_DATA_GRAPH
-        .get()
-        .unwrap()
-        .get_closest_to_coords(*to_lat, *to_lon)
-    {
+    let end_point = match MapDataGraph::get().get_closest_to_coords(*to_lat, *to_lon) {
         None => {
             eprintln!("no closest point found");
             process::exit(1);

@@ -1,7 +1,4 @@
-use crate::{
-    map_data::graph::{MapDataGraph, MapDataPointRef},
-    MAP_DATA_GRAPH,
-};
+use crate::map_data::graph::{MapDataGraph, MapDataPointRef};
 use geo::{HaversineDestination, Point};
 use rayon::prelude::*;
 
