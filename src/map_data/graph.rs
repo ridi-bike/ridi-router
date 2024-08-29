@@ -110,6 +110,7 @@ pub struct MapDataGraph {
     nodes_hashed_offset_lon: PointMap,
     nodes_hashed_offset_lat_lon: PointMap,
     ways: Vec<MapDataWay>,
+    ways_map: HashMap<u64, usize>,
     lines: Vec<MapDataLine>,
 }
 
@@ -127,6 +128,7 @@ impl MapDataGraph {
             nodes_hashed_offset_lon: BTreeMap::new(),
             nodes_hashed_offset_lat_lon: BTreeMap::new(),
             ways: Vec::new(),
+            ways_map: HashMap::new(),
             lines: Vec::new(),
         }
     }
@@ -138,6 +140,13 @@ impl MapDataGraph {
 
     fn get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
         match self.points_map.get(id) {
+            None => return None,
+            Some(i) => Some(MapDataElementRef::new(i.clone())),
+        }
+    }
+
+    fn get_way_ref_by_id(&self, id: &u64) -> Option<MapDataWayRef> {
+        match self.ways_map.get(id) {
             None => return None,
             Some(i) => Some(MapDataElementRef::new(i.clone())),
         }
@@ -157,7 +166,6 @@ impl MapDataGraph {
         };
         let idx = self.add_point(point.clone());
         let point_ref = MapDataElementRef::new(idx);
-        self.points_map.insert(point.id, idx);
         self.point_hashed_offset_none.insert(
             get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::None),
             point_ref.clone(),
@@ -172,6 +180,41 @@ impl MapDataGraph {
         );
         self.point_hashed_offset_none
             .insert(get_gps_coords_hash(lat, lon, HashOffset::LatLon), point_ref);
+    }
+
+    fn get_way_by_idx(&self, idx: usize) -> &MapDataWay {
+        &self.ways[idx]
+    }
+    fn get_point_by_idx(&self, idx: usize) -> &MapDataPoint {
+        &self.points[idx]
+    }
+    fn get_line_by_idx(&self, idx: usize) -> &MapDataLine {
+        &self.lines[idx]
+    }
+    fn get_mut_way_by_idx(&mut self, idx: usize) -> &mut MapDataWay {
+        &mut self.ways[idx]
+    }
+    fn get_mut_point_by_idx(&mut self, idx: usize) -> &mut MapDataPoint {
+        &mut self.points[idx]
+    }
+    fn get_mut_line_by_idx(&mut self, idx: usize) -> &mut MapDataLine {
+        &mut self.lines[idx]
+    }
+    fn add_line(&mut self, line: MapDataLine) -> usize {
+        self.lines.push(line);
+        self.lines.len() - 1
+    }
+    fn add_point(&mut self, point: MapDataPoint) -> usize {
+        let idx = self.points.len();
+        self.points_map.insert(point.id, idx);
+        self.points.push(point);
+        idx
+    }
+    fn add_way(&mut self, way: MapDataWay) -> usize {
+        let idx = self.ways.len();
+        self.ways_map.insert(way.id, idx);
+        self.ways.push(way);
+        idx
     }
 
     fn way_is_ok(&self, osm_way: &OsmWay) -> bool {
@@ -202,37 +245,6 @@ impl MapDataGraph {
         false
     }
 
-    fn get_way_ref_by_idx(&self, idx: usize) -> &MapDataWay {
-        &self.ways[idx]
-    }
-    fn get_point_ref_by_idx(&self, idx: usize) -> &MapDataPoint {
-        &self.points[idx]
-    }
-    fn get_line_ref_by_idx(&self, idx: usize) -> &MapDataLine {
-        &self.lines[idx]
-    }
-    fn get_mut_way_ref_by_idx(&mut self, idx: usize) -> &mut MapDataWay {
-        &mut self.ways[idx]
-    }
-    fn get_mut_point_ref_by_idx(&mut self, idx: usize) -> &mut MapDataPoint {
-        &mut self.points[idx]
-    }
-    fn get_mut_line_ref_by_idx(&mut self, idx: usize) -> &mut MapDataLine {
-        &mut self.lines[idx]
-    }
-    fn add_line(&mut self, line: MapDataLine) -> usize {
-        self.lines.push(line);
-        self.lines.len() - 1
-    }
-    fn add_point(&mut self, point: MapDataPoint) -> usize {
-        self.points.push(point);
-        self.points.len() - 1
-    }
-    fn add_way(&mut self, way: MapDataWay) -> usize {
-        self.ways.push(way);
-        self.ways.len() - 1
-    }
-
     pub fn insert_way(&mut self, osm_way: OsmWay) -> Result<(), MapDataError> {
         if !self.way_is_ok(&osm_way) {
             return Ok(());
@@ -247,12 +259,12 @@ impl MapDataGraph {
         let way_ref = MapDataElementRef::new(way_idx);
         for point_id in &osm_way.point_ids {
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
-                let way_mut = self.get_mut_way_ref_by_idx(way_idx);
+                let way_mut = self.get_mut_way_by_idx(way_idx);
                 way_mut.points.add(point_ref.clone());
             }
 
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
-                let point_mut = self.get_mut_point_ref_by_idx(point_ref.idx);
+                let point_mut = self.get_mut_point_by_idx(point_ref.idx);
                 point_mut.part_of_ways.push(way_ref.clone());
             }
 
@@ -260,7 +272,7 @@ impl MapDataGraph {
                 if let Some(prev_point_ref) = prev_point_ref {
                     let line_id = get_line_id(
                         &way.id,
-                        &self.get_point_ref_by_idx(prev_point_ref.idx).id,
+                        &self.get_point_by_idx(prev_point_ref.idx).id,
                         &point_id,
                     );
                     let line = MapDataLine {
@@ -281,11 +293,11 @@ impl MapDataGraph {
                     let line_idx = self.add_line(line);
                     let line_ref = MapDataLineRef::new(line_idx);
 
-                    let point_mut = self.get_mut_point_ref_by_idx(point_ref.idx);
+                    let point_mut = self.get_mut_point_by_idx(point_ref.idx);
                     point_mut.lines.push(line_ref.clone());
                     point_mut.junction = point_mut.lines.len() > 2;
 
-                    let prev_point_mut = self.get_mut_point_ref_by_idx(prev_point_ref.idx);
+                    let prev_point_mut = self.get_mut_point_by_idx(prev_point_ref.idx);
                     prev_point_mut.lines.push(line_ref);
 
                     prev_point_mut.junction = prev_point_mut.lines.len() > 2;
@@ -359,10 +371,11 @@ impl MapDataGraph {
             .filter(|member| member.role == OsmRelationMemberRole::Via)
             .collect::<Vec<_>>();
         if via_members.len() == 1 {
-            fn get_way_ids(
+            fn get_way_refs(
+                graph: &MapDataGraph,
                 members: &Vec<OsmRelationMember>,
                 role: OsmRelationMemberRole,
-            ) -> Vec<u64> {
+            ) -> Vec<MapDataWayRef> {
                 members
                     .iter()
                     .filter_map(|member| {
@@ -371,61 +384,59 @@ impl MapDataGraph {
                         }
                         None
                     })
+                    .filter_map(|w_id| graph.get_way_ref_by_id(&w_id))
                     .collect::<Vec<_>>()
             }
             fn get_lines_from_way_ids(
                 graph: &MapDataGraph,
-                way_ids: &Vec<u64>,
+                way_refs: &Vec<MapDataWayRef>,
                 point: &MapDataPointRef,
             ) -> Vec<MapDataLineRef> {
-                way_ids
+                way_refs
                     .iter()
-                    .filter_map(|way_id| {
+                    .filter_map(|way_ref| {
                         // we may not find a way and that's fine as the
                         // relation may be associated with a service road
                         // or other way that is outside of our dataset
                         graph
-                            .get_point_ref_by_idx(point.idx)
+                            .get_point_by_idx(point.idx)
                             .lines
                             .iter()
                             .find(|line| {
                                 // can't use borrow() here because we are still just setting up the
                                 // graph and it'll block itself
-                                graph
-                                    .get_way_ref_by_idx(graph.get_line_ref_by_idx(line.idx).way.idx)
-                                    .id
-                                    == *way_id
+                                graph.get_line_by_idx(line.idx).way.idx == way_ref.idx
                             })
                             .cloned()
                     })
                     .collect()
             }
-            let from_way_ids = get_way_ids(&relation.members, OsmRelationMemberRole::From);
-            let to_way_ids = get_way_ids(&relation.members, OsmRelationMemberRole::To);
+            let from_way_refs = get_way_refs(self, &relation.members, OsmRelationMemberRole::From);
+            let to_way_refs = get_way_refs(self, &relation.members, OsmRelationMemberRole::To);
 
-            if from_way_ids.is_empty() || to_way_ids.is_empty() {
+            if from_way_refs.is_empty() || to_way_refs.is_empty() {
                 return Ok(());
             }
 
-            let via_node = via_members.first().ok_or(MapDataError::MissingViaNode {
+            let via_member = via_members.first().ok_or(MapDataError::MissingViaMember {
                 relation_id: relation.id,
             })?;
-            if via_node.member_type == OsmRelationMemberType::Way {
+            if via_member.member_type == OsmRelationMemberType::Way {
                 return Err(MapDataError::NotYetImplemented {
                     message: String::from("restrictions with Ways as the Via role"),
                     relation: relation.clone(),
                 });
             }
-            let via_point = self.get_point_ref_by_id(&via_node.member_ref).ok_or(
+            let via_point = self.get_point_ref_by_id(&via_member.member_ref).ok_or(
                 MapDataError::MissingViaPoint {
                     relation_id: relation.id,
-                    point_id: via_node.member_ref,
+                    point_id: via_member.member_ref,
                 },
             )?;
 
-            let from_lines = get_lines_from_way_ids(self, &from_way_ids, &via_point);
-            let to_lines = get_lines_from_way_ids(self, &to_way_ids, &via_point);
-            let point = self.get_mut_point_ref_by_idx(via_point.idx);
+            let from_lines = get_lines_from_way_ids(self, &from_way_refs, &via_point);
+            let to_lines = get_lines_from_way_ids(self, &to_way_refs, &via_point);
+            let point = self.get_mut_point_by_idx(via_point.idx);
             let rule = MapDataRule {
                 from_lines,
                 to_lines,

@@ -20,7 +20,7 @@ pub enum MapDataError {
         relation_id: u64,
         restriction: String,
     },
-    MissingViaNode {
+    MissingViaMember {
         relation_id: u64,
     },
     MissingViaPoint {
