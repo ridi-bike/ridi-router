@@ -14,7 +14,7 @@ use geo::Point;
 use crate::{
     gps_hash::{get_gps_coords_hash, HashOffset},
     map_data::{
-        osm::{OsmRelationMember, OsmRelationMemberRole},
+        osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
     osm_data_reader::OsmDataReader,
@@ -61,11 +61,9 @@ impl<T: MapDataElement> MapDataElementRef<T> {
             _marker: PhantomData,
         }
     }
-}
 
-impl<T: MapDataElement> MapDataElementRef<T> {
     pub fn borrow(&self) -> &'static T {
-        MapDataElement::get(self.idx)
+        T::get(self.idx)
     }
 }
 
@@ -308,7 +306,15 @@ impl MapDataGraph {
             // https://wiki.openstreetmap.org/w/index.php?title=Relation:restriction&uselang=en
             // currently only "restriction", but "restriction:bus" was in use until 2013
             if rel_type.starts_with("restriction") {
-                return true;
+                let restriction = relation
+                    .tags
+                    .get("restriction")
+                    .or(relation.tags.get("restriction:motorcycle"))
+                    .or(relation.tags.get("restriction:conditional"))
+                    .or(relation.tags.get("restriction:motorcar"));
+                if restriction.is_some() {
+                    return true;
+                }
             }
         }
         false
@@ -323,7 +329,9 @@ impl MapDataGraph {
             .get("restriction")
             .or(relation.tags.get("restriction:motorcycle"))
             .or(relation.tags.get("restriction:conditional"))
+            .or(relation.tags.get("restriction:motorcar"))
             .ok_or(MapDataError::MissingRestriction {
+                osm_relation: relation.clone(),
                 relation_id: relation.id,
             })?;
         let rule_type = match restriction.split(" ").collect::<Vec<_>>().get(0) {
@@ -351,14 +359,6 @@ impl MapDataGraph {
             .filter(|member| member.role == OsmRelationMemberRole::Via)
             .collect::<Vec<_>>();
         if via_members.len() == 1 {
-            let via_node = via_members.first().ok_or(MapDataError::MissingViaNode {
-                relation_id: relation.id,
-            })?;
-            let via_point = self.get_point_ref_by_id(&via_node.member_ref).ok_or(
-                MapDataError::MissingViaPoint {
-                    point_id: via_node.member_ref,
-                },
-            )?;
             fn get_way_ids(
                 members: &Vec<OsmRelationMember>,
                 role: OsmRelationMemberRole,
@@ -377,34 +377,54 @@ impl MapDataGraph {
                 graph: &MapDataGraph,
                 way_ids: &Vec<u64>,
                 point: &MapDataPointRef,
-                relation_id: u64,
-            ) -> Result<Vec<MapDataLineRef>, MapDataError> {
+            ) -> Vec<MapDataLineRef> {
                 way_ids
                     .iter()
-                    .map(|way_id| {
+                    .filter_map(|way_id| {
+                        // we may not find a way and that's fine as the
+                        // relation may be associated with a service road
+                        // or other way that is outside of our dataset
                         graph
                             .get_point_ref_by_idx(point.idx)
                             .lines
                             .iter()
                             .find(|line| {
+                                // can't use borrow() here because we are still just setting up the
+                                // graph and it'll block itself
                                 graph
                                     .get_way_ref_by_idx(graph.get_line_ref_by_idx(line.idx).way.idx)
                                     .id
                                     == *way_id
                             })
-                            .ok_or(MapDataError::WayIdNotLinkedWithViaPoint {
-                                relation_id,
-                                point_id: graph.get_point_ref_by_idx(point.idx).id,
-                                way_id: *way_id,
-                            })
-                            .map(|line| line.clone())
+                            .cloned()
                     })
                     .collect()
             }
             let from_way_ids = get_way_ids(&relation.members, OsmRelationMemberRole::From);
-            let from_lines = get_lines_from_way_ids(self, &from_way_ids, &via_point, relation.id)?;
             let to_way_ids = get_way_ids(&relation.members, OsmRelationMemberRole::To);
-            let to_lines = get_lines_from_way_ids(self, &to_way_ids, &via_point, relation.id)?;
+
+            if from_way_ids.is_empty() || to_way_ids.is_empty() {
+                return Ok(());
+            }
+
+            let via_node = via_members.first().ok_or(MapDataError::MissingViaNode {
+                relation_id: relation.id,
+            })?;
+            if via_node.member_type == OsmRelationMemberType::Way {
+                return Err(MapDataError::NotYetImplemented {
+                    message: String::from("restrictions with Ways as the Via role"),
+                    relation: relation.clone(),
+                });
+            }
+            let via_point = self.get_point_ref_by_id(&via_node.member_ref).ok_or(
+                MapDataError::MissingViaPoint {
+                    relation_id: relation.id,
+                    point_id: via_node.member_ref,
+                },
+            )?;
+
+            let from_lines = get_lines_from_way_ids(self, &from_way_ids, &via_point);
+            let to_lines = get_lines_from_way_ids(self, &to_way_ids, &via_point);
             let point = self.get_mut_point_ref_by_idx(via_point.idx);
             let rule = MapDataRule {
                 from_lines,
@@ -412,12 +432,14 @@ impl MapDataGraph {
                 rule_type,
             };
             point.rules.push(rule);
-        } else {
-            eprintln!(
-                "not yet implemented relations with via ways, rel {:#?}",
-                relation
-            );
+        } else if via_members.len() > 1 {
+            return Err(MapDataError::NotYetImplemented {
+                message: String::from("not yet implemented relations with via ways"),
+                relation: relation.clone(),
+            });
         }
+        // relations with a missing via member are invalid and therefore we skip them
+        // https://wiki.openstreetmap.org/wiki/Relation:restriction#Members
         Ok(())
     }
 
