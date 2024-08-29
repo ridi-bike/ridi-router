@@ -1,5 +1,6 @@
 use clap::{arg, value_parser, Command};
 
+use core::panic;
 use std::{
     cmp::Eq,
     collections::{BTreeMap, HashMap},
@@ -12,6 +13,7 @@ use geo::HaversineDistance;
 use geo::Point;
 
 use crate::{
+    cli::Cli,
     gps_hash::{get_gps_coords_hash, HashOffset},
     map_data::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
@@ -531,47 +533,15 @@ impl MapDataGraph {
 
     pub fn get() -> &'static MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| {
-            let matches = Command::new("gps-router")
-                .arg(
-                    arg!(
-                        -d --data_file <PATH> "File with OSM json data"
-                    )
-                    .value_parser(value_parser!(String)),
-                )
-                .arg(
-                    arg!(
-                        -f --from_lat <LAT> "From lat"
-                    )
-                    .value_parser(value_parser!(f64)),
-                )
-                .arg(
-                    arg!(
-                        -F --from_lon <LON> "From lon"
-                    )
-                    .value_parser(value_parser!(f64)),
-                )
-                .arg(
-                    arg!(
-                        -t --to_lat <LAT> "To lat"
-                    )
-                    .value_parser(value_parser!(f64)),
-                )
-                .arg(
-                    arg!(
-                        -T --to_lon <LON> "To lon"
-                    )
-                    .value_parser(value_parser!(f64)),
-                )
-                .get_matches();
-
-            let file_source = matches.get_one::<String>("data_file");
-
-            let data_reader = if let Some(file) = file_source {
-                OsmDataReader::new_file(file.clone())
-            } else {
-                OsmDataReader::new_stdin()
+            let data_source = match Cli::get() {
+                Cli::Single {
+                    data_source,
+                    from_to: _,
+                } => data_source,
+                cli => panic!("{:#?} not yet implemented", cli),
             };
 
+            let data_reader = OsmDataReader::new(data_source);
             let map_data = data_reader.read_data().unwrap();
 
             map_data
@@ -586,10 +556,7 @@ mod tests {
 
     use rusty_fork::rusty_fork_test;
 
-    use crate::{
-        map_data::osm::OsmRelationMemberType,
-        test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1},
-    };
+    use crate::test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1};
 
     use super::*;
 

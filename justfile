@@ -48,7 +48,7 @@ gps-test-to-lon := '24.253038'		# doles sala
 # gps-test-to-lat := '56.62557'		# garoza
 # gps-test-to-lon := '23.93226'		# garoza
 
-run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from_lat ' + gps-test-from-lat + ' --from_lon ' + gps-test-from-lon + ' --to_lat ' + gps-test-to-lat + ' --to_lon ' + gps-test-to-lon
+run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
 
 run-stdin:
   {{run-and-load-stdin}}
@@ -57,7 +57,7 @@ run-show-stdin:
   {{run-and-load-stdin}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
   
-load-file := '-- --data_file map-data' / map-data-file-name + ' --from_lat ' + gps-test-from-lat + ' --from_lon ' + gps-test-from-lon + ' --to_lat ' + gps-test-to-lat + ' --to_lon ' + gps-test-to-lon
+load-file := '-- --data_json map-data' / map-data-file-name + ' --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
 
 run-file:
   cargo run {{load-file}}

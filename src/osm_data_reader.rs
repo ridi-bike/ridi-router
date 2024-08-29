@@ -17,34 +17,29 @@ pub enum OsmDataReaderError {
 }
 
 #[derive(Debug, PartialEq)]
-enum ReaderSource {
+pub enum DataSource {
     Stdin,
-    File { file: String },
+    JsonFile { file: String },
+    PbfFile { file: String },
 }
 
 pub struct OsmDataReader {
-    source: ReaderSource,
+    source: DataSource,
     map_data: MapDataGraph,
 }
 
 impl OsmDataReader {
-    pub fn new_stdin() -> Self {
+    pub fn new(data_source: DataSource) -> Self {
         Self {
-            source: ReaderSource::Stdin,
             map_data: MapDataGraph::new(),
-        }
-    }
-    pub fn new_file(file: String) -> Self {
-        Self {
-            source: ReaderSource::File { file },
-            map_data: MapDataGraph::new(),
+            source: data_source,
         }
     }
 
     pub fn read_data(mut self) -> Result<MapDataGraph, OsmDataReaderError> {
-        if self.source == ReaderSource::Stdin {
+        if self.source == DataSource::Stdin {
             self.read_stdin()?;
-        } else if let ReaderSource::File { ref file } = self.source {
+        } else if let DataSource::JsonFile { ref file } = self.source {
             self.read_file(file.clone())?;
         }
         Ok(self.map_data)

@@ -11,6 +11,7 @@ geo = "0.28.0"
 gpx = "0.10.0"
 # json-tools = "1.1.2"
 json-tools = { git = "https://github.com/tomsjansons/json-tools.git", branch = "value-pairs" }
+osmpbf = "0.3.4"
 rand = "0.8.5"
 rayon = "1.10.0"
 serde = "1.0.201"

@@ -321,7 +321,7 @@ pub fn test_dataset_3() -> OsmTestData {
 }
 
 pub fn graph_from_test_file(file: &str) -> MapDataGraph {
-    let data_reader = OsmDataReader::new_file(file.to_string());
+    let data_reader = OsmDataReader::new_json_file(file.to_string());
     data_reader.read_data().unwrap()
 }
 
