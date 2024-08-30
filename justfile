@@ -1,12 +1,12 @@
 gps-query-range := '100000' # 100km
 gps-query-from := '56.951861,24.113821' # riga
 gps-query-to := '57.313103,25.281460' # cesis
-map-data-file-name := "map-data-riga-cesis.json"
+map-data-json-name := "map-data-riga-cesis.json"
 
 # gps-query-range := '100' # 100m
 # gps-query-from := '57.155453,24.853327' # sigulda
 # gps-query-to := '57.155453,24.853327' # sigulda
-# map-data-file-name := "test-data-sig-100.json"
+# map-data-json-name := "test-data-sig-100.json"
 
 overpass-query := '"[out:json];
                     way
@@ -33,7 +33,7 @@ overpass-query := '"[out:json];
                     out;"'
 
 data-fetch:
-  curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > map-data/{{map-data-file-name}}
+  curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > map-data/{{map-data-json-name}}
 
 # gps-test-from-lat := '56.92517' # zaķusala
 # gps-test-from-lon := '24.13688' # zaķusala
@@ -48,7 +48,7 @@ gps-test-to-lon := '24.253038'		# doles sala
 # gps-test-to-lat := '56.62557'		# garoza
 # gps-test-to-lon := '23.93226'		# garoza
 
-run-and-load-stdin := 'cat map-data' / map-data-file-name + ' | cargo run -- --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
+run-and-load-stdin := 'cat map-data' / map-data-json-name + ' | cargo run -- --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
 
 run-stdin:
   {{run-and-load-stdin}}
@@ -57,18 +57,35 @@ run-show-stdin:
   {{run-and-load-stdin}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
   
-load-file := '-- --data_json map-data' / map-data-file-name + ' --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
+load-json := '-- --data_json map-data' / map-data-json-name + ' --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
 
-run-file:
-  cargo run {{load-file}}
+run-json:
+  cargo run {{load-json}}
 
-run-show-file:
-  cargo run {{load-file}} > map-data/output.gpx
+run-show-json:
+  cargo run {{load-json}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
 
-run-file-release:
-  cargo run --release {{load-file}}
+run-json-release:
+  cargo run --release {{load-json}}
 
-run-show-file-release:
-  cargo run --release {{load-file}} > map-data/output.gpx
+run-show-json-release:
+  cargo run --release {{load-json}} > map-data/output.gpx
+  gpxsee map-data/output.gpx &
+
+map-data-pbf-name := 'latvia-latest.osm.pbf'
+
+load-pbf := '-- --data_pbf map-data' / map-data-pbf-name + ' --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
+run-pbf:
+  cargo run {{load-pbf}}
+
+run-show-pbf:
+  cargo run {{load-pbf}} > map-data/output.gpx
+  gpxsee map-data/output.gpx &
+
+run-pbf-release:
+  cargo run --release {{load-pbf}}
+
+run-show-pbf-release:
+  cargo run --release {{load-pbf}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
