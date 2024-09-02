@@ -76,6 +76,7 @@ run-show-json-release:
 map-data-pbf-name := 'latvia-latest.osm.pbf'
 
 load-pbf := '-- --data_pbf map-data' / map-data-pbf-name + ' --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
+
 run-pbf:
   cargo run {{load-pbf}}
 

@@ -1,4 +1,5 @@
 use clap::{arg, value_parser, Command};
+use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 
 use core::panic;
 use std::{
@@ -182,6 +183,32 @@ impl MapDataGraph {
         );
         self.point_hashed_offset_none
             .insert(get_gps_coords_hash(lat, lon, HashOffset::LatLon), point_ref);
+    }
+
+    pub fn generate_point_hashes(&mut self) -> () {
+        for point in self.points.iter().filter(|p| !p.lines.is_empty()) {
+            let point_idx = self
+                .points_map
+                .get(&point.id)
+                .expect("Point must exist in the points map, something went very wrong");
+            let point_ref = MapDataElementRef::new(*point_idx);
+            self.point_hashed_offset_none.insert(
+                get_gps_coords_hash(point.lat, point.lon, HashOffset::None),
+                point_ref.clone(),
+            );
+            self.point_hashed_offset_none.insert(
+                get_gps_coords_hash(point.lat, point.lon, HashOffset::Lat),
+                point_ref.clone(),
+            );
+            self.point_hashed_offset_none.insert(
+                get_gps_coords_hash(point.lat, point.lon, HashOffset::Lon),
+                point_ref.clone(),
+            );
+            self.point_hashed_offset_none.insert(
+                get_gps_coords_hash(point.lat, point.lon, HashOffset::LatLon),
+                point_ref,
+            );
+        }
     }
 
     fn get_way_by_idx(&self, idx: usize) -> &MapDataWay {
