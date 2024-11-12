@@ -41,11 +41,19 @@ jobs:
       run: |
         git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD^)..HEAD --pretty=format:"* %s" > RELEASE_NOTES.md
         
+    - name: Commit Version Update
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add Cargo.toml
+        git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
+        git push origin main --tags
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v${{ steps.semver.outputs.next }}
-        name: Release v${{ steps.semver.outputs.next }}
+        tag_name: ${{ steps.semver.outputs.next }}
+        name: Release ${{ steps.semver.outputs.next }}
         body_path: RELEASE_NOTES.md
         files: |
           target/release/*
@@ -54,11 +62,3 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
-    - name: Commit Version Update
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add Cargo.toml
-        git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
-        git tag -a ${{ steps.semver.outputs.next }} -m "Release ${{ steps.semver.outputs.next }}"
-        git push origin main --tags
