@@ -1,4 +1,4 @@
-name: Rust
+name: Release 
 
 on:
   push:
@@ -8,13 +8,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
+      with:
+        fetch-depth: 0
+    
+    - name: Get Next Version
+      id: semver
+      uses: ietf-tools/semver-action@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        branch: main
+    
+    - name: Update Cargo.toml Version
+      run: |
+        sed -i "s/^version = .*/version = \"${{ steps.semver.outputs.next }}\"/" Cargo.toml
+        
     - name: Run tests
       run: cargo test --verbose
+      
+    - name: Build Release
+      run: cargo build --release --verbose
+      
+    - name: Generate Release Notes
+      run: |
+        git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD^)..HEAD --pretty=format:"* %s" > RELEASE_NOTES.md
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.semver.outputs.next }}
+        name: Release v${{ steps.semver.outputs.next }}
+        body_path: RELEASE_NOTES.md
+        files: |
+          target/release/*
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Commit Version Update
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add Cargo.toml
+        git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
+        git tag -a v${{ steps.semver.outputs.next }} -m "Release v${{ steps.semver.outputs.next }}"
+        git push origin main --tags
