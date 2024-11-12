@@ -146,13 +146,13 @@ impl Navigator {
             walker: Walker::new(
                 itinerary.get_from().clone(),
                 itinerary.get_to().clone(),
-                Box::new(DebugLoggerFileSink::new(
-                    1,
-                    itinerary.get_from().clone(),
-                    itinerary.get_to().clone(),
-                    itinerary.get_waypoints().clone(),
-                )),
-                // Box::new(DebugLoggerVoidSink::default()),
+                // Box::new(DebugLoggerFileSink::new(
+                //     1,
+                //     itinerary.get_from().clone(),
+                //     itinerary.get_to().clone(),
+                //     itinerary.get_waypoints().clone(),
+                // )),
+                Box::new(DebugLoggerVoidSink::default()),
             ),
             itinerary,
             weight_calcs,
@@ -282,7 +282,7 @@ impl Navigator {
                 ));
             }
 
-            if loop_counter >= 10000 {
+            if loop_counter >= 1000000 {
                 return NavigationResult::Stopped(self.walker.get_route().clone());
             }
         }

@@ -32,21 +32,34 @@ overpass-query := '"[out:json];
                     );
                     out;"'
 
-data-fetch:
+data-fetch-overpass-query:
   curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > map-data/{{map-data-json-name}}
+
+data-fetch-pbf-latvia:
+	wget https://download.geofabrik.de/europe/latvia-latest.osm.pbf 
+
+data-fetch-pbf-spain:
+	wget https://download.geofabrik.de/europe/spain-latest.osm.pbf 
+
+data-fetch-pbf-greece:
+	wget https://download.geofabrik.de/europe/greece-latest.osm.pbf 
 
 # gps-test-from-lat := '56.92517' # zaķusala
 # gps-test-from-lon := '24.13688' # zaķusala
 # gps-test-from-lat := '57.55998' # zilaiskalns
 # gps-test-from-lon := '25.20804' # zilaiskalns
-gps-test-from-lat := '57.154260' # sigulda
-gps-test-from-lon := '24.853496' # sigulda
-gps-test-to-lat := '56.856551'		# doles sala
-gps-test-to-lon := '24.253038'		# doles sala
+# gps-test-from-lat := '57.154260' # sigulda
+# gps-test-from-lon := '24.853496' # sigulda
+gps-test-from-lat := '36.618195' # malaga
+gps-test-from-lon := '-4.500159' # malaga
+# gps-test-to-lat := '56.856551'		# doles sala
+# gps-test-to-lon := '24.253038'		# doles sala
 # gps-test-to-lat := '57.111708'		# garciems
 # gps-test-to-lon := '24.192656'		# garciems
 # gps-test-to-lat := '56.62557'		# garoza
 # gps-test-to-lon := '23.93226'		# garoza
+gps-test-to-lat := '37.119409'		# gergal, spain
+gps-test-to-lon := '-2.541200'		# gergal, spain
 
 run-and-load-stdin := 'cat map-data' / map-data-json-name + ' | cargo run -- --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
 
@@ -73,7 +86,8 @@ run-show-json-release:
   cargo run --release {{load-json}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
 
-map-data-pbf-name := 'latvia-latest.osm.pbf'
+# map-data-pbf-name := 'latvia-latest.osm.pbf'
+map-data-pbf-name := 'spain-latest.osm.pbf'
 
 load-pbf := '-- --data_pbf map-data' / map-data-pbf-name + ' --from ' + gps-test-from-lat + ',' + gps-test-from-lon + ' --to ' + gps-test-to-lat + ',' + gps-test-to-lon
 
