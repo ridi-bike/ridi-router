@@ -24,6 +24,8 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         branch: main
+        majorList: major
+        patchList: chore, fix, bugfix, perf, refactor, test, tests
     
     - name: Update Cargo.toml Version
       run: |
