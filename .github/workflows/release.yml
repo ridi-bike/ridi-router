@@ -27,7 +27,9 @@ jobs:
     
     - name: Update Cargo.toml Version
       run: |
-        sed -i "s/^version = .*/version = \"${{ steps.semver.outputs.next }}\"/" Cargo.toml
+        VERSION="${{ steps.semver.outputs.next }}"
+        VERSION_CLEAN="${VERSION#v}"  # Remove leading 'v' if present
+        sed -i "s/^version = .*/version = \"$VERSION_CLEAN\"/" Cargo.toml
         
     - name: Run tests
       run: cargo test --verbose
