@@ -420,23 +420,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "moto-router"
-version = "0.1.0"
-dependencies = [
- "clap",
- "geo",
- "gpx",
- "json-tools",
- "osmpbfreader",
- "rand",
- "rayon",
- "rusty-fork",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
 name = "num-conv"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -613,6 +596,23 @@ checksum = "1465873a3dfdaa8ae7cb14b4383657caab0b3e8a0aa9ae8e04b044854c8dfce2"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "ridi-router"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "geo",
+ "gpx",
+ "json-tools",
+ "osmpbfreader",
+ "rand",
+ "rayon",
+ "rusty-fork",
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]

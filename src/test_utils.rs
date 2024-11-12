@@ -5,7 +5,7 @@ use crate::{
         graph::{MapDataGraph, MapDataLineRef},
         osm::{OsmNode, OsmRelation, OsmWay},
     },
-    osm_data_reader::OsmDataReader,
+    osm_data_reader::{DataSource, OsmDataReader},
     router::route::Route,
     MAP_DATA_GRAPH,
 };
@@ -321,7 +321,10 @@ pub fn test_dataset_3() -> OsmTestData {
 }
 
 pub fn graph_from_test_file(file: &str) -> MapDataGraph {
-    let data_reader = OsmDataReader::new_json_file(file.to_string());
+    let data_source = DataSource::JsonFile {
+        file: file.to_string(),
+    };
+    let data_reader = OsmDataReader::new(data_source);
     data_reader.read_data().unwrap()
 }
 
