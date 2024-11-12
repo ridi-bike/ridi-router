@@ -32,10 +32,10 @@ jobs:
         sed -i "s/^version = .*/version = \"$VERSION_CLEAN\"/" Cargo.toml
         
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
       
     - name: Build Release
-      run: cargo build --release --verbose
+      run: cargo build --release
       
     - name: Generate Release Notes
       run: |
@@ -60,5 +60,5 @@ jobs:
         git config --local user.name "GitHub Action"
         git add Cargo.toml
         git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
-        git tag -a v${{ steps.semver.outputs.next }} -m "Release v${{ steps.semver.outputs.next }}"
+        git tag -a ${{ steps.semver.outputs.next }} -m "Release ${{ steps.semver.outputs.next }}"
         git push origin main --tags
