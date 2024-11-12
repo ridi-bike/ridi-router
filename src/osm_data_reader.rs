@@ -10,7 +10,6 @@ use crate::{
     osm_json_parser::{OsmElement, OsmElementType, OsmJsonParser, OsmJsonParserError},
 };
 use std::{
-    collections::HashMap,
     fs::File,
     io::{self, BufRead, BufReader},
     time::Instant,
