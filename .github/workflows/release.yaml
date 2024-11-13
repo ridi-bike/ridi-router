@@ -38,6 +38,14 @@ jobs:
       
     - name: Build Release
       run: cargo build --release
+
+    - name: Verify Release Binary
+      run: |
+        BINARY_PATH="target/release/ridi-router"
+        if [[ ! -f "$BINARY_PATH" ]]; then
+          echo "Error: Release binary not found at $BINARY_PATH"
+          exit 1
+        fi
       
     - name: Generate Release Notes
       run: |
