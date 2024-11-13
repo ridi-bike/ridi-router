@@ -63,8 +63,15 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add Cargo.toml
-        git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
+        git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
         git push origin main --tags
+
+    - name: Rebase Dev Branch
+      run: |
+        git fetch origin dev:dev
+        git checkout dev
+        git rebase main
+        git push origin dev --force-with-lease
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
