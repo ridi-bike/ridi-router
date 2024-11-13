@@ -58,7 +58,7 @@ jobs:
         name: Release ${{ steps.semver.outputs.next }}
         body_path: RELEASE_NOTES.md
         files: |
-          target/release/*
+          target/release/ridi-router
         draft: false
         prerelease: false
       env:
