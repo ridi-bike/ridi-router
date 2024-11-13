@@ -13,24 +13,24 @@ pub struct RoutesWriter {
     start_point: MapDataPointRef,
     routes: Vec<Route>,
     file_name: Option<String>,
-    from_lat: f64,
-    from_lon: f64,
+    start_lat: f64,
+    start_lon: f64,
 }
 
 impl RoutesWriter {
     pub fn new(
         start_point: MapDataPointRef,
         routes: Vec<Route>,
-        from_lat: f64,
-        from_lon: f64,
+        start_lat: f64,
+        start_lon: f64,
         file_name: Option<String>,
     ) -> Self {
         Self {
             start_point,
             routes,
             file_name,
-            from_lat,
-            from_lon,
+            start_lat,
+            start_lon,
         }
     }
     pub fn write_gpx(self) -> Result<(), RoutesWriterError> {
@@ -40,7 +40,7 @@ impl RoutesWriter {
         for route in self.routes {
             let mut track_segment = TrackSegment::new();
 
-            let waypoint = Waypoint::new(Point::new(self.from_lon, self.from_lat));
+            let waypoint = Waypoint::new(Point::new(self.start_lon, self.start_lat));
             track_segment.points.push(waypoint);
 
             let waypoint = Waypoint::new(Point::new(

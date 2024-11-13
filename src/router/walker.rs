@@ -6,7 +6,6 @@ use crate::{
         graph::{MapDataGraph, MapDataPointRef},
         rule::MapDataRuleType,
     },
-    MAP_DATA_GRAPH,
 };
 
 use super::route::{segment::Segment, segment_list::SegmentList, Route};

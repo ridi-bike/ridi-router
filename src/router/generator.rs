@@ -16,13 +16,13 @@ const ITINERARY_VARIATION_DISTANCES: [f64; 2] = [10000., 20000.];
 const ITINERARY_VARIATION_DEGREES: [f64; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
 
 pub struct Generator {
-    from: MapDataPointRef,
-    to: MapDataPointRef,
+    start: MapDataPointRef,
+    finish: MapDataPointRef,
 }
 
 impl Generator {
-    pub fn new(from: MapDataPointRef, to: MapDataPointRef) -> Self {
-        Self { from, to }
+    pub fn new(start: MapDataPointRef, finish: MapDataPointRef) -> Self {
+        Self { start, finish }
     }
 
     fn create_waypoints_around(&self, point: &MapDataPointRef) -> Vec<MapDataPointRef> {
@@ -44,18 +44,18 @@ impl Generator {
     }
 
     fn generate_itineraries(&self) -> Vec<Itinerary> {
-        let to_waypoints = self.create_waypoints_around(&self.to);
+        let to_waypoints = self.create_waypoints_around(&self.finish);
         let mut itineraries = vec![Itinerary::new(
-            self.from.clone(),
-            self.to.clone(),
+            self.start.clone(),
+            self.finish.clone(),
             Vec::new(),
             10.,
         )];
 
         to_waypoints.iter().for_each(|wp| {
             itineraries.push(Itinerary::new(
-                self.from.clone(),
-                self.to.clone(),
+                self.start.clone(),
+                self.finish.clone(),
                 vec![wp.clone()],
                 1000.,
             ))

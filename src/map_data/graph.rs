@@ -1,27 +1,24 @@
-use clap::{arg, value_parser, Command};
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-
 use core::panic;
 use std::{
     cmp::Eq,
     collections::{BTreeMap, HashMap},
-    fmt::{Debug, Display},
+    fmt::Debug,
     hash::Hash,
     marker::PhantomData,
+    sync::OnceLock,
 };
 
 use geo::HaversineDistance;
 use geo::Point;
 
 use crate::{
-    cli::Cli,
     gps_hash::{get_gps_coords_hash, HashOffset},
     map_data::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
     osm_data_reader::OsmDataReader,
-    MAP_DATA_GRAPH,
+    router_mode::RouterMode,
 };
 
 use super::{
@@ -32,6 +29,8 @@ use super::{
     way::{MapDataWay, MapDataWayPoints},
     MapDataError,
 };
+
+pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
 trait MapDataElement: Debug {
     fn get(idx: usize) -> &'static Self;
@@ -560,15 +559,15 @@ impl MapDataGraph {
 
     pub fn get() -> &'static MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| {
-            let data_source = match Cli::get() {
-                Cli::Single {
-                    data_source,
-                    from_to: _,
-                } => data_source,
-                cli => panic!("{:#?} not yet implemented", cli),
+            let data_source = match RouterMode::get() {
+                RouterMode::Server { data_source } => data_source,
+                RouterMode::Dual { data_source, .. } => data_source,
+                RouterMode::Client { .. } => {
+                    panic!("data source only available in server or dual mode")
+                }
             };
 
-            let data_reader = OsmDataReader::new(data_source);
+            let data_reader = OsmDataReader::new(data_source.clone());
             let map_data = data_reader.read_data().unwrap();
 
             map_data
