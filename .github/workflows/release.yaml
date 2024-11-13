@@ -65,10 +65,12 @@ jobs:
         git config --local user.name "GitHub Action"
         git add Cargo.toml
         git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
+        git remote set-url origin "https://x-access-token:${{ steps.generate_token.outputs.token }}@github.com/${{ github.repository }}"
         git push origin main --tags
 
     - name: Rebase Dev Branch
       run: |
+        git remote set-url origin "https://x-access-token:${{ steps.generate_token.outputs.token }}@github.com/${{ github.repository }}"
         git fetch origin dev:dev
         git checkout dev
         git rebase main
