@@ -68,13 +68,6 @@ jobs:
         git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
         git push origin main
 
-    - name: Rebase Dev Branch
-      run: |
-        git fetch origin dev:dev
-        git checkout dev
-        git merge main
-        git push origin dev 
-
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
