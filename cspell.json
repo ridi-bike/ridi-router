@@ -1,1 +1,17 @@
-{"flagWords":[],"version":"0.2","language":"en","words":["trunc","sigulda","cesis","gpxsee","sala","moto","ridi","osmpbf","osmpbfreader"]}
+{
+	"flagWords": [],
+	"version": "0.2",
+	"language": "en",
+	"words": [
+		"trunc",
+		"sigulda",
+		"cesis",
+		"gpxsee",
+		"sala",
+		"moto",
+		"ridi",
+		"osmpbf",
+		"osmpbfreader",
+		"interprocess"
+	]
+}

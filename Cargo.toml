@@ -9,6 +9,7 @@ edition = "2021"
 clap = { version = "4.5.9", features = ["derive"] }
 geo = "0.28.0"
 gpx = "0.10.0"
+interprocess = "2.2.1"
 # json-tools = "1.1.2"
 json-tools = { git = "https://github.com/tomsjansons/json-tools.git", branch = "value-pairs" }
 osmpbfreader = "0.16.1"

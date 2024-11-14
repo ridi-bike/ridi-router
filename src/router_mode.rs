@@ -1,11 +1,25 @@
-use core::panic;
-use std::{path::PathBuf, sync::OnceLock};
+use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLock};
 
 use clap::Parser;
 
 use crate::{osm_data_reader::DataSource, result_writer::DataDestination};
 
 use clap::Subcommand;
+
+#[derive(Debug)]
+enum RouterModeError {
+    InputFileFormatIncorrect {
+        filename: PathBuf,
+    },
+    OutputFileFormatIncorrect {
+        filename: PathBuf,
+    },
+    Coords {
+        name: String,
+        cause: String,
+        error: Option<ParseFloatError>,
+    },
+}
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -17,7 +31,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliMode {
-    Sever {
+    Server {
         #[arg(short, long, value_name = "FILE")]
         input: PathBuf,
     },
@@ -73,66 +87,103 @@ pub enum RouterMode {
 }
 
 impl RouterMode {
-    fn get_start_finish(start: String, finish: String) -> StartFinish {
+    fn get_start_finish(start: String, finish: String) -> Result<StartFinish, RouterModeError> {
         let mut start = start.split(",");
         let mut finish = finish.split(",");
-        StartFinish {
+        Ok(StartFinish {
             start_lat: start
                 .next()
-                .expect("LAT value not found in the 'start' arg")
+                .ok_or_else(|| RouterModeError::Coords {
+                    name: "Start LAT".to_string(),
+                    cause: "missing".to_string(),
+                    error: None,
+                })?
                 .parse()
-                .expect("LAT value in the 'start' arg not parsable as f64"),
+                .map_err(|error| RouterModeError::Coords {
+                    name: "Start LAT".to_string(),
+                    cause: "not parsable as f64".to_string(),
+                    error: Some(error),
+                })?,
             start_lon: start
                 .next()
-                .expect("LON value not found in the 'start' arg")
+                .ok_or_else(|| RouterModeError::Coords {
+                    name: "Start LON".to_string(),
+                    cause: "missing".to_string(),
+                    error: None,
+                })?
                 .parse()
-                .expect("LON value in the 'start' arg not parsable as f64"),
+                .map_err(|error| RouterModeError::Coords {
+                    name: "Start Lon".to_string(),
+                    cause: "not parsable as f64".to_string(),
+                    error: Some(error),
+                })?,
             finish_lat: finish
                 .next()
-                .expect("LAT value not found in the 'finish' arg")
+                .ok_or_else(|| RouterModeError::Coords {
+                    name: "Finish LAT".to_string(),
+                    cause: "missing".to_string(),
+                    error: None,
+                })?
                 .parse()
-                .expect("LAT value in the 'finish' arg not parsable as f64"),
+                .map_err(|error| RouterModeError::Coords {
+                    name: "Finish LAT".to_string(),
+                    cause: "not parsable as f64".to_string(),
+                    error: Some(error),
+                })?,
             finish_lon: finish
                 .next()
-                .expect("LON value not found in the 'finish' arg")
+                .ok_or_else(|| RouterModeError::Coords {
+                    name: "Finish LON".to_string(),
+                    cause: "missing".to_string(),
+                    error: None,
+                })?
                 .parse()
-                .expect("LON value in the 'finish' arg not parsable as f64"),
-        }
+                .map_err(|error| RouterModeError::Coords {
+                    name: "Finish LON".to_string(),
+                    cause: "not parsable as f64".to_string(),
+                    error: Some(error),
+                })?,
+        })
     }
-    fn get_data_source(input: PathBuf) -> DataSource {
-        if input.ends_with(".json") {
-            DataSource::JsonFile { file: input }
-        } else if input.ends_with(".pbf") {
-            DataSource::PbfFile { file: input }
-        } else {
-            panic!("expected json or pbf")
+    fn get_data_source(input: PathBuf) -> Result<DataSource, RouterModeError> {
+        if let Some(ext) = input.extension() {
+            if ext == "json" {
+                return Ok(DataSource::JsonFile { file: input });
+            } else if ext == "pbf " {
+                return Ok(DataSource::PbfFile { file: input });
+            }
         }
+        Err(RouterModeError::InputFileFormatIncorrect { filename: input })
     }
-    fn get_data_destination(output: PathBuf) -> DataDestination {
-        if output.ends_with(".json") {
-            DataDestination::Json { file: output }
-        } else if output.ends_with(".gpx") {
-            DataDestination::Gpx { file: output }
-        } else {
-            panic!("output can only be json or gpx");
+    fn get_data_destination(output: PathBuf) -> Result<DataDestination, RouterModeError> {
+        if let Some(ext) = output.extension() {
+            if ext == "json" {
+                return Ok(DataDestination::Json { file: output });
+            } else if ext == "gpx" {
+                return Ok(DataDestination::Gpx { file: output });
+            }
         }
+        Err(RouterModeError::OutputFileFormatIncorrect { filename: output })
     }
     pub fn get() -> &'static RouterMode {
         ROUTER_MODE.get_or_init(|| {
             let cli = Cli::parse();
             match cli.mode {
-                CliMode::Sever { input } => RouterMode::Server {
-                    data_source: RouterMode::get_data_source(input),
+                CliMode::Server { input } => RouterMode::Server {
+                    data_source: RouterMode::get_data_source(input)
+                        .expect("could not get data source"),
                 },
                 CliMode::Client {
                     output,
                     start,
                     finish,
                 } => {
-                    let start_finish = RouterMode::get_start_finish(start, finish);
+                    let start_finish = RouterMode::get_start_finish(start, finish)
+                        .expect("could not get start/finish coordinates");
                     RouterMode::Client {
                         start_finish,
-                        data_destination: RouterMode::get_data_destination(output),
+                        data_destination: RouterMode::get_data_destination(output)
+                            .expect("could not get data destination"),
                     }
                 }
                 CliMode::Dual {
@@ -141,11 +192,14 @@ impl RouterMode {
                     start,
                     finish,
                 } => {
-                    let start_finish = RouterMode::get_start_finish(start, finish);
+                    let start_finish = RouterMode::get_start_finish(start, finish)
+                        .expect("could not get start/finish coordinates");
                     RouterMode::Dual {
-                        data_source: RouterMode::get_data_source(input),
+                        data_source: RouterMode::get_data_source(input)
+                            .expect("could not get data source"),
                         start_finish,
-                        data_destination: RouterMode::get_data_destination(output),
+                        data_destination: RouterMode::get_data_destination(output)
+                            .expect("could not get data destination"),
                     }
                 }
             }
