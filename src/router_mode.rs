@@ -149,7 +149,7 @@ impl RouterMode {
         if let Some(ext) = input.extension() {
             if ext == "json" {
                 return Ok(DataSource::JsonFile { file: input });
-            } else if ext == "pbf " {
+            } else if ext == "pbf" {
                 return Ok(DataSource::PbfFile { file: input });
             }
         }

@@ -1,15 +1,47 @@
+use clap::error;
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Name, Stream};
-use std::io::{self, prelude::*, BufReader};
+use std::{
+    io::{self, prelude::*, BufReader},
+    num::ParseFloatError,
+    thread,
+    time::Duration,
+};
+
+use crate::router_mode::{RouterMode, StartFinish};
 
 #[derive(Debug)]
 pub enum IpcHandlerError {
-    NamespaceName { error: io::Error },
-    CreateListener { error: io::Error },
-    SocketAddressInUse { error: io::Error },
-    ReadLine { error: io::Error },
-    WriteLine { error: io::Error },
-    WriteAll { error: io::Error },
-    Connect { error: io::Error },
+    NamespaceName {
+        error: io::Error,
+    },
+    CreateListener {
+        error: io::Error,
+    },
+    SocketAddressInUse {
+        error: io::Error,
+    },
+    ReadLine {
+        error: io::Error,
+    },
+    WriteLine {
+        error: io::Error,
+    },
+    WriteAll {
+        error: io::Error,
+    },
+    Connect {
+        error: io::Error,
+    },
+    ParseMessageCoords {
+        error: ParseFloatError,
+        value: String,
+        pos: usize,
+    },
+    ParseMessageUnexpected {
+        pos: usize,
+        value: String,
+    },
+    ParseMessageMissingValue,
 }
 
 pub struct IpcHandler<'a> {
@@ -78,46 +110,98 @@ impl<'a> IpcHandler<'a> {
         // The synchronization between the server and client, if any is used, goes here.
         eprintln!("Server running at {}", self.socket_print_name);
 
-        // Preemptively allocate a sizeable buffer for receiving at a later moment. This size should
-        // be enough and should be easy to find for the allocator. Since we only have one concurrent
-        // client, there's no need to reallocate the buffer repeatedly.
-        let mut buffer = String::with_capacity(128);
-
         for conn in listener.incoming().filter_map(handle_error) {
-            // Wrap the connection into a buffered receiver right away
-            // so that we could receive a single line from it.
-            let mut conn = BufReader::new(conn);
-            println!("Incoming connection!");
-
-            // Since our client example sends first, the server should receive a line and only then
-            // send a response. Otherwise, because receiving from and sending to a connection cannot
-            // be simultaneous without threads or async, we can deadlock the two processes by having
-            // both sides wait for the send buffer to be emptied by the other.
-            conn.read_line(&mut buffer)
-                .map_err(|error| IpcHandlerError::ReadLine { error })?;
-
-            // Now that the receive has come through and the client is waiting on the server's send, do
-            // it. (`.get_mut()` is to get the sender, `BufReader` doesn't implement a pass-through
-            // `Write`.)
-            conn.get_mut()
-                .write_all(b"Hello from server!\n")
-                .map_err(|error| IpcHandlerError::WriteLine { error })?;
-
-            // Print out the result, getting the newline for free!
-            print!("Client answered: {buffer}");
-
-            // Clear the buffer so that the next iteration will display new data instead of messages
-            // stacking on top of one another.
-            buffer.clear();
+            rayon::spawn(move || {
+                let res = IpcHandler::process_connection(&conn);
+                if let Err(err) = res {
+                    eprintln!("error from connection {:?}", err)
+                }
+            });
         }
-        //{
+
         Ok(())
     }
 
-    pub fn connect(&self) -> Result<(), IpcHandlerError> {
+    fn process_connection(conn: &Stream) -> Result<(), IpcHandlerError> {
+        let mut buffer = String::with_capacity(128);
+
+        // Wrap the connection into a buffered receiver right away
+        // so that we could receive a single line from it.
+        let mut conn = BufReader::new(conn);
+        println!("Incoming connection!");
+
+        // Since our client example sends first, the server should receive a line and only then
+        // send a response. Otherwise, because receiving from and sending to a connection cannot
+        // be simultaneous without threads or async, we can deadlock the two processes by having
+        // both sides wait for the send buffer to be emptied by the other.
+        conn.read_line(&mut buffer)
+            .map_err(|error| IpcHandlerError::ReadLine { error })?;
+
+        let mut start_lat: Option<f64> = None;
+        let mut start_lon: Option<f64> = None;
+        let mut finish_lat: Option<f64> = None;
+        let mut finish_lon: Option<f64> = None;
+
+        buffer.pop(); // remove newline char
+        let message_parts = buffer.split(",");
+        eprintln!("message_parts {:?}", message_parts);
+        for (idx, part) in message_parts.enumerate() {
+            eprintln!("{}:{}", idx, part);
+            let coord = part
+                .parse()
+                .map_err(|error| IpcHandlerError::ParseMessageCoords {
+                    error,
+                    value: part.to_string(),
+                    pos: idx,
+                })?;
+            if idx == 0 {
+                start_lat = Some(coord);
+            }
+            if idx == 1 {
+                start_lon = Some(coord);
+            }
+            if idx == 2 {
+                finish_lat = Some(coord);
+            }
+            if idx == 3 {
+                finish_lon = Some(coord);
+            }
+            if idx > 3 {
+                return Err(IpcHandlerError::ParseMessageUnexpected {
+                    pos: idx,
+                    value: part.to_string(),
+                });
+            }
+        }
+
+        let start_lat = start_lat.ok_or(IpcHandlerError::ParseMessageMissingValue)?;
+        let start_lon = start_lon.ok_or(IpcHandlerError::ParseMessageMissingValue)?;
+        let finish_lat = finish_lat.ok_or(IpcHandlerError::ParseMessageMissingValue)?;
+        let finish_lon = finish_lon.ok_or(IpcHandlerError::ParseMessageMissingValue)?;
+
+        let arr = [1f64; 5];
+        eprintln!("arr {:?}", arr);
+        arr.iter().for_each(|v| {
+            let sleep_sec = (v * start_lat) as u64;
+            eprintln!("sleeping for {}", sleep_sec);
+            thread::sleep(Duration::from_secs(sleep_sec));
+        });
+
+        // Now that the receive has come through and the client is waiting on the server's send, do
+        // it. (`.get_mut()` is to get the sender, `BufReader` doesn't implement a pass-through
+        // `Write`.)
+        conn.get_mut()
+            .write_all(b"Hello from server!\n")
+            .map_err(|error| IpcHandlerError::WriteLine { error })?;
+
+        Ok(())
+    }
+
+    pub fn connect(&self, start_finish: &StartFinish) -> Result<(), IpcHandlerError> {
         // Preemptively allocate a sizeable buffer for receiving. This size should be enough and
         // should be easy to find for the allocator.
         let mut buffer = String::with_capacity(128);
+        eprintln!("buffer {buffer:?}");
 
         // Create our connection. This will block until the server accepts our connection, but will
         // fail immediately if the server hasn't even started yet; somewhat similar to how happens
@@ -128,14 +212,23 @@ impl<'a> IpcHandler<'a> {
             .map_err(|error| IpcHandlerError::Connect { error })?;
         // Wrap it into a buffered reader right away so that we could receive a single line out of it.
         let mut conn = BufReader::new(conn);
+        eprintln!("con {conn:?}");
 
         // Send our message into the stream. This will finish either when the whole message has been
         // sent or if a send operation returns an error. (`.get_mut()` is to get the sender,
         // `BufReader` doesn't implement pass-through `Write`.)
+        let message = format!(
+            "{},{},{},{}\n",
+            start_finish.start_lat,
+            start_finish.start_lon,
+            start_finish.finish_lat,
+            start_finish.finish_lon
+        );
+        eprintln!("message {message:?}");
         conn.get_mut()
-            .write_all(b"Hello from client!\n")
+            .write_all(message.as_bytes())
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
-
+        eprintln!("message sent");
         // We now employ the buffer we allocated prior and receive a single line, interpreting a
         // newline character as an end-of-file (because local sockets cannot be portably shut down),
         // verifying validity of UTF-8 on the fly.

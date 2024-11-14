@@ -51,12 +51,13 @@ fn main() {
             }
         }
         RouterMode::Server { .. } => {
+            MapDataGraph::get();
             let ipc = IpcHandler::init().expect("could not init ipc");
             ipc.listen().expect("failed when listening to ipc");
         }
-        RouterMode::Client { .. } => {
+        RouterMode::Client { start_finish, .. } => {
             let ipc = IpcHandler::init().expect("could not init ipc");
-            ipc.connect().expect("could not connect to ipc");
+            ipc.connect(start_finish).expect("could not connect to ipc");
         }
     }
 }
