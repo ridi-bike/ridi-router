@@ -333,7 +333,7 @@ impl Walker {
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
-                if last_segment.get_end_point().borrow().junction
+                if last_segment.get_end_point().borrow().is_junction()
                     && self
                         .get_fork_segments_for_segment(&last_segment)
                         .get_segment_count()

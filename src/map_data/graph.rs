@@ -158,7 +158,6 @@ impl MapDataGraph {
             lon: value.lon,
             part_of_ways: Vec::new(),
             lines: Vec::new(),
-            junction: false,
             rules: Vec::new(),
         };
         let idx = self.add_point(point.clone());
@@ -312,12 +311,9 @@ impl MapDataGraph {
 
                     let point_mut = self.get_mut_point_by_idx(point_ref.idx);
                     point_mut.lines.push(line_ref.clone());
-                    point_mut.junction = point_mut.lines.len() > 2;
 
                     let prev_point_mut = self.get_mut_point_by_idx(prev_point_ref.idx);
                     prev_point_mut.lines.push(line_ref);
-
-                    prev_point_mut.junction = prev_point_mut.lines.len() > 2;
                 }
                 prev_point_ref = Some(point_ref);
             } else {

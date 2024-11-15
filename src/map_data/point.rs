@@ -16,7 +16,6 @@ pub struct MapDataPoint {
     pub lon: f64,
     pub part_of_ways: Vec<MapDataWayRef>,
     pub lines: Vec<MapDataLineRef>,
-    pub junction: bool,
     pub rules: Vec<MapDataRule>,
 }
 
@@ -30,6 +29,9 @@ impl MapDataPoint {
         let self_geo = Point::new(self.lon, self.lat);
         let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
         self_geo.haversine_bearing(point_geo)
+    }
+    pub fn is_junction(&self) -> bool {
+        self.lines.len() > 2
     }
 }
 
@@ -61,7 +63,7 @@ impl Debug for MapDataPoint {
                 .iter()
                 .map(|l| l.borrow().line_id())
                 .collect::<Vec<_>>(),
-            self.junction,
+            self.is_junction(),
             self.rules
         )
     }
