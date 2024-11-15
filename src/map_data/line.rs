@@ -2,16 +2,21 @@ use std::fmt::Debug;
 
 use super::graph::{MapDataElementTagRef, MapDataPointRef, MapDataWayRef};
 
+#[derive(Clone, PartialEq)]
+pub enum LineDirection {
+    BothWays = 0,
+    OneWay = 1,
+    Roundabout = 2,
+}
+
 #[derive(Clone)]
 pub struct MapDataLine {
     // pub id: String,
     pub way: MapDataWayRef,
     pub points: (MapDataPointRef, MapDataPointRef),
-    pub one_way: bool,
-    pub roundabout: bool,
+    pub direction: LineDirection,
     pub tags: (MapDataElementTagRef, MapDataElementTagRef),
 }
-
 impl MapDataLine {
     pub fn line_id(&self) -> String {
         format!(
@@ -26,6 +31,12 @@ impl MapDataLine {
     }
     pub fn tag_ref(&self) -> Option<&String> {
         self.tags.1.get()
+    }
+    pub fn is_one_way(&self) -> bool {
+        self.direction == LineDirection::OneWay
+    }
+    pub fn is_roundabout(&self) -> bool {
+        self.direction == LineDirection::Roundabout
     }
 }
 
@@ -49,8 +60,8 @@ impl Debug for MapDataLine {
             self.way.borrow().id,
             self.points.0.borrow().id,
             self.points.1.borrow().id,
-            self.one_way,
-            self.roundabout
+            self.is_one_way(),
+            self.direction == LineDirection::Roundabout
         )
     }
 }

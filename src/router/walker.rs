@@ -71,7 +71,7 @@ impl Walker {
         let segment_list = segments
             .iter()
             .filter_map(|(l, p)| {
-                if l.borrow().one_way && &l.borrow().points.1 == center_point {
+                if l.borrow().is_one_way() && &l.borrow().points.1 == center_point {
                     return None;
                 }
                 if not_allow_rules.len() > 0 {
@@ -139,7 +139,7 @@ impl Walker {
                 }
 
                 // exclude if next line is one way and the direction is backwards
-                if line_next.borrow().one_way && &line_next.borrow().points.1 == center_point {
+                if line_next.borrow().is_one_way() && &line_next.borrow().points.1 == center_point {
                     return false;
                 }
 
@@ -175,7 +175,7 @@ impl Walker {
     }
 
     fn get_roundabout_exits(&self, segment: &Segment) -> SegmentList {
-        if !segment.get_line().borrow().roundabout {
+        if !segment.get_line().borrow().is_roundabout() {
             return SegmentList::new();
         }
 
@@ -191,7 +191,7 @@ impl Walker {
                 fork_segments
                     .iter()
                     .filter_map(|f| {
-                        if f.get_line().borrow().roundabout {
+                        if f.get_line().borrow().is_roundabout() {
                             return None;
                         }
                         Some(f.clone())
@@ -201,7 +201,7 @@ impl Walker {
 
             current_segment = match fork_segments
                 .iter()
-                .find(|s| s.get_line().borrow().roundabout)
+                .find(|s| s.get_line().borrow().is_roundabout())
             {
                 None => break,
                 Some(s) => {
@@ -219,7 +219,7 @@ impl Walker {
     fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) -> () {
         let last_segment = match self.route_walked.get_segment_last() {
             Some(seg) => {
-                if !seg.get_line().borrow().roundabout {
+                if !seg.get_line().borrow().is_roundabout() {
                     return ();
                 }
                 seg.clone()
@@ -244,7 +244,7 @@ impl Walker {
 
             current_segment = match fork_segments
                 .iter()
-                .find(|s| s.get_line().borrow().roundabout)
+                .find(|s| s.get_line().borrow().is_roundabout())
             {
                 None => break,
                 Some(s) => {
@@ -277,7 +277,7 @@ impl Walker {
             let available_segments = match self.route_walked.get_segment_last() {
                 None => self.get_fork_segments_for_point(&self.start),
                 Some(segment) => {
-                    if segment.get_line().borrow().roundabout {
+                    if segment.get_line().borrow().is_roundabout() {
                         self.get_roundabout_exits(&segment)
                     } else {
                         self.get_fork_segments_for_segment(&segment)

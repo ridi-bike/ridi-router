@@ -1,4 +1,3 @@
-use core::panic;
 use std::{
     cmp::Eq,
     collections::{BTreeMap, HashMap},
@@ -21,7 +20,7 @@ use crate::{
 };
 
 use super::{
-    line::MapDataLine,
+    line::{LineDirection, MapDataLine},
     osm::{OsmNode, OsmRelation, OsmWay},
     point::MapDataPoint,
     rule::MapDataRuleType,
@@ -345,8 +344,13 @@ impl MapDataGraph {
                     let line = MapDataLine {
                         way: way_ref.clone(),
                         points: (prev_point_ref.clone(), point_ref.clone()),
-                        one_way: osm_way.is_one_way(),
-                        roundabout: osm_way.is_roundabout(),
+                        direction: if osm_way.is_roundabout() {
+                            LineDirection::Roundabout
+                        } else if osm_way.is_one_way() {
+                            LineDirection::OneWay
+                        } else {
+                            LineDirection::BothWays
+                        },
                         tags: (self.get_tag_ref(tag_name), self.get_tag_ref(tag_ref)),
                     };
                     let line_idx = self.add_line(line);
