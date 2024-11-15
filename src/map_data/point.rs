@@ -6,7 +6,6 @@ use std::fmt::Debug;
 
 use super::graph::MapDataLineRef;
 use super::graph::MapDataPointRef;
-use super::graph::MapDataWayRef;
 use super::rule::MapDataRule;
 
 #[derive(Clone)]
