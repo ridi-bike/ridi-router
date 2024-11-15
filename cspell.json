@@ -12,6 +12,7 @@
 		"ridi",
 		"osmpbf",
 		"osmpbfreader",
-		"interprocess"
+		"interprocess",
+		"bincode"
 	]
 }

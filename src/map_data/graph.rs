@@ -17,8 +17,7 @@ use crate::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
-    osm_data_reader::OsmDataReader,
-    router_mode::RouterMode,
+    osm_data_reader::{DataSource, OsmDataReader},
 };
 
 use super::{
@@ -557,21 +556,20 @@ impl MapDataGraph {
         points_with_dist.get(0).map(|(_, p)| p.clone())
     }
 
-    pub fn get() -> &'static MapDataGraph {
+    fn get_or_init(data_source: Option<&DataSource>) -> &'static MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| {
-            let data_source = match RouterMode::get() {
-                RouterMode::Server { data_source } => data_source,
-                RouterMode::Dual { data_source, .. } => data_source,
-                RouterMode::Client { .. } => {
-                    panic!("data source only available in server or dual mode")
-                }
-            };
-
+            let data_source = data_source.expect("data source must passed in when calling init");
             let data_reader = OsmDataReader::new(data_source.clone());
             let map_data = data_reader.read_data().unwrap();
 
             map_data
         })
+    }
+    pub fn init(data_source: &DataSource) -> () {
+        MapDataGraph::get_or_init(Some(data_source));
+    }
+    pub fn get() -> &'static MapDataGraph {
+        MapDataGraph::get_or_init(None) // we've already initialized the graph
     }
 }
 
