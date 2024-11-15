@@ -97,6 +97,29 @@ impl<T: MapDataElement + 'static> Debug for MapDataElementRef<T> {
     }
 }
 
+#[derive(Clone)]
+pub struct MapDataElementTagRef {
+    tag_value_pos: u32,
+}
+
+impl MapDataElementTagRef {
+    pub fn none() -> Self {
+        Self { tag_value_pos: 0 }
+    }
+    pub fn some(tag_idx: u32) -> Self {
+        Self {
+            tag_value_pos: tag_idx + 1,
+        }
+    }
+    pub fn get(&self) -> Option<&String> {
+        if self.tag_value_pos == 0 {
+            return None;
+        }
+        let idx = self.tag_value_pos - 1;
+        Some(&MapDataGraph::get().tags[idx as usize])
+    }
+}
+
 pub type MapDataLineRef = MapDataElementRef<MapDataLine>;
 pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
 pub type MapDataWayRef = MapDataElementRef<MapDataWay>;
@@ -113,6 +136,8 @@ pub struct MapDataGraph {
     ways: Vec<MapDataWay>,
     ways_map: HashMap<u64, usize>,
     lines: Vec<MapDataLine>,
+    tags: Vec<String>,
+    tags_map: HashMap<String, u32>,
 }
 
 impl MapDataGraph {
@@ -127,6 +152,8 @@ impl MapDataGraph {
             ways: Vec::new(),
             ways_map: HashMap::new(),
             lines: Vec::new(),
+            tags: Vec::new(),
+            tags_map: HashMap::new(),
         }
     }
 
@@ -204,9 +231,9 @@ impl MapDataGraph {
         }
     }
 
-    fn get_way_by_idx(&self, idx: usize) -> &MapDataWay {
-        &self.ways[idx]
-    }
+    // fn get_way_by_idx(&self, idx: usize) -> &MapDataWay {
+    //     &self.ways[idx]
+    // }
     fn get_point_by_idx(&self, idx: usize) -> &MapDataPoint {
         &self.points[idx]
     }
@@ -219,9 +246,9 @@ impl MapDataGraph {
     fn get_mut_point_by_idx(&mut self, idx: usize) -> &mut MapDataPoint {
         &mut self.points[idx]
     }
-    fn get_mut_line_by_idx(&mut self, idx: usize) -> &mut MapDataLine {
-        &mut self.lines[idx]
-    }
+    // fn get_mut_line_by_idx(&mut self, idx: usize) -> &mut MapDataLine {
+    //     &mut self.lines[idx]
+    // }
     fn add_line(&mut self, line: MapDataLine) -> usize {
         self.lines.push(line);
         self.lines.len() - 1
@@ -237,6 +264,21 @@ impl MapDataGraph {
         self.ways_map.insert(way.id, idx);
         self.ways.push(way);
         idx
+    }
+    fn get_tag_ref(&mut self, maybe_tag: Option<String>) -> MapDataElementTagRef {
+        if let Some(tag) = maybe_tag {
+            let tag_idx = self.tags_map.get(&tag);
+            if let Some(tag_idx) = tag_idx {
+                MapDataElementTagRef::some(*tag_idx)
+            } else {
+                let tag_idx = self.tags.len() as u32;
+                self.tags.push(tag.clone());
+                self.tags_map.insert(tag, tag_idx.clone());
+                MapDataElementTagRef::some(tag_idx)
+            }
+        } else {
+            MapDataElementTagRef::none()
+        }
     }
 
     fn way_is_ok(&self, osm_way: &OsmWay) -> bool {
@@ -292,19 +334,20 @@ impl MapDataGraph {
 
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
                 if let Some(prev_point_ref) = prev_point_ref {
+                    let tag_name = osm_way
+                        .tags
+                        .as_ref()
+                        .map_or(None, |t| t.get("name").cloned());
+                    let tag_ref = osm_way
+                        .tags
+                        .as_ref()
+                        .map_or(None, |t| t.get("ref").cloned());
                     let line = MapDataLine {
                         way: way_ref.clone(),
                         points: (prev_point_ref.clone(), point_ref.clone()),
                         one_way: osm_way.is_one_way(),
                         roundabout: osm_way.is_roundabout(),
-                        tags_name: osm_way
-                            .tags
-                            .as_ref()
-                            .map_or(None, |t| t.get("name").cloned()),
-                        tags_ref: osm_way
-                            .tags
-                            .as_ref()
-                            .map_or(None, |t| t.get("ref").cloned()),
+                        tags: (self.get_tag_ref(tag_name), self.get_tag_ref(tag_ref)),
                     };
                     let line_idx = self.add_line(line);
                     let line_ref = MapDataLineRef::new(line_idx);

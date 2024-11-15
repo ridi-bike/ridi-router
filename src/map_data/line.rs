@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use super::graph::{MapDataPointRef, MapDataWayRef};
+use super::graph::{MapDataElementTagRef, MapDataPointRef, MapDataWayRef};
 
 #[derive(Clone)]
 pub struct MapDataLine {
@@ -9,8 +9,7 @@ pub struct MapDataLine {
     pub points: (MapDataPointRef, MapDataPointRef),
     pub one_way: bool,
     pub roundabout: bool,
-    pub tags_ref: Option<String>,
-    pub tags_name: Option<String>,
+    pub tags: (MapDataElementTagRef, MapDataElementTagRef),
 }
 
 impl MapDataLine {
@@ -21,6 +20,12 @@ impl MapDataLine {
             self.points.0.borrow().id,
             self.points.1.borrow().id
         )
+    }
+    pub fn tag_name(&self) -> Option<&String> {
+        self.tags.0.get()
+    }
+    pub fn tag_ref(&self) -> Option<&String> {
+        self.tags.1.get()
     }
 }
 

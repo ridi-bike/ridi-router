@@ -92,23 +92,13 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
     let current_ref = input
         .route
         .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags_ref.clone());
+        .map_or(None, |s| s.get_line().borrow().tag_ref());
     let current_name = input
         .route
         .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags_name.clone());
-    let fork_ref = input
-        .current_fork_segment
-        .get_line()
-        .borrow()
-        .tags_ref
-        .clone();
-    let fork_name = input
-        .current_fork_segment
-        .get_line()
-        .borrow()
-        .tags_name
-        .clone();
+        .map_or(None, |s| s.get_line().borrow().tag_name());
+    let fork_ref = input.current_fork_segment.get_line().borrow().tag_ref();
+    let fork_name = input.current_fork_segment.get_line().borrow().tag_name();
 
     if (current_ref.is_some() && fork_ref.is_some() && current_ref == fork_ref)
         || (current_name.is_some() && fork_name.is_some() && current_name == fork_name)
