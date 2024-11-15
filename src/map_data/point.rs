@@ -14,7 +14,6 @@ pub struct MapDataPoint {
     pub id: u64,
     pub lat: f64,
     pub lon: f64,
-    pub part_of_ways: Vec<MapDataWayRef>,
     pub lines: Vec<MapDataLineRef>,
     pub rules: Vec<MapDataRule>,
 }
@@ -48,17 +47,12 @@ impl Debug for MapDataPoint {
     id={}
     lat={}
     lon={}
-    part_of_ways={:?}
     lines={:?}
     junction={}
     rules={:#?}",
             self.id,
             self.lat,
             self.lon,
-            self.part_of_ways
-                .iter()
-                .map(|w| w.borrow().id)
-                .collect::<Vec<_>>(),
             self.lines
                 .iter()
                 .map(|l| l.borrow().line_id())

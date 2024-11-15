@@ -182,7 +182,6 @@ impl MapDataGraph {
             id: value.id,
             lat: value.lat,
             lon: value.lon,
-            part_of_ways: Vec::new(),
             lines: Vec::new(),
             rules: Vec::new(),
         };
@@ -324,11 +323,6 @@ impl MapDataGraph {
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
                 let way_mut = self.get_mut_way_by_idx(way_idx);
                 way_mut.points.add(point_ref.clone());
-            }
-
-            if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
-                let point_mut = self.get_mut_point_by_idx(point_ref.idx);
-                point_mut.part_of_ways.push(way_ref.clone());
             }
 
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
@@ -828,23 +822,15 @@ mod tests {
                 eprintln!("test {:#?}", test);
                 point.lat == test.lat
                     && point.lon == test.lon
-                    && point.part_of_ways.len() == test.ways.len()
-                    && point.part_of_ways.iter().enumerate().all(|(idx, w)| {
-                        let test_way_id = test
-                            .ways
-                            .get(idx)
-                            .expect(format!("{}: way at idx {} must exist", id, idx).as_str());
-                        w.borrow().id == *test_way_id
-                    })
                     && point.lines.len() == test.lines.len()
                     && point.lines.iter().enumerate().all(|(idx, l)| {
                         let test_line_id = test
                             .lines
                             .get(idx)
                             .expect(format!("{}: line at idx {} must exist", id, idx).as_str());
-                        l.borrow().id == *test_line_id
+                        l.borrow().line_id() == *test_line_id
                     })
-                    && point.junction == test.junction
+                    && point.is_junction() == test.junction
             }
             let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
             assert!(point_is_ok(
@@ -1014,7 +1000,7 @@ mod tests {
                 let line = map_data
                     .lines
                     .iter()
-                    .find(|l| l.id == *id)
+                    .find(|l| l.line_id() == *id)
                     .expect(format!("line {} must exist", id).as_str());
                 eprintln!("line {:#?}", line);
                 eprintln!("test {:#?}", test_points);
@@ -1066,7 +1052,7 @@ mod tests {
             let point = map_data.get_point_ref_by_id(&5).unwrap();
             let points = map_data.get_adjacent(point);
             points.iter().for_each(|p| {
-                assert!((p.1.borrow().id == 3 && p.1.borrow().junction == true) || p.1.borrow().id != 3)
+                assert!((p.1.borrow().id == 3 && p.1.borrow().is_junction() == true) || p.1.borrow().id != 3)
             });
 
             let point = map_data.get_point_ref_by_id(&3).unwrap();
@@ -1074,12 +1060,12 @@ mod tests {
             let non_junctions = vec![2, 5, 4];
             points.iter().for_each(|p| {
                 assert!(
-                    ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().junction == false)
+                    ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().is_junction() == false)
                         || !non_junctions.contains(&p.1.borrow().id))
                 )
             });
             points.iter().for_each(|p| {
-                assert!((p.1.borrow().id == 6 && p.1.borrow().junction == true) || p.1.borrow().id != 6)
+                assert!((p.1.borrow().id == 6 && p.1.borrow().is_junction() == true) || p.1.borrow().id != 6)
             });
         }
     }
@@ -1120,7 +1106,7 @@ mod tests {
                 for (adj_line, adj_point) in &adj_elements {
                     let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
                         line_id.split("-").collect::<HashSet<_>>()
-                            == adj_line.borrow().id.split("-").collect::<HashSet<_>>()
+                            == adj_line.borrow().line_id().split("-").collect::<HashSet<_>>()
                             && point_id == &adj_point.borrow().id
                     });
                     assert_eq!(adj_match.is_some(), true);
