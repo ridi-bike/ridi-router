@@ -59,7 +59,7 @@ impl Debug for MapDataPoint {
                 .collect::<Vec<_>>(),
             self.lines
                 .iter()
-                .map(|l| l.borrow().id.clone())
+                .map(|l| l.borrow().line_id())
                 .collect::<Vec<_>>(),
             self.junction,
             self.rules

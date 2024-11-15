@@ -115,10 +115,6 @@ pub struct MapDataGraph {
     lines: Vec<MapDataLine>,
 }
 
-fn get_line_id(way_id: &u64, point_id_1: &u64, point_id_2: &u64) -> String {
-    format!("{}-{}-{}", way_id, point_id_1, point_id_2)
-}
-
 impl MapDataGraph {
     pub fn new() -> Self {
         Self {
@@ -297,13 +293,7 @@ impl MapDataGraph {
 
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
                 if let Some(prev_point_ref) = prev_point_ref {
-                    let line_id = get_line_id(
-                        &way.id,
-                        &self.get_point_by_idx(prev_point_ref.idx).id,
-                        &point_id,
-                    );
                     let line = MapDataLine {
-                        id: line_id,
                         way: way_ref.clone(),
                         points: (prev_point_ref.clone(), point_ref.clone()),
                         one_way: osm_way.is_one_way(),

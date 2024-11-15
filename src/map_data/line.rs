@@ -4,7 +4,7 @@ use super::graph::{MapDataPointRef, MapDataWayRef};
 
 #[derive(Clone)]
 pub struct MapDataLine {
-    pub id: String,
+    // pub id: String,
     pub way: MapDataWayRef,
     pub points: (MapDataPointRef, MapDataPointRef),
     pub one_way: bool,
@@ -13,9 +13,20 @@ pub struct MapDataLine {
     pub tags_name: Option<String>,
 }
 
+impl MapDataLine {
+    pub fn line_id(&self) -> String {
+        format!(
+            "{}-{}-{}",
+            self.way.borrow().id,
+            self.points.0.borrow().id,
+            self.points.1.borrow().id
+        )
+    }
+}
+
 impl PartialEq for MapDataLine {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.points.0 == other.points.0 && self.points.1 == other.points.1
     }
 }
 
@@ -29,7 +40,7 @@ impl Debug for MapDataLine {
     points=({},{})
     one_way={}
     roundabout={}",
-            self.id,
+            self.line_id(),
             self.way.borrow().id,
             self.points.0.borrow().id,
             self.points.1.borrow().id,
