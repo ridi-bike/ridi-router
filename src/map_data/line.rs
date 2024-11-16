@@ -1,15 +1,17 @@
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
+
 use super::graph::{MapDataElementTagRef, MapDataPointRef};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum LineDirection {
     BothWays = 0,
     OneWay = 1,
     Roundabout = 2,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataLine {
     // pub id: String,
     pub points: (MapDataPointRef, MapDataPointRef),

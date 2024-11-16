@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     map_data::{
         graph::MapDataGraph,
@@ -29,8 +31,14 @@ pub enum OsmDataReaderError {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum DataSource {
-    JsonFile { file: PathBuf },
-    PbfFile { file: PathBuf },
+    JsonFile {
+        file: PathBuf,
+        cache: Option<PathBuf>,
+    },
+    PbfFile {
+        file: PathBuf,
+        cache: Option<PathBuf>,
+    },
 }
 
 pub struct OsmDataReader {
@@ -48,14 +56,70 @@ impl OsmDataReader {
 
     pub fn read_data(mut self) -> Result<MapDataGraph, OsmDataReaderError> {
         match self.source {
-            DataSource::JsonFile { ref file } => {
-                self.read_json(file.clone())?;
+            DataSource::JsonFile {
+                ref file,
+                ref cache,
+            } => {
+                let file = file.clone();
+                let cache = cache.clone();
+                let cache_read = if let Some(cache) = &cache {
+                    self.read_cache(cache.clone())?
+                } else {
+                    false
+                };
+
+                if !cache_read {
+                    self.read_json(file, cache)?;
+                }
             }
-            DataSource::PbfFile { ref file } => {
-                self.read_pbf(file.clone())?;
+            DataSource::PbfFile {
+                ref file,
+                ref cache,
+            } => {
+                let file = file.clone();
+                let cache = cache.clone();
+                let cache_read = if let Some(cache) = &cache {
+                    self.read_cache(cache.clone())?
+                } else {
+                    false
+                };
+
+                if !cache_read {
+                    self.read_pbf(file, cache)?;
+                }
             }
         };
         Ok(self.map_data)
+    }
+
+    fn read_cache(&mut self, cache_file: PathBuf) -> Result<bool, OsmDataReaderError> {
+        let read_start = Instant::now();
+        let cache_contents = match std::fs::read(cache_file) {
+            Err(_) => return Ok(false),
+            Ok(c) => c,
+        };
+        let graph = bincode::deserialize(&cache_contents[..]).expect("could not deserialize");
+        // let graph_reader =
+        //     flexbuffers::Reader::get_root(&cache_contents[..]).expect("could not create reader");
+        // let graph = MapDataGraph::deserialize(graph_reader).expect("could nto deserialize");
+        self.map_data = graph;
+        let read_duration = read_start.elapsed();
+        eprintln!("cache read took {} seconds", read_duration.as_secs());
+        Ok(true)
+    }
+
+    fn write_cache(&self, cache_file: Option<PathBuf>) -> Result<(), OsmDataReaderError> {
+        if let Some(cache_file) = cache_file {
+            let graph_cache =
+                bincode::serialize(&self.map_data).expect("could not serialize graph");
+            std::fs::write(cache_file, graph_cache).expect("failed to write to file");
+            // let mut flex_serializer = flexbuffers::FlexbufferSerializer::new();
+            // self.map_data
+            //     .serialize(&mut flex_serializer)
+            //     .expect("could not serialize");
+            // std::fs::write(cache_file, flex_serializer.view()).expect("failed to write to file");
+        }
+        Ok(())
     }
 
     fn process_elements(&mut self, elements: Vec<OsmElement>) -> Result<(), OsmDataReaderError> {
@@ -99,7 +163,11 @@ impl OsmDataReader {
         Ok(())
     }
 
-    fn read_pbf(&mut self, file: PathBuf) -> Result<(), OsmDataReaderError> {
+    fn read_pbf(
+        &mut self,
+        file: PathBuf,
+        cache_file: Option<PathBuf>,
+    ) -> Result<(), OsmDataReaderError> {
         let read_start = Instant::now();
 
         let path = std::path::Path::new(&file);
@@ -205,13 +273,19 @@ impl OsmDataReader {
 
         self.map_data.generate_point_hashes();
 
+        self.write_cache(cache_file).expect("could not write cache");
+
         let read_duration = read_start.elapsed();
         eprintln!("file read took {} seconds", read_duration.as_secs());
 
         Ok(())
     }
 
-    fn read_json(&mut self, file: PathBuf) -> Result<(), OsmDataReaderError> {
+    fn read_json(
+        &mut self,
+        file: PathBuf,
+        cache_file: Option<PathBuf>,
+    ) -> Result<(), OsmDataReaderError> {
         let read_start = Instant::now();
         let mut parser_state = OsmJsonParser::new();
 
@@ -233,6 +307,8 @@ impl OsmDataReader {
         }
 
         self.map_data.generate_point_hashes();
+
+        self.write_cache(cache_file).expect("could not write cache");
 
         let read_duration = read_start.elapsed();
         eprintln!("file read took {} seconds", read_duration.as_secs());

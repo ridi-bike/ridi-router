@@ -44,6 +44,9 @@ enum CliMode {
     Server {
         #[arg(short, long, value_name = "FILE")]
         input: PathBuf,
+
+        #[arg(short, long, value_name = "FILE")]
+        cache: Option<PathBuf>,
     },
     Client {
         #[arg(short, long, value_name = "FILE")]
@@ -58,6 +61,9 @@ enum CliMode {
     Dual {
         #[arg(short, long, value_name = "FILE")]
         input: PathBuf,
+
+        #[arg(short, long, value_name = "FILE")]
+        cache: Option<PathBuf>,
 
         #[arg(short, long, value_name = "FILE")]
         output: PathBuf,
@@ -102,8 +108,8 @@ impl RouterRunner {
     pub fn init() -> Self {
         let cli = Cli::parse();
         let mode = match cli.mode {
-            CliMode::Server { input } => RouterMode::Server {
-                data_source: get_data_source(input).expect("could not get data source"),
+            CliMode::Server { input, cache } => RouterMode::Server {
+                data_source: get_data_source(input, cache).expect("could not get data source"),
             },
             CliMode::Client {
                 output,
@@ -120,6 +126,7 @@ impl RouterRunner {
             }
             CliMode::Dual {
                 input,
+                cache,
                 output,
                 start,
                 finish,
@@ -127,7 +134,7 @@ impl RouterRunner {
                 let start_finish = get_start_finish(start, finish)
                     .expect("could not get start/finish coordinates");
                 RouterMode::Dual {
-                    data_source: get_data_source(input).expect("could not get data source"),
+                    data_source: get_data_source(input, cache).expect("could not get data source"),
                     start_finish,
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
@@ -273,12 +280,15 @@ fn get_start_finish(start: String, finish: String) -> Result<StartFinish, Router
             })?,
     })
 }
-fn get_data_source(input: PathBuf) -> Result<DataSource, RouterRunnerError> {
+fn get_data_source(
+    input: PathBuf,
+    cache: Option<PathBuf>,
+) -> Result<DataSource, RouterRunnerError> {
     if let Some(ext) = input.extension() {
         if ext == "json" {
-            return Ok(DataSource::JsonFile { file: input });
+            return Ok(DataSource::JsonFile { file: input, cache });
         } else if ext == "pbf" {
-            return Ok(DataSource::PbfFile { file: input });
+            return Ok(DataSource::PbfFile { file: input, cache });
         }
     }
     Err(RouterRunnerError::InputFileFormatIncorrect { filename: input })

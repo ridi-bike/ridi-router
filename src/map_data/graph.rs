@@ -9,6 +9,7 @@ use std::{
 
 use geo::HaversineDistance;
 use geo::Point;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     gps_hash::{get_gps_coords_hash, HashOffset},
@@ -17,6 +18,7 @@ use crate::{
         rule::MapDataRule,
     },
     osm_data_reader::{DataSource, OsmDataReader},
+    router_runner::RouterMode,
 };
 
 use super::{
@@ -43,6 +45,7 @@ impl MapDataElement for MapDataLine {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct MapDataElementRef<T: MapDataElement> {
     idx: usize,
     _marker: PhantomData<T>,
@@ -90,7 +93,7 @@ impl<T: MapDataElement + 'static> Debug for MapDataElementRef<T> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataElementTagRef {
     tag_value_pos: u32,
 }
@@ -118,6 +121,7 @@ pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
 
 type PointMap = BTreeMap<u64, MapDataPointRef>;
 
+#[derive(Serialize, Deserialize)]
 pub struct MapDataGraph {
     points: Vec<MapDataPoint>,
     points_map: HashMap<u64, usize>,
@@ -211,6 +215,9 @@ impl MapDataGraph {
                 point_ref,
             );
         }
+        self.points_map = HashMap::new();
+        self.ways_lines = HashMap::new();
+        self.tags_map = HashMap::new();
     }
 
     fn get_point_by_idx(&self, idx: usize) -> &MapDataPoint {

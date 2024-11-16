@@ -1,6 +1,8 @@
 use geo::HaversineBearing;
 use geo::HaversineDistance;
 use geo::Point;
+use serde::Deserialize;
+use serde::Serialize;
 
 use std::fmt::Debug;
 
@@ -8,7 +10,7 @@ use super::graph::MapDataLineRef;
 use super::graph::MapDataPointRef;
 use super::rule::MapDataRule;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataPoint {
     pub id: u64,
     pub lat: f64,

@@ -1,14 +1,16 @@
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
+
 use super::graph::MapDataLineRef;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MapDataRuleType {
     OnlyAllowed,
     NotAllowed,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataRule {
     pub from_lines: Vec<MapDataLineRef>,
     pub to_lines: Vec<MapDataLineRef>,
