@@ -94,14 +94,16 @@ impl OsmDataReader {
 
     fn read_cache(&mut self, cache_file: PathBuf) -> Result<bool, OsmDataReaderError> {
         let read_start = Instant::now();
-        let cache_contents = match std::fs::read(cache_file) {
+        // let file = match std::fs::File::open(cache_file) {
+        //     Err(_) => return Ok(false),
+        //     Ok(c) => c,
+        // };
+        // let graph = bincode::deserialize_from(file).expect("could not deserialize");
+        let file_contents = match std::fs::read(cache_file) {
             Err(_) => return Ok(false),
             Ok(c) => c,
         };
-        let graph = bincode::deserialize(&cache_contents[..]).expect("could not deserialize");
-        // let graph_reader =
-        //     flexbuffers::Reader::get_root(&cache_contents[..]).expect("could not create reader");
-        // let graph = MapDataGraph::deserialize(graph_reader).expect("could nto deserialize");
+        let graph = bincode::deserialize(&file_contents[..]).expect("could not deserialize");
         self.map_data = graph;
         let read_duration = read_start.elapsed();
         eprintln!("cache read took {} seconds", read_duration.as_secs());
@@ -110,14 +112,11 @@ impl OsmDataReader {
 
     fn write_cache(&self, cache_file: Option<PathBuf>) -> Result<(), OsmDataReaderError> {
         if let Some(cache_file) = cache_file {
-            let graph_cache =
-                bincode::serialize(&self.map_data).expect("could not serialize graph");
-            std::fs::write(cache_file, graph_cache).expect("failed to write to file");
-            // let mut flex_serializer = flexbuffers::FlexbufferSerializer::new();
-            // self.map_data
-            //     .serialize(&mut flex_serializer)
-            //     .expect("could not serialize");
-            // std::fs::write(cache_file, flex_serializer.view()).expect("failed to write to file");
+            // let file = std::fs::File::create(cache_file).expect("could not create file");
+            // bincode::serialize_into(file, &self.map_data).expect("could not serialize into writer");
+            let serialized_graph =
+                bincode::serialize(&self.map_data).expect("could not serialize into writer");
+            std::fs::write(cache_file, serialized_graph).expect("failed to write to file");
         }
         Ok(())
     }
