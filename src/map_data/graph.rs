@@ -125,10 +125,10 @@ type PointMap = BTreeMap<u64, MapDataPointRef>;
 pub struct MapDataGraph {
     points: Vec<MapDataPoint>,
     points_map: HashMap<u64, usize>,
-    point_hashed_offset_none: PointMap,
-    point_hashed_offset_lat: PointMap,
-    nodes_hashed_offset_lon: PointMap,
-    nodes_hashed_offset_lat_lon: PointMap,
+    points_hashed_offset_none: PointMap,
+    points_hashed_offset_lat: PointMap,
+    points_hashed_offset_lon: PointMap,
+    points_hashed_offset_lat_lon: PointMap,
     ways_lines: HashMap<u64, Vec<MapDataLineRef>>,
     lines: Vec<MapDataLine>,
     tags: Vec<String>,
@@ -140,10 +140,10 @@ impl MapDataGraph {
         Self {
             points: Vec::new(),
             points_map: HashMap::new(),
-            point_hashed_offset_none: BTreeMap::new(),
-            point_hashed_offset_lat: BTreeMap::new(),
-            nodes_hashed_offset_lon: BTreeMap::new(),
-            nodes_hashed_offset_lat_lon: BTreeMap::new(),
+            points_hashed_offset_none: BTreeMap::new(),
+            points_hashed_offset_lat: BTreeMap::new(),
+            points_hashed_offset_lon: BTreeMap::new(),
+            points_hashed_offset_lat_lon: BTreeMap::new(),
             ways_lines: HashMap::new(),
             lines: Vec::new(),
             tags: Vec::new(),
@@ -175,19 +175,19 @@ impl MapDataGraph {
         };
         let idx = self.add_point(point.clone());
         let point_ref = MapDataElementRef::new(idx);
-        self.point_hashed_offset_none.insert(
+        self.points_hashed_offset_none.insert(
             get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::None),
             point_ref.clone(),
         );
-        self.point_hashed_offset_none.insert(
+        self.points_hashed_offset_none.insert(
             get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::Lat),
             point_ref.clone(),
         );
-        self.point_hashed_offset_none.insert(
+        self.points_hashed_offset_none.insert(
             get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::Lon),
             point_ref.clone(),
         );
-        self.point_hashed_offset_none
+        self.points_hashed_offset_none
             .insert(get_gps_coords_hash(lat, lon, HashOffset::LatLon), point_ref);
     }
 
@@ -198,19 +198,19 @@ impl MapDataGraph {
                 .get(&point.id)
                 .expect("Point must exist in the points map, something went very wrong");
             let point_ref = MapDataElementRef::new(*point_idx);
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_none.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::None),
                 point_ref.clone(),
             );
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_lat.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::Lat),
                 point_ref.clone(),
             );
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_lon.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::Lon),
                 point_ref.clone(),
             );
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_lat_lon.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::LatLon),
                 point_ref,
             );
@@ -486,10 +486,10 @@ impl MapDataGraph {
                     search_hash
                 };
 
-            let offset_none_points = self.point_hashed_offset_none.range(from..=to);
-            let offset_lat_points = self.point_hashed_offset_lat.range(from..=to);
-            let offset_lon_points = self.nodes_hashed_offset_lon.range(from..=to);
-            let offset_lat_lon_points = self.nodes_hashed_offset_lat_lon.range(from..=to);
+            let offset_none_points = self.points_hashed_offset_none.range(from..=to);
+            let offset_lat_points = self.points_hashed_offset_lat.range(from..=to);
+            let offset_lon_points = self.points_hashed_offset_lon.range(from..=to);
+            let offset_lat_lon_points = self.points_hashed_offset_lat_lon.range(from..=to);
             let points: [Vec<MapDataPointRef>; 4] = [
                 offset_none_points.map(|(_, point)| point.clone()).collect(),
                 offset_lat_points.map(|(_, point)| point.clone()).collect(),
