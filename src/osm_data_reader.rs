@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     map_data::{
-        graph::MapDataGraph,
+        graph::{MapDataGraph, MapDataGraphPacked},
         osm::{
             OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
             OsmWay,
@@ -99,12 +99,59 @@ impl OsmDataReader {
         //     Ok(c) => c,
         // };
         // let graph = bincode::deserialize_from(file).expect("could not deserialize");
-        let file_contents = match std::fs::read(cache_file) {
-            Err(_) => return Ok(false),
-            Ok(c) => c,
-        };
-        let graph = bincode::deserialize(&file_contents[..]).expect("could not deserialize");
-        self.map_data = graph;
+
+        // let file_contents = match std::fs::read(cache_file) {
+        //     Err(_) => return Ok(false),
+        //     Ok(c) => c,
+        // };
+        // let graph = bincode::deserialize(&file_contents[..]).expect("could not deserialize");
+        // self.map_data = graph;
+
+        if !std::fs::exists(&cache_file).expect("could not check if cache exists") {
+            return Ok(false);
+        }
+
+        let mut packed_data = MapDataGraphPacked::default();
+        fn read_cache_file(file_folder: &PathBuf, file_name: &str) -> Vec<u8> {
+            let mut file = file_folder.clone();
+            file.push(format!("{}.cache", file_name));
+            let file_contents =
+                std::fs::read(file).expect(format!("could not read {file_name} file").as_str());
+            // bincode::deserialize(&file_contents[..])
+            //     .expect(format!("could not deserialize {file_name} file").as_str())
+            file_contents
+        }
+
+        rayon::scope(|scope| {
+            scope.spawn(|_| {
+                packed_data.points = read_cache_file(&cache_file, "points");
+            });
+            scope.spawn(|_| {
+                packed_data.points_hashed_offset_none =
+                    read_cache_file(&cache_file, "points_hashed_offset_none");
+            });
+            scope.spawn(|_| {
+                packed_data.points_hashed_offset_lat =
+                    read_cache_file(&cache_file, "points_hashed_offset_lat");
+            });
+            scope.spawn(|_| {
+                packed_data.points_hashed_offset_lon =
+                    read_cache_file(&cache_file, "points_hashed_offset_lon");
+            });
+            scope.spawn(|_| {
+                packed_data.points_hashed_offset_lat_lon =
+                    read_cache_file(&cache_file, "points_hashed_offset_lat_lon");
+            });
+            scope.spawn(|_| {
+                packed_data.lines = read_cache_file(&cache_file, "lines");
+            });
+            scope.spawn(|_| {
+                packed_data.tags = read_cache_file(&cache_file, "tags");
+            });
+        });
+
+        self.map_data = MapDataGraph::unpack(packed_data);
+
         let read_duration = read_start.elapsed();
         eprintln!("cache read took {} seconds", read_duration.as_secs());
         Ok(true)
@@ -114,9 +161,64 @@ impl OsmDataReader {
         if let Some(cache_file) = cache_file {
             // let file = std::fs::File::create(cache_file).expect("could not create file");
             // bincode::serialize_into(file, &self.map_data).expect("could not serialize into writer");
-            let serialized_graph =
-                bincode::serialize(&self.map_data).expect("could not serialize into writer");
-            std::fs::write(cache_file, serialized_graph).expect("failed to write to file");
+
+            // let serialized_graph =
+            //     bincode::serialize(&self.map_data).expect("could not serialize into writer");
+            // std::fs::write(cache_file, serialized_graph).expect("failed to write to file");
+            if std::fs::exists(&cache_file).expect("could not check dir") {
+                std::fs::remove_dir_all(&cache_file).expect("could not delete dir");
+            }
+            std::fs::create_dir_all(&cache_file).expect("could not create dir");
+            fn write_cache_file(
+                file_folder: &PathBuf,
+                file_name: &str,
+                file_contents: Vec<u8>,
+            ) -> () {
+                let mut file = file_folder.clone();
+                file.push(format!("{file_name}.cache"));
+                std::fs::write(file, file_contents)
+                    .expect(format!("could not write {file_name} to file").as_str());
+            }
+            let packed_data = self.map_data.pack();
+            rayon::scope(|scope| {
+                scope.spawn(|_| {
+                    write_cache_file(&cache_file, "points", packed_data.points);
+                });
+                scope.spawn(|_| {
+                    write_cache_file(
+                        &cache_file,
+                        "points_hashed_offset_none",
+                        packed_data.points_hashed_offset_none,
+                    );
+                });
+                scope.spawn(|_| {
+                    write_cache_file(
+                        &cache_file,
+                        "points_hashed_offset_lat",
+                        packed_data.points_hashed_offset_lat,
+                    );
+                });
+                scope.spawn(|_| {
+                    write_cache_file(
+                        &cache_file,
+                        "points_hashed_offset_lon",
+                        packed_data.points_hashed_offset_lon,
+                    );
+                });
+                scope.spawn(|_| {
+                    write_cache_file(
+                        &cache_file,
+                        "points_hashed_offset_lat_lon",
+                        packed_data.points_hashed_offset_lat_lon,
+                    );
+                });
+                scope.spawn(|_| {
+                    write_cache_file(&cache_file, "lines", packed_data.lines);
+                });
+                scope.spawn(|_| {
+                    write_cache_file(&cache_file, "tags", packed_data.tags);
+                });
+            })
         }
         Ok(())
     }

@@ -5,6 +5,7 @@ use std::{
     hash::Hash,
     marker::PhantomData,
     sync::OnceLock,
+    time::Instant,
 };
 
 use geo::HaversineDistance;
@@ -135,6 +136,17 @@ pub struct MapDataGraph {
     tags_map: HashMap<String, u32>,
 }
 
+#[derive(Default)]
+pub struct MapDataGraphPacked {
+    pub points: Vec<u8>,
+    pub points_hashed_offset_none: Vec<u8>,
+    pub points_hashed_offset_lat: Vec<u8>,
+    pub points_hashed_offset_lon: Vec<u8>,
+    pub points_hashed_offset_lat_lon: Vec<u8>,
+    pub lines: Vec<u8>,
+    pub tags: Vec<u8>,
+}
+
 impl MapDataGraph {
     pub fn new() -> Self {
         Self {
@@ -151,6 +163,190 @@ impl MapDataGraph {
         }
     }
 
+    pub fn pack(&self) -> MapDataGraphPacked {
+        let mut packed = MapDataGraphPacked::default();
+
+        eprintln!("points len {}", self.points.len());
+        eprintln!(
+            "points_hashed_offset_none len {}",
+            self.points_hashed_offset_none.len(),
+        );
+        eprintln!(
+            "points_hashed_offset_lat len {}",
+            self.points_hashed_offset_lat.len(),
+        );
+        eprintln!(
+            "points_hashed_offset_lon len {}",
+            self.points_hashed_offset_lon.len(),
+        );
+        eprintln!(
+            "points_hashed_offset_lat_lon len {}",
+            self.points_hashed_offset_lat_lon.len(),
+        );
+        eprintln!("lines len {}", self.lines.len());
+        eprintln!("tags len {}", self.tags.len());
+
+        rayon::scope(|scope| {
+            scope.spawn(|_| {
+                packed.points =
+                    bincode::serialize(&self.points).expect("could not serialize points");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_none =
+                    bincode::serialize(&self.points_hashed_offset_none)
+                        .expect("could not serialize point_hashed_offset_none");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_lat =
+                    bincode::serialize(&self.points_hashed_offset_lat)
+                        .expect("could not serialize point_hashed_offset_lat");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_lon =
+                    bincode::serialize(&self.points_hashed_offset_lon)
+                        .expect("could not serialize points_hashed_offset_lon");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_lat_lon =
+                    bincode::serialize(&self.points_hashed_offset_lat_lon)
+                        .expect("could not serialize points_hashed_offset_lat_lon");
+            });
+            scope.spawn(|_| {
+                packed.lines = bincode::serialize(&self.lines).expect("could not serialize lines");
+            });
+            scope.spawn(|_| {
+                packed.tags = bincode::serialize(&self.tags).expect("could not serialize tags");
+            });
+        });
+
+        eprintln!("points len {}, {}", self.points.len(), packed.points.len());
+        eprintln!(
+            "points_hashed_offset_none len {} {}",
+            self.points_hashed_offset_none.len(),
+            packed.points_hashed_offset_none.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat len {} {}",
+            self.points_hashed_offset_lat.len(),
+            packed.points_hashed_offset_lat.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lon len {} {}",
+            self.points_hashed_offset_lon.len(),
+            packed.points_hashed_offset_lon.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat_lon len {} {}",
+            self.points_hashed_offset_lat_lon.len(),
+            packed.points_hashed_offset_lat_lon.len()
+        );
+        eprintln!("lines len {} {}", self.lines.len(), packed.lines.len());
+        eprintln!("tags len {} {}", self.tags.len(), packed.tags.len());
+        packed
+    }
+
+    pub fn unpack(packed: MapDataGraphPacked) -> Self {
+        let mut points = Vec::new();
+        let points_map = HashMap::new();
+        let mut points_hashed_offset_none = BTreeMap::new();
+        let mut points_hashed_offset_lat = BTreeMap::new();
+        let mut points_hashed_offset_lon = BTreeMap::new();
+        let mut points_hashed_offset_lat_lon = BTreeMap::new();
+        let ways_lines = HashMap::new();
+        let mut lines = Vec::new();
+        let mut tags = Vec::new();
+        let tags_map = HashMap::new();
+
+        let unpack_start = Instant::now();
+        rayon::scope(|scope| {
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points =
+                    bincode::deserialize(&packed.points[..]).expect("could not deserialize points");
+                let dur = start.elapsed();
+                eprintln!("points {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_none =
+                    bincode::deserialize(&packed.points_hashed_offset_none[..])
+                        .expect("could not deserialize points_hashed_offset_none");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_none {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lat =
+                    bincode::deserialize(&packed.points_hashed_offset_lat[..])
+                        .expect("could not deserialize points_hashed_offset_lat");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lat {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lon =
+                    bincode::deserialize(&packed.points_hashed_offset_lon[..])
+                        .expect("could not deserialize points_hashed_offset_lon");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lon {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lat_lon =
+                    bincode::deserialize(&packed.points_hashed_offset_lat_lon[..])
+                        .expect("could not deserialize points_hashed_offset_lat_lon");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lat_lon {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                lines =
+                    bincode::deserialize(&packed.lines[..]).expect("could not deserialize lines");
+                let dur = start.elapsed();
+                eprintln!("lines {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                tags = bincode::deserialize(&packed.tags[..]).expect("could not deserialize tags");
+                let dur = start.elapsed();
+                eprintln!("tags {}s", dur.as_secs());
+            });
+        });
+        let unpack_duration = unpack_start.elapsed();
+        eprintln!("unpack took {}s", unpack_duration.as_secs());
+        eprintln!("points {}", points.len());
+        eprintln!(
+            "points_hashed_offset_none {}",
+            points_hashed_offset_none.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat {}",
+            points_hashed_offset_lat.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lon {}",
+            points_hashed_offset_lon.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat_lon {}",
+            points_hashed_offset_lat_lon.len()
+        );
+        eprintln!("lines {}", lines.len());
+        eprintln!("tags {}", tags.len());
+        Self {
+            points,
+            points_map,
+            points_hashed_offset_none,
+            points_hashed_offset_lat,
+            points_hashed_offset_lon,
+            points_hashed_offset_lat_lon,
+            lines,
+            ways_lines,
+            tags,
+            tags_map,
+        }
+    }
+
     #[cfg(test)]
     pub fn test_get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
         self.get_point_ref_by_id(id)
@@ -164,8 +360,6 @@ impl MapDataGraph {
     }
 
     pub fn insert_node(&mut self, value: OsmNode) -> () {
-        let lat = value.lat.clone();
-        let lon = value.lon.clone();
         let point = MapDataPoint {
             id: value.id,
             lat: value.lat,
@@ -173,22 +367,7 @@ impl MapDataGraph {
             lines: Vec::new(),
             rules: Vec::new(),
         };
-        let idx = self.add_point(point.clone());
-        let point_ref = MapDataElementRef::new(idx);
-        self.points_hashed_offset_none.insert(
-            get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::None),
-            point_ref.clone(),
-        );
-        self.points_hashed_offset_none.insert(
-            get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::Lat),
-            point_ref.clone(),
-        );
-        self.points_hashed_offset_none.insert(
-            get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::Lon),
-            point_ref.clone(),
-        );
-        self.points_hashed_offset_none
-            .insert(get_gps_coords_hash(lat, lon, HashOffset::LatLon), point_ref);
+        self.add_point(point.clone());
     }
 
     pub fn generate_point_hashes(&mut self) -> () {
@@ -220,12 +399,6 @@ impl MapDataGraph {
         self.tags_map = HashMap::new();
     }
 
-    fn get_point_by_idx(&self, idx: usize) -> &MapDataPoint {
-        &self.points[idx]
-    }
-    fn get_line_by_idx(&self, idx: usize) -> &MapDataLine {
-        &self.lines[idx]
-    }
     fn get_mut_point_by_idx(&mut self, idx: usize) -> &mut MapDataPoint {
         &mut self.points[idx]
     }
