@@ -67,7 +67,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     let degree_offset_from_next =
         ((180.0 - fork_bearing.abs()) - (180.0 - next_bearing.abs())).abs();
 
-    let ratio: f64 = 255.0 / 180.0;
+    let ratio: f32 = 255.0 / 180.0;
 
     input
         .debug_logger
@@ -160,10 +160,10 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
         Some(segment) => segment.get_end_point().clone(),
     };
 
-    let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f64);
+    let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f32);
 
     let distance_last_points = point_steps_back.borrow().distance_between(&current_point);
-    let average_distance_last_points = distance_last_points / (check_steps_back as f64);
+    let average_distance_last_points = distance_last_points / (check_steps_back as f32);
 
     if average_distance_last_points < average_distance_per_segment * 0.3 {
         // return WeightCalcResult::DoNotUse;

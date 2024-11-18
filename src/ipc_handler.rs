@@ -21,8 +21,8 @@ pub enum IpcHandlerError {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CoordsMessage {
-    pub lat: f64,
-    pub lon: f64,
+    pub lat: f32,
+    pub lon: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

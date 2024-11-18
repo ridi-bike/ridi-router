@@ -6,7 +6,7 @@ pub struct Itinerary {
     finish: MapDataPointRef,
     waypoints: Vec<MapDataPointRef>,
     next: MapDataPointRef,
-    waypoint_radius: f64,
+    waypoint_radius: f32,
 }
 
 impl Itinerary {
@@ -14,7 +14,7 @@ impl Itinerary {
         start: MapDataPointRef,
         finish: MapDataPointRef,
         waypoints: Vec<MapDataPointRef>,
-        waypoint_radius: f64,
+        waypoint_radius: f32,
     ) -> Self {
         Self {
             start,

@@ -362,8 +362,8 @@ impl MapDataGraph {
     pub fn insert_node(&mut self, value: OsmNode) -> () {
         let point = MapDataPoint {
             id: value.id,
-            lat: value.lat,
-            lon: value.lon,
+            lat: value.lat as f32,
+            lon: value.lon as f32,
             lines: Vec::new(),
             rules: Vec::new(),
         };
@@ -645,7 +645,7 @@ impl MapDataGraph {
             .collect()
     }
 
-    pub fn get_closest_to_coords(&self, lat: f64, lon: f64) -> Option<MapDataPointRef> {
+    pub fn get_closest_to_coords(&self, lat: f32, lon: f32) -> Option<MapDataPointRef> {
         let search_hash = get_gps_coords_hash(lat, lon, HashOffset::None);
         let mut grid_points = HashMap::new();
 

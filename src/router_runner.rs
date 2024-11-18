@@ -78,10 +78,10 @@ enum CliMode {
 
 #[derive(Debug)]
 pub struct StartFinish {
-    pub start_lat: f64,
-    pub start_lon: f64,
-    pub finish_lat: f64,
-    pub finish_lon: f64,
+    pub start_lat: f32,
+    pub start_lon: f32,
+    pub finish_lat: f32,
+    pub finish_lon: f32,
 }
 
 #[derive(Debug)]

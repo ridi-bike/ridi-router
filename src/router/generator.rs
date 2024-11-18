@@ -12,8 +12,8 @@ use super::{
     },
 };
 
-const ITINERARY_VARIATION_DISTANCES: [f64; 2] = [10000., 20000.];
-const ITINERARY_VARIATION_DEGREES: [f64; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
+const ITINERARY_VARIATION_DISTANCES: [f32; 2] = [10000., 20000.];
+const ITINERARY_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
 
 pub struct Generator {
     start: MapDataPointRef,
