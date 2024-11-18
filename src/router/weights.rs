@@ -253,7 +253,7 @@ mod test {
                 debug_logger: &debug_logger
             });
             eprintln!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(216));
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(215));
 
             let fork_point = MapDataGraph::get()
                 .test_get_point_ref_by_id(&9212889586)

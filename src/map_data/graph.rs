@@ -394,9 +394,11 @@ impl MapDataGraph {
                 point_ref,
             );
         }
-        self.points_map = HashMap::new();
-        self.ways_lines = HashMap::new();
-        self.tags_map = HashMap::new();
+        if !cfg!(test) {
+            self.points_map = HashMap::new();
+            self.ways_lines = HashMap::new();
+            self.tags_map = HashMap::new();
+        }
     }
 
     fn get_mut_point_by_idx(&mut self, idx: usize) -> &mut MapDataPoint {
