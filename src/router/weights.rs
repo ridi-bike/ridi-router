@@ -176,6 +176,8 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 #[cfg(test)]
 mod test {
 
+    use std::path::PathBuf;
+
     use rusty_fork::rusty_fork_test;
 
     use crate::{
@@ -214,13 +216,13 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn weight_heading_test() {
-            set_graph_static(graph_from_test_file("test-data/sigulda-100.json"));
+            set_graph_static(graph_from_test_file(&PathBuf::from("test-data/sigulda-100.json")));
             let from = MapDataGraph::get()
                 .test_get_point_ref_by_id(&885564366)
-                .expect("to find start point");
+                .expect("did not find start point");
             let to = MapDataGraph::get()
                 .test_get_point_ref_by_id(&33416714)
-                .expect("to find end point");
+                .expect("did not find end point");
             let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
             let walker = Walker::new(
                 from.clone(),

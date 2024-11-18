@@ -649,9 +649,15 @@ impl MapDataGraph {
         let search_hash = get_gps_coords_hash(lat, lon, HashOffset::None);
         let mut grid_points = HashMap::new();
 
-        for level in 0..=32 {
+        for level in 0..=32u8 {
             let shift_width = 2 * level;
-            let from = search_hash >> shift_width << shift_width;
+
+            let from = if shift_width < 64 {
+                search_hash >> shift_width << shift_width
+            } else {
+                0
+            };
+
             let to = from
                 | if shift_width > 0 {
                     u64::max_value() >> (64 - shift_width)
@@ -920,9 +926,8 @@ mod tests {
 
     #[derive(Debug)]
     struct PointTest {
-        lat: f64,
-        lon: f64,
-        ways: Vec<u64>,
+        lat: f32,
+        lon: f32,
         lines: Vec<&'static str>,
         junction: bool,
     }
@@ -957,8 +962,7 @@ mod tests {
                 PointTest {
                     lat: 1.0,
                     lon: 1.0,
-                    ways: vec![1234],
-                    lines: vec!["1234-1-2"],
+                    lines: vec!["1-2"],
                     junction: false
                 }
             ));
@@ -968,8 +972,7 @@ mod tests {
                 PointTest {
                     lat: 2.0,
                     lon: 2.0,
-                    ways: vec![1234],
-                    lines: vec!["1234-1-2", "1234-2-3"],
+                    lines: vec!["1-2", "2-3"],
                     junction: false
                 }
             ));
@@ -979,8 +982,7 @@ mod tests {
                 PointTest {
                     lat: 3.0,
                     lon: 3.0,
-                    ways: vec![1234, 5367],
-                    lines: vec!["1234-2-3", "1234-3-4", "5367-5-3", "5367-3-6"],
+                    lines: vec!["2-3", "3-4", "5-3", "3-6"],
                     junction: true
                 }
             ));
@@ -990,8 +992,7 @@ mod tests {
                 PointTest {
                     lat: 4.0,
                     lon: 4.0,
-                    ways: vec![1234, 489],
-                    lines: vec!["1234-3-4", "489-4-8"],
+                    lines: vec!["3-4", "4-8"],
                     junction: false
                 }
             ));
@@ -1001,8 +1002,7 @@ mod tests {
                 PointTest {
                     lat: 5.0,
                     lon: 5.0,
-                    ways: vec![5367],
-                    lines: vec!["5367-5-3"],
+                    lines: vec!["5-3"],
                     junction: false
                 }
             ));
@@ -1012,8 +1012,7 @@ mod tests {
                 PointTest {
                     lat: 6.0,
                     lon: 6.0,
-                    ways: vec![5367, 68],
-                    lines: vec!["5367-3-6", "5367-6-7", "68-6-8"],
+                    lines: vec!["3-6", "6-7", "6-8"],
                     junction: true
                 }
             ));
@@ -1023,8 +1022,7 @@ mod tests {
                 PointTest {
                     lat: 7.0,
                     lon: 7.0,
-                    ways: vec![5367],
-                    lines: vec!["5367-6-7"],
+                    lines: vec!["6-7"],
                     junction: false
                 }
             ));
@@ -1034,8 +1032,7 @@ mod tests {
                 PointTest {
                     lat: 8.0,
                     lon: 8.0,
-                    ways: vec![489, 68],
-                    lines: vec!["489-4-8", "489-8-9", "68-6-8"],
+                    lines: vec!["4-8", "8-9", "6-8"],
                     junction: true
                 }
             ));
@@ -1045,8 +1042,7 @@ mod tests {
                 PointTest {
                     lat: 9.0,
                     lon: 9.0,
-                    ways: vec![489],
-                    lines: vec!["489-8-9"],
+                    lines: vec!["8-9"],
                     junction: false
                 }
             ));
@@ -1056,8 +1052,7 @@ mod tests {
                 PointTest {
                     lat: 11.0,
                     lon: 11.0,
-                    ways: vec![1112],
-                    lines: vec!["1112-11-12"],
+                    lines: vec!["11-12"],
                     junction: false
                 }
             ));
@@ -1067,41 +1062,10 @@ mod tests {
                 PointTest {
                     lat: 12.0,
                     lon: 12.0,
-                    ways: vec![1112],
-                    lines: vec!["1112-11-12"],
+                    lines: vec!["11-12"],
                     junction: false
                 }
             ));
-        }
-    }
-
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn check_way_consistency() {
-            fn way_is_ok(map_data: &MapDataGraph, id: &u64, test_points: Vec<u64>) -> bool {
-                let way = map_data
-                    .ways
-                    .iter()
-                    .find(|w| w.id == *id)
-                    .expect(format!("way {} must exist", id).as_str());
-                eprintln!("way {:#?}", way);
-                eprintln!("test {:#?}", test_points);
-                way.points.len() == test_points.len()
-                    && way.points.iter().enumerate().all(|(idx, p)| {
-                        let p = p.borrow();
-                        p.id == *test_points
-                            .get(idx)
-                            .expect(format!("point at idx {} must exist", idx).as_str())
-                    })
-            }
-            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-
-            assert!(way_is_ok(&map_data, &1234, vec![1, 2, 3, 4]));
-            assert!(way_is_ok(&map_data, &5367, vec![5, 3, 6, 7]));
-            assert!(way_is_ok(&map_data, &489, vec![4, 8, 9]));
-            assert!(way_is_ok(&map_data, &68, vec![6, 8]));
-            assert!(way_is_ok(&map_data, &1112, vec![11, 12]));
         }
     }
 
@@ -1112,7 +1076,6 @@ mod tests {
             fn line_is_ok(
                 map_data: &MapDataGraph,
                 id: &str,
-                test_way: u64,
                 test_points: (u64, u64),
             ) -> bool {
                 let line = map_data
@@ -1122,21 +1085,20 @@ mod tests {
                     .expect(format!("line {} must exist", id).as_str());
                 eprintln!("line {:#?}", line);
                 eprintln!("test {:#?}", test_points);
-                line.way.borrow().id == test_way
-                    && line.points.0.borrow().id == test_points.0
+                     line.points.0.borrow().id == test_points.0
                     && line.points.1.borrow().id == test_points.1
             }
             let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            assert!(line_is_ok(&map_data, "1234-1-2", 1234, (1, 2)));
-            assert!(line_is_ok(&map_data, "1234-2-3", 1234, (2, 3)));
-            assert!(line_is_ok(&map_data, "1234-3-4", 1234, (3, 4)));
-            assert!(line_is_ok(&map_data, "5367-5-3", 5367, (5, 3)));
-            assert!(line_is_ok(&map_data, "5367-3-6", 5367, (3, 6)));
-            assert!(line_is_ok(&map_data, "5367-6-7", 5367, (6, 7)));
-            assert!(line_is_ok(&map_data, "489-4-8", 489, (4, 8)));
-            assert!(line_is_ok(&map_data, "489-8-9", 489, (8, 9)));
-            assert!(line_is_ok(&map_data, "68-6-8", 68, (6, 8)));
-            assert!(line_is_ok(&map_data, "1112-11-12", 1112, (11, 12)));
+            assert!(line_is_ok(&map_data, "1-2", (1, 2)));
+            assert!(line_is_ok(&map_data, "2-3", (2, 3)));
+            assert!(line_is_ok(&map_data, "3-4", (3, 4)));
+            assert!(line_is_ok(&map_data, "5-3", (5, 3)));
+            assert!(line_is_ok(&map_data, "3-6", (3, 6)));
+            assert!(line_is_ok(&map_data, "6-7", (6, 7)));
+            assert!(line_is_ok(&map_data, "4-8", (4, 8)));
+            assert!(line_is_ok(&map_data, "8-9", (8, 9)));
+            assert!(line_is_ok(&map_data, "6-8", (6, 8)));
+            assert!(line_is_ok(&map_data, "11-12", (11, 12)));
         }
     }
 
@@ -1198,22 +1160,22 @@ mod tests {
                 (
                     1,
                     MapDataGraph::get().get_point_ref_by_id(&2).unwrap(),
-                    vec![(String::from("1234-1-2"), 1), (String::from("1234-2-3"), 3)],
+                    vec![(String::from("1-2"), 1), (String::from("2-3"), 3)],
                 ),
                 (
                     2,
                     MapDataGraph::get().get_point_ref_by_id(&3).unwrap(),
                     vec![
-                        (String::from("5367-5-3"), 5),
-                        (String::from("5367-6-3"), 6),
-                        (String::from("1234-2-3"), 2),
-                        (String::from("1234-4-3"), 4),
+                        (String::from("5-3"), 5),
+                        (String::from("6-3"), 6),
+                        (String::from("2-3"), 2),
+                        (String::from("4-3"), 4),
                     ],
                 ),
                 (
                     3,
                     MapDataGraph::get().get_point_ref_by_id(&1).unwrap(),
-                    vec![(String::from("1234-1-2"), 2)],
+                    vec![(String::from("1-2"), 2)],
                 ),
             ];
 
@@ -1439,15 +1401,31 @@ mod tests {
     fn run_closest_test(test: ClosestTest) -> () {
         let (points, check_point, closest_id) = test;
         let mut map_data = MapDataGraph::new();
-        for point in points {
+        for point in &points {
             if let Some(point) = point {
                 map_data.insert_node(point.clone());
             }
         }
+        for point in points {
+            if let Some(point) = point {
+                map_data
+                    .insert_way(OsmWay {
+                        id: point.id,
+                        tags: Some(HashMap::from([(
+                            "highway".to_string(),
+                            "primary".to_string(),
+                        )])),
+                        point_ids: vec![point.id, point.id],
+                    })
+                    .expect("failed to insert dummy way");
+            }
+        }
+        map_data.generate_point_hashes();
 
         let map_data = set_graph_static(map_data);
 
-        let closest = map_data.get_closest_to_coords(check_point.lat, check_point.lon);
+        let closest =
+            map_data.get_closest_to_coords(check_point.lat as f32, check_point.lon as f32);
         if let Some(closest) = closest {
             assert_eq!(closest.borrow().id, closest_id);
         } else {

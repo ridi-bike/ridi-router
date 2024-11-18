@@ -33,7 +33,7 @@ impl MapDataLine {
         self.tags.1.get()
     }
     pub fn is_one_way(&self) -> bool {
-        self.direction == LineDirection::OneWay
+        self.direction == LineDirection::OneWay || self.direction == LineDirection::Roundabout
     }
     pub fn is_roundabout(&self) -> bool {
         self.direction == LineDirection::Roundabout

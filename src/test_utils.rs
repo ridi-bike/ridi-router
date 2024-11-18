@@ -1,13 +1,12 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     map_data::{
-        graph::{MapDataGraph, MapDataLineRef},
+        graph::{MapDataGraph, MapDataLineRef, MAP_DATA_GRAPH},
         osm::{OsmNode, OsmRelation, OsmWay},
     },
     osm_data_reader::{DataSource, OsmDataReader},
     router::route::Route,
-    MAP_DATA_GRAPH,
 };
 
 pub type OsmTestData = (Vec<OsmNode>, Vec<OsmWay>, Vec<OsmRelation>);
@@ -320,9 +319,10 @@ pub fn test_dataset_3() -> OsmTestData {
     )
 }
 
-pub fn graph_from_test_file(file: &str) -> MapDataGraph {
+pub fn graph_from_test_file(file: &PathBuf) -> MapDataGraph {
     let data_source = DataSource::JsonFile {
-        file: file.to_string(),
+        file: file.clone(),
+        cache: None,
     };
     let data_reader = OsmDataReader::new(data_source);
     data_reader.read_data().unwrap()
@@ -357,19 +357,7 @@ pub fn line_is_between_point_ids(line: &MapDataLineRef, id1: u64, id2: u64) -> b
         line.borrow().points.0.borrow().id,
         line.borrow().points.1.borrow().id,
     ];
-    line.borrow()
-        .id
-        .split("-")
-        .collect::<Vec<_>>()
-        .contains(&id1.to_string().as_str())
-        && line
-            .borrow()
-            .id
-            .split("-")
-            .collect::<Vec<_>>()
-            .contains(&id2.to_string().as_str())
-        && point_ids.contains(&id1)
-        && point_ids.contains(&id2)
+    point_ids.contains(&id1) && point_ids.contains(&id2)
 }
 
 pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {

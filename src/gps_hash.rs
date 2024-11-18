@@ -143,7 +143,7 @@ mod tests {
         ];
 
         for test in tests {
-            let output = get_gps_coords_hash(test.lat, test.lon, test.offset);
+            let output = get_gps_coords_hash(test.lat as f32, test.lon as f32, test.offset);
             assert_eq!(output, test.output);
         }
     }
