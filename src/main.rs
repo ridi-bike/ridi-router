@@ -5,6 +5,7 @@ mod gps_hash;
 mod gpx_writer;
 mod ipc_handler;
 mod map_data;
+mod map_data_cache;
 mod osm_data_reader;
 mod osm_json_parser;
 mod result_writer;

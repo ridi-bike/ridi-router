@@ -164,6 +164,8 @@ impl MapDataGraph {
     }
 
     pub fn pack(&self) -> MapDataGraphPacked {
+        let pack_start = Instant::now();
+
         let mut packed = MapDataGraphPacked::default();
 
         eprintln!("points len {}", self.points.len());
@@ -242,109 +244,11 @@ impl MapDataGraph {
         );
         eprintln!("lines len {} {}", self.lines.len(), packed.lines.len());
         eprintln!("tags len {} {}", self.tags.len(), packed.tags.len());
+
+        let pack_end = pack_start.elapsed();
+        eprint!("pack took {}s", pack_end.as_secs());
+
         packed
-    }
-
-    pub fn unpack(packed: MapDataGraphPacked) -> Self {
-        let mut points = Vec::new();
-        let points_map = HashMap::new();
-        let mut points_hashed_offset_none = BTreeMap::new();
-        let mut points_hashed_offset_lat = BTreeMap::new();
-        let mut points_hashed_offset_lon = BTreeMap::new();
-        let mut points_hashed_offset_lat_lon = BTreeMap::new();
-        let ways_lines = HashMap::new();
-        let mut lines = Vec::new();
-        let mut tags = Vec::new();
-        let tags_map = HashMap::new();
-
-        let unpack_start = Instant::now();
-        rayon::scope(|scope| {
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points =
-                    bincode::deserialize(&packed.points[..]).expect("could not deserialize points");
-                let dur = start.elapsed();
-                eprintln!("points {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_none =
-                    bincode::deserialize(&packed.points_hashed_offset_none[..])
-                        .expect("could not deserialize points_hashed_offset_none");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_none {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_lat =
-                    bincode::deserialize(&packed.points_hashed_offset_lat[..])
-                        .expect("could not deserialize points_hashed_offset_lat");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_lat {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_lon =
-                    bincode::deserialize(&packed.points_hashed_offset_lon[..])
-                        .expect("could not deserialize points_hashed_offset_lon");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_lon {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_lat_lon =
-                    bincode::deserialize(&packed.points_hashed_offset_lat_lon[..])
-                        .expect("could not deserialize points_hashed_offset_lat_lon");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_lat_lon {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                lines =
-                    bincode::deserialize(&packed.lines[..]).expect("could not deserialize lines");
-                let dur = start.elapsed();
-                eprintln!("lines {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                tags = bincode::deserialize(&packed.tags[..]).expect("could not deserialize tags");
-                let dur = start.elapsed();
-                eprintln!("tags {}s", dur.as_secs());
-            });
-        });
-        let unpack_duration = unpack_start.elapsed();
-        eprintln!("unpack took {}s", unpack_duration.as_secs());
-        eprintln!("points {}", points.len());
-        eprintln!(
-            "points_hashed_offset_none {}",
-            points_hashed_offset_none.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lat {}",
-            points_hashed_offset_lat.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lon {}",
-            points_hashed_offset_lon.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lat_lon {}",
-            points_hashed_offset_lat_lon.len()
-        );
-        eprintln!("lines {}", lines.len());
-        eprintln!("tags {}", tags.len());
-        Self {
-            points,
-            points_map,
-            points_hashed_offset_none,
-            points_hashed_offset_lat,
-            points_hashed_offset_lon,
-            points_hashed_offset_lat_lon,
-            lines,
-            ways_lines,
-            tags,
-            tags_map,
-        }
     }
 
     #[cfg(test)]
@@ -707,6 +611,108 @@ impl MapDataGraph {
 
         points_with_dist.sort_by(|(dist_a, _), (dist_b, _)| dist_a.cmp(dist_b));
         points_with_dist.get(0).map(|(_, p)| p.clone())
+    }
+    pub fn unpack(packed: MapDataGraphPacked) -> &'static MapDataGraph {
+        let mut points = Vec::new();
+        let points_map = HashMap::new();
+        let mut points_hashed_offset_none = BTreeMap::new();
+        let mut points_hashed_offset_lat = BTreeMap::new();
+        let mut points_hashed_offset_lon = BTreeMap::new();
+        let mut points_hashed_offset_lat_lon = BTreeMap::new();
+        let ways_lines = HashMap::new();
+        let mut lines = Vec::new();
+        let mut tags = Vec::new();
+        let tags_map = HashMap::new();
+
+        let unpack_start = Instant::now();
+        rayon::scope(|scope| {
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points =
+                    bincode::deserialize(&packed.points[..]).expect("could not deserialize points");
+                let dur = start.elapsed();
+                eprintln!("points {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_none =
+                    bincode::deserialize(&packed.points_hashed_offset_none[..])
+                        .expect("could not deserialize points_hashed_offset_none");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_none {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lat =
+                    bincode::deserialize(&packed.points_hashed_offset_lat[..])
+                        .expect("could not deserialize points_hashed_offset_lat");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lat {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lon =
+                    bincode::deserialize(&packed.points_hashed_offset_lon[..])
+                        .expect("could not deserialize points_hashed_offset_lon");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lon {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lat_lon =
+                    bincode::deserialize(&packed.points_hashed_offset_lat_lon[..])
+                        .expect("could not deserialize points_hashed_offset_lat_lon");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lat_lon {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                lines =
+                    bincode::deserialize(&packed.lines[..]).expect("could not deserialize lines");
+                let dur = start.elapsed();
+                eprintln!("lines {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                tags = bincode::deserialize(&packed.tags[..]).expect("could not deserialize tags");
+                let dur = start.elapsed();
+                eprintln!("tags {}s", dur.as_secs());
+            });
+        });
+        let unpack_duration = unpack_start.elapsed();
+        eprintln!("unpack took {}s", unpack_duration.as_secs());
+        eprintln!("points {}", points.len());
+        eprintln!(
+            "points_hashed_offset_none {}",
+            points_hashed_offset_none.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat {}",
+            points_hashed_offset_lat.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lon {}",
+            points_hashed_offset_lon.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat_lon {}",
+            points_hashed_offset_lat_lon.len()
+        );
+        eprintln!("lines {}", lines.len());
+        eprintln!("tags {}", tags.len());
+
+        MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
+            points,
+            points_map,
+            points_hashed_offset_none,
+            points_hashed_offset_lat,
+            points_hashed_offset_lon,
+            points_hashed_offset_lat_lon,
+            lines,
+            ways_lines,
+            tags,
+            tags_map,
+        })
     }
 
     fn get_or_init(data_source: Option<&DataSource>) -> &'static MapDataGraph {

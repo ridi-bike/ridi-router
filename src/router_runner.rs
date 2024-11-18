@@ -1,4 +1,4 @@
-use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLock};
+use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLock, time::Instant};
 
 use clap::Parser;
 
@@ -6,6 +6,7 @@ use crate::{
     gpx_writer::RoutesWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage},
     map_data::graph::MapDataGraph,
+    map_data_cache::MapDataCache,
     osm_data_reader::DataSource,
     result_writer::DataDestination,
     router::generator::Generator,
@@ -46,7 +47,7 @@ enum CliMode {
         input: PathBuf,
 
         #[arg(short, long, value_name = "FILE")]
-        cache: Option<PathBuf>,
+        cache_dir: Option<PathBuf>,
     },
     Client {
         #[arg(short, long, value_name = "FILE")]
@@ -63,7 +64,7 @@ enum CliMode {
         input: PathBuf,
 
         #[arg(short, long, value_name = "FILE")]
-        cache: Option<PathBuf>,
+        cache_dir: Option<PathBuf>,
 
         #[arg(short, long, value_name = "FILE")]
         output: PathBuf,
@@ -88,6 +89,7 @@ pub struct StartFinish {
 pub enum RouterMode {
     Server {
         data_source: DataSource,
+        cache_dir: Option<PathBuf>,
     },
     Client {
         start_finish: StartFinish,
@@ -95,6 +97,7 @@ pub enum RouterMode {
     },
     Dual {
         data_source: DataSource,
+        cache_dir: Option<PathBuf>,
         start_finish: StartFinish,
         data_destination: DataDestination,
     },
@@ -108,8 +111,9 @@ impl RouterRunner {
     pub fn init() -> Self {
         let cli = Cli::parse();
         let mode = match cli.mode {
-            CliMode::Server { input, cache } => RouterMode::Server {
-                data_source: get_data_source(input, cache).expect("could not get data source"),
+            CliMode::Server { input, cache_dir } => RouterMode::Server {
+                data_source: get_data_source(input).expect("could not get data source"),
+                cache_dir,
             },
             CliMode::Client {
                 output,
@@ -126,7 +130,7 @@ impl RouterRunner {
             }
             CliMode::Dual {
                 input,
-                cache,
+                cache_dir,
                 output,
                 start,
                 finish,
@@ -134,7 +138,8 @@ impl RouterRunner {
                 let start_finish = get_start_finish(start, finish)
                     .expect("could not get start/finish coordinates");
                 RouterMode::Dual {
-                    data_source: get_data_source(input, cache).expect("could not get data source"),
+                    data_source: get_data_source(input).expect("could not get data source"),
+                    cache_dir,
                     start_finish,
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
@@ -176,14 +181,58 @@ impl RouterRunner {
     fn run_dual(
         &self,
         data_source: &DataSource,
+        cache_dir: Option<PathBuf>,
         start_finish: &StartFinish,
     ) -> Result<(), RouterRunnerError> {
-        MapDataGraph::init(data_source);
+        let mut data_cache = MapDataCache::init(cache_dir);
+        let cached_map_data = data_cache.read_cache();
+        let cached_map_data = match cached_map_data {
+            Ok(d) => d,
+            Err(error) => {
+                tracing::error!("Failed to process cache: {:?}", error);
+                None
+            }
+        };
+        if let Some(packed_data) = cached_map_data {
+            MapDataGraph::unpack(packed_data);
+        } else {
+            MapDataGraph::init(data_source);
+            let packed_data = MapDataGraph::get().pack();
+            if let Err(error) = data_cache.write_cache(packed_data) {
+                tracing::error!("Failed to write cache: {:?}", error);
+            }
+        }
         RouterRunner::generate_route(start_finish)
     }
 
-    fn run_server(&self, data_source: &DataSource) -> Result<(), RouterRunnerError> {
-        MapDataGraph::init(data_source);
+    fn run_server(
+        &self,
+        data_source: &DataSource,
+        cache_dir: Option<PathBuf>,
+    ) -> Result<(), RouterRunnerError> {
+        let startup_start = Instant::now();
+
+        let mut data_cache = MapDataCache::init(cache_dir);
+        let cached_map_data = data_cache.read_cache();
+        let cached_map_data = match cached_map_data {
+            Ok(d) => d,
+            Err(error) => {
+                tracing::error!("Failed to process cache: {:?}", error);
+                None
+            }
+        };
+        if let Some(packed_data) = cached_map_data {
+            MapDataGraph::unpack(packed_data);
+        } else {
+            MapDataGraph::init(data_source);
+            let packed_data = MapDataGraph::get().pack();
+            if let Err(error) = data_cache.write_cache(packed_data) {
+                tracing::error!("Failed to write cache: {:?}", error);
+            }
+        }
+
+        let startup_end = startup_start.elapsed();
+        eprintln!("startup took {}s", startup_end.as_secs());
 
         let ipc = IpcHandler::init().map_err(|error| RouterRunnerError::Ipc { error })?;
         ipc.listen(|request_message| {
@@ -214,9 +263,13 @@ impl RouterRunner {
             RouterMode::Dual {
                 start_finish,
                 data_source,
+                cache_dir,
                 ..
-            } => self.run_dual(&data_source, &start_finish),
-            RouterMode::Server { data_source } => self.run_server(&data_source),
+            } => self.run_dual(&data_source, cache_dir.clone(), &start_finish),
+            RouterMode::Server {
+                data_source,
+                cache_dir,
+            } => self.run_server(&data_source, cache_dir.clone()),
             RouterMode::Client { start_finish, .. } => self.run_client(&start_finish),
         }
     }
@@ -280,18 +333,15 @@ fn get_start_finish(start: String, finish: String) -> Result<StartFinish, Router
             })?,
     })
 }
-fn get_data_source(
-    input: PathBuf,
-    cache: Option<PathBuf>,
-) -> Result<DataSource, RouterRunnerError> {
-    if let Some(ext) = input.extension() {
+fn get_data_source(file: PathBuf) -> Result<DataSource, RouterRunnerError> {
+    if let Some(ext) = file.extension() {
         if ext == "json" {
-            return Ok(DataSource::JsonFile { file: input, cache });
+            return Ok(DataSource::JsonFile { file });
         } else if ext == "pbf" {
-            return Ok(DataSource::PbfFile { file: input, cache });
+            return Ok(DataSource::PbfFile { file });
         }
     }
-    Err(RouterRunnerError::InputFileFormatIncorrect { filename: input })
+    Err(RouterRunnerError::InputFileFormatIncorrect { filename: file })
 }
 fn get_data_destination(output: PathBuf) -> Result<DataDestination, RouterRunnerError> {
     if let Some(ext) = output.extension() {
