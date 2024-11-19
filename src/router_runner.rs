@@ -3,12 +3,12 @@ use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLoc
 use clap::Parser;
 
 use crate::{
-    gpx_writer::RoutesWriter,
+    gpx_writer::GpxWriter,
     ipc_handler::{CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage},
     map_data::graph::MapDataGraph,
     map_data_cache::MapDataCache,
     osm_data_reader::DataSource,
-    result_writer::DataDestination,
+    result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{generator::Generator, route::Route},
 };
 
@@ -33,6 +33,9 @@ pub enum RouterRunnerError {
     PointNotFound {
         point: String,
     },
+    ResultWrite {
+        error: ResultWriterError,
+    },
 }
 
 #[derive(Parser)]
@@ -54,7 +57,7 @@ enum CliMode {
     },
     Client {
         #[arg(short, long, value_name = "FILE")]
-        output: PathBuf,
+        output: Option<PathBuf>,
 
         #[arg(short, long, value_name = "COORDINATES")]
         start: String,
@@ -70,7 +73,7 @@ enum CliMode {
         cache_dir: Option<PathBuf>,
 
         #[arg(short, long, value_name = "FILE")]
-        output: PathBuf,
+        output: Option<PathBuf>,
 
         #[arg(short, long, value_name = "COORDINATES")]
         start: String,
@@ -176,6 +179,7 @@ impl RouterRunner {
         data_source: &DataSource,
         cache_dir: Option<PathBuf>,
         start_finish: &StartFinish,
+        data_destination: &DataDestination,
     ) -> Result<(), RouterRunnerError> {
         let mut data_cache = MapDataCache::init(cache_dir);
         let cached_map_data = data_cache.read_cache();
@@ -196,6 +200,30 @@ impl RouterRunner {
             }
         }
         let route_result = RouterRunner::generate_route(start_finish);
+        ResultWriter::write(
+            data_destination.clone(),
+            ResponseMessage {
+                id: "oo".to_string(),
+                result: route_result
+                    .map(|routes| {
+                        routes
+                            .iter()
+                            .map(|route| RouteMessage {
+                                coords: route
+                                    .clone()
+                                    .into_iter()
+                                    .map(|segment| CoordsMessage {
+                                        lat: segment.get_end_point().borrow().lat,
+                                        lon: segment.get_end_point().borrow().lon,
+                                    })
+                                    .collect::<Vec<CoordsMessage>>(),
+                            })
+                            .collect()
+                    })
+                    .map_err(|error| format!("Error generating route {:?}", error)),
+            },
+        )
+        .map_err(|error| RouterRunnerError::ResultWrite { error })?;
         Ok(())
     }
 
@@ -263,12 +291,17 @@ impl RouterRunner {
         Ok(())
     }
 
-    fn run_client(&self, start_finish: &StartFinish) -> Result<(), RouterRunnerError> {
+    fn run_client(
+        &self,
+        start_finish: &StartFinish,
+        data_destination: &DataDestination,
+    ) -> Result<(), RouterRunnerError> {
         let ipc = IpcHandler::init().map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
             .connect(start_finish)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
-        eprintln!("resp id {}", response.id);
+        ResultWriter::write(data_destination.clone(), response)
+            .map_err(|error| RouterRunnerError::ResultWrite { error })?;
         Ok(())
     }
 
@@ -278,13 +311,21 @@ impl RouterRunner {
                 start_finish,
                 data_source,
                 cache_dir,
-                ..
-            } => self.run_dual(&data_source, cache_dir.clone(), &start_finish),
+                data_destination,
+            } => self.run_dual(
+                &data_source,
+                cache_dir.clone(),
+                &start_finish,
+                &data_destination,
+            ),
             RouterMode::Server {
                 data_source,
                 cache_dir,
             } => self.run_server(&data_source, cache_dir.clone()),
-            RouterMode::Client { start_finish, .. } => self.run_client(&start_finish),
+            RouterMode::Client {
+                start_finish,
+                data_destination,
+            } => self.run_client(&start_finish, &data_destination),
         }
     }
 }
@@ -357,13 +398,17 @@ fn get_data_source(file: PathBuf) -> Result<DataSource, RouterRunnerError> {
     }
     Err(RouterRunnerError::InputFileFormatIncorrect { filename: file })
 }
-fn get_data_destination(output: PathBuf) -> Result<DataDestination, RouterRunnerError> {
-    if let Some(ext) = output.extension() {
-        if ext == "json" {
-            return Ok(DataDestination::Json { file: output });
-        } else if ext == "gpx" {
-            return Ok(DataDestination::Gpx { file: output });
+fn get_data_destination(output: Option<PathBuf>) -> Result<DataDestination, RouterRunnerError> {
+    if let Some(output) = output {
+        if let Some(ext) = output.extension() {
+            if ext == "json" {
+                return Ok(DataDestination::Json { file: output });
+            } else if ext == "gpx" {
+                return Ok(DataDestination::Gpx { file: output });
+            }
         }
+        return Err(RouterRunnerError::OutputFileFormatIncorrect { filename: output });
     }
-    Err(RouterRunnerError::OutputFileFormatIncorrect { filename: output })
+
+    Ok(DataDestination::Stdout)
 }
