@@ -1,6 +1,8 @@
 pub mod segment;
 pub mod segment_list;
 
+use serde::{Deserialize, Serialize};
+
 use crate::map_data::{line::MapDataLine, point::MapDataPoint};
 
 use self::segment::Segment;

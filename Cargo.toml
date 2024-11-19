@@ -20,6 +20,7 @@ serde = { version = "1.0.201", features = ["derive"] }
 serde_derive = "1.0.201"
 serde_json = "1.0.117"
 tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
 
 [dev-dependencies]
 rusty-fork = "0.3.0"

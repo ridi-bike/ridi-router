@@ -2,9 +2,9 @@ use bincode::ErrorKind;
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Name, Stream};
 use serde::{Deserialize, Serialize};
 use std::io::{self, prelude::*, BufReader};
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
-use crate::router_runner::{RouterRunnerError, StartFinish};
+use crate::router_runner::StartFinish;
 
 #[derive(Debug)]
 pub enum IpcHandlerError {
@@ -19,7 +19,7 @@ pub enum IpcHandlerError {
     SerializeMessage { error: Box<ErrorKind> },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct CoordsMessage {
     pub lat: f32,
     pub lon: f32,
@@ -33,12 +33,14 @@ pub struct RequestMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseMessage {
-    pub id: String,
+pub struct RouteMessage {
+    pub coords: Vec<CoordsMessage>,
 }
 
-pub trait MessageHandler {
-    fn process(&self, request: RequestMessage) -> ResponseMessage;
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ResponseMessage {
+    pub id: String,
+    pub result: Result<Vec<RouteMessage>, String>,
 }
 
 pub struct IpcHandler<'a> {
@@ -48,7 +50,6 @@ pub struct IpcHandler<'a> {
 
 impl<'a> IpcHandler<'a> {
     pub fn init() -> Result<Self, IpcHandlerError> {
-        // Pick a name.
         let socket_print_name = if GenericNamespaced::is_supported() {
             String::from("ridi-router.socket")
         } else {
@@ -70,7 +71,9 @@ impl<'a> IpcHandler<'a> {
     where
         T: Fn(RequestMessage) -> ResponseMessage + Sync + Send + Copy + 'static,
     {
+        dbg!("listen");
         let opts = ListenerOptions::new().name(self.socket_name.clone());
+        dbg!("opts {opts:?}");
 
         let listener = match opts.create_sync() {
             Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
@@ -78,6 +81,7 @@ impl<'a> IpcHandler<'a> {
             }
             x => x.map_err(|error| IpcHandlerError::CreateListener { error })?,
         };
+        dbg!("listener {listener:?}");
 
         info!("Server running at {}", self.socket_print_name);
 
@@ -87,6 +91,7 @@ impl<'a> IpcHandler<'a> {
                     warn!("Incoming connection failed {}", e);
                 }
                 Ok(conn) => {
+                    trace!("received connection");
                     let req = match IpcHandler::process_request(&conn) {
                         Err(err) => {
                             warn!("error from connection {:?}", err);
@@ -94,14 +99,11 @@ impl<'a> IpcHandler<'a> {
                         }
                         Ok(req) => req,
                     };
+                    dbg!("calling msg handler");
                     let resp = message_handler(req);
-                    match IpcHandler::process_response(&conn, &resp) {
-                        Err(err) => {
-                            warn!("error from connection {:?}", err);
-                            return ();
-                        }
-                        Ok(res) => res,
-                    };
+                    if let Err(error) = IpcHandler::process_response(&conn, &resp) {
+                        warn!("error from connection {:?}", error);
+                    }
                 }
             });
         }
@@ -110,16 +112,25 @@ impl<'a> IpcHandler<'a> {
     }
 
     fn process_request(conn: &Stream) -> Result<RequestMessage, IpcHandlerError> {
-        let mut buffer = Vec::new();
-
         let mut conn = BufReader::new(conn);
         info!("Incoming connection!");
 
-        conn.read_to_end(&mut buffer)
+        let mut mes_len_buf = [0u8; 8];
+        conn.read_exact(&mut mes_len_buf)
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
+
+        println!("message size {:?}", u64::from_ne_bytes(mes_len_buf));
+
+        let mut buffer = vec![0; u64::from_ne_bytes(mes_len_buf) as usize];
+        conn.read_exact(&mut buffer[..])
+            .map_err(|error| IpcHandlerError::ReadLine { error })?;
+
+        println!("message received {}", buffer.len());
 
         let request_message = bincode::deserialize(&buffer[..])
             .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
+
+        println!("deserialized {request_message:?}");
 
         Ok(request_message)
     }
@@ -128,8 +139,23 @@ impl<'a> IpcHandler<'a> {
         response_message: &ResponseMessage,
     ) -> Result<(), IpcHandlerError> {
         let mut conn = BufReader::new(conn);
+
         let buffer = bincode::serialize(response_message)
             .map_err(|error| IpcHandlerError::SerializeMessage { error })?;
+
+        let mes_len_bytes: u64 = buffer.len() as u64;
+        conn.get_mut()
+            .write_all(&mes_len_bytes.to_ne_bytes()[..])
+            .map_err(|error| IpcHandlerError::WriteAll { error })?;
+        eprintln!("message size sent {}", mes_len_bytes);
+
+        println!(
+            "sending resp {} {} {}",
+            response_message.id,
+            response_message.result.is_ok(),
+            buffer.len()
+        );
+
         conn.get_mut()
             .write_all(&buffer[..])
             .map_err(|error| IpcHandlerError::WriteLine { error })?;
@@ -137,47 +163,51 @@ impl<'a> IpcHandler<'a> {
         Ok(())
     }
 
-    pub fn connect(&self, start_finish: &StartFinish) -> Result<(), IpcHandlerError> {
-        // Preemptively allocate a sizeable buffer for receiving. This size should be enough and
-        // should be easy to find for the allocator.
-        let mut buffer = String::with_capacity(128);
-        eprintln!("buffer {buffer:?}");
-
-        // Create our connection. This will block until the server accepts our connection, but will
-        // fail immediately if the server hasn't even started yet; somewhat similar to how happens
-        // with TCP, where connecting to a port that's not bound to any server will send a "connection
-        // refused" response, but that will take twice the ping, the roundtrip time, to reach the
-        // client.
+    pub fn connect(&self, start_finish: &StartFinish) -> Result<ResponseMessage, IpcHandlerError> {
         let conn = Stream::connect(self.socket_name.clone())
             .map_err(|error| IpcHandlerError::Connect { error })?;
-        // Wrap it into a buffered reader right away so that we could receive a single line out of it.
-        let mut conn = BufReader::new(conn);
-        eprintln!("con {conn:?}");
 
-        // Send our message into the stream. This will finish either when the whole message has been
-        // sent or if a send operation returns an error. (`.get_mut()` is to get the sender,
-        // `BufReader` doesn't implement pass-through `Write`.)
-        let message = format!(
-            "{},{},{},{}\n",
-            start_finish.start_lat,
-            start_finish.start_lon,
-            start_finish.finish_lat,
-            start_finish.finish_lon
-        );
-        eprintln!("message {message:?}");
+        let mut conn = BufReader::new(conn);
+
+        let req_msg = RequestMessage {
+            id: "ooo".to_string(),
+            start: CoordsMessage {
+                lat: start_finish.start_lat,
+                lon: start_finish.start_lon,
+            },
+            finish: CoordsMessage {
+                lat: start_finish.finish_lat,
+                lon: start_finish.finish_lon,
+            },
+        };
+        let req_buf = bincode::serialize(&req_msg)
+            .map_err(|error| IpcHandlerError::SerializeMessage { error })?;
+
+        let mes_len_bytes: u64 = req_buf.len() as u64;
         conn.get_mut()
-            .write_all(message.as_bytes())
+            .write_all(&mes_len_bytes.to_ne_bytes()[..])
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
-        eprintln!("message sent");
-        // We now employ the buffer we allocated prior and receive a single line, interpreting a
-        // newline character as an end-of-file (because local sockets cannot be portably shut down),
-        // verifying validity of UTF-8 on the fly.
-        conn.read_line(&mut buffer)
+        eprintln!("message size sent {}", mes_len_bytes);
+        conn.get_mut()
+            .write_all(&req_buf[..])
+            .map_err(|error| IpcHandlerError::WriteAll { error })?;
+        eprintln!("message sent {}", req_buf.len());
+
+        let mut mes_len_buf = [0u8; 8];
+        conn.read_exact(&mut mes_len_buf)
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
-        // Print out the result, getting the newline for free!
-        print!("Server answered: {buffer}");
-        //{
-        Ok(())
+        println!("message size {:?}", u64::from_ne_bytes(mes_len_buf));
+
+        let mut resp_buf = vec![0; u64::from_ne_bytes(mes_len_buf) as usize];
+        conn.read_exact(&mut resp_buf[..])
+            .map_err(|error| IpcHandlerError::ReadLine { error })?;
+
+        println!("message received {}", resp_buf.len());
+
+        let resp_msg: ResponseMessage = bincode::deserialize(&resp_buf[..])
+            .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
+
+        Ok(resp_msg)
     }
 }

@@ -4,12 +4,12 @@ use clap::Parser;
 
 use crate::{
     gpx_writer::RoutesWriter,
-    ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage},
+    ipc_handler::{CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage},
     map_data::graph::MapDataGraph,
     map_data_cache::MapDataCache,
     osm_data_reader::DataSource,
     result_writer::DataDestination,
-    router::generator::Generator,
+    router::{generator::Generator, route::Route},
 };
 
 use clap::Subcommand;
@@ -29,6 +29,9 @@ pub enum RouterRunnerError {
     },
     Ipc {
         error: IpcHandlerError,
+    },
+    PointNotFound {
+        point: String,
     },
 }
 
@@ -150,32 +153,22 @@ impl RouterRunner {
         Self { mode }
     }
 
-    fn generate_route(start_finish: &StartFinish) -> Result<(), RouterRunnerError> {
-        let start = match MapDataGraph::get()
+    fn generate_route(start_finish: &StartFinish) -> Result<Vec<Route>, RouterRunnerError> {
+        let start = MapDataGraph::get()
             .get_closest_to_coords(start_finish.start_lat, start_finish.start_lon)
-        {
-            Some(p) => p,
-            None => panic!("no closest point found"),
-        };
-        let finish = match MapDataGraph::get()
+            .ok_or(RouterRunnerError::PointNotFound {
+                point: "Start point".to_string(),
+            })?;
+
+        let finish = MapDataGraph::get()
             .get_closest_to_coords(start_finish.finish_lat, start_finish.finish_lon)
-        {
-            Some(p) => p,
-            None => panic!("no closest point found"),
-        };
+            .ok_or(RouterRunnerError::PointNotFound {
+                point: "Finish point".to_string(),
+            })?;
+
         let route_generator = Generator::new(start.clone(), finish.clone());
         let routes = route_generator.generate_routes();
-        let writer = RoutesWriter::new(
-            start.clone(),
-            routes,
-            start_finish.start_lat,
-            start_finish.start_lon,
-            None,
-        );
-        match writer.write_gpx() {
-            Ok(()) => return Ok(()),
-            Err(e) => panic!("Error on write: {:#?}", e),
-        }
+        Ok(routes)
     }
 
     fn run_dual(
@@ -202,7 +195,8 @@ impl RouterRunner {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
         }
-        RouterRunner::generate_route(start_finish)
+        let route_result = RouterRunner::generate_route(start_finish);
+        Ok(())
     }
 
     fn run_server(
@@ -235,8 +229,9 @@ impl RouterRunner {
         eprintln!("startup took {}s", startup_end.as_secs());
 
         let ipc = IpcHandler::init().map_err(|error| RouterRunnerError::Ipc { error })?;
+        dbg!("ipc init done");
         ipc.listen(|request_message| {
-            RouterRunner::generate_route(&StartFinish {
+            let route_res = RouterRunner::generate_route(&StartFinish {
                 start_lat: request_message.start.lat,
                 start_lon: request_message.start.lon,
                 finish_lat: request_message.finish.lat,
@@ -245,6 +240,23 @@ impl RouterRunner {
 
             ResponseMessage {
                 id: request_message.id,
+                result: route_res
+                    .map(|routes| {
+                        routes
+                            .iter()
+                            .map(|route| RouteMessage {
+                                coords: route
+                                    .clone()
+                                    .into_iter()
+                                    .map(|segment| CoordsMessage {
+                                        lat: segment.get_end_point().borrow().lat,
+                                        lon: segment.get_end_point().borrow().lon,
+                                    })
+                                    .collect::<Vec<CoordsMessage>>(),
+                            })
+                            .collect()
+                    })
+                    .map_err(|error| format!("Error generating route {:?}", error)),
             }
         })
         .map_err(|error| RouterRunnerError::Ipc { error })?;
@@ -253,8 +265,10 @@ impl RouterRunner {
 
     fn run_client(&self, start_finish: &StartFinish) -> Result<(), RouterRunnerError> {
         let ipc = IpcHandler::init().map_err(|error| RouterRunnerError::Ipc { error })?;
-        ipc.connect(start_finish)
+        let response = ipc
+            .connect(start_finish)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
+        eprintln!("resp id {}", response.id);
         Ok(())
     }
 
