@@ -320,10 +320,7 @@ pub fn test_dataset_3() -> OsmTestData {
 }
 
 pub fn graph_from_test_file(file: &PathBuf) -> MapDataGraph {
-    let data_source = DataSource::JsonFile {
-        file: file.clone(),
-        cache: None,
-    };
+    let data_source = DataSource::JsonFile { file: file.clone() };
     let data_reader = OsmDataReader::new(data_source);
     data_reader.read_data().unwrap()
 }
