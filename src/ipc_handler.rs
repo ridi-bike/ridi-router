@@ -49,11 +49,16 @@ pub struct IpcHandler<'a> {
 }
 
 impl<'a> IpcHandler<'a> {
-    pub fn init() -> Result<Self, IpcHandlerError> {
+    pub fn init(socket_name: Option<String>) -> Result<Self, IpcHandlerError> {
+        let socket_name = socket_name.map_or("1".to_string(), |v| {
+            v.chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect::<String>()
+        });
         let socket_print_name = if GenericNamespaced::is_supported() {
-            String::from("ridi-router.socket")
+            String::from(format!("ridi-router-{}.socket", socket_name))
         } else {
-            String::from("/tmp/ridi-router.sock")
+            String::from(format!("/tmp/ridi-router-{}.socket", socket_name))
         };
 
         let socket_name = socket_print_name

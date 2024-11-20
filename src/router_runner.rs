@@ -63,6 +63,9 @@ enum CliMode {
 
         #[arg(short, long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
+
+        #[arg(short, long, value_name = "NAME")]
+        socket_name: Option<String>,
     },
     Client {
         #[arg(short, long, value_name = "FILE")]
@@ -73,6 +76,9 @@ enum CliMode {
 
         #[arg(short, long, value_name = "COORDINATES")]
         finish: String,
+
+        #[arg(short, long, value_name = "NAME")]
+        socket_name: Option<String>,
     },
     Dual {
         #[arg(short, long, value_name = "FILE")]
@@ -109,10 +115,12 @@ pub enum RouterMode {
     Server {
         data_source: DataSource,
         cache_dir: Option<PathBuf>,
+        socket_name: Option<String>,
     },
     Client {
         start_finish: StartFinish,
         data_destination: DataDestination,
+        socket_name: Option<String>,
     },
     Dual {
         data_source: DataSource,
@@ -134,14 +142,20 @@ impl RouterRunner {
                 data_source: get_data_source(input).expect("could not get data source"),
                 cache_dir,
             },
-            CliMode::Server { input, cache_dir } => RouterMode::Server {
+            CliMode::Server {
+                input,
+                cache_dir,
+                socket_name,
+            } => RouterMode::Server {
                 data_source: get_data_source(input).expect("could not get data source"),
                 cache_dir,
+                socket_name,
             },
             CliMode::Client {
                 output,
                 start,
                 finish,
+                socket_name,
             } => {
                 let start_finish = get_start_finish(start, finish)
                     .expect("could not get start/finish coordinates");
@@ -149,6 +163,7 @@ impl RouterRunner {
                     start_finish,
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
+                    socket_name,
                 }
             }
             CliMode::Dual {
@@ -268,6 +283,7 @@ impl RouterRunner {
         &self,
         data_source: &DataSource,
         cache_dir: Option<PathBuf>,
+        socket_name: Option<String>,
     ) -> Result<(), RouterRunnerError> {
         let startup_start = Instant::now();
 
@@ -293,7 +309,8 @@ impl RouterRunner {
         let startup_end = startup_start.elapsed();
         eprintln!("startup took {}s", startup_end.as_secs());
 
-        let ipc = IpcHandler::init().map_err(|error| RouterRunnerError::Ipc { error })?;
+        let ipc =
+            IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         dbg!("ipc init done");
         ipc.listen(|request_message| {
             let route_res = RouterRunner::generate_route(&StartFinish {
@@ -332,8 +349,10 @@ impl RouterRunner {
         &self,
         start_finish: &StartFinish,
         data_destination: &DataDestination,
+        socket_name: Option<String>,
     ) -> Result<(), RouterRunnerError> {
-        let ipc = IpcHandler::init().map_err(|error| RouterRunnerError::Ipc { error })?;
+        let ipc =
+            IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
             .connect(start_finish)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
@@ -362,11 +381,13 @@ impl RouterRunner {
             RouterMode::Server {
                 data_source,
                 cache_dir,
-            } => self.run_server(&data_source, cache_dir.clone()),
+                socket_name,
+            } => self.run_server(&data_source, cache_dir.clone(), socket_name.clone()),
             RouterMode::Client {
                 start_finish,
                 data_destination,
-            } => self.run_client(&start_finish, &data_destination),
+                socket_name,
+            } => self.run_client(&start_finish, &data_destination, socket_name.clone()),
         }
     }
 }
