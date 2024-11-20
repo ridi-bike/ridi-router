@@ -3,10 +3,9 @@ use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLoc
 use clap::Parser;
 
 use crate::{
-    gpx_writer::GpxWriter,
     ipc_handler::{CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage},
     map_data::graph::MapDataGraph,
-    map_data_cache::MapDataCache,
+    map_data_cache::{MapDataCache, MapDataCacheError},
     osm_data_reader::DataSource,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{generator::Generator, route::Route},
@@ -36,6 +35,9 @@ pub enum RouterRunnerError {
     ResultWrite {
         error: ResultWriterError,
     },
+    CacheWrite {
+        error: MapDataCacheError,
+    },
 }
 
 #[derive(Parser)]
@@ -48,6 +50,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliMode {
+    Cache {
+        #[arg(short, long, value_name = "FILE")]
+        input: PathBuf,
+
+        #[arg(short, long, value_name = "FILE")]
+        cache_dir: PathBuf,
+    },
     Server {
         #[arg(short, long, value_name = "FILE")]
         input: PathBuf,
@@ -93,6 +102,10 @@ pub struct StartFinish {
 
 #[derive(Debug)]
 pub enum RouterMode {
+    Cache {
+        data_source: DataSource,
+        cache_dir: PathBuf,
+    },
     Server {
         data_source: DataSource,
         cache_dir: Option<PathBuf>,
@@ -117,6 +130,10 @@ impl RouterRunner {
     pub fn init() -> Self {
         let cli = Cli::parse();
         let mode = match cli.mode {
+            CliMode::Cache { input, cache_dir } => RouterMode::Cache {
+                data_source: get_data_source(input).expect("could not get data source"),
+                cache_dir,
+            },
             CliMode::Server { input, cache_dir } => RouterMode::Server {
                 data_source: get_data_source(input).expect("could not get data source"),
                 cache_dir,
@@ -227,6 +244,26 @@ impl RouterRunner {
         Ok(())
     }
 
+    fn run_cache(
+        &self,
+        data_source: &DataSource,
+        cache_dir: PathBuf,
+    ) -> Result<(), RouterRunnerError> {
+        let startup_start = Instant::now();
+
+        let data_cache = MapDataCache::init(Some(cache_dir));
+        MapDataGraph::init(data_source);
+        let packed_data = MapDataGraph::get().pack();
+        data_cache
+            .write_cache(packed_data)
+            .map_err(|error| RouterRunnerError::CacheWrite { error })?;
+
+        let startup_end = startup_start.elapsed();
+        eprintln!("cache gen took {}s", startup_end.as_secs());
+
+        Ok(())
+    }
+
     fn run_server(
         &self,
         data_source: &DataSource,
@@ -318,6 +355,10 @@ impl RouterRunner {
                 &start_finish,
                 &data_destination,
             ),
+            RouterMode::Cache {
+                data_source,
+                cache_dir,
+            } => self.run_cache(data_source, cache_dir.clone()),
             RouterMode::Server {
                 data_source,
                 cache_dir,
