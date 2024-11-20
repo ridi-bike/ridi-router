@@ -681,7 +681,7 @@ checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "ridi-router"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bincode",
  "clap",
