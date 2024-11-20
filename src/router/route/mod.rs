@@ -1,6 +1,8 @@
 pub mod segment;
 pub mod segment_list;
 
+use serde::{Deserialize, Serialize};
+
 use crate::map_data::{line::MapDataLine, point::MapDataPoint};
 
 use self::segment::Segment;
@@ -35,7 +37,7 @@ impl Route {
         match self.get_segment_last() {
             None => None,
             Some(last_segment) => self.route_segments.iter().rev().find(|route_segment| {
-                route_segment.get_end_point().borrow().junction == true
+                route_segment.get_end_point().borrow().is_junction()
                     && route_segment.get_end_point().borrow().id
                         != last_segment.get_end_point().borrow().id
             }),

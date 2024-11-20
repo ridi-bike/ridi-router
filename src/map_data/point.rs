@@ -1,35 +1,37 @@
 use geo::HaversineBearing;
 use geo::HaversineDistance;
 use geo::Point;
+use serde::Deserialize;
+use serde::Serialize;
 
 use std::fmt::Debug;
 
 use super::graph::MapDataLineRef;
 use super::graph::MapDataPointRef;
-use super::graph::MapDataWayRef;
 use super::rule::MapDataRule;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataPoint {
     pub id: u64,
-    pub lat: f64,
-    pub lon: f64,
-    pub part_of_ways: Vec<MapDataWayRef>,
+    pub lat: f32,
+    pub lon: f32,
     pub lines: Vec<MapDataLineRef>,
-    pub junction: bool,
     pub rules: Vec<MapDataRule>,
 }
 
 impl MapDataPoint {
-    pub fn distance_between(&self, point: &MapDataPointRef) -> f64 {
+    pub fn distance_between(&self, point: &MapDataPointRef) -> f32 {
         let self_geo = Point::new(self.lon, self.lat);
         let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
         self_geo.haversine_distance(&point_geo)
     }
-    pub fn bearing_to(&self, point: &MapDataPointRef) -> f64 {
+    pub fn bearing_to(&self, point: &MapDataPointRef) -> f32 {
         let self_geo = Point::new(self.lon, self.lat);
         let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
         self_geo.haversine_bearing(point_geo)
+    }
+    pub fn is_junction(&self) -> bool {
+        self.lines.len() > 2
     }
 }
 
@@ -46,22 +48,17 @@ impl Debug for MapDataPoint {
     id={}
     lat={}
     lon={}
-    part_of_ways={:?}
     lines={:?}
     junction={}
     rules={:#?}",
             self.id,
             self.lat,
             self.lon,
-            self.part_of_ways
-                .iter()
-                .map(|w| w.borrow().id)
-                .collect::<Vec<_>>(),
             self.lines
                 .iter()
-                .map(|l| l.borrow().id.clone())
+                .map(|l| l.borrow().line_id())
                 .collect::<Vec<_>>(),
-            self.junction,
+            self.is_junction(),
             self.rules
         )
     }

@@ -16,7 +16,7 @@ fn interleave_u32_with_zeros(input: u32) -> u64 {
     return output;
 }
 
-fn get_adjusted_coords(lat: f64, lon: f64, offset: HashOffset) -> (u32, u32) {
+fn get_adjusted_coords(lat: f32, lon: f32, offset: HashOffset) -> (u32, u32) {
     let lat_adj: u32 = ((lat + 90.0) * 100000.0).trunc() as u32 * 2;
     let lon_adj: u32 = ((lon + 180.0) * 100000.0).trunc() as u32;
 
@@ -28,7 +28,7 @@ fn get_adjusted_coords(lat: f64, lon: f64, offset: HashOffset) -> (u32, u32) {
     }
 }
 
-pub fn get_gps_coords_hash(lat: f64, lon: f64, offset: HashOffset) -> u64 {
+pub fn get_gps_coords_hash(lat: f32, lon: f32, offset: HashOffset) -> u64 {
     let (lat_adj, lon_adj) = get_adjusted_coords(lat, lon, offset);
 
     (interleave_u32_with_zeros(lat_adj) << 1) | interleave_u32_with_zeros(lon_adj)
@@ -143,7 +143,7 @@ mod tests {
         ];
 
         for test in tests {
-            let output = get_gps_coords_hash(test.lat, test.lon, test.offset);
+            let output = get_gps_coords_hash(test.lat as f32, test.lon as f32, test.offset);
             assert_eq!(output, test.output);
         }
     }

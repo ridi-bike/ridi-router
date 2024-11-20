@@ -2,42 +2,42 @@ use crate::map_data::graph::MapDataPointRef;
 
 #[derive(Clone, Debug)]
 pub struct Itinerary {
-    from: MapDataPointRef,
-    to: MapDataPointRef,
+    start: MapDataPointRef,
+    finish: MapDataPointRef,
     waypoints: Vec<MapDataPointRef>,
     next: MapDataPointRef,
-    waypoint_radius: f64,
+    waypoint_radius: f32,
 }
 
 impl Itinerary {
     pub fn new(
-        from: MapDataPointRef,
-        to: MapDataPointRef,
+        start: MapDataPointRef,
+        finish: MapDataPointRef,
         waypoints: Vec<MapDataPointRef>,
-        waypoint_radius: f64,
+        waypoint_radius: f32,
     ) -> Self {
         Self {
-            from,
+            start,
             waypoint_radius,
-            next: waypoints.get(0).map_or(to.clone(), |w| w.clone()),
+            next: waypoints.get(0).map_or(finish.clone(), |w| w.clone()),
             waypoints,
-            to,
+            finish,
         }
     }
 
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {
-        if current.borrow().distance_between(&self.to)
+        if current.borrow().distance_between(&self.finish)
             < current.borrow().distance_between(&self.next)
         {
-            self.next = self.to.clone();
+            self.next = self.finish.clone();
         } else if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 self.next = self
                     .waypoints
                     .get(idx + 1)
-                    .map_or(self.to.clone(), |w| w.clone())
+                    .map_or(self.finish.clone(), |w| w.clone())
             } else {
-                self.next = self.to.clone();
+                self.next = self.finish.clone();
             }
         }
     }
@@ -47,11 +47,11 @@ impl Itinerary {
     }
 
     pub fn get_from(&self) -> &MapDataPointRef {
-        &self.from
+        &self.start
     }
 
     pub fn get_to(&self) -> &MapDataPointRef {
-        &self.to
+        &self.finish
     }
 
     pub fn get_waypoints(&self) -> &Vec<MapDataPointRef> {

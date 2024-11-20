@@ -1,14 +1,16 @@
 use std::fmt::Debug;
 
+use serde::{Deserialize, Serialize};
+
 use super::graph::MapDataLineRef;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MapDataRuleType {
     OnlyAllowed,
     NotAllowed,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataRule {
     pub from_lines: Vec<MapDataLineRef>,
     pub to_lines: Vec<MapDataLineRef>,
@@ -21,7 +23,7 @@ impl Debug for MapDataRule {
             "({:?}){}({:?})",
             self.from_lines
                 .iter()
-                .map(|l| l.borrow().id.clone())
+                .map(|l| l.borrow().line_id())
                 .collect::<Vec<_>>(),
             if self.rule_type == MapDataRuleType::OnlyAllowed {
                 "--->"
@@ -30,7 +32,7 @@ impl Debug for MapDataRule {
             },
             self.to_lines
                 .iter()
-                .map(|l| l.borrow().id.clone())
+                .map(|l| l.borrow().line_id())
                 .collect::<Vec<_>>(),
         )
     }

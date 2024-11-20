@@ -67,7 +67,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     let degree_offset_from_next =
         ((180.0 - fork_bearing.abs()) - (180.0 - next_bearing.abs())).abs();
 
-    let ratio: f64 = 255.0 / 180.0;
+    let ratio: f32 = 255.0 / 180.0;
 
     input
         .debug_logger
@@ -92,23 +92,13 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
     let current_ref = input
         .route
         .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags_ref.clone());
+        .map_or(None, |s| s.get_line().borrow().tag_ref());
     let current_name = input
         .route
         .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags_name.clone());
-    let fork_ref = input
-        .current_fork_segment
-        .get_line()
-        .borrow()
-        .tags_ref
-        .clone();
-    let fork_name = input
-        .current_fork_segment
-        .get_line()
-        .borrow()
-        .tags_name
-        .clone();
+        .map_or(None, |s| s.get_line().borrow().tag_name());
+    let fork_ref = input.current_fork_segment.get_line().borrow().tag_ref();
+    let fork_name = input.current_fork_segment.get_line().borrow().tag_name();
 
     if (current_ref.is_some() && fork_ref.is_some() && current_ref == fork_ref)
         || (current_name.is_some() && fork_name.is_some() && current_name == fork_name)
@@ -170,10 +160,10 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
         Some(segment) => segment.get_end_point().clone(),
     };
 
-    let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f64);
+    let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f32);
 
     let distance_last_points = point_steps_back.borrow().distance_between(&current_point);
-    let average_distance_last_points = distance_last_points / (check_steps_back as f64);
+    let average_distance_last_points = distance_last_points / (check_steps_back as f32);
 
     if average_distance_last_points < average_distance_per_segment * 0.3 {
         // return WeightCalcResult::DoNotUse;
@@ -185,6 +175,8 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
 #[cfg(test)]
 mod test {
+
+    use std::path::PathBuf;
 
     use rusty_fork::rusty_fork_test;
 
@@ -224,13 +216,13 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn weight_heading_test() {
-            set_graph_static(graph_from_test_file("test-data/sigulda-100.json"));
+            set_graph_static(graph_from_test_file(&PathBuf::from("test-data/sigulda-100.json")));
             let from = MapDataGraph::get()
                 .test_get_point_ref_by_id(&885564366)
-                .expect("to find start point");
+                .expect("did not find start point");
             let to = MapDataGraph::get()
                 .test_get_point_ref_by_id(&33416714)
-                .expect("to find end point");
+                .expect("did not find end point");
             let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
             let walker = Walker::new(
                 from.clone(),
@@ -261,7 +253,7 @@ mod test {
                 debug_logger: &debug_logger
             });
             eprintln!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(216));
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(215));
 
             let fork_point = MapDataGraph::get()
                 .test_get_point_ref_by_id(&9212889586)

@@ -1,17 +1,20 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{
     map_data::{
-        graph::MapDataGraph,
+        graph::{MapDataGraph, MapDataGraphPacked},
         osm::{
             OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
             OsmWay,
         },
-        way, MapDataError,
+        MapDataError,
     },
     osm_json_parser::{OsmElement, OsmElementType, OsmJsonParser, OsmJsonParserError},
 };
 use std::{
     fs::File,
     io::{self, BufRead, BufReader},
+    path::PathBuf,
     time::Instant,
 };
 
@@ -26,11 +29,10 @@ pub enum OsmDataReaderError {
     PbfFileError { error: String },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum DataSource {
-    Stdin,
-    JsonFile { file: String },
-    PbfFile { file: String },
+    JsonFile { file: PathBuf },
+    PbfFile { file: PathBuf },
 }
 
 pub struct OsmDataReader {
@@ -48,9 +50,6 @@ impl OsmDataReader {
 
     pub fn read_data(mut self) -> Result<MapDataGraph, OsmDataReaderError> {
         match self.source {
-            DataSource::Stdin => {
-                self.read_stdin()?;
-            }
             DataSource::JsonFile { ref file } => {
                 self.read_json(file.clone())?;
             }
@@ -102,7 +101,7 @@ impl OsmDataReader {
         Ok(())
     }
 
-    fn read_pbf(&mut self, file: String) -> Result<(), OsmDataReaderError> {
+    fn read_pbf(&mut self, file: PathBuf) -> Result<(), OsmDataReaderError> {
         let read_start = Instant::now();
 
         let path = std::path::Path::new(&file);
@@ -126,7 +125,7 @@ impl OsmDataReader {
             })
             .map_err(|error| OsmDataReaderError::PbfFileReadError { error })?;
 
-        for (id, element) in elements {
+        for (_id, element) in elements {
             if element.is_node() {
                 let node = element.node().map_or(
                     Err(OsmDataReaderError::PbfFileError {
@@ -214,7 +213,7 @@ impl OsmDataReader {
         Ok(())
     }
 
-    fn read_json(&mut self, file: String) -> Result<(), OsmDataReaderError> {
+    fn read_json(&mut self, file: PathBuf) -> Result<(), OsmDataReaderError> {
         let read_start = Instant::now();
         let mut parser_state = OsmJsonParser::new();
 
@@ -239,29 +238,6 @@ impl OsmDataReader {
 
         let read_duration = read_start.elapsed();
         eprintln!("file read took {} seconds", read_duration.as_secs());
-
-        Ok(())
-    }
-
-    fn read_stdin(&mut self) -> Result<(), OsmDataReaderError> {
-        let read_start = Instant::now();
-        let mut parser_state = OsmJsonParser::new();
-        let stdin = std::io::stdin();
-        for line in stdin.lock().lines() {
-            let line = line
-                .map_err(|error| OsmDataReaderError::StdioError { error })?
-                .as_bytes()
-                .to_owned();
-            let elements = parser_state
-                .parse_line(line)
-                .map_err(|error| OsmDataReaderError::ParserError { error })?;
-            self.process_elements(elements)?;
-        }
-
-        self.map_data.generate_point_hashes();
-
-        let read_duration = read_start.elapsed();
-        eprintln!("stdin read took {} seconds", read_duration.as_secs());
 
         Ok(())
     }

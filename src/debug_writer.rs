@@ -89,7 +89,10 @@ impl DebugLogger for DebugLoggerFileSink {
             let mut waypoint = if let Some(wp) = self.forks.get(&point.borrow().id) {
                 wp.clone()
             } else {
-                Waypoint::new(Point::new(point.borrow().lon, point.borrow().lat))
+                Waypoint::new(Point::new(
+                    point.borrow().lon.into(),
+                    point.borrow().lat.into(),
+                ))
             };
             let move_result_type = match move_result {
                 WalkerMoveResult::Finish => "Finish",
@@ -125,8 +128,8 @@ impl DebugLogger for DebugLoggerFileSink {
                     }
                     if let Some(dead_segment) = dead_segment {
                         track_segment.points.push(Waypoint::new(Point::new(
-                            dead_segment.get_end_point().borrow().lon,
-                            dead_segment.get_end_point().borrow().lat,
+                            dead_segment.get_end_point().borrow().lon.into(),
+                            dead_segment.get_end_point().borrow().lat.into(),
                         )));
                     }
                 }
@@ -199,15 +202,15 @@ impl DebugLoggerFileSink {
         let mut track_segment = TrackSegment::new();
 
         let waypoint = Waypoint::new(Point::new(
-            self.start_point.borrow().lon,
-            self.start_point.borrow().lat,
+            self.start_point.borrow().lon.into(),
+            self.start_point.borrow().lat.into(),
         ));
         track_segment.points.push(waypoint);
 
         for segment in self.route.clone() {
             let waypoint = Waypoint::new(Point::new(
-                segment.get_end_point().borrow().lon,
-                segment.get_end_point().borrow().lat,
+                segment.get_end_point().borrow().lon.into(),
+                segment.get_end_point().borrow().lat.into(),
             ));
             track_segment.points.push(waypoint);
         }
@@ -222,14 +225,15 @@ impl DebugLoggerFileSink {
         }
 
         let mut end_point = Waypoint::new(Point::new(
-            self.end_point.borrow().lon,
-            self.end_point.borrow().lat,
+            self.end_point.borrow().lon.into(),
+            self.end_point.borrow().lat.into(),
         ));
         end_point.name = Some(String::from("END"));
         gpx.waypoints.push(end_point);
 
         for (idx, wp) in self.waypoints.clone().iter().enumerate() {
-            let mut end_point = Waypoint::new(Point::new(wp.borrow().lon, wp.borrow().lat));
+            let mut end_point =
+                Waypoint::new(Point::new(wp.borrow().lon.into(), wp.borrow().lat.into()));
             end_point.name = Some(format!("WP-{}", idx));
             gpx.waypoints.push(end_point);
         }

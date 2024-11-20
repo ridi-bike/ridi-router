@@ -6,7 +6,6 @@ use std::{
 use crate::{
     debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
     map_data::graph::MapDataPointRef,
-    MAP_DATA_GRAPH,
 };
 
 use super::{

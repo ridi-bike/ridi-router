@@ -1,37 +1,36 @@
-use clap::{arg, value_parser, Command};
-use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-
-use core::panic;
 use std::{
     cmp::Eq,
     collections::{BTreeMap, HashMap},
-    fmt::{Debug, Display},
+    fmt::Debug,
     hash::Hash,
     marker::PhantomData,
+    sync::OnceLock,
+    time::Instant,
 };
 
 use geo::HaversineDistance;
 use geo::Point;
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    cli::Cli,
     gps_hash::{get_gps_coords_hash, HashOffset},
     map_data::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
-    osm_data_reader::OsmDataReader,
-    MAP_DATA_GRAPH,
+    osm_data_reader::{DataSource, OsmDataReader},
+    router_runner::RouterMode,
 };
 
 use super::{
-    line::MapDataLine,
+    line::{LineDirection, MapDataLine},
     osm::{OsmNode, OsmRelation, OsmWay},
     point::MapDataPoint,
     rule::MapDataRuleType,
-    way::{MapDataWay, MapDataWayPoints},
     MapDataError,
 };
+
+pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
 trait MapDataElement: Debug {
     fn get(idx: usize) -> &'static Self;
@@ -46,12 +45,8 @@ impl MapDataElement for MapDataLine {
         &MapDataGraph::get().lines[idx]
     }
 }
-impl MapDataElement for MapDataWay {
-    fn get(idx: usize) -> &'static MapDataWay {
-        &MapDataGraph::get().ways[idx]
-    }
-}
 
+#[derive(Serialize, Deserialize)]
 pub struct MapDataElementRef<T: MapDataElement> {
     idx: usize,
     _marker: PhantomData<T>,
@@ -99,26 +94,57 @@ impl<T: MapDataElement + 'static> Debug for MapDataElementRef<T> {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct MapDataElementTagRef {
+    tag_value_pos: u32,
+}
+
+impl MapDataElementTagRef {
+    pub fn none() -> Self {
+        Self { tag_value_pos: 0 }
+    }
+    pub fn some(tag_idx: u32) -> Self {
+        Self {
+            tag_value_pos: tag_idx + 1,
+        }
+    }
+    pub fn get(&self) -> Option<&String> {
+        if self.tag_value_pos == 0 {
+            return None;
+        }
+        let idx = self.tag_value_pos - 1;
+        Some(&MapDataGraph::get().tags[idx as usize])
+    }
+}
+
 pub type MapDataLineRef = MapDataElementRef<MapDataLine>;
 pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
-pub type MapDataWayRef = MapDataElementRef<MapDataWay>;
 
 type PointMap = BTreeMap<u64, MapDataPointRef>;
 
+#[derive(Serialize, Deserialize)]
 pub struct MapDataGraph {
     points: Vec<MapDataPoint>,
     points_map: HashMap<u64, usize>,
-    point_hashed_offset_none: PointMap,
-    point_hashed_offset_lat: PointMap,
-    nodes_hashed_offset_lon: PointMap,
-    nodes_hashed_offset_lat_lon: PointMap,
-    ways: Vec<MapDataWay>,
-    ways_map: HashMap<u64, usize>,
+    points_hashed_offset_none: PointMap,
+    points_hashed_offset_lat: PointMap,
+    points_hashed_offset_lon: PointMap,
+    points_hashed_offset_lat_lon: PointMap,
+    ways_lines: HashMap<u64, Vec<MapDataLineRef>>,
     lines: Vec<MapDataLine>,
+    tags: Vec<String>,
+    tags_map: HashMap<String, u32>,
 }
 
-fn get_line_id(way_id: &u64, point_id_1: &u64, point_id_2: &u64) -> String {
-    format!("{}-{}-{}", way_id, point_id_1, point_id_2)
+#[derive(Default)]
+pub struct MapDataGraphPacked {
+    pub points: Vec<u8>,
+    pub points_hashed_offset_none: Vec<u8>,
+    pub points_hashed_offset_lat: Vec<u8>,
+    pub points_hashed_offset_lon: Vec<u8>,
+    pub points_hashed_offset_lat_lon: Vec<u8>,
+    pub lines: Vec<u8>,
+    pub tags: Vec<u8>,
 }
 
 impl MapDataGraph {
@@ -126,14 +152,103 @@ impl MapDataGraph {
         Self {
             points: Vec::new(),
             points_map: HashMap::new(),
-            point_hashed_offset_none: BTreeMap::new(),
-            point_hashed_offset_lat: BTreeMap::new(),
-            nodes_hashed_offset_lon: BTreeMap::new(),
-            nodes_hashed_offset_lat_lon: BTreeMap::new(),
-            ways: Vec::new(),
-            ways_map: HashMap::new(),
+            points_hashed_offset_none: BTreeMap::new(),
+            points_hashed_offset_lat: BTreeMap::new(),
+            points_hashed_offset_lon: BTreeMap::new(),
+            points_hashed_offset_lat_lon: BTreeMap::new(),
+            ways_lines: HashMap::new(),
             lines: Vec::new(),
+            tags: Vec::new(),
+            tags_map: HashMap::new(),
         }
+    }
+
+    pub fn pack(&self) -> MapDataGraphPacked {
+        let pack_start = Instant::now();
+
+        let mut packed = MapDataGraphPacked::default();
+
+        eprintln!("points len {}", self.points.len());
+        eprintln!(
+            "points_hashed_offset_none len {}",
+            self.points_hashed_offset_none.len(),
+        );
+        eprintln!(
+            "points_hashed_offset_lat len {}",
+            self.points_hashed_offset_lat.len(),
+        );
+        eprintln!(
+            "points_hashed_offset_lon len {}",
+            self.points_hashed_offset_lon.len(),
+        );
+        eprintln!(
+            "points_hashed_offset_lat_lon len {}",
+            self.points_hashed_offset_lat_lon.len(),
+        );
+        eprintln!("lines len {}", self.lines.len());
+        eprintln!("tags len {}", self.tags.len());
+
+        rayon::scope(|scope| {
+            scope.spawn(|_| {
+                packed.points =
+                    bincode::serialize(&self.points).expect("could not serialize points");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_none =
+                    bincode::serialize(&self.points_hashed_offset_none)
+                        .expect("could not serialize point_hashed_offset_none");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_lat =
+                    bincode::serialize(&self.points_hashed_offset_lat)
+                        .expect("could not serialize point_hashed_offset_lat");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_lon =
+                    bincode::serialize(&self.points_hashed_offset_lon)
+                        .expect("could not serialize points_hashed_offset_lon");
+            });
+            scope.spawn(|_| {
+                packed.points_hashed_offset_lat_lon =
+                    bincode::serialize(&self.points_hashed_offset_lat_lon)
+                        .expect("could not serialize points_hashed_offset_lat_lon");
+            });
+            scope.spawn(|_| {
+                packed.lines = bincode::serialize(&self.lines).expect("could not serialize lines");
+            });
+            scope.spawn(|_| {
+                packed.tags = bincode::serialize(&self.tags).expect("could not serialize tags");
+            });
+        });
+
+        eprintln!("points len {}, {}", self.points.len(), packed.points.len());
+        eprintln!(
+            "points_hashed_offset_none len {} {}",
+            self.points_hashed_offset_none.len(),
+            packed.points_hashed_offset_none.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat len {} {}",
+            self.points_hashed_offset_lat.len(),
+            packed.points_hashed_offset_lat.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lon len {} {}",
+            self.points_hashed_offset_lon.len(),
+            packed.points_hashed_offset_lon.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat_lon len {} {}",
+            self.points_hashed_offset_lat_lon.len(),
+            packed.points_hashed_offset_lat_lon.len()
+        );
+        eprintln!("lines len {} {}", self.lines.len(), packed.lines.len());
+        eprintln!("tags len {} {}", self.tags.len(), packed.tags.len());
+
+        let pack_end = pack_start.elapsed();
+        eprint!("pack took {}s", pack_end.as_secs());
+
+        packed
     }
 
     #[cfg(test)]
@@ -148,41 +263,15 @@ impl MapDataGraph {
         }
     }
 
-    fn get_way_ref_by_id(&self, id: &u64) -> Option<MapDataWayRef> {
-        match self.ways_map.get(id) {
-            None => return None,
-            Some(i) => Some(MapDataElementRef::new(i.clone())),
-        }
-    }
-
     pub fn insert_node(&mut self, value: OsmNode) -> () {
-        let lat = value.lat.clone();
-        let lon = value.lon.clone();
         let point = MapDataPoint {
             id: value.id,
-            lat: value.lat,
-            lon: value.lon,
-            part_of_ways: Vec::new(),
+            lat: value.lat as f32,
+            lon: value.lon as f32,
             lines: Vec::new(),
-            junction: false,
             rules: Vec::new(),
         };
-        let idx = self.add_point(point.clone());
-        let point_ref = MapDataElementRef::new(idx);
-        self.point_hashed_offset_none.insert(
-            get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::None),
-            point_ref.clone(),
-        );
-        self.point_hashed_offset_none.insert(
-            get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::Lat),
-            point_ref.clone(),
-        );
-        self.point_hashed_offset_none.insert(
-            get_gps_coords_hash(lat.clone(), lon.clone(), HashOffset::Lon),
-            point_ref.clone(),
-        );
-        self.point_hashed_offset_none
-            .insert(get_gps_coords_hash(lat, lon, HashOffset::LatLon), point_ref);
+        self.add_point(point.clone());
     }
 
     pub fn generate_point_hashes(&mut self) -> () {
@@ -192,42 +281,32 @@ impl MapDataGraph {
                 .get(&point.id)
                 .expect("Point must exist in the points map, something went very wrong");
             let point_ref = MapDataElementRef::new(*point_idx);
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_none.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::None),
                 point_ref.clone(),
             );
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_lat.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::Lat),
                 point_ref.clone(),
             );
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_lon.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::Lon),
                 point_ref.clone(),
             );
-            self.point_hashed_offset_none.insert(
+            self.points_hashed_offset_lat_lon.insert(
                 get_gps_coords_hash(point.lat, point.lon, HashOffset::LatLon),
                 point_ref,
             );
         }
+        if !cfg!(test) {
+            self.points_map = HashMap::new();
+            self.ways_lines = HashMap::new();
+            self.tags_map = HashMap::new();
+        }
     }
 
-    fn get_way_by_idx(&self, idx: usize) -> &MapDataWay {
-        &self.ways[idx]
-    }
-    fn get_point_by_idx(&self, idx: usize) -> &MapDataPoint {
-        &self.points[idx]
-    }
-    fn get_line_by_idx(&self, idx: usize) -> &MapDataLine {
-        &self.lines[idx]
-    }
-    fn get_mut_way_by_idx(&mut self, idx: usize) -> &mut MapDataWay {
-        &mut self.ways[idx]
-    }
     fn get_mut_point_by_idx(&mut self, idx: usize) -> &mut MapDataPoint {
         &mut self.points[idx]
-    }
-    fn get_mut_line_by_idx(&mut self, idx: usize) -> &mut MapDataLine {
-        &mut self.lines[idx]
     }
     fn add_line(&mut self, line: MapDataLine) -> usize {
         self.lines.push(line);
@@ -239,11 +318,20 @@ impl MapDataGraph {
         self.points.push(point);
         idx
     }
-    fn add_way(&mut self, way: MapDataWay) -> usize {
-        let idx = self.ways.len();
-        self.ways_map.insert(way.id, idx);
-        self.ways.push(way);
-        idx
+    fn get_tag_ref(&mut self, maybe_tag: Option<String>) -> MapDataElementTagRef {
+        if let Some(tag) = maybe_tag {
+            let tag_idx = self.tags_map.get(&tag);
+            if let Some(tag_idx) = tag_idx {
+                MapDataElementTagRef::some(*tag_idx)
+            } else {
+                let tag_idx = self.tags.len() as u32;
+                self.tags.push(tag.clone());
+                self.tags_map.insert(tag, tag_idx.clone());
+                MapDataElementTagRef::some(tag_idx)
+            }
+        } else {
+            MapDataElementTagRef::none()
+        }
     }
 
     fn way_is_ok(&self, osm_way: &OsmWay) -> bool {
@@ -279,57 +367,39 @@ impl MapDataGraph {
             return Ok(());
         }
         let mut prev_point_ref: Option<MapDataPointRef> = None;
-        let way = MapDataWay {
-            id: osm_way.id,
-            points: MapDataWayPoints::new(),
-        };
 
-        let way_idx = self.add_way(way.clone());
-        let way_ref = MapDataElementRef::new(way_idx);
+        let mut way_line_refs = Vec::new();
         for point_id in &osm_way.point_ids {
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
-                let way_mut = self.get_mut_way_by_idx(way_idx);
-                way_mut.points.add(point_ref.clone());
-            }
-
-            if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
-                let point_mut = self.get_mut_point_by_idx(point_ref.idx);
-                point_mut.part_of_ways.push(way_ref.clone());
-            }
-
-            if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
                 if let Some(prev_point_ref) = prev_point_ref {
-                    let line_id = get_line_id(
-                        &way.id,
-                        &self.get_point_by_idx(prev_point_ref.idx).id,
-                        &point_id,
-                    );
+                    let tag_name = osm_way
+                        .tags
+                        .as_ref()
+                        .map_or(None, |t| t.get("name").cloned());
+                    let tag_ref = osm_way
+                        .tags
+                        .as_ref()
+                        .map_or(None, |t| t.get("ref").cloned());
                     let line = MapDataLine {
-                        id: line_id,
-                        way: way_ref.clone(),
                         points: (prev_point_ref.clone(), point_ref.clone()),
-                        one_way: osm_way.is_one_way(),
-                        roundabout: osm_way.is_roundabout(),
-                        tags_name: osm_way
-                            .tags
-                            .as_ref()
-                            .map_or(None, |t| t.get("name").cloned()),
-                        tags_ref: osm_way
-                            .tags
-                            .as_ref()
-                            .map_or(None, |t| t.get("ref").cloned()),
+                        direction: if osm_way.is_roundabout() {
+                            LineDirection::Roundabout
+                        } else if osm_way.is_one_way() {
+                            LineDirection::OneWay
+                        } else {
+                            LineDirection::BothWays
+                        },
+                        tags: (self.get_tag_ref(tag_name), self.get_tag_ref(tag_ref)),
                     };
                     let line_idx = self.add_line(line);
                     let line_ref = MapDataLineRef::new(line_idx);
+                    way_line_refs.push(line_ref.clone());
 
                     let point_mut = self.get_mut_point_by_idx(point_ref.idx);
                     point_mut.lines.push(line_ref.clone());
-                    point_mut.junction = point_mut.lines.len() > 2;
 
                     let prev_point_mut = self.get_mut_point_by_idx(prev_point_ref.idx);
                     prev_point_mut.lines.push(line_ref);
-
-                    prev_point_mut.junction = prev_point_mut.lines.len() > 2;
                 }
                 prev_point_ref = Some(point_ref);
             } else {
@@ -338,6 +408,7 @@ impl MapDataGraph {
                 });
             }
         }
+        self.ways_lines.insert(osm_way.id, way_line_refs);
 
         Ok(())
     }
@@ -400,11 +471,11 @@ impl MapDataGraph {
             .filter(|member| member.role == OsmRelationMemberRole::Via)
             .collect::<Vec<_>>();
         if via_members.len() == 1 {
-            fn get_way_refs(
+            fn get_lines_from_way_ids(
                 graph: &MapDataGraph,
                 members: &Vec<OsmRelationMember>,
                 role: OsmRelationMemberRole,
-            ) -> Vec<MapDataWayRef> {
+            ) -> Vec<MapDataLineRef> {
                 members
                     .iter()
                     .filter_map(|member| {
@@ -413,37 +484,17 @@ impl MapDataGraph {
                         }
                         None
                     })
-                    .filter_map(|w_id| graph.get_way_ref_by_id(&w_id))
+                    .filter_map(|w_id| graph.ways_lines.get(&w_id))
+                    .flatten()
+                    .map(|l| l.clone())
                     .collect::<Vec<_>>()
             }
-            fn get_lines_from_way_ids(
-                graph: &MapDataGraph,
-                way_refs: &Vec<MapDataWayRef>,
-                point: &MapDataPointRef,
-            ) -> Vec<MapDataLineRef> {
-                way_refs
-                    .iter()
-                    .filter_map(|way_ref| {
-                        // we may not find a way and that's fine as the
-                        // relation may be associated with a service road
-                        // or other way that is outside of our dataset
-                        graph
-                            .get_point_by_idx(point.idx)
-                            .lines
-                            .iter()
-                            .find(|line| {
-                                // can't use borrow() here because we are still just setting up the
-                                // graph and it'll block itself
-                                graph.get_line_by_idx(line.idx).way.idx == way_ref.idx
-                            })
-                            .cloned()
-                    })
-                    .collect()
-            }
-            let from_way_refs = get_way_refs(self, &relation.members, OsmRelationMemberRole::From);
-            let to_way_refs = get_way_refs(self, &relation.members, OsmRelationMemberRole::To);
+            let from_lines =
+                get_lines_from_way_ids(self, &relation.members, OsmRelationMemberRole::From);
+            let to_lines =
+                get_lines_from_way_ids(self, &relation.members, OsmRelationMemberRole::To);
 
-            if from_way_refs.is_empty() || to_way_refs.is_empty() {
+            if from_lines.is_empty() || to_lines.is_empty() {
                 return Ok(());
             }
 
@@ -463,8 +514,6 @@ impl MapDataGraph {
                 },
             )?;
 
-            let from_lines = get_lines_from_way_ids(self, &from_way_refs, &via_point);
-            let to_lines = get_lines_from_way_ids(self, &to_way_refs, &via_point);
             let point = self.get_mut_point_by_idx(via_point.idx);
             let rule = MapDataRule {
                 from_lines,
@@ -502,13 +551,19 @@ impl MapDataGraph {
             .collect()
     }
 
-    pub fn get_closest_to_coords(&self, lat: f64, lon: f64) -> Option<MapDataPointRef> {
+    pub fn get_closest_to_coords(&self, lat: f32, lon: f32) -> Option<MapDataPointRef> {
         let search_hash = get_gps_coords_hash(lat, lon, HashOffset::None);
         let mut grid_points = HashMap::new();
 
-        for level in 0..=32 {
+        for level in 0..=32u8 {
             let shift_width = 2 * level;
-            let from = search_hash >> shift_width << shift_width;
+
+            let from = if shift_width < 64 {
+                search_hash >> shift_width << shift_width
+            } else {
+                0
+            };
+
             let to = from
                 | if shift_width > 0 {
                     u64::max_value() >> (64 - shift_width)
@@ -516,10 +571,10 @@ impl MapDataGraph {
                     search_hash
                 };
 
-            let offset_none_points = self.point_hashed_offset_none.range(from..=to);
-            let offset_lat_points = self.point_hashed_offset_lat.range(from..=to);
-            let offset_lon_points = self.nodes_hashed_offset_lon.range(from..=to);
-            let offset_lat_lon_points = self.nodes_hashed_offset_lat_lon.range(from..=to);
+            let offset_none_points = self.points_hashed_offset_none.range(from..=to);
+            let offset_lat_points = self.points_hashed_offset_lat.range(from..=to);
+            let offset_lon_points = self.points_hashed_offset_lon.range(from..=to);
+            let offset_lat_lon_points = self.points_hashed_offset_lat_lon.range(from..=to);
             let points: [Vec<MapDataPointRef>; 4] = [
                 offset_none_points.map(|(_, point)| point.clone()).collect(),
                 offset_lat_points.map(|(_, point)| point.clone()).collect(),
@@ -557,22 +612,123 @@ impl MapDataGraph {
         points_with_dist.sort_by(|(dist_a, _), (dist_b, _)| dist_a.cmp(dist_b));
         points_with_dist.get(0).map(|(_, p)| p.clone())
     }
+    pub fn unpack(packed: MapDataGraphPacked) -> &'static MapDataGraph {
+        let mut points = Vec::new();
+        let points_map = HashMap::new();
+        let mut points_hashed_offset_none = BTreeMap::new();
+        let mut points_hashed_offset_lat = BTreeMap::new();
+        let mut points_hashed_offset_lon = BTreeMap::new();
+        let mut points_hashed_offset_lat_lon = BTreeMap::new();
+        let ways_lines = HashMap::new();
+        let mut lines = Vec::new();
+        let mut tags = Vec::new();
+        let tags_map = HashMap::new();
 
-    pub fn get() -> &'static MapDataGraph {
+        let unpack_start = Instant::now();
+        rayon::scope(|scope| {
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points =
+                    bincode::deserialize(&packed.points[..]).expect("could not deserialize points");
+                let dur = start.elapsed();
+                eprintln!("points {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_none =
+                    bincode::deserialize(&packed.points_hashed_offset_none[..])
+                        .expect("could not deserialize points_hashed_offset_none");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_none {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lat =
+                    bincode::deserialize(&packed.points_hashed_offset_lat[..])
+                        .expect("could not deserialize points_hashed_offset_lat");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lat {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lon =
+                    bincode::deserialize(&packed.points_hashed_offset_lon[..])
+                        .expect("could not deserialize points_hashed_offset_lon");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lon {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                points_hashed_offset_lat_lon =
+                    bincode::deserialize(&packed.points_hashed_offset_lat_lon[..])
+                        .expect("could not deserialize points_hashed_offset_lat_lon");
+                let dur = start.elapsed();
+                eprintln!("points_hashed_offset_lat_lon {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                lines =
+                    bincode::deserialize(&packed.lines[..]).expect("could not deserialize lines");
+                let dur = start.elapsed();
+                eprintln!("lines {}s", dur.as_secs());
+            });
+            scope.spawn(|_| {
+                let start = Instant::now();
+                tags = bincode::deserialize(&packed.tags[..]).expect("could not deserialize tags");
+                let dur = start.elapsed();
+                eprintln!("tags {}s", dur.as_secs());
+            });
+        });
+        let unpack_duration = unpack_start.elapsed();
+        eprintln!("unpack took {}s", unpack_duration.as_secs());
+        eprintln!("points {}", points.len());
+        eprintln!(
+            "points_hashed_offset_none {}",
+            points_hashed_offset_none.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat {}",
+            points_hashed_offset_lat.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lon {}",
+            points_hashed_offset_lon.len()
+        );
+        eprintln!(
+            "points_hashed_offset_lat_lon {}",
+            points_hashed_offset_lat_lon.len()
+        );
+        eprintln!("lines {}", lines.len());
+        eprintln!("tags {}", tags.len());
+
+        MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
+            points,
+            points_map,
+            points_hashed_offset_none,
+            points_hashed_offset_lat,
+            points_hashed_offset_lon,
+            points_hashed_offset_lat_lon,
+            lines,
+            ways_lines,
+            tags,
+            tags_map,
+        })
+    }
+
+    fn get_or_init(data_source: Option<&DataSource>) -> &'static MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| {
-            let data_source = match Cli::get() {
-                Cli::Single {
-                    data_source,
-                    from_to: _,
-                } => data_source,
-                cli => panic!("{:#?} not yet implemented", cli),
-            };
-
-            let data_reader = OsmDataReader::new(data_source);
+            let data_source = data_source.expect("data source must passed in when calling init");
+            let data_reader = OsmDataReader::new(data_source.clone());
             let map_data = data_reader.read_data().unwrap();
 
             map_data
         })
+    }
+    pub fn init(data_source: &DataSource) -> () {
+        MapDataGraph::get_or_init(Some(data_source));
+    }
+    pub fn get() -> &'static MapDataGraph {
+        MapDataGraph::get_or_init(None) // we've already initialized the graph
     }
 }
 
@@ -778,9 +934,8 @@ mod tests {
 
     #[derive(Debug)]
     struct PointTest {
-        lat: f64,
-        lon: f64,
-        ways: Vec<u64>,
+        lat: f32,
+        lon: f32,
         lines: Vec<&'static str>,
         junction: bool,
     }
@@ -798,23 +953,15 @@ mod tests {
                 eprintln!("test {:#?}", test);
                 point.lat == test.lat
                     && point.lon == test.lon
-                    && point.part_of_ways.len() == test.ways.len()
-                    && point.part_of_ways.iter().enumerate().all(|(idx, w)| {
-                        let test_way_id = test
-                            .ways
-                            .get(idx)
-                            .expect(format!("{}: way at idx {} must exist", id, idx).as_str());
-                        w.borrow().id == *test_way_id
-                    })
                     && point.lines.len() == test.lines.len()
                     && point.lines.iter().enumerate().all(|(idx, l)| {
                         let test_line_id = test
                             .lines
                             .get(idx)
                             .expect(format!("{}: line at idx {} must exist", id, idx).as_str());
-                        l.borrow().id == *test_line_id
+                        l.borrow().line_id() == *test_line_id
                     })
-                    && point.junction == test.junction
+                    && point.is_junction() == test.junction
             }
             let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
             assert!(point_is_ok(
@@ -823,8 +970,7 @@ mod tests {
                 PointTest {
                     lat: 1.0,
                     lon: 1.0,
-                    ways: vec![1234],
-                    lines: vec!["1234-1-2"],
+                    lines: vec!["1-2"],
                     junction: false
                 }
             ));
@@ -834,8 +980,7 @@ mod tests {
                 PointTest {
                     lat: 2.0,
                     lon: 2.0,
-                    ways: vec![1234],
-                    lines: vec!["1234-1-2", "1234-2-3"],
+                    lines: vec!["1-2", "2-3"],
                     junction: false
                 }
             ));
@@ -845,8 +990,7 @@ mod tests {
                 PointTest {
                     lat: 3.0,
                     lon: 3.0,
-                    ways: vec![1234, 5367],
-                    lines: vec!["1234-2-3", "1234-3-4", "5367-5-3", "5367-3-6"],
+                    lines: vec!["2-3", "3-4", "5-3", "3-6"],
                     junction: true
                 }
             ));
@@ -856,8 +1000,7 @@ mod tests {
                 PointTest {
                     lat: 4.0,
                     lon: 4.0,
-                    ways: vec![1234, 489],
-                    lines: vec!["1234-3-4", "489-4-8"],
+                    lines: vec!["3-4", "4-8"],
                     junction: false
                 }
             ));
@@ -867,8 +1010,7 @@ mod tests {
                 PointTest {
                     lat: 5.0,
                     lon: 5.0,
-                    ways: vec![5367],
-                    lines: vec!["5367-5-3"],
+                    lines: vec!["5-3"],
                     junction: false
                 }
             ));
@@ -878,8 +1020,7 @@ mod tests {
                 PointTest {
                     lat: 6.0,
                     lon: 6.0,
-                    ways: vec![5367, 68],
-                    lines: vec!["5367-3-6", "5367-6-7", "68-6-8"],
+                    lines: vec!["3-6", "6-7", "6-8"],
                     junction: true
                 }
             ));
@@ -889,8 +1030,7 @@ mod tests {
                 PointTest {
                     lat: 7.0,
                     lon: 7.0,
-                    ways: vec![5367],
-                    lines: vec!["5367-6-7"],
+                    lines: vec!["6-7"],
                     junction: false
                 }
             ));
@@ -900,8 +1040,7 @@ mod tests {
                 PointTest {
                     lat: 8.0,
                     lon: 8.0,
-                    ways: vec![489, 68],
-                    lines: vec!["489-4-8", "489-8-9", "68-6-8"],
+                    lines: vec!["4-8", "8-9", "6-8"],
                     junction: true
                 }
             ));
@@ -911,8 +1050,7 @@ mod tests {
                 PointTest {
                     lat: 9.0,
                     lon: 9.0,
-                    ways: vec![489],
-                    lines: vec!["489-8-9"],
+                    lines: vec!["8-9"],
                     junction: false
                 }
             ));
@@ -922,8 +1060,7 @@ mod tests {
                 PointTest {
                     lat: 11.0,
                     lon: 11.0,
-                    ways: vec![1112],
-                    lines: vec!["1112-11-12"],
+                    lines: vec!["11-12"],
                     junction: false
                 }
             ));
@@ -933,41 +1070,10 @@ mod tests {
                 PointTest {
                     lat: 12.0,
                     lon: 12.0,
-                    ways: vec![1112],
-                    lines: vec!["1112-11-12"],
+                    lines: vec!["11-12"],
                     junction: false
                 }
             ));
-        }
-    }
-
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn check_way_consistency() {
-            fn way_is_ok(map_data: &MapDataGraph, id: &u64, test_points: Vec<u64>) -> bool {
-                let way = map_data
-                    .ways
-                    .iter()
-                    .find(|w| w.id == *id)
-                    .expect(format!("way {} must exist", id).as_str());
-                eprintln!("way {:#?}", way);
-                eprintln!("test {:#?}", test_points);
-                way.points.len() == test_points.len()
-                    && way.points.iter().enumerate().all(|(idx, p)| {
-                        let p = p.borrow();
-                        p.id == *test_points
-                            .get(idx)
-                            .expect(format!("point at idx {} must exist", idx).as_str())
-                    })
-            }
-            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-
-            assert!(way_is_ok(&map_data, &1234, vec![1, 2, 3, 4]));
-            assert!(way_is_ok(&map_data, &5367, vec![5, 3, 6, 7]));
-            assert!(way_is_ok(&map_data, &489, vec![4, 8, 9]));
-            assert!(way_is_ok(&map_data, &68, vec![6, 8]));
-            assert!(way_is_ok(&map_data, &1112, vec![11, 12]));
         }
     }
 
@@ -978,31 +1084,29 @@ mod tests {
             fn line_is_ok(
                 map_data: &MapDataGraph,
                 id: &str,
-                test_way: u64,
                 test_points: (u64, u64),
             ) -> bool {
                 let line = map_data
                     .lines
                     .iter()
-                    .find(|l| l.id == *id)
+                    .find(|l| l.line_id() == *id)
                     .expect(format!("line {} must exist", id).as_str());
                 eprintln!("line {:#?}", line);
                 eprintln!("test {:#?}", test_points);
-                line.way.borrow().id == test_way
-                    && line.points.0.borrow().id == test_points.0
+                     line.points.0.borrow().id == test_points.0
                     && line.points.1.borrow().id == test_points.1
             }
             let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            assert!(line_is_ok(&map_data, "1234-1-2", 1234, (1, 2)));
-            assert!(line_is_ok(&map_data, "1234-2-3", 1234, (2, 3)));
-            assert!(line_is_ok(&map_data, "1234-3-4", 1234, (3, 4)));
-            assert!(line_is_ok(&map_data, "5367-5-3", 5367, (5, 3)));
-            assert!(line_is_ok(&map_data, "5367-3-6", 5367, (3, 6)));
-            assert!(line_is_ok(&map_data, "5367-6-7", 5367, (6, 7)));
-            assert!(line_is_ok(&map_data, "489-4-8", 489, (4, 8)));
-            assert!(line_is_ok(&map_data, "489-8-9", 489, (8, 9)));
-            assert!(line_is_ok(&map_data, "68-6-8", 68, (6, 8)));
-            assert!(line_is_ok(&map_data, "1112-11-12", 1112, (11, 12)));
+            assert!(line_is_ok(&map_data, "1-2", (1, 2)));
+            assert!(line_is_ok(&map_data, "2-3", (2, 3)));
+            assert!(line_is_ok(&map_data, "3-4", (3, 4)));
+            assert!(line_is_ok(&map_data, "5-3", (5, 3)));
+            assert!(line_is_ok(&map_data, "3-6", (3, 6)));
+            assert!(line_is_ok(&map_data, "6-7", (6, 7)));
+            assert!(line_is_ok(&map_data, "4-8", (4, 8)));
+            assert!(line_is_ok(&map_data, "8-9", (8, 9)));
+            assert!(line_is_ok(&map_data, "6-8", (6, 8)));
+            assert!(line_is_ok(&map_data, "11-12", (11, 12)));
         }
     }
 
@@ -1036,7 +1140,7 @@ mod tests {
             let point = map_data.get_point_ref_by_id(&5).unwrap();
             let points = map_data.get_adjacent(point);
             points.iter().for_each(|p| {
-                assert!((p.1.borrow().id == 3 && p.1.borrow().junction == true) || p.1.borrow().id != 3)
+                assert!((p.1.borrow().id == 3 && p.1.borrow().is_junction() == true) || p.1.borrow().id != 3)
             });
 
             let point = map_data.get_point_ref_by_id(&3).unwrap();
@@ -1044,12 +1148,12 @@ mod tests {
             let non_junctions = vec![2, 5, 4];
             points.iter().for_each(|p| {
                 assert!(
-                    ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().junction == false)
+                    ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().is_junction() == false)
                         || !non_junctions.contains(&p.1.borrow().id))
                 )
             });
             points.iter().for_each(|p| {
-                assert!((p.1.borrow().id == 6 && p.1.borrow().junction == true) || p.1.borrow().id != 6)
+                assert!((p.1.borrow().id == 6 && p.1.borrow().is_junction() == true) || p.1.borrow().id != 6)
             });
         }
     }
@@ -1064,22 +1168,22 @@ mod tests {
                 (
                     1,
                     MapDataGraph::get().get_point_ref_by_id(&2).unwrap(),
-                    vec![(String::from("1234-1-2"), 1), (String::from("1234-2-3"), 3)],
+                    vec![(String::from("1-2"), 1), (String::from("2-3"), 3)],
                 ),
                 (
                     2,
                     MapDataGraph::get().get_point_ref_by_id(&3).unwrap(),
                     vec![
-                        (String::from("5367-5-3"), 5),
-                        (String::from("5367-6-3"), 6),
-                        (String::from("1234-2-3"), 2),
-                        (String::from("1234-4-3"), 4),
+                        (String::from("5-3"), 5),
+                        (String::from("6-3"), 6),
+                        (String::from("2-3"), 2),
+                        (String::from("4-3"), 4),
                     ],
                 ),
                 (
                     3,
                     MapDataGraph::get().get_point_ref_by_id(&1).unwrap(),
-                    vec![(String::from("1234-1-2"), 2)],
+                    vec![(String::from("1-2"), 2)],
                 ),
             ];
 
@@ -1090,7 +1194,7 @@ mod tests {
                 for (adj_line, adj_point) in &adj_elements {
                     let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
                         line_id.split("-").collect::<HashSet<_>>()
-                            == adj_line.borrow().id.split("-").collect::<HashSet<_>>()
+                            == adj_line.borrow().line_id().split("-").collect::<HashSet<_>>()
                             && point_id == &adj_point.borrow().id
                     });
                     assert_eq!(adj_match.is_some(), true);
@@ -1305,15 +1409,31 @@ mod tests {
     fn run_closest_test(test: ClosestTest) -> () {
         let (points, check_point, closest_id) = test;
         let mut map_data = MapDataGraph::new();
-        for point in points {
+        for point in &points {
             if let Some(point) = point {
                 map_data.insert_node(point.clone());
             }
         }
+        for point in points {
+            if let Some(point) = point {
+                map_data
+                    .insert_way(OsmWay {
+                        id: point.id,
+                        tags: Some(HashMap::from([(
+                            "highway".to_string(),
+                            "primary".to_string(),
+                        )])),
+                        point_ids: vec![point.id, point.id],
+                    })
+                    .expect("failed to insert dummy way");
+            }
+        }
+        map_data.generate_point_hashes();
 
         let map_data = set_graph_static(map_data);
 
-        let closest = map_data.get_closest_to_coords(check_point.lat, check_point.lon);
+        let closest =
+            map_data.get_closest_to_coords(check_point.lat as f32, check_point.lon as f32);
         if let Some(closest) = closest {
             assert_eq!(closest.borrow().id, closest_id);
         } else {

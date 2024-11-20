@@ -1,59 +1,36 @@
 use geo::Point;
 use gpx::{write, Gpx, GpxVersion, Track, TrackSegment, Waypoint};
-use std::{fs::File, io::Error};
+use std::{fs::File, io::Error, path::PathBuf};
 
-use crate::{map_data::graph::MapDataPointRef, router::route::Route};
+use crate::{
+    ipc_handler::{ResponseMessage, RouteMessage},
+    map_data::graph::MapDataPointRef,
+    router::route::Route,
+};
 
 #[derive(Debug)]
-pub enum RoutesWriterError {
+pub enum GpxWriterError {
     FileCreateError { error: Error },
 }
 
-pub struct RoutesWriter {
-    start_point: MapDataPointRef,
-    routes: Vec<Route>,
-    file_name: Option<String>,
-    from_lat: f64,
-    from_lon: f64,
+pub struct GpxWriter {
+    routes: Vec<RouteMessage>,
+    file_name: PathBuf,
 }
 
-impl RoutesWriter {
-    pub fn new(
-        start_point: MapDataPointRef,
-        routes: Vec<Route>,
-        from_lat: f64,
-        from_lon: f64,
-        file_name: Option<String>,
-    ) -> Self {
-        Self {
-            start_point,
-            routes,
-            file_name,
-            from_lat,
-            from_lon,
-        }
+impl GpxWriter {
+    pub fn new(routes: Vec<RouteMessage>, file_name: PathBuf) -> Self {
+        Self { routes, file_name }
     }
-    pub fn write_gpx(self) -> Result<(), RoutesWriterError> {
+    pub fn write_gpx(self) -> Result<(), GpxWriterError> {
         let mut gpx = Gpx::default();
         gpx.version = GpxVersion::Gpx11;
 
         for route in self.routes {
             let mut track_segment = TrackSegment::new();
 
-            let waypoint = Waypoint::new(Point::new(self.from_lon, self.from_lat));
-            track_segment.points.push(waypoint);
-
-            let waypoint = Waypoint::new(Point::new(
-                self.start_point.borrow().lon,
-                self.start_point.borrow().lat,
-            ));
-            track_segment.points.push(waypoint);
-
-            for segment in route {
-                let waypoint = Waypoint::new(Point::new(
-                    segment.get_end_point().borrow().lon,
-                    segment.get_end_point().borrow().lat,
-                ));
+            for coord in route.coords {
+                let waypoint = Waypoint::new(Point::new(coord.lon.into(), coord.lat.into()));
                 track_segment.points.push(waypoint);
             }
 
@@ -63,14 +40,10 @@ impl RoutesWriter {
             gpx.tracks.push(track);
         }
 
-        if let Some(file_name) = self.file_name {
-            let file = File::create(format!("/home/toms/dev/moto-router/debug/{}", file_name))
-                .or_else(|error| Err(RoutesWriterError::FileCreateError { error }))?;
+        let file = File::create(self.file_name)
+            .or_else(|error| Err(GpxWriterError::FileCreateError { error }))?;
 
-            write(&gpx, file).unwrap();
-        } else {
-            write(&gpx, std::io::stdout()).unwrap();
-        }
+        write(&gpx, file).unwrap();
 
         Ok(())
     }
