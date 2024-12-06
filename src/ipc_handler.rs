@@ -124,18 +124,18 @@ impl<'a> IpcHandler<'a> {
         conn.read_exact(&mut mes_len_buf)
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
-        println!("message size {:?}", u64::from_ne_bytes(mes_len_buf));
+        eprintln!("message size {:?}", u64::from_ne_bytes(mes_len_buf));
 
         let mut buffer = vec![0; u64::from_ne_bytes(mes_len_buf) as usize];
         conn.read_exact(&mut buffer[..])
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
-        println!("message received {}", buffer.len());
+        eprintln!("message received {}", buffer.len());
 
         let request_message = bincode::deserialize(&buffer[..])
             .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
 
-        println!("deserialized {request_message:?}");
+        eprintln!("deserialized {request_message:?}");
 
         Ok(request_message)
     }
@@ -154,7 +154,7 @@ impl<'a> IpcHandler<'a> {
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
         eprintln!("message size sent {}", mes_len_bytes);
 
-        println!(
+        eprintln!(
             "sending resp {} {} {}",
             response_message.id,
             response_message.result.is_ok(),
@@ -202,13 +202,13 @@ impl<'a> IpcHandler<'a> {
         conn.read_exact(&mut mes_len_buf)
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
-        println!("message size {:?}", u64::from_ne_bytes(mes_len_buf));
+        eprintln!("message size {:?}", u64::from_ne_bytes(mes_len_buf));
 
         let mut resp_buf = vec![0; u64::from_ne_bytes(mes_len_buf) as usize];
         conn.read_exact(&mut resp_buf[..])
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
-        println!("message received {}", resp_buf.len());
+        eprintln!("message received {}", resp_buf.len());
 
         let resp_msg: ResponseMessage = bincode::deserialize(&resp_buf[..])
             .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
