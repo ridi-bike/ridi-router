@@ -13,7 +13,6 @@ use geo::Point;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    gps_hash::{get_gps_coords_hash, HashOffset},
     map_data::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
@@ -26,6 +25,7 @@ use super::{
     line::{LineDirection, MapDataLine},
     osm::{OsmNode, OsmRelation, OsmWay},
     point::MapDataPoint,
+    proximity::GpsProximityLookup,
     rule::MapDataRuleType,
     MapDataError,
 };
@@ -120,16 +120,11 @@ impl MapDataElementTagRef {
 pub type MapDataLineRef = MapDataElementRef<MapDataLine>;
 pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
 
-type PointMap = BTreeMap<u64, MapDataPointRef>;
-
 #[derive(Serialize, Deserialize)]
 pub struct MapDataGraph {
     points: Vec<MapDataPoint>,
     points_map: HashMap<u64, usize>,
-    points_hashed_offset_none: PointMap,
-    points_hashed_offset_lat: PointMap,
-    points_hashed_offset_lon: PointMap,
-    points_hashed_offset_lat_lon: PointMap,
+    proximity_lookup: GpsProximityLookup,
     ways_lines: HashMap<u64, Vec<MapDataLineRef>>,
     lines: Vec<MapDataLine>,
     tags: Vec<String>,
@@ -139,10 +134,6 @@ pub struct MapDataGraph {
 #[derive(Default)]
 pub struct MapDataGraphPacked {
     pub points: Vec<u8>,
-    pub points_hashed_offset_none: Vec<u8>,
-    pub points_hashed_offset_lat: Vec<u8>,
-    pub points_hashed_offset_lon: Vec<u8>,
-    pub points_hashed_offset_lat_lon: Vec<u8>,
     pub lines: Vec<u8>,
     pub tags: Vec<u8>,
 }
@@ -152,10 +143,7 @@ impl MapDataGraph {
         Self {
             points: Vec::new(),
             points_map: HashMap::new(),
-            points_hashed_offset_none: BTreeMap::new(),
-            points_hashed_offset_lat: BTreeMap::new(),
-            points_hashed_offset_lon: BTreeMap::new(),
-            points_hashed_offset_lat_lon: BTreeMap::new(),
+            proximity_lookup: GpsProximityLookup::new(),
             ways_lines: HashMap::new(),
             lines: Vec::new(),
             tags: Vec::new(),
@@ -169,22 +157,7 @@ impl MapDataGraph {
         let mut packed = MapDataGraphPacked::default();
 
         eprintln!("points len {}", self.points.len());
-        eprintln!(
-            "points_hashed_offset_none len {}",
-            self.points_hashed_offset_none.len(),
-        );
-        eprintln!(
-            "points_hashed_offset_lat len {}",
-            self.points_hashed_offset_lat.len(),
-        );
-        eprintln!(
-            "points_hashed_offset_lon len {}",
-            self.points_hashed_offset_lon.len(),
-        );
-        eprintln!(
-            "points_hashed_offset_lat_lon len {}",
-            self.points_hashed_offset_lat_lon.len(),
-        );
+        eprintln!("proximity_lookup len {}", self.proximity_lookup.len(),);
         eprintln!("lines len {}", self.lines.len());
         eprintln!("tags len {}", self.tags.len());
 
@@ -193,26 +166,26 @@ impl MapDataGraph {
                 packed.points =
                     bincode::serialize(&self.points).expect("could not serialize points");
             });
-            scope.spawn(|_| {
-                packed.points_hashed_offset_none =
-                    bincode::serialize(&self.points_hashed_offset_none)
-                        .expect("could not serialize point_hashed_offset_none");
-            });
-            scope.spawn(|_| {
-                packed.points_hashed_offset_lat =
-                    bincode::serialize(&self.points_hashed_offset_lat)
-                        .expect("could not serialize point_hashed_offset_lat");
-            });
-            scope.spawn(|_| {
-                packed.points_hashed_offset_lon =
-                    bincode::serialize(&self.points_hashed_offset_lon)
-                        .expect("could not serialize points_hashed_offset_lon");
-            });
-            scope.spawn(|_| {
-                packed.points_hashed_offset_lat_lon =
-                    bincode::serialize(&self.points_hashed_offset_lat_lon)
-                        .expect("could not serialize points_hashed_offset_lat_lon");
-            });
+            // scope.spawn(|_| {
+            //     packed.points_hashed_offset_none =
+            //         bincode::serialize(&self.points_hashed_offset_none)
+            //             .expect("could not serialize point_hashed_offset_none");
+            // });
+            // scope.spawn(|_| {
+            //     packed.points_hashed_offset_lat =
+            //         bincode::serialize(&self.points_hashed_offset_lat)
+            //             .expect("could not serialize point_hashed_offset_lat");
+            // });
+            // scope.spawn(|_| {
+            //     packed.points_hashed_offset_lon =
+            //         bincode::serialize(&self.points_hashed_offset_lon)
+            //             .expect("could not serialize points_hashed_offset_lon");
+            // });
+            // scope.spawn(|_| {
+            //     packed.points_hashed_offset_lat_lon =
+            //         bincode::serialize(&self.points_hashed_offset_lat_lon)
+            //             .expect("could not serialize points_hashed_offset_lat_lon");
+            // });
             scope.spawn(|_| {
                 packed.lines = bincode::serialize(&self.lines).expect("could not serialize lines");
             });
@@ -222,26 +195,26 @@ impl MapDataGraph {
         });
 
         eprintln!("points len {}, {}", self.points.len(), packed.points.len());
-        eprintln!(
-            "points_hashed_offset_none len {} {}",
-            self.points_hashed_offset_none.len(),
-            packed.points_hashed_offset_none.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lat len {} {}",
-            self.points_hashed_offset_lat.len(),
-            packed.points_hashed_offset_lat.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lon len {} {}",
-            self.points_hashed_offset_lon.len(),
-            packed.points_hashed_offset_lon.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lat_lon len {} {}",
-            self.points_hashed_offset_lat_lon.len(),
-            packed.points_hashed_offset_lat_lon.len()
-        );
+        // eprintln!(
+        //     "points_hashed_offset_none len {} {}",
+        //     self.points_hashed_offset_none.len(),
+        //     packed.points_hashed_offset_none.len()
+        // );
+        // eprintln!(
+        //     "points_hashed_offset_lat len {} {}",
+        //     self.points_hashed_offset_lat.len(),
+        //     packed.points_hashed_offset_lat.len()
+        // );
+        // eprintln!(
+        //     "points_hashed_offset_lon len {} {}",
+        //     self.points_hashed_offset_lon.len(),
+        //     packed.points_hashed_offset_lon.len()
+        // );
+        // eprintln!(
+        //     "points_hashed_offset_lat_lon len {} {}",
+        //     self.points_hashed_offset_lat_lon.len(),
+        //     packed.points_hashed_offset_lat_lon.len()
+        // );
         eprintln!("lines len {} {}", self.lines.len(), packed.lines.len());
         eprintln!("tags len {} {}", self.tags.len(), packed.tags.len());
 
@@ -281,22 +254,7 @@ impl MapDataGraph {
                 .get(&point.id)
                 .expect("Point must exist in the points map, something went very wrong");
             let point_ref = MapDataElementRef::new(*point_idx);
-            self.points_hashed_offset_none.insert(
-                get_gps_coords_hash(point.lat, point.lon, HashOffset::None),
-                point_ref.clone(),
-            );
-            self.points_hashed_offset_lat.insert(
-                get_gps_coords_hash(point.lat, point.lon, HashOffset::Lat),
-                point_ref.clone(),
-            );
-            self.points_hashed_offset_lon.insert(
-                get_gps_coords_hash(point.lat, point.lon, HashOffset::Lon),
-                point_ref.clone(),
-            );
-            self.points_hashed_offset_lat_lon.insert(
-                get_gps_coords_hash(point.lat, point.lon, HashOffset::LatLon),
-                point_ref,
-            );
+            self.proximity_lookup.insert(point_ref);
         }
         if !cfg!(test) {
             self.points_map = HashMap::new();
@@ -552,73 +510,15 @@ impl MapDataGraph {
     }
 
     pub fn get_closest_to_coords(&self, lat: f32, lon: f32) -> Option<MapDataPointRef> {
-        let search_hash = get_gps_coords_hash(lat, lon, HashOffset::None);
-        let mut grid_points = HashMap::new();
-
-        for level in 0..=32u8 {
-            let shift_width = 2 * level;
-
-            let from = if shift_width < 64 {
-                search_hash >> shift_width << shift_width
-            } else {
-                0
-            };
-
-            let to = from
-                | if shift_width > 0 {
-                    u64::max_value() >> (64 - shift_width)
-                } else {
-                    search_hash
-                };
-
-            let offset_none_points = self.points_hashed_offset_none.range(from..=to);
-            let offset_lat_points = self.points_hashed_offset_lat.range(from..=to);
-            let offset_lon_points = self.points_hashed_offset_lon.range(from..=to);
-            let offset_lat_lon_points = self.points_hashed_offset_lat_lon.range(from..=to);
-            let points: [Vec<MapDataPointRef>; 4] = [
-                offset_none_points.map(|(_, point)| point.clone()).collect(),
-                offset_lat_points.map(|(_, point)| point.clone()).collect(),
-                offset_lon_points.map(|(_, point)| point.clone()).collect(),
-                offset_lat_lon_points
-                    .map(|(_, point)| point.clone())
-                    .collect(),
-            ];
-
-            let points = points.concat();
-            if !points.is_empty() || (from == 0 && to == u64::max_value()) {
-                points.iter().for_each(|p| {
-                    let id: u64 = p.borrow().id.clone();
-                    grid_points.insert(id, p.clone());
-                });
-                break;
-            }
-        }
-
-        if grid_points.len() == 1 {
-            let point = grid_points.values().next().map(|p| p.clone());
-            return point;
-        }
-
-        let mut points_with_dist: Vec<(u32, MapDataPointRef)> = grid_points
-            .iter()
-            .map(|(_, p)| {
-                let point1 = Point::new(p.borrow().lon, p.borrow().lat);
-                let point2 = Point::new(lon, lat);
-                let distance = point1.haversine_distance(&point2);
-                (distance.round() as u32, p.clone())
-            })
-            .collect();
-
-        points_with_dist.sort_by(|(dist_a, _), (dist_b, _)| dist_a.cmp(dist_b));
-        points_with_dist.get(0).map(|(_, p)| p.clone())
+        self.proximity_lookup.find_closest(lat, lon)
     }
     pub fn unpack(packed: MapDataGraphPacked) -> &'static MapDataGraph {
         let mut points = Vec::new();
         let points_map = HashMap::new();
-        let mut points_hashed_offset_none = BTreeMap::new();
-        let mut points_hashed_offset_lat = BTreeMap::new();
-        let mut points_hashed_offset_lon = BTreeMap::new();
-        let mut points_hashed_offset_lat_lon = BTreeMap::new();
+        // let mut points_hashed_offset_none = BTreeMap::new();
+        // let mut points_hashed_offset_lat = BTreeMap::new();
+        // let mut points_hashed_offset_lon = BTreeMap::new();
+        // let mut points_hashed_offset_lat_lon = BTreeMap::new();
         let ways_lines = HashMap::new();
         let mut lines = Vec::new();
         let mut tags = Vec::new();
@@ -633,38 +533,38 @@ impl MapDataGraph {
                 let dur = start.elapsed();
                 eprintln!("points {}s", dur.as_secs());
             });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_none =
-                    bincode::deserialize(&packed.points_hashed_offset_none[..])
-                        .expect("could not deserialize points_hashed_offset_none");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_none {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_lat =
-                    bincode::deserialize(&packed.points_hashed_offset_lat[..])
-                        .expect("could not deserialize points_hashed_offset_lat");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_lat {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_lon =
-                    bincode::deserialize(&packed.points_hashed_offset_lon[..])
-                        .expect("could not deserialize points_hashed_offset_lon");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_lon {}s", dur.as_secs());
-            });
-            scope.spawn(|_| {
-                let start = Instant::now();
-                points_hashed_offset_lat_lon =
-                    bincode::deserialize(&packed.points_hashed_offset_lat_lon[..])
-                        .expect("could not deserialize points_hashed_offset_lat_lon");
-                let dur = start.elapsed();
-                eprintln!("points_hashed_offset_lat_lon {}s", dur.as_secs());
-            });
+            // scope.spawn(|_| {
+            //     let start = Instant::now();
+            //     points_hashed_offset_none =
+            //         bincode::deserialize(&packed.points_hashed_offset_none[..])
+            //             .expect("could not deserialize points_hashed_offset_none");
+            //     let dur = start.elapsed();
+            //     eprintln!("points_hashed_offset_none {}s", dur.as_secs());
+            // });
+            // scope.spawn(|_| {
+            //     let start = Instant::now();
+            //     points_hashed_offset_lat =
+            //         bincode::deserialize(&packed.points_hashed_offset_lat[..])
+            //             .expect("could not deserialize points_hashed_offset_lat");
+            //     let dur = start.elapsed();
+            //     eprintln!("points_hashed_offset_lat {}s", dur.as_secs());
+            // });
+            // scope.spawn(|_| {
+            //     let start = Instant::now();
+            //     points_hashed_offset_lon =
+            //         bincode::deserialize(&packed.points_hashed_offset_lon[..])
+            //             .expect("could not deserialize points_hashed_offset_lon");
+            //     let dur = start.elapsed();
+            //     eprintln!("points_hashed_offset_lon {}s", dur.as_secs());
+            // });
+            // scope.spawn(|_| {
+            //     let start = Instant::now();
+            //     points_hashed_offset_lat_lon =
+            //         bincode::deserialize(&packed.points_hashed_offset_lat_lon[..])
+            //             .expect("could not deserialize points_hashed_offset_lat_lon");
+            //     let dur = start.elapsed();
+            //     eprintln!("points_hashed_offset_lat_lon {}s", dur.as_secs());
+            // });
             scope.spawn(|_| {
                 let start = Instant::now();
                 lines =
@@ -682,32 +582,29 @@ impl MapDataGraph {
         let unpack_duration = unpack_start.elapsed();
         eprintln!("unpack took {}s", unpack_duration.as_secs());
         eprintln!("points {}", points.len());
-        eprintln!(
-            "points_hashed_offset_none {}",
-            points_hashed_offset_none.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lat {}",
-            points_hashed_offset_lat.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lon {}",
-            points_hashed_offset_lon.len()
-        );
-        eprintln!(
-            "points_hashed_offset_lat_lon {}",
-            points_hashed_offset_lat_lon.len()
-        );
+        // eprintln!(
+        //     "points_hashed_offset_none {}",
+        //     points_hashed_offset_none.len()
+        // );
+        // eprintln!(
+        //     "points_hashed_offset_lat {}",
+        //     points_hashed_offset_lat.len()
+        // );
+        // eprintln!(
+        //     "points_hashed_offset_lon {}",
+        //     points_hashed_offset_lon.len()
+        // );
+        // eprintln!(
+        //     "points_hashed_offset_lat_lon {}",
+        //     points_hashed_offset_lat_lon.len()
+        // );
         eprintln!("lines {}", lines.len());
         eprintln!("tags {}", tags.len());
 
         MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
             points,
             points_map,
-            points_hashed_offset_none,
-            points_hashed_offset_lat,
-            points_hashed_offset_lon,
-            points_hashed_offset_lat_lon,
+            proximity_lookup: GpsProximityLookup::new(),
             lines,
             ways_lines,
             tags,

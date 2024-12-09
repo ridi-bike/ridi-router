@@ -3,7 +3,6 @@ use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
 mod debug_writer;
-mod gps_hash;
 mod gpx_writer;
 mod ipc_handler;
 mod map_data;

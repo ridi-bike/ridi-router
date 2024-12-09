@@ -96,14 +96,14 @@ impl MapDataCache {
 
         let packed_data = MapDataGraphPacked {
             points: points.ok_or(MapDataCacheError::MissingValue)??,
-            points_hashed_offset_none: points_hashed_offset_none
-                .ok_or(MapDataCacheError::MissingValue)??,
-            points_hashed_offset_lat: points_hashed_offset_lat
-                .ok_or(MapDataCacheError::MissingValue)??,
-            points_hashed_offset_lon: points_hashed_offset_lon
-                .ok_or(MapDataCacheError::MissingValue)??,
-            points_hashed_offset_lat_lon: points_hashed_offset_lat_lon
-                .ok_or(MapDataCacheError::MissingValue)??,
+            // points_hashed_offset_none: points_hashed_offset_none
+            //     .ok_or(MapDataCacheError::MissingValue)??,
+            // points_hashed_offset_lat: points_hashed_offset_lat
+            //     .ok_or(MapDataCacheError::MissingValue)??,
+            // points_hashed_offset_lon: points_hashed_offset_lon
+            //     .ok_or(MapDataCacheError::MissingValue)??,
+            // points_hashed_offset_lat_lon: points_hashed_offset_lat_lon
+            //     .ok_or(MapDataCacheError::MissingValue)??,
             lines: lines.ok_or(MapDataCacheError::MissingValue)??,
             tags: tags.ok_or(MapDataCacheError::MissingValue)??,
         };
@@ -137,26 +137,10 @@ impl MapDataCache {
                 .enumerate()
                 .map(|(i, _)| match i {
                     0 => write_cache_file(&cache_dir, "points", &packed_data.points),
-                    1 => write_cache_file(
-                        &cache_dir,
-                        "points_hashed_offset_none",
-                        &packed_data.points_hashed_offset_none,
-                    ),
-                    2 => write_cache_file(
-                        &cache_dir,
-                        "points_hashed_offset_lat",
-                        &packed_data.points_hashed_offset_lat,
-                    ),
-                    3 => write_cache_file(
-                        &cache_dir,
-                        "points_hashed_offset_lon",
-                        &packed_data.points_hashed_offset_lon,
-                    ),
-                    4 => write_cache_file(
-                        &cache_dir,
-                        "points_hashed_offset_lat_lon",
-                        &packed_data.points_hashed_offset_lat_lon,
-                    ),
+                    1 => write_cache_file(&cache_dir, "points_hashed_offset_none", &Vec::new()),
+                    2 => write_cache_file(&cache_dir, "points_hashed_offset_lat", &Vec::new()),
+                    3 => write_cache_file(&cache_dir, "points_hashed_offset_lon", &Vec::new()),
+                    4 => write_cache_file(&cache_dir, "points_hashed_offset_lat_lon", &Vec::new()),
                     5 => write_cache_file(&cache_dir, "lines", &packed_data.lines),
                     6 => write_cache_file(&cache_dir, "tags", &packed_data.tags),
                     _ => Err(MapDataCacheError::UnexpectedValue),

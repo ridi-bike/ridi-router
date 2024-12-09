@@ -104,3 +104,6 @@ run-pbf-release:
 run-show-pbf-release:
   cargo run --release {{load-pbf}} > map-data/output.gpx
   gpxsee map-data/output.gpx &
+
+cache-lv:
+	cargo run --release -- cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia
