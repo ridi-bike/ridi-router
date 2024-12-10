@@ -556,7 +556,7 @@ impl MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
             points,
             points_map,
-            point_grid: PointGrid::new(),
+            point_grid,
             lines,
             ways_lines,
             tags,

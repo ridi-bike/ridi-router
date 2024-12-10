@@ -44,6 +44,7 @@ impl Generator {
     }
 
     fn generate_itineraries(&self) -> Vec<Itinerary> {
+        let from_waypoints = self.create_waypoints_around(&self.start);
         let to_waypoints = self.create_waypoints_around(&self.finish);
         let mut itineraries = vec![Itinerary::new(
             self.start.clone(),
@@ -52,15 +53,16 @@ impl Generator {
             10.,
         )];
 
-        to_waypoints.iter().for_each(|wp| {
-            itineraries.push(Itinerary::new(
-                self.start.clone(),
-                self.finish.clone(),
-                vec![wp.clone()],
-                1000.,
-            ))
+        from_waypoints.iter().for_each(|from_wp| {
+            to_waypoints.iter().for_each(|to_wp| {
+                itineraries.push(Itinerary::new(
+                    self.start.clone(),
+                    self.finish.clone(),
+                    vec![from_wp.clone(), to_wp.clone()],
+                    1000.,
+                ))
+            })
         });
-
         itineraries
     }
 
