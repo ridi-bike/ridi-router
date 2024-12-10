@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use serde::{Deserialize, Serialize};
 
-use super::graph::{MapDataElementTagRef, MapDataPointRef};
+use super::graph::{ElementTagSetRef, MapDataPointRef};
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum LineDirection {
@@ -10,25 +10,13 @@ pub enum LineDirection {
     OneWay = 1,
     Roundabout = 2,
 }
-type LineTags = (
-    MapDataElementTagRef,
-    MapDataElementTagRef,
-    MapDataElementTagRef,
-    MapDataElementTagRef,
-    MapDataElementTagRef,
-);
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataLine {
     // pub id: String,
     pub points: (MapDataPointRef, MapDataPointRef),
     pub direction: LineDirection,
-    pub tags: (
-        MapDataElementTagRef,
-        MapDataElementTagRef,
-        MapDataElementTagRef,
-        MapDataElementTagRef,
-        MapDataElementTagRef,
-    ),
+    pub tags: ElementTagSetRef,
 }
 impl MapDataLine {
     pub fn line_id(&self) -> String {
@@ -37,12 +25,6 @@ impl MapDataLine {
             self.points.0.borrow().id,
             self.points.1.borrow().id
         )
-    }
-    pub fn tag_name(&self) -> Option<&String> {
-        self.tags.0.get()
-    }
-    pub fn tag_ref(&self) -> Option<&String> {
-        self.tags.1.get()
     }
     pub fn is_one_way(&self) -> bool {
         self.direction == LineDirection::OneWay || self.direction == LineDirection::Roundabout

@@ -1,6 +1,6 @@
 use std::{
     cmp::{Eq, Ordering},
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     fmt::Debug,
     hash::Hash,
     marker::PhantomData,
@@ -8,8 +8,8 @@ use std::{
     time::Instant,
 };
 
+use geo::HaversineDistance;
 use geo::Point;
-use geo::{closest_point, HaversineDistance};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -18,7 +18,6 @@ use crate::{
         rule::MapDataRule,
     },
     osm_data_reader::{DataSource, OsmDataReader},
-    router_runner::RouterMode,
 };
 
 use super::{
@@ -31,6 +30,141 @@ use super::{
 };
 
 pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
+struct ElementTagValueRef {
+    pub tag_value_pos: u32,
+}
+impl ElementTagValueRef {
+    pub fn none() -> Self {
+        Self { tag_value_pos: 0 }
+    }
+    pub fn some(tag_idx: u32) -> Self {
+        Self {
+            tag_value_pos: tag_idx + 1,
+        }
+    }
+    pub fn borrow(&self) -> Option<&smartstring::alias::String> {
+        let idx = if self.tag_value_pos == 0 {
+            return None;
+        } else {
+            self.tag_value_pos - 1
+        };
+        Some(&MapDataGraph::get().tags.tag_values[idx as usize])
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ElementTagSetRef {
+    tag_set_idx: u32,
+}
+
+impl ElementTagSetRef {
+    pub fn borrow(&self) -> &ElementTagSet {
+        &MapDataGraph::get().tags.tag_sets[self.tag_set_idx as usize]
+    }
+    pub fn new(idx: u32) -> Self {
+        Self { tag_set_idx: idx }
+    }
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
+pub struct ElementTagSet {
+    name: ElementTagValueRef,
+    hw_ref: ElementTagValueRef,
+    highway: ElementTagValueRef,
+    surface: ElementTagValueRef,
+    smoothness: ElementTagValueRef,
+}
+
+impl ElementTagSet {
+    pub fn name(&self) -> Option<&smartstring::alias::String> {
+        self.name.borrow()
+    }
+    pub fn hw_ref(&self) -> Option<&smartstring::alias::String> {
+        self.hw_ref.borrow()
+    }
+    pub fn highway(&self) -> Option<&smartstring::alias::String> {
+        self.highway.borrow()
+    }
+    pub fn surface(&self) -> Option<&smartstring::alias::String> {
+        self.surface.borrow()
+    }
+    pub fn smoothness(&self) -> Option<&smartstring::alias::String> {
+        self.smoothness.borrow()
+    }
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+struct ElementTags {
+    pub tag_values: Vec<smartstring::alias::String>,
+    pub tag_sets: Vec<ElementTagSet>,
+    tag_map: HashMap<smartstring::alias::String, u32>,
+    tag_set_map: HashMap<ElementTagSet, u32>,
+}
+
+impl ElementTags {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn len(&self) -> (usize, usize) {
+        (self.tag_values.len(), self.tag_sets.len())
+    }
+    pub fn clear_maps(&mut self) -> () {
+        self.tag_set_map = HashMap::new();
+        self.tag_map = HashMap::new();
+    }
+    pub fn get_or_create(
+        &mut self,
+        name: Option<&String>,
+        hw_ref: Option<&String>,
+        highway: Option<&String>,
+        surface: Option<&String>,
+        smoothness: Option<&String>,
+    ) -> ElementTagSetRef {
+        let name_ref = self.get_tag_value_ref(name);
+        let hw_ref_ref = self.get_tag_value_ref(hw_ref);
+        let highway_ref = self.get_tag_value_ref(highway);
+        let surface_ref = self.get_tag_value_ref(surface);
+        let smoothness_ref = self.get_tag_value_ref(smoothness);
+
+        let tag_set = ElementTagSet {
+            name: name_ref,
+            hw_ref: hw_ref_ref,
+            highway: highway_ref,
+            surface: surface_ref,
+            smoothness: smoothness_ref,
+        };
+        let idx = match self.tag_set_map.get(&tag_set) {
+            Some(i) => *i,
+            None => {
+                let new_idx = self.tag_sets.len() as u32;
+                self.tag_set_map.insert(tag_set.clone(), new_idx);
+                self.tag_sets.push(tag_set);
+                new_idx
+            }
+        };
+        ElementTagSetRef::new(idx)
+    }
+    fn get_tag_value_ref(&mut self, value: Option<&String>) -> ElementTagValueRef {
+        match value {
+            None => ElementTagValueRef::none(),
+            Some(v) => {
+                let idx = match self.tag_map.get(&smartstring::alias::String::from(v)) {
+                    Some(i) => *i,
+                    None => {
+                        let new_idx = self.tag_values.len() as u32;
+                        self.tag_values.push(smartstring::alias::String::from(v));
+                        self.tag_map
+                            .insert(smartstring::alias::String::from(v), new_idx);
+                        new_idx
+                    }
+                };
+                ElementTagValueRef::some(idx)
+            }
+        }
+    }
+}
 
 trait MapDataElement: Debug {
     fn get(idx: usize) -> &'static Self;
@@ -94,29 +228,6 @@ impl<T: MapDataElement + 'static> Debug for MapDataElementRef<T> {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct MapDataElementTagRef {
-    tag_value_pos: u32,
-}
-
-impl MapDataElementTagRef {
-    pub fn none() -> Self {
-        Self { tag_value_pos: 0 }
-    }
-    pub fn some(tag_idx: u32) -> Self {
-        Self {
-            tag_value_pos: tag_idx + 1,
-        }
-    }
-    pub fn get(&self) -> Option<&String> {
-        if self.tag_value_pos == 0 {
-            return None;
-        }
-        let idx = self.tag_value_pos - 1;
-        Some(&MapDataGraph::get().tags[idx as usize])
-    }
-}
-
 pub type MapDataLineRef = MapDataElementRef<MapDataLine>;
 pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
 
@@ -127,8 +238,7 @@ pub struct MapDataGraph {
     point_grid: PointGrid,
     ways_lines: HashMap<u64, Vec<MapDataLineRef>>,
     lines: Vec<MapDataLine>,
-    tags: Vec<String>,
-    tags_map: HashMap<String, u32>,
+    tags: ElementTags,
 }
 
 #[derive(Default)]
@@ -147,8 +257,7 @@ impl MapDataGraph {
             point_grid: PointGrid::new(),
             ways_lines: HashMap::new(),
             lines: Vec::new(),
-            tags: Vec::new(),
-            tags_map: HashMap::new(),
+            tags: ElementTags::new(),
         }
     }
 
@@ -160,7 +269,7 @@ impl MapDataGraph {
         eprintln!("points len {}", self.points.len());
         eprintln!("proximity_lookup len {}", self.point_grid.len(),);
         eprintln!("lines len {}", self.lines.len());
-        eprintln!("tags len {}", self.tags.len());
+        eprintln!("tags len {:?}", self.tags.len());
 
         rayon::scope(|scope| {
             scope.spawn(|_| {
@@ -186,7 +295,7 @@ impl MapDataGraph {
             packed.point_grid.len()
         );
         eprintln!("lines len {} {}", self.lines.len(), packed.lines.len());
-        eprintln!("tags len {} {}", self.tags.len(), packed.tags.len());
+        eprintln!("tags len {:?} {}", self.tags.len(), packed.tags.len());
 
         let pack_end = pack_start.elapsed();
         eprint!("pack took {}s", pack_end.as_secs());
@@ -229,7 +338,7 @@ impl MapDataGraph {
         if !cfg!(test) {
             self.points_map = HashMap::new();
             self.ways_lines = HashMap::new();
-            self.tags_map = HashMap::new();
+            self.tags.clear_maps();
         }
     }
 
@@ -245,21 +354,6 @@ impl MapDataGraph {
         self.points_map.insert(point.id, idx);
         self.points.push(point);
         idx
-    }
-    fn get_tag_ref(&mut self, maybe_tag: Option<String>) -> MapDataElementTagRef {
-        if let Some(tag) = maybe_tag {
-            let tag_idx = self.tags_map.get(&tag);
-            if let Some(tag_idx) = tag_idx {
-                MapDataElementTagRef::some(*tag_idx)
-            } else {
-                let tag_idx = self.tags.len() as u32;
-                self.tags.push(tag.clone());
-                self.tags_map.insert(tag, tag_idx.clone());
-                MapDataElementTagRef::some(tag_idx)
-            }
-        } else {
-            MapDataElementTagRef::none()
-        }
     }
 
     fn way_is_ok(&self, osm_way: &OsmWay) -> bool {
@@ -306,26 +400,12 @@ impl MapDataGraph {
         for point_id in &osm_way.point_ids {
             if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
                 if let Some(prev_point_ref) = prev_point_ref {
-                    let tag_name = osm_way
-                        .tags
-                        .as_ref()
-                        .map_or(None, |t| t.get("name").cloned());
-                    let tag_ref = osm_way
-                        .tags
-                        .as_ref()
-                        .map_or(None, |t| t.get("ref").cloned());
-                    let tag_surface = osm_way
-                        .tags
-                        .as_ref()
-                        .map_or(None, |t| t.get("surface").cloned());
-                    let tag_smoothness = osm_way
-                        .tags
-                        .as_ref()
-                        .map_or(None, |t| t.get("smoothness").cloned());
-                    let tag_highway = osm_way
-                        .tags
-                        .as_ref()
-                        .map_or(None, |t| t.get("highway").cloned());
+                    let tag_name = osm_way.tags.as_ref().map_or(None, |t| t.get("name"));
+                    let tag_ref = osm_way.tags.as_ref().map_or(None, |t| t.get("ref"));
+                    let tag_surface = osm_way.tags.as_ref().map_or(None, |t| t.get("surface"));
+                    let tag_smoothness =
+                        osm_way.tags.as_ref().map_or(None, |t| t.get("smoothness"));
+                    let tag_highway = osm_way.tags.as_ref().map_or(None, |t| t.get("highway"));
                     let line = MapDataLine {
                         points: (prev_point_ref.clone(), point_ref.clone()),
                         direction: if osm_way.is_roundabout() {
@@ -335,12 +415,12 @@ impl MapDataGraph {
                         } else {
                             LineDirection::BothWays
                         },
-                        tags: (
-                            self.get_tag_ref(tag_name),
-                            self.get_tag_ref(tag_ref),
+                        tags: self.tags.get_or_create(
+                            tag_name,
+                            tag_ref,
                             tag_highway,
                             tag_surface,
-                            tag_highway,
+                            tag_smoothness,
                         ),
                     };
                     let line_idx = self.add_line(line);
@@ -537,8 +617,7 @@ impl MapDataGraph {
         let mut point_grid = PointGrid::new();
         let ways_lines = HashMap::new();
         let mut lines = Vec::new();
-        let mut tags = Vec::new();
-        let tags_map = HashMap::new();
+        let mut tags = ElementTags::new();
 
         let unpack_start = Instant::now();
         rayon::scope(|scope| {
@@ -575,7 +654,7 @@ impl MapDataGraph {
         eprintln!("points {}", points.len());
         eprintln!("point_grid {}", point_grid.len());
         eprintln!("lines {}", lines.len());
-        eprintln!("tags {}", tags.len());
+        eprintln!("tags {:?}", tags.len());
 
         MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
             points,
@@ -584,7 +663,6 @@ impl MapDataGraph {
             lines,
             ways_lines,
             tags,
-            tags_map,
         })
     }
 
