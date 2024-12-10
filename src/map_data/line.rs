@@ -10,13 +10,25 @@ pub enum LineDirection {
     OneWay = 1,
     Roundabout = 2,
 }
-
+type LineTags = (
+    MapDataElementTagRef,
+    MapDataElementTagRef,
+    MapDataElementTagRef,
+    MapDataElementTagRef,
+    MapDataElementTagRef,
+);
 #[derive(Clone, Serialize, Deserialize)]
 pub struct MapDataLine {
     // pub id: String,
     pub points: (MapDataPointRef, MapDataPointRef),
     pub direction: LineDirection,
-    pub tags: (MapDataElementTagRef, MapDataElementTagRef),
+    pub tags: (
+        MapDataElementTagRef,
+        MapDataElementTagRef,
+        MapDataElementTagRef,
+        MapDataElementTagRef,
+        MapDataElementTagRef,
+    ),
 }
 impl MapDataLine {
     pub fn line_id(&self) -> String {

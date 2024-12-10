@@ -115,10 +115,17 @@ impl OsmDataReader {
                     && obj.tags().iter().any(|t| {
                         t.0 == "highway"
                             && t.1 != "proposed"
+                            && t.1 != "construction"
                             && t.1 != "cycleway"
                             && t.1 != "steps"
                             && t.1 != "pedestrian"
-                            && t.1 != "path"
+                            && (t.1 != "path"
+                                || (t.1 == "path"
+                                    && obj
+                                        .tags()
+                                        .iter()
+                                        .find(|t2| t2.0 == "motorcycle" && t2.1 == "yes")
+                                        .is_some()))
                             && t.1 != "service"
                             && t.1 != "footway"
                     })

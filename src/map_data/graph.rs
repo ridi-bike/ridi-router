@@ -349,12 +349,18 @@ impl MapDataGraph {
                     return false;
                 }
             }
+            let motorcycle = match tags.get("motorcycle") {
+                Some(v) => v == "yes",
+                None => false,
+            };
+
             if let Some(highway) = tags.get("highway") {
                 return highway != "proposed"
+                    && highway != "construction"
                     && highway != "cycleway"
                     && highway != "steps"
                     && highway != "pedestrian"
-                    && highway != "path"
+                    && (highway != "path" || (highway == "path" && motorcycle))
                     && highway != "service"
                     && highway != "footway";
             }
@@ -380,6 +386,18 @@ impl MapDataGraph {
                         .tags
                         .as_ref()
                         .map_or(None, |t| t.get("ref").cloned());
+                    let tag_surface = osm_way
+                        .tags
+                        .as_ref()
+                        .map_or(None, |t| t.get("surface").cloned());
+                    let tag_smoothness = osm_way
+                        .tags
+                        .as_ref()
+                        .map_or(None, |t| t.get("smoothness").cloned());
+                    let tag_highway = osm_way
+                        .tags
+                        .as_ref()
+                        .map_or(None, |t| t.get("highway").cloned());
                     let line = MapDataLine {
                         points: (prev_point_ref.clone(), point_ref.clone()),
                         direction: if osm_way.is_roundabout() {
@@ -389,7 +407,13 @@ impl MapDataGraph {
                         } else {
                             LineDirection::BothWays
                         },
-                        tags: (self.get_tag_ref(tag_name), self.get_tag_ref(tag_ref)),
+                        tags: (
+                            self.get_tag_ref(tag_name),
+                            self.get_tag_ref(tag_ref),
+                            tag_highway,
+                            tag_surface,
+                            tag_highway,
+                        ),
                     };
                     let line_idx = self.add_line(line);
                     let line_ref = MapDataLineRef::new(line_idx);

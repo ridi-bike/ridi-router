@@ -1,6 +1,7 @@
 use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLock, time::Instant};
 
 use clap::Parser;
+use tracing::info;
 
 use crate::{
     ipc_handler::{CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage},
@@ -274,7 +275,7 @@ impl RouterRunner {
             .map_err(|error| RouterRunnerError::CacheWrite { error })?;
 
         let startup_end = startup_start.elapsed();
-        eprintln!("cache gen took {}s", startup_end.as_secs());
+        info!("cache gen took {}s", startup_end.as_secs());
 
         Ok(())
     }
