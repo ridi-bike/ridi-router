@@ -18,6 +18,26 @@ use std::{
     time::Instant,
 };
 
+pub const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "motorway_link",
+    "trunk_link",
+    "primary_link",
+    "secondary_link",
+    "tertiary_link",
+    "living_street",
+    "track",
+    "escape",
+    "raceway",
+    "road",
+];
+
 #[derive(Debug)]
 pub enum OsmDataReaderError {
     StdioError { error: io::Error },
@@ -114,20 +134,13 @@ impl OsmDataReader {
                 obj.is_way()
                     && obj.tags().iter().any(|t| {
                         t.0 == "highway"
-                            && t.1 != "proposed"
-                            && t.1 != "construction"
-                            && t.1 != "cycleway"
-                            && t.1 != "steps"
-                            && t.1 != "pedestrian"
-                            && (t.1 != "path"
+                            && (ALLOWED_HIGHWAY_VALUES.contains(&t.1.as_str())
                                 || (t.1 == "path"
                                     && obj
                                         .tags()
                                         .iter()
                                         .find(|t2| t2.0 == "motorcycle" && t2.1 == "yes")
                                         .is_some()))
-                            && t.1 != "service"
-                            && t.1 != "footway"
                     })
             })
             .map_err(|error| OsmDataReaderError::PbfFileReadError { error })?;

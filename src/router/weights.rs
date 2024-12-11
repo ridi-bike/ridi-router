@@ -1,8 +1,11 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use geo::{HaversineBearing, Point};
 
-use crate::debug_writer::DebugLogger;
+use crate::{
+    debug_writer::DebugLogger,
+    hints::{self, HintTagValueAction, RouterHints},
+};
 
 use super::{
     itinerary::Itinerary,
@@ -20,7 +23,8 @@ pub struct WeightCalcInput<'a> {
     pub debug_logger: &'a Box<dyn DebugLogger>,
 }
 
-pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
+// pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
+pub type WeightCalc = Box<dyn Fn(WeightCalcInput) -> WeightCalcResult>;
 
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     let mut walker = input.walker_from_fork;
@@ -180,6 +184,65 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
     if average_distance_last_points < average_distance_per_segment * 0.3 {
         // return WeightCalcResult::DoNotUse;
         return WeightCalcResult::UseWithWeight(0);
+    }
+
+    WeightCalcResult::UseWithWeight(0)
+}
+
+fn compare_segment_tag_with_hint_tag(
+    hint: &Option<HashMap<String, HintTagValueAction>>,
+    segment_tag: Option<&smartstring::alias::String>,
+) -> Option<WeightCalcResult> {
+    if let Some(ref hint_tag) = hint {
+        if let Some(segment_tag) = segment_tag {
+            let hint_tag = hint_tag.get(&segment_tag.to_string());
+            if let Some(hint_tag) = hint_tag {
+                return Some(match hint_tag {
+                    HintTagValueAction::Avoid => WeightCalcResult::DoNotUse,
+                    HintTagValueAction::Priority(p) => WeightCalcResult::UseWithWeight(*p),
+                });
+            }
+        }
+    }
+    None
+}
+
+pub fn weight_hints(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcResult {
+    if let Some(res) = compare_segment_tag_with_hint_tag(
+        &hints.highway,
+        input
+            .current_fork_segment
+            .get_line()
+            .borrow()
+            .tags
+            .borrow()
+            .highway(),
+    ) {
+        return res;
+    }
+    if let Some(res) = compare_segment_tag_with_hint_tag(
+        &hints.surface,
+        input
+            .current_fork_segment
+            .get_line()
+            .borrow()
+            .tags
+            .borrow()
+            .surface(),
+    ) {
+        return res;
+    }
+    if let Some(res) = compare_segment_tag_with_hint_tag(
+        &hints.smoothness,
+        input
+            .current_fork_segment
+            .get_line()
+            .borrow()
+            .tags
+            .borrow()
+            .smoothness(),
+    ) {
+        return res;
     }
 
     WeightCalcResult::UseWithWeight(0)

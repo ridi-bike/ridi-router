@@ -62,15 +62,15 @@ gps-test-to-lon := '24.253038'		# doles sala
 # gps-test-to-lon := '-2.541200'		# gergal, spain
 
 run-load-json-show:
-	cargo run --release -- dual --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}} --input map-data/{{map-data-json-name}} --output map-data/output.gpx
+	cargo run --release -- dual --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}} --input map-data/{{map-data-json-name}} --output map-data/output.gpx --hint-file map-data/hints-empty.json
 	gpxsee map-data/output.gpx &
 
 run-load-pbf-show:
-	cargo run --release -- dual --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}} --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx
+	cargo run --release -- dual --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}} --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --hint-file map-data/hints-empty.json
 	gpxsee map-data/output.gpx &
 
 run-load-cache-show:
-	cargo run --release -- dual --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}} --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --cache-dir map-data/cache/latvia
+	cargo run --release -- dual --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}} --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --cache-dir map-data/cache/latvia --hint-file map-data/hints-empty.json
 	gpxsee map-data/output.gpx &
   
 cache-lv:

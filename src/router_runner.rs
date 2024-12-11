@@ -4,6 +4,7 @@ use clap::Parser;
 use tracing::info;
 
 use crate::{
+    hints::RouterHints,
     ipc_handler::{CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage},
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
@@ -52,50 +53,56 @@ struct Cli {
 #[derive(Subcommand)]
 enum CliMode {
     Cache {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         input: PathBuf,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         cache_dir: PathBuf,
     },
     Server {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         input: PathBuf,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "NAME")]
+        #[arg(long, value_name = "NAME")]
         socket_name: Option<String>,
     },
     Client {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         start: String,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         finish: String,
 
-        #[arg(short, long, value_name = "NAME")]
+        #[arg(long, value_name = "NAME")]
         socket_name: Option<String>,
+
+        #[arg(long, value_name = "FILE")]
+        hint_file: Option<PathBuf>,
     },
     Dual {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         input: PathBuf,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         start: String,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         finish: String,
+
+        #[arg(long, value_name = "FILE")]
+        hint_file: Option<PathBuf>,
     },
 }
 
@@ -122,12 +129,14 @@ pub enum RouterMode {
         start_finish: StartFinish,
         data_destination: DataDestination,
         socket_name: Option<String>,
+        hint_file: Option<PathBuf>,
     },
     Dual {
         data_source: DataSource,
         cache_dir: Option<PathBuf>,
         start_finish: StartFinish,
         data_destination: DataDestination,
+        hint_file: Option<PathBuf>,
     },
 }
 
@@ -157,6 +166,7 @@ impl RouterRunner {
                 start,
                 finish,
                 socket_name,
+                hint_file,
             } => {
                 let start_finish = get_start_finish(start, finish)
                     .expect("could not get start/finish coordinates");
@@ -165,6 +175,7 @@ impl RouterRunner {
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
                     socket_name,
+                    hint_file,
                 }
             }
             CliMode::Dual {
@@ -173,6 +184,7 @@ impl RouterRunner {
                 output,
                 start,
                 finish,
+                hint_file,
             } => {
                 let start_finish = get_start_finish(start, finish)
                     .expect("could not get start/finish coordinates");
@@ -182,6 +194,7 @@ impl RouterRunner {
                     start_finish,
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
+                    hint_file,
                 }
             }
         };
@@ -189,7 +202,10 @@ impl RouterRunner {
         Self { mode }
     }
 
-    fn generate_route(start_finish: &StartFinish) -> Result<Vec<Route>, RouterRunnerError> {
+    fn generate_route(
+        start_finish: &StartFinish,
+        hints: RouterHints,
+    ) -> Result<Vec<Route>, RouterRunnerError> {
         let start = MapDataGraph::get()
             .get_closest_to_coords(start_finish.start_lat, start_finish.start_lon)
             .ok_or(RouterRunnerError::PointNotFound {
@@ -202,7 +218,7 @@ impl RouterRunner {
                 point: "Finish point".to_string(),
             })?;
 
-        let route_generator = Generator::new(start.clone(), finish.clone());
+        let route_generator = Generator::new(start.clone(), finish.clone(), hints);
         let routes = route_generator.generate_routes();
         Ok(routes)
     }
@@ -213,7 +229,9 @@ impl RouterRunner {
         cache_dir: Option<PathBuf>,
         start_finish: &StartFinish,
         data_destination: &DataDestination,
+        hints_file: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
+        let hints = RouterHints::read(hints_file).expect("Failed to read hints");
         let mut data_cache = MapDataCache::init(cache_dir);
         let cached_map_data = data_cache.read_cache();
         let cached_map_data = match cached_map_data {
@@ -232,7 +250,7 @@ impl RouterRunner {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
         }
-        let route_result = RouterRunner::generate_route(start_finish);
+        let route_result = RouterRunner::generate_route(start_finish, hints);
         ResultWriter::write(
             data_destination.clone(),
             ResponseMessage {
@@ -314,12 +332,15 @@ impl RouterRunner {
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         dbg!("ipc init done");
         ipc.listen(|request_message| {
-            let route_res = RouterRunner::generate_route(&StartFinish {
-                start_lat: request_message.start.lat,
-                start_lon: request_message.start.lon,
-                finish_lat: request_message.finish.lat,
-                finish_lon: request_message.finish.lon,
-            });
+            let route_res = RouterRunner::generate_route(
+                &StartFinish {
+                    start_lat: request_message.start.lat,
+                    start_lon: request_message.start.lon,
+                    finish_lat: request_message.finish.lat,
+                    finish_lon: request_message.finish.lon,
+                },
+                request_message.hints,
+            );
 
             ResponseMessage {
                 id: request_message.id,
@@ -351,11 +372,13 @@ impl RouterRunner {
         start_finish: &StartFinish,
         data_destination: &DataDestination,
         socket_name: Option<String>,
+        hints_file: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
+        let hints = RouterHints::read(hints_file).expect("could not read hints");
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
-            .connect(start_finish)
+            .connect(start_finish, hints)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
@@ -369,11 +392,13 @@ impl RouterRunner {
                 data_source,
                 cache_dir,
                 data_destination,
+                hint_file,
             } => self.run_dual(
                 &data_source,
                 cache_dir.clone(),
                 &start_finish,
                 &data_destination,
+                hint_file.clone(),
             ),
             RouterMode::Cache {
                 data_source,
@@ -388,7 +413,13 @@ impl RouterRunner {
                 start_finish,
                 data_destination,
                 socket_name,
-            } => self.run_client(&start_finish, &data_destination, socket_name.clone()),
+                hint_file,
+            } => self.run_client(
+                &start_finish,
+                &data_destination,
+                socket_name.clone(),
+                hint_file.clone(),
+            ),
         }
     }
 }

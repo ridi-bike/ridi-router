@@ -17,7 +17,7 @@ use crate::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
-    osm_data_reader::{DataSource, OsmDataReader},
+    osm_data_reader::{DataSource, OsmDataReader, ALLOWED_HIGHWAY_VALUES},
 };
 
 use super::{
@@ -150,13 +150,18 @@ impl ElementTags {
         match value {
             None => ElementTagValueRef::none(),
             Some(v) => {
-                let idx = match self.tag_map.get(&smartstring::alias::String::from(v)) {
+                let v = if v.ends_with("_link") {
+                    v.replace("_link", "")
+                } else {
+                    v.to_string()
+                };
+                let idx = match self.tag_map.get(&smartstring::alias::String::from(&v)) {
                     Some(i) => *i,
                     None => {
                         let new_idx = self.tag_values.len() as u32;
-                        self.tag_values.push(smartstring::alias::String::from(v));
+                        self.tag_values.push(smartstring::alias::String::from(&v));
                         self.tag_map
-                            .insert(smartstring::alias::String::from(v), new_idx);
+                            .insert(smartstring::alias::String::from(&v), new_idx);
                         new_idx
                     }
                 };
@@ -377,14 +382,8 @@ impl MapDataGraph {
             };
 
             if let Some(highway) = tags.get("highway") {
-                return highway != "proposed"
-                    && highway != "construction"
-                    && highway != "cycleway"
-                    && highway != "steps"
-                    && highway != "pedestrian"
-                    && (highway != "path" || (highway == "path" && motorcycle))
-                    && highway != "service"
-                    && highway != "footway";
+                return ALLOWED_HIGHWAY_VALUES.contains(&highway.as_str())
+                    && (highway != "path" || (highway == "path" && motorcycle));
             }
         }
         false

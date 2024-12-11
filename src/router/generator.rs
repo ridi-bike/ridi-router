@@ -1,4 +1,7 @@
-use crate::map_data::graph::{MapDataGraph, MapDataPointRef};
+use crate::{
+    hints::RouterHints,
+    map_data::graph::{MapDataGraph, MapDataPointRef},
+};
 use geo::{HaversineDestination, Point};
 use rayon::prelude::*;
 
@@ -7,8 +10,8 @@ use super::{
     navigator::{NavigationResult, Navigator},
     route::Route,
     weights::{
-        weight_check_distance_to_next, weight_heading, weight_no_loops, weight_prefer_same_road,
-        weight_progress_speed,
+        weight_check_distance_to_next, weight_heading, weight_hints, weight_no_loops,
+        weight_prefer_same_road,
     },
 };
 
@@ -18,11 +21,16 @@ const ITINERARY_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., -45., -
 pub struct Generator {
     start: MapDataPointRef,
     finish: MapDataPointRef,
+    hints: RouterHints,
 }
 
 impl Generator {
-    pub fn new(start: MapDataPointRef, finish: MapDataPointRef) -> Self {
-        Self { start, finish }
+    pub fn new(start: MapDataPointRef, finish: MapDataPointRef, hints: RouterHints) -> Self {
+        Self {
+            start,
+            finish,
+            hints,
+        }
     }
 
     fn create_waypoints_around(&self, point: &MapDataPointRef) -> Vec<MapDataPointRef> {
@@ -71,14 +79,15 @@ impl Generator {
         itineraries
             .into_par_iter()
             .map(|itinerary| {
+                let hints = self.hints.clone();
                 Navigator::new(
                     itinerary,
                     vec![
-                        weight_check_distance_to_next,
-                        weight_prefer_same_road,
-                        weight_no_loops,
-                        weight_heading,
-                        // weight_progress_speed,
+                        Box::new(|input| weight_check_distance_to_next(input)),
+                        Box::new(|input| weight_prefer_same_road(input)),
+                        Box::new(|input| weight_no_loops(input)),
+                        Box::new(|input| weight_heading(input)),
+                        Box::new(move |input| weight_hints(input, &hints)),
                     ],
                 )
                 .generate_routes()

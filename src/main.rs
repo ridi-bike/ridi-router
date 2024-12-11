@@ -4,6 +4,7 @@ use tracing_subscriber::FmtSubscriber;
 
 mod debug_writer;
 mod gpx_writer;
+mod hints;
 mod ipc_handler;
 mod map_data;
 mod map_data_cache;
