@@ -189,18 +189,15 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
     WeightCalcResult::UseWithWeight(0)
 }
 
-fn compare_segment_tag_with_hint_tag(
+fn get_hint_for_tag(
     hint: &Option<HashMap<String, HintTagValueAction>>,
     segment_tag: Option<&smartstring::alias::String>,
-) -> Option<WeightCalcResult> {
+) -> Option<HintTagValueAction> {
     if let Some(ref hint_tag) = hint {
         if let Some(segment_tag) = segment_tag {
             let hint_tag = hint_tag.get(&segment_tag.to_string());
             if let Some(hint_tag) = hint_tag {
-                return Some(match hint_tag {
-                    HintTagValueAction::Avoid => WeightCalcResult::DoNotUse,
-                    HintTagValueAction::Priority(p) => WeightCalcResult::UseWithWeight(*p),
-                });
+                return Some(hint_tag.clone());
             }
         }
     }
@@ -208,7 +205,7 @@ fn compare_segment_tag_with_hint_tag(
 }
 
 pub fn weight_hints(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcResult {
-    if let Some(res) = compare_segment_tag_with_hint_tag(
+    if let Some(res) = get_hint_for_tag(
         &hints.highway,
         input
             .current_fork_segment
@@ -220,7 +217,7 @@ pub fn weight_hints(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcRe
     ) {
         return res;
     }
-    if let Some(res) = compare_segment_tag_with_hint_tag(
+    if let Some(res) = get_hint_for_tag(
         &hints.surface,
         input
             .current_fork_segment
@@ -232,7 +229,7 @@ pub fn weight_hints(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcRe
     ) {
         return res;
     }
-    if let Some(res) = compare_segment_tag_with_hint_tag(
+    if let Some(res) = get_hint_for_tag(
         &hints.smoothness,
         input
             .current_fork_segment

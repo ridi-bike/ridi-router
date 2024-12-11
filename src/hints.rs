@@ -15,7 +15,7 @@ pub enum HintsError {
 #[serde(tag = "action", rename_all = "lowercase")]
 pub enum HintTagValueAction {
     Avoid,
-    Priority(u8),
+    Priority { value: u8 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
