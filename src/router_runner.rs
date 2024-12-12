@@ -4,13 +4,14 @@ use clap::Parser;
 use tracing::info;
 
 use crate::{
-    ipc_handler::{CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage},
+    ipc_handler::{
+        CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult,
+    },
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
     osm_data_reader::DataSource,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
-    router::rules::RouterRules,
-    router::{generator::Generator, route::Route},
+    router::{generator::Generator, route::Route, rules::RouterRules},
 };
 
 use clap::Subcommand;
@@ -255,9 +256,12 @@ impl RouterRunner {
             data_destination.clone(),
             ResponseMessage {
                 id: "oo".to_string(),
-                result: route_result
-                    .map(|routes| {
-                        routes
+                result: route_result.map_or_else(
+                    |error| RouterResult::Error {
+                        message: format!("Error generating route {:?}", error),
+                    },
+                    |routes| RouterResult::Ok {
+                        routes: routes
                             .iter()
                             .map(|route| RouteMessage {
                                 coords: route
@@ -269,9 +273,9 @@ impl RouterRunner {
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
                             })
-                            .collect()
-                    })
-                    .map_err(|error| format!("Error generating route {:?}", error)),
+                            .collect(),
+                    },
+                ),
             },
         )
         .map_err(|error| RouterRunnerError::ResultWrite { error })?;
@@ -344,9 +348,12 @@ impl RouterRunner {
 
             ResponseMessage {
                 id: request_message.id,
-                result: route_res
-                    .map(|routes| {
-                        routes
+                result: route_res.map_or_else(
+                    |error| RouterResult::Error {
+                        message: format!("Error generating route {:?}", error),
+                    },
+                    |routes| RouterResult::Ok {
+                        routes: routes
                             .iter()
                             .map(|route| RouteMessage {
                                 coords: route
@@ -358,9 +365,9 @@ impl RouterRunner {
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
                             })
-                            .collect()
-                    })
-                    .map_err(|error| format!("Error generating route {:?}", error)),
+                            .collect(),
+                    },
+                ),
             }
         })
         .map_err(|error| RouterRunnerError::Ipc { error })?;

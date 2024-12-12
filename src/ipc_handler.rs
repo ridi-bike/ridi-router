@@ -39,9 +39,15 @@ pub struct RouteMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum RouterResult {
+    Error { message: String },
+    Ok { routes: Vec<RouteMessage> },
+}
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseMessage {
     pub id: String,
-    pub result: Result<Vec<RouteMessage>, String>,
+    pub result: RouterResult,
 }
 
 pub struct IpcHandler<'a> {
@@ -154,13 +160,6 @@ impl<'a> IpcHandler<'a> {
             .write_all(&mes_len_bytes.to_ne_bytes()[..])
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
         eprintln!("message size sent {}", mes_len_bytes);
-
-        eprintln!(
-            "sending resp {} {} {}",
-            response_message.id,
-            response_message.result.is_ok(),
-            buffer.len()
-        );
 
         conn.get_mut()
             .write_all(&buffer[..])
