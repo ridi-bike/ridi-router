@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{self, prelude::*, BufReader};
 use tracing::{info, trace, warn};
 
-use crate::{hints::RouterHints, router_runner::StartFinish};
+use crate::{router::rules::RouterRules, router_runner::StartFinish};
 
 #[derive(Debug)]
 pub enum IpcHandlerError {
@@ -30,7 +30,7 @@ pub struct RequestMessage {
     pub id: String,
     pub start: CoordsMessage,
     pub finish: CoordsMessage,
-    pub hints: RouterHints,
+    pub rules: RouterRules,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -172,7 +172,7 @@ impl<'a> IpcHandler<'a> {
     pub fn connect(
         &self,
         start_finish: &StartFinish,
-        hints: RouterHints,
+        rules: RouterRules,
     ) -> Result<ResponseMessage, IpcHandlerError> {
         let conn = Stream::connect(self.socket_name.clone())
             .map_err(|error| IpcHandlerError::Connect { error })?;
@@ -189,7 +189,7 @@ impl<'a> IpcHandler<'a> {
                 lat: start_finish.finish_lat,
                 lon: start_finish.finish_lon,
             },
-            hints,
+            rules,
         };
         let req_buf = bincode::serialize(&req_msg)
             .map_err(|error| IpcHandlerError::SerializeMessage { error })?;

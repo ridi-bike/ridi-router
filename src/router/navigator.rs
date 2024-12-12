@@ -6,6 +6,7 @@ use std::{
 use crate::{
     debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
     map_data::graph::MapDataPointRef,
+    router::rules::RouterRules,
 };
 
 use super::{
@@ -134,13 +135,14 @@ pub enum NavigationResult {
 
 pub struct Navigator {
     itinerary: Itinerary,
+    rules: RouterRules,
     walker: Walker,
     weight_calcs: Vec<WeightCalc>,
     discarded_fork_choices: DiscardedForkChoices,
 }
 
 impl Navigator {
-    pub fn new(itinerary: Itinerary, weight_calcs: Vec<WeightCalc>) -> Self {
+    pub fn new(itinerary: Itinerary, rules: RouterRules, weight_calcs: Vec<WeightCalc>) -> Self {
         Navigator {
             walker: Walker::new(
                 itinerary.get_from().clone(),
@@ -154,6 +156,7 @@ impl Navigator {
                 Box::new(DebugLoggerVoidSink::default()),
             ),
             itinerary,
+            rules,
             weight_calcs,
             discarded_fork_choices: DiscardedForkChoices::new(),
         }
@@ -217,6 +220,7 @@ impl Navigator {
                                         Box::new(DebugLoggerVoidSink::default()),
                                     ),
                                     debug_logger: &self.walker.debug_logger,
+                                    rules: &self.rules,
                                 })
                             })
                             .collect::<Vec<_>>();

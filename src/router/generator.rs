@@ -1,6 +1,6 @@
 use crate::{
-    hints::RouterHints,
     map_data::graph::{MapDataGraph, MapDataPointRef},
+    router::rules::RouterRules,
 };
 use geo::{HaversineDestination, Point};
 use rayon::prelude::*;
@@ -10,8 +10,8 @@ use super::{
     navigator::{NavigationResult, Navigator},
     route::Route,
     weights::{
-        weight_check_distance_to_next, weight_heading, weight_hints_highway,
-        weight_hints_smoothness, weight_hints_surface, weight_no_loops, weight_prefer_same_road,
+        weight_check_distance_to_next, weight_heading, weight_no_loops, weight_prefer_same_road,
+        weight_progress_speed, weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
     },
 };
 
@@ -21,15 +21,15 @@ const ITINERARY_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., -45., -
 pub struct Generator {
     start: MapDataPointRef,
     finish: MapDataPointRef,
-    hints: RouterHints,
+    rules: RouterRules,
 }
 
 impl Generator {
-    pub fn new(start: MapDataPointRef, finish: MapDataPointRef, hints: RouterHints) -> Self {
+    pub fn new(start: MapDataPointRef, finish: MapDataPointRef, rules: RouterRules) -> Self {
         Self {
             start,
             finish,
-            hints,
+            rules,
         }
     }
 
@@ -81,23 +81,16 @@ impl Generator {
             .map(|itinerary| {
                 Navigator::new(
                     itinerary,
+                    self.rules.clone(),
                     vec![
-                        Box::new(|input| weight_check_distance_to_next(input)),
-                        Box::new(|input| weight_prefer_same_road(input)),
-                        Box::new(|input| weight_no_loops(input)),
-                        Box::new(|input| weight_heading(input)),
-                        {
-                            let hints = self.hints.clone();
-                            Box::new(move |input| weight_hints_highway(input, &hints))
-                        },
-                        {
-                            let hints = self.hints.clone();
-                            Box::new(move |input| weight_hints_surface(input, &hints))
-                        },
-                        {
-                            let hints = self.hints.clone();
-                            Box::new(move |input| weight_hints_smoothness(input, &hints))
-                        },
+                        weight_progress_speed,
+                        weight_check_distance_to_next,
+                        weight_prefer_same_road,
+                        weight_no_loops,
+                        weight_heading,
+                        weight_rules_highway,
+                        weight_rules_surface,
+                        weight_rules_smoothness,
                     ],
                 )
                 .generate_routes()
