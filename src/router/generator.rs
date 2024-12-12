@@ -10,8 +10,8 @@ use super::{
     navigator::{NavigationResult, Navigator},
     route::Route,
     weights::{
-        weight_check_distance_to_next, weight_heading, weight_hints, weight_no_loops,
-        weight_prefer_same_road,
+        weight_check_distance_to_next, weight_heading, weight_hints_highway,
+        weight_hints_smoothness, weight_hints_surface, weight_no_loops, weight_prefer_same_road,
     },
 };
 
@@ -79,7 +79,6 @@ impl Generator {
         itineraries
             .into_par_iter()
             .map(|itinerary| {
-                let hints = self.hints.clone();
                 Navigator::new(
                     itinerary,
                     vec![
@@ -87,7 +86,18 @@ impl Generator {
                         Box::new(|input| weight_prefer_same_road(input)),
                         Box::new(|input| weight_no_loops(input)),
                         Box::new(|input| weight_heading(input)),
-                        Box::new(move |input| weight_hints(input, &hints)),
+                        {
+                            let hints = self.hints.clone();
+                            Box::new(move |input| weight_hints_highway(input, &hints))
+                        },
+                        {
+                            let hints = self.hints.clone();
+                            Box::new(move |input| weight_hints_surface(input, &hints))
+                        },
+                        {
+                            let hints = self.hints.clone();
+                            Box::new(move |input| weight_hints_smoothness(input, &hints))
+                        },
                     ],
                 )
                 .generate_routes()

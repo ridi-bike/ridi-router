@@ -192,19 +192,24 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 fn get_hint_for_tag(
     hint: &Option<HashMap<String, HintTagValueAction>>,
     segment_tag: Option<&smartstring::alias::String>,
-) -> Option<HintTagValueAction> {
+) -> Option<WeightCalcResult> {
     if let Some(ref hint_tag) = hint {
         if let Some(segment_tag) = segment_tag {
             let hint_tag = hint_tag.get(&segment_tag.to_string());
             if let Some(hint_tag) = hint_tag {
-                return Some(hint_tag.clone());
+                return Some(match hint_tag {
+                    HintTagValueAction::Avoid => WeightCalcResult::DoNotUse,
+                    HintTagValueAction::Priority { value } => {
+                        WeightCalcResult::UseWithWeight(*value)
+                    }
+                });
             }
         }
     }
     None
 }
 
-pub fn weight_hints(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcResult {
+pub fn weight_hints_highway(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcResult {
     if let Some(res) = get_hint_for_tag(
         &hints.highway,
         input
@@ -217,6 +222,11 @@ pub fn weight_hints(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcRe
     ) {
         return res;
     }
+
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_hints_surface(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcResult {
     if let Some(res) = get_hint_for_tag(
         &hints.surface,
         input
@@ -229,6 +239,11 @@ pub fn weight_hints(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcRe
     ) {
         return res;
     }
+
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_hints_smoothness(input: WeightCalcInput, hints: &RouterHints) -> WeightCalcResult {
     if let Some(res) = get_hint_for_tag(
         &hints.smoothness,
         input
