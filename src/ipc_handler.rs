@@ -1,10 +1,16 @@
 use bincode::ErrorKind;
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Name, Stream};
 use serde::{Deserialize, Serialize};
-use std::io::{self, prelude::*, BufReader};
+use std::{
+    collections::HashMap,
+    io::{self, prelude::*, BufReader},
+};
 use tracing::{info, trace, warn};
 
-use crate::{router::rules::RouterRules, router_runner::StartFinish};
+use crate::{
+    router::{route::RouteStats, rules::RouterRules},
+    router_runner::StartFinish,
+};
 
 #[derive(Debug)]
 pub enum IpcHandlerError {
@@ -36,6 +42,7 @@ pub struct RequestMessage {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RouteMessage {
     pub coords: Vec<CoordsMessage>,
+    pub stats: RouteStats,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

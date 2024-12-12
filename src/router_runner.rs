@@ -272,6 +272,7 @@ impl RouterRunner {
                                         lon: segment.get_end_point().borrow().lon,
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
+                                stats: route.calc_stats(),
                             })
                             .collect(),
                     },
@@ -364,6 +365,7 @@ impl RouterRunner {
                                         lon: segment.get_end_point().borrow().lon,
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
+                                stats: route.calc_stats(),
                             })
                             .collect(),
                     },

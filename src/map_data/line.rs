@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use geo::{HaversineDistance, Point};
 use serde::{Deserialize, Serialize};
 
 use super::graph::{ElementTagSetRef, MapDataPointRef};
@@ -31,6 +32,14 @@ impl MapDataLine {
     }
     pub fn is_roundabout(&self) -> bool {
         self.direction == LineDirection::Roundabout
+    }
+    pub fn get_len_m(&self) -> f32 {
+        let point_1 = self.points.0.borrow();
+        let point_2 = self.points.1.borrow();
+        let geo_point_1 = Point::new(point_1.lon, point_1.lat);
+        let geo_point_2 = Point::new(point_2.lon, point_2.lat);
+
+        geo_point_1.haversine_distance(&geo_point_2)
     }
 }
 
