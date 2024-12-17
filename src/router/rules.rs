@@ -43,7 +43,7 @@ impl Default for BasicRuleProgressDirection {
     fn default() -> Self {
         Self {
             enabled: true,
-            check_steps_back: 100,
+            check_steps_back: 1000,
         }
     }
 }
@@ -59,7 +59,7 @@ impl Default for BasicRuleProgressSpeed {
     fn default() -> Self {
         Self {
             enabled: false,
-            check_steps_back: 100,
+            check_steps_back: 1000,
             last_step_distance_below_avg_with_ratio: 1.3,
         }
     }
