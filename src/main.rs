@@ -1,3 +1,5 @@
+use std::io;
+
 use router_runner::RouterRunner;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
@@ -15,12 +17,12 @@ mod router_runner;
 mod test_utils;
 
 fn main() {
-    // a builder for `FmtSubscriber`.
     let subscriber = FmtSubscriber::builder()
-        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
-        // will be written to stdout.
-        .with_max_level(Level::TRACE)
-        // completes the builder.
+        .with_writer(io::stderr)
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_names(true)
+        .with_max_level(Level::INFO)
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");

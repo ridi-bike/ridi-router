@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use geo::{HaversineDistance, Point};
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,11 @@ pub struct MapDataLine {
     pub points: (MapDataPointRef, MapDataPointRef),
     pub direction: LineDirection,
     pub tags: ElementTagSetRef,
+}
+impl Display for MapDataLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Line({}-{})", self.points.0, self.points.1)
+    }
 }
 impl MapDataLine {
     pub fn line_id(&self) -> String {

@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use std::fmt::Debug;
+use std::fmt::Display;
 
 use super::graph::MapDataLineRef;
 use super::graph::MapDataPointRef;
@@ -61,5 +62,11 @@ impl Debug for MapDataPoint {
             self.is_junction(),
             self.rules
         )
+    }
+}
+
+impl Display for MapDataPoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Point({}: {}, {})", self.id, self.lat, self.lon)
     }
 }

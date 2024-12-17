@@ -3,6 +3,7 @@ use std::{io, path::PathBuf, time::Instant};
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
+use tracing::info;
 
 use crate::map_data::graph::MapDataGraphPacked;
 
@@ -45,6 +46,7 @@ impl MapDataCache {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn read_cache(&mut self) -> Result<Option<MapDataGraphPacked>, MapDataCacheError> {
         let cache_dir = match &self.cache_dir {
             None => return Ok(None),
@@ -86,11 +88,12 @@ impl MapDataCache {
         };
 
         let read_duration = read_start.elapsed();
-        eprintln!("cache read took {} seconds", read_duration.as_secs());
+        info!("cache read took {} seconds", read_duration.as_secs());
 
         Ok(Some(packed_data))
     }
 
+    #[tracing::instrument(skip(self, packed_data))]
     pub fn write_cache(&self, packed_data: MapDataGraphPacked) -> Result<(), MapDataCacheError> {
         if !self.write_to_cache {
             return Ok(());
@@ -122,7 +125,7 @@ impl MapDataCache {
                 .collect::<Result<Vec<_>, MapDataCacheError>>()?;
         }
         let write_end = write_start.elapsed();
-        eprintln!("cache write {}s", write_end.as_secs());
+        info!("cache write {}s", write_end.as_secs());
         Ok(())
     }
 }

@@ -124,9 +124,9 @@ mod test {
             ];
             for (idx, test) in tests.iter().enumerate() {
                 let hash = PointGrid::get_cell_id(test.0, test.1);
-                eprintln!("test {idx}, hash, expected");
-                eprintln!("{hash:?}");
-                eprintln!("{:?}", test.2);
+                info!("test {idx}, hash, expected");
+                info!("{hash:?}");
+                info!("{:?}", test.2);
                 assert_eq!(hash, test.2);
             }
         }
@@ -162,8 +162,8 @@ mod test {
             for (idx, test) in tests.iter().enumerate() {
                 let adjacent_cell_ids =
                     PointGrid::get_outer_cell_ids((test.0, test.1), test.2);
-                eprintln!("test {idx}");
-                eprintln!("adjacent {adjacent_cell_ids:?}");
+                info!("test {idx}");
+                info!("adjacent {adjacent_cell_ids:?}");
                 if test.3.is_empty() {
                     assert!(adjacent_cell_ids.is_none());
                 } else {

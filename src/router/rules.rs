@@ -87,6 +87,7 @@ pub struct RouterRules {
 }
 
 impl RouterRules {
+    #[tracing::instrument]
     pub fn read_from_file(file: PathBuf) -> Result<Self, RulesError> {
         let file = std::fs::read(file).map_err(|error| RulesError::FileRead { error })?;
         let text =
@@ -97,6 +98,7 @@ impl RouterRules {
         Ok(rules)
     }
 
+    #[tracing::instrument]
     pub fn read_from_stdin() -> Result<Self, RulesError> {
         let mut text = String::new();
         let stdin = io::stdin();

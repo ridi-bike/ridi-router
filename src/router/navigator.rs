@@ -3,6 +3,8 @@ use std::{
     fmt::Debug,
 };
 
+use tracing::{field::DebugValue, info, trace};
+
 use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
 
 use super::{
@@ -148,14 +150,24 @@ impl Navigator {
         }
     }
 
+    #[tracing::instrument(skip(self), fields(id = self.itinerary.id()))]
     pub fn generate_routes(mut self) -> NavigationResult {
+        info!("Route gen for itinerary {}", self.itinerary);
+
         let mut loop_counter = 0;
         loop {
             loop_counter += 1;
 
             let move_result = self.walker.move_forward_to_next_fork();
 
+            trace!(
+                step = loop_counter,
+                move_result = debug(&move_result),
+                "Next step"
+            );
+
             if move_result == Ok(WalkerMoveResult::Finish) {
+                trace!("Finished with route");
                 return NavigationResult::Finished(self.walker.get_route().clone());
             }
             if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
@@ -181,7 +193,7 @@ impl Navigator {
                             .weight_calcs
                             .iter()
                             .map(|weight_calc| {
-                                weight_calc(WeightCalcInput {
+                                let weight_calc_result = weight_calc(WeightCalcInput {
                                     route: self.walker.get_route(),
                                     itinerary: &self.itinerary,
                                     current_fork_segment: &fork_route_segment,
@@ -191,7 +203,9 @@ impl Navigator {
                                         self.itinerary.get_next().clone(),
                                     ),
                                     rules: &self.rules,
-                                })
+                                });
+                                trace!(result = debug(&weight_calc_result), "Weight calc");
+                                weight_calc_result
                             })
                             .collect::<Vec<_>>();
 
@@ -204,6 +218,7 @@ impl Navigator {
                     },
                 );
 
+                trace!(fork_weights = debug(&fork_weights), "Fork weights");
                 let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
@@ -211,26 +226,18 @@ impl Navigator {
                         .add_discarded_choice(&last_point, &chosen_fork_point);
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
-                    let move_back_segment_list = self.walker.move_backwards_to_prev_fork();
-                    let last_segment = self
-                        .walker
-                        .get_route()
-                        .get_segment_last()
-                        .map(|s| s.clone());
+                    self.walker.move_backwards_to_prev_fork();
                     if self.walker.get_route().get_junction_before_last_segment() == None {
+                        info!("Stuck");
                         return NavigationResult::Stuck;
                     }
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
-                let move_back_segment_list = self.walker.move_backwards_to_prev_fork();
-                let last_segment = self
-                    .walker
-                    .get_route()
-                    .get_segment_last()
-                    .map(|s| s.clone());
+                self.walker.move_backwards_to_prev_fork();
             }
 
             if loop_counter >= 1000000 {
+                info!("Reached loop {loop_counter}, stopping");
                 return NavigationResult::Stopped(self.walker.get_route().clone());
             }
         }

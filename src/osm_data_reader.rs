@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     map_data::{
@@ -228,7 +229,7 @@ impl OsmDataReader {
         self.map_data.generate_point_hashes();
 
         let read_duration = read_start.elapsed();
-        eprintln!("file read took {} seconds", read_duration.as_secs());
+        info!("file read took {} seconds", read_duration.as_secs());
 
         Ok(())
     }
@@ -257,7 +258,7 @@ impl OsmDataReader {
         self.map_data.generate_point_hashes();
 
         let read_duration = read_start.elapsed();
-        eprintln!("file read took {} seconds", read_duration.as_secs());
+        info!("file read took {} seconds", read_duration.as_secs());
 
         Ok(())
     }

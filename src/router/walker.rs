@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 use crate::map_data::{
     graph::{MapDataGraph, MapDataPointRef},
@@ -346,6 +346,7 @@ mod tests {
     use std::collections::HashMap;
 
     use rusty_fork::rusty_fork_test;
+    use tracing::info;
 
     use crate::{
         map_data::{
@@ -755,7 +756,7 @@ mod tests {
             let can_go = MapDataGraph::get()
                 .test_get_point_ref_by_id(&can_go_id)
                 .unwrap();
-            eprintln!("go {}", can_go_id);
+            info!("go {}", can_go_id);
             assert!(choices.get_all_segment_points().contains(&can_go));
         }
 
@@ -763,7 +764,7 @@ mod tests {
             let cannot_go = MapDataGraph::get()
                 .test_get_point_ref_by_id(&cannot_go_id)
                 .unwrap();
-            eprintln!("no go {}", cannot_go_id);
+            info!("no go {}", cannot_go_id);
             assert!(!choices.get_all_segment_points().contains(&cannot_go));
         }
     }

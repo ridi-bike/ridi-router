@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use geo::{HaversineBearing, Point};
+use tracing::{error, trace};
 
 use crate::router::rules::{RouterRules, RulesTagValueAction};
 
@@ -23,11 +24,13 @@ pub struct WeightCalcInput<'a> {
 pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
 
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_heading");
+
     let mut walker = input.walker_from_fork;
     let next_fork = match walker.move_forward_to_next_fork() {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("weight calc error {:#?}", e);
+            error!("weight calc error {:#?}", e);
             return WeightCalcResult::DoNotUse;
         }
     };
@@ -73,6 +76,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_prefer_same_road");
     if !input.rules.basic.prefer_same_road.enabled {
         return WeightCalcResult::UseWithWeight(0);
     }
@@ -109,6 +113,7 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_no_loops");
     if input.route.has_looped() {
         return WeightCalcResult::DoNotUse;
     }
@@ -117,6 +122,8 @@ pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_check_distance_to_next");
+
     if !input.rules.basic.progression_direction.enabled {
         return WeightCalcResult::UseWithWeight(0);
     }
@@ -145,6 +152,8 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
 }
 
 pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_progress_speed");
+
     if !input.rules.basic.progression_speed.enabled {
         return WeightCalcResult::UseWithWeight(0);
     }
@@ -206,6 +215,8 @@ fn get_rule_for_tag(
 }
 
 pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_rules_highway");
+
     if let Some(res) = get_rule_for_tag(
         &input.rules.highway,
         input
@@ -223,6 +234,8 @@ pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_rules_surface");
+
     if let Some(res) = get_rule_for_tag(
         &input.rules.surface,
         input
@@ -240,6 +253,8 @@ pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_rules_smoothness");
+
     if let Some(res) = get_rule_for_tag(
         &input.rules.smoothness,
         input
@@ -332,7 +347,7 @@ mod test {
                 rules: &RouterRules::default()
 
             });
-            eprintln!("{:#?}", fork_weight);
+            info!("{:#?}", fork_weight);
             assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(215));
 
             let fork_point = MapDataGraph::get()
@@ -352,7 +367,7 @@ mod test {
                 ),
                 rules: &RouterRules::default()
             });
-            eprintln!("{:#?}", fork_weight);
+            info!("{:#?}", fork_weight);
             assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(162));
         }
     }

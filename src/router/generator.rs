@@ -4,6 +4,7 @@ use crate::{
 };
 use geo::{HaversineDestination, Point};
 use rayon::prelude::*;
+use tracing::info;
 
 use super::{
     itinerary::Itinerary,
@@ -51,6 +52,7 @@ impl Generator {
             .collect()
     }
 
+    #[tracing::instrument(skip(self))]
     fn generate_itineraries(&self) -> Vec<Itinerary> {
         let from_waypoints = self.create_waypoints_around(&self.start);
         let to_waypoints = self.create_waypoints_around(&self.finish);
@@ -74,8 +76,10 @@ impl Generator {
         itineraries
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<Route> {
         let itineraries = self.generate_itineraries();
+        info!("Created {} itineraries", itineraries.len());
         itineraries
             .into_par_iter()
             .map(|itinerary| {
