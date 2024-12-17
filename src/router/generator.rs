@@ -1,4 +1,7 @@
-use crate::map_data::graph::{MapDataGraph, MapDataPointRef};
+use crate::{
+    map_data::graph::{MapDataGraph, MapDataPointRef},
+    router::rules::RouterRules,
+};
 use geo::{HaversineDestination, Point};
 use rayon::prelude::*;
 
@@ -8,7 +11,7 @@ use super::{
     route::Route,
     weights::{
         weight_check_distance_to_next, weight_heading, weight_no_loops, weight_prefer_same_road,
-        weight_progress_speed,
+        weight_progress_speed, weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
     },
 };
 
@@ -18,11 +21,16 @@ const ITINERARY_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., -45., -
 pub struct Generator {
     start: MapDataPointRef,
     finish: MapDataPointRef,
+    rules: RouterRules,
 }
 
 impl Generator {
-    pub fn new(start: MapDataPointRef, finish: MapDataPointRef) -> Self {
-        Self { start, finish }
+    pub fn new(start: MapDataPointRef, finish: MapDataPointRef, rules: RouterRules) -> Self {
+        Self {
+            start,
+            finish,
+            rules,
+        }
     }
 
     fn create_waypoints_around(&self, point: &MapDataPointRef) -> Vec<MapDataPointRef> {
@@ -73,12 +81,16 @@ impl Generator {
             .map(|itinerary| {
                 Navigator::new(
                     itinerary,
+                    self.rules.clone(),
                     vec![
+                        weight_progress_speed,
                         weight_check_distance_to_next,
                         weight_prefer_same_road,
                         weight_no_loops,
                         weight_heading,
-                        // weight_progress_speed,
+                        weight_rules_highway,
+                        weight_rules_surface,
+                        weight_rules_smoothness,
                     ],
                 )
                 .generate_routes()

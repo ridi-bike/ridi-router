@@ -39,17 +39,18 @@ impl ResultWriter {
                     .map_err(|error| ResultWriterError::Stdout { error })?;
                 Ok(())
             }
-            DataDestination::Gpx { file } => {
-                let routes = response
-                    .result
-                    .map_err(|error| ResultWriterError::RoutesGenerationFailed { error })?;
+            DataDestination::Gpx { file } => match response.result {
+                crate::ipc_handler::RouterResult::Error { message } => {
+                    Err(ResultWriterError::RoutesGenerationFailed { error: message })
+                }
+                crate::ipc_handler::RouterResult::Ok { routes } => {
+                    GpxWriter::new(routes, file.clone())
+                        .write_gpx()
+                        .map_err(|error| ResultWriterError::Gpx { error })?;
 
-                GpxWriter::new(routes, file.clone())
-                    .write_gpx()
-                    .map_err(|error| ResultWriterError::Gpx { error })?;
-
-                Ok(())
-            }
+                    Ok(())
+                }
+            },
             DataDestination::Json { file } => {
                 let json = serde_json::to_string(&response)
                     .map_err(|error| ResultWriterError::SerializeJson { error })?;

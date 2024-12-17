@@ -6,6 +6,7 @@ use std::{
 use crate::{
     debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
     map_data::graph::MapDataPointRef,
+    router::rules::RouterRules,
 };
 
 use super::{
@@ -134,13 +135,14 @@ pub enum NavigationResult {
 
 pub struct Navigator {
     itinerary: Itinerary,
+    rules: RouterRules,
     walker: Walker,
     weight_calcs: Vec<WeightCalc>,
     discarded_fork_choices: DiscardedForkChoices,
 }
 
 impl Navigator {
-    pub fn new(itinerary: Itinerary, weight_calcs: Vec<WeightCalc>) -> Self {
+    pub fn new(itinerary: Itinerary, rules: RouterRules, weight_calcs: Vec<WeightCalc>) -> Self {
         Navigator {
             walker: Walker::new(
                 itinerary.get_from().clone(),
@@ -154,6 +156,7 @@ impl Navigator {
                 Box::new(DebugLoggerVoidSink::default()),
             ),
             itinerary,
+            rules,
             weight_calcs,
             discarded_fork_choices: DiscardedForkChoices::new(),
         }
@@ -217,6 +220,7 @@ impl Navigator {
                                         Box::new(DebugLoggerVoidSink::default()),
                                     ),
                                     debug_logger: &self.walker.debug_logger,
+                                    rules: &self.rules,
                                 })
                             })
                             .collect::<Vec<_>>();
@@ -295,6 +299,7 @@ mod test {
         router::{
             itinerary::Itinerary,
             navigator::{NavigationResult, WeightCalcResult},
+            rules::RouterRules,
             weights::WeightCalcInput,
         },
         test_utils::{
@@ -325,7 +330,7 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(itinerary.clone(), vec![weight]);
+            let mut navigator = Navigator::new(itinerary.clone(), RouterRules::default(), vec![weight]);
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -349,7 +354,7 @@ mod test {
                 }
                 WeightCalcResult::UseWithWeight(1)
             }
-            let mut navigator = Navigator::new(itinerary, vec![weight2]);
+            let navigator = Navigator::new(itinerary,RouterRules::default(), vec![weight2]);
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -391,7 +396,7 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(itinerary, vec![weight]);
+            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -415,7 +420,7 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new( itinerary, vec![weight]);
+            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
 
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
                 assert!(false);
@@ -437,7 +442,7 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(itinerary, vec![weight]);
+            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
                 assert!(false);
             }
@@ -477,7 +482,7 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(itinerary, vec![weight1, weight2]);
+            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight1, weight2]);
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {

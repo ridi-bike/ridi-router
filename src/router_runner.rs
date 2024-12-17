@@ -1,14 +1,17 @@
 use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLock, time::Instant};
 
 use clap::Parser;
+use tracing::info;
 
 use crate::{
-    ipc_handler::{CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage},
+    ipc_handler::{
+        CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult,
+    },
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
     osm_data_reader::DataSource,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
-    router::{generator::Generator, route::Route},
+    router::{generator::Generator, route::Route, rules::RouterRules},
 };
 
 use clap::Subcommand;
@@ -51,50 +54,56 @@ struct Cli {
 #[derive(Subcommand)]
 enum CliMode {
     Cache {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         input: PathBuf,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         cache_dir: PathBuf,
     },
     Server {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         input: PathBuf,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "NAME")]
+        #[arg(long, value_name = "NAME")]
         socket_name: Option<String>,
     },
     Client {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         start: String,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         finish: String,
 
-        #[arg(short, long, value_name = "NAME")]
+        #[arg(long, value_name = "NAME")]
         socket_name: Option<String>,
+
+        #[arg(long, value_name = "FILE")]
+        rule_file: Option<PathBuf>,
     },
     Dual {
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         input: PathBuf,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         start: String,
 
-        #[arg(short, long, value_name = "COORDINATES")]
+        #[arg(long, value_name = "COORDINATES")]
         finish: String,
+
+        #[arg(long, value_name = "FILE")]
+        rule_file: Option<PathBuf>,
     },
 }
 
@@ -121,12 +130,14 @@ pub enum RouterMode {
         start_finish: StartFinish,
         data_destination: DataDestination,
         socket_name: Option<String>,
+        rule_file: Option<PathBuf>,
     },
     Dual {
         data_source: DataSource,
         cache_dir: Option<PathBuf>,
         start_finish: StartFinish,
         data_destination: DataDestination,
+        rule_file: Option<PathBuf>,
     },
 }
 
@@ -156,6 +167,7 @@ impl RouterRunner {
                 start,
                 finish,
                 socket_name,
+                rule_file,
             } => {
                 let start_finish = get_start_finish(start, finish)
                     .expect("could not get start/finish coordinates");
@@ -164,6 +176,7 @@ impl RouterRunner {
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
                     socket_name,
+                    rule_file,
                 }
             }
             CliMode::Dual {
@@ -172,6 +185,7 @@ impl RouterRunner {
                 output,
                 start,
                 finish,
+                rule_file,
             } => {
                 let start_finish = get_start_finish(start, finish)
                     .expect("could not get start/finish coordinates");
@@ -181,6 +195,7 @@ impl RouterRunner {
                     start_finish,
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
+                    rule_file,
                 }
             }
         };
@@ -188,7 +203,10 @@ impl RouterRunner {
         Self { mode }
     }
 
-    fn generate_route(start_finish: &StartFinish) -> Result<Vec<Route>, RouterRunnerError> {
+    fn generate_route(
+        start_finish: &StartFinish,
+        rules: RouterRules,
+    ) -> Result<Vec<Route>, RouterRunnerError> {
         let start = MapDataGraph::get()
             .get_closest_to_coords(start_finish.start_lat, start_finish.start_lon)
             .ok_or(RouterRunnerError::PointNotFound {
@@ -201,7 +219,7 @@ impl RouterRunner {
                 point: "Finish point".to_string(),
             })?;
 
-        let route_generator = Generator::new(start.clone(), finish.clone());
+        let route_generator = Generator::new(start.clone(), finish.clone(), rules);
         let routes = route_generator.generate_routes();
         Ok(routes)
     }
@@ -212,7 +230,9 @@ impl RouterRunner {
         cache_dir: Option<PathBuf>,
         start_finish: &StartFinish,
         data_destination: &DataDestination,
+        rule_file: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
+        let rules = RouterRules::read(rule_file).expect("Failed to read rules");
         let mut data_cache = MapDataCache::init(cache_dir);
         let cached_map_data = data_cache.read_cache();
         let cached_map_data = match cached_map_data {
@@ -231,14 +251,17 @@ impl RouterRunner {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
         }
-        let route_result = RouterRunner::generate_route(start_finish);
+        let route_result = RouterRunner::generate_route(start_finish, rules);
         ResultWriter::write(
             data_destination.clone(),
             ResponseMessage {
                 id: "oo".to_string(),
-                result: route_result
-                    .map(|routes| {
-                        routes
+                result: route_result.map_or_else(
+                    |error| RouterResult::Error {
+                        message: format!("Error generating route {:?}", error),
+                    },
+                    |routes| RouterResult::Ok {
+                        routes: routes
                             .iter()
                             .map(|route| RouteMessage {
                                 coords: route
@@ -249,10 +272,11 @@ impl RouterRunner {
                                         lon: segment.get_end_point().borrow().lon,
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
+                                stats: route.calc_stats(),
                             })
-                            .collect()
-                    })
-                    .map_err(|error| format!("Error generating route {:?}", error)),
+                            .collect(),
+                    },
+                ),
             },
         )
         .map_err(|error| RouterRunnerError::ResultWrite { error })?;
@@ -274,7 +298,7 @@ impl RouterRunner {
             .map_err(|error| RouterRunnerError::CacheWrite { error })?;
 
         let startup_end = startup_start.elapsed();
-        eprintln!("cache gen took {}s", startup_end.as_secs());
+        info!("cache gen took {}s", startup_end.as_secs());
 
         Ok(())
     }
@@ -313,18 +337,24 @@ impl RouterRunner {
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         dbg!("ipc init done");
         ipc.listen(|request_message| {
-            let route_res = RouterRunner::generate_route(&StartFinish {
-                start_lat: request_message.start.lat,
-                start_lon: request_message.start.lon,
-                finish_lat: request_message.finish.lat,
-                finish_lon: request_message.finish.lon,
-            });
+            let route_res = RouterRunner::generate_route(
+                &StartFinish {
+                    start_lat: request_message.start.lat,
+                    start_lon: request_message.start.lon,
+                    finish_lat: request_message.finish.lat,
+                    finish_lon: request_message.finish.lon,
+                },
+                request_message.rules,
+            );
 
             ResponseMessage {
                 id: request_message.id,
-                result: route_res
-                    .map(|routes| {
-                        routes
+                result: route_res.map_or_else(
+                    |error| RouterResult::Error {
+                        message: format!("Error generating route {:?}", error),
+                    },
+                    |routes| RouterResult::Ok {
+                        routes: routes
                             .iter()
                             .map(|route| RouteMessage {
                                 coords: route
@@ -335,10 +365,11 @@ impl RouterRunner {
                                         lon: segment.get_end_point().borrow().lon,
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
+                                stats: route.calc_stats(),
                             })
-                            .collect()
-                    })
-                    .map_err(|error| format!("Error generating route {:?}", error)),
+                            .collect(),
+                    },
+                ),
             }
         })
         .map_err(|error| RouterRunnerError::Ipc { error })?;
@@ -350,11 +381,13 @@ impl RouterRunner {
         start_finish: &StartFinish,
         data_destination: &DataDestination,
         socket_name: Option<String>,
+        rule_file: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
+        let rules = RouterRules::read(rule_file).expect("could not read rules");
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
-            .connect(start_finish)
+            .connect(start_finish, rules)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
@@ -368,11 +401,13 @@ impl RouterRunner {
                 data_source,
                 cache_dir,
                 data_destination,
+                rule_file,
             } => self.run_dual(
                 &data_source,
                 cache_dir.clone(),
                 &start_finish,
                 &data_destination,
+                rule_file.clone(),
             ),
             RouterMode::Cache {
                 data_source,
@@ -387,7 +422,13 @@ impl RouterRunner {
                 start_finish,
                 data_destination,
                 socket_name,
-            } => self.run_client(&start_finish, &data_destination, socket_name.clone()),
+                rule_file,
+            } => self.run_client(
+                &start_finish,
+                &data_destination,
+                socket_name.clone(),
+                rule_file.clone(),
+            ),
         }
     }
 }

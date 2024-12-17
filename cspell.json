@@ -13,6 +13,7 @@
 		"osmpbf",
 		"osmpbfreader",
 		"interprocess",
-		"bincode"
+		"bincode",
+		"smartstring"
 	]
 }

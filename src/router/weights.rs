@@ -1,8 +1,11 @@
-use std::rc::Rc;
+use std::collections::HashMap;
 
 use geo::{HaversineBearing, Point};
 
-use crate::debug_writer::DebugLogger;
+use crate::{
+    debug_writer::DebugLogger,
+    router::rules::{RouterRules, RulesTagValueAction},
+};
 
 use super::{
     itinerary::Itinerary,
@@ -18,6 +21,7 @@ pub struct WeightCalcInput<'a> {
     pub itinerary: &'a Itinerary,
     pub walker_from_fork: Walker,
     pub debug_logger: &'a Box<dyn DebugLogger>,
+    pub rules: &'a RouterRules,
 }
 
 pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
@@ -89,21 +93,36 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
+    if !input.rules.basic.prefer_same_road.enabled {
+        return WeightCalcResult::UseWithWeight(0);
+    }
     let current_ref = input
         .route
         .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tag_ref());
+        .map_or(None, |s| s.get_line().borrow().tags.borrow().hw_ref());
     let current_name = input
         .route
         .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tag_name());
-    let fork_ref = input.current_fork_segment.get_line().borrow().tag_ref();
-    let fork_name = input.current_fork_segment.get_line().borrow().tag_name();
+        .map_or(None, |s| s.get_line().borrow().tags.borrow().name());
+    let fork_ref = input
+        .current_fork_segment
+        .get_line()
+        .borrow()
+        .tags
+        .borrow()
+        .hw_ref();
+    let fork_name = input
+        .current_fork_segment
+        .get_line()
+        .borrow()
+        .tags
+        .borrow()
+        .name();
 
     if (current_ref.is_some() && fork_ref.is_some() && current_ref == fork_ref)
         || (current_name.is_some() && fork_name.is_some() && current_name == fork_name)
     {
-        return WeightCalcResult::UseWithWeight(60);
+        return WeightCalcResult::UseWithWeight(input.rules.basic.prefer_same_road.priority);
     }
 
     WeightCalcResult::UseWithWeight(0)
@@ -118,7 +137,10 @@ pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult {
-    let check_steps_back = 100;
+    if !input.rules.basic.progression_direction.enabled {
+        return WeightCalcResult::UseWithWeight(0);
+    }
+    let check_steps_back = input.rules.basic.progression_direction.check_steps_back;
 
     let distance_to_end_current = match input.route.get_segment_last() {
         None => return WeightCalcResult::UseWithWeight(0),
@@ -143,7 +165,11 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
 }
 
 pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
-    let check_steps_back = 100;
+    if !input.rules.basic.progression_speed.enabled {
+        return WeightCalcResult::UseWithWeight(0);
+    }
+
+    let check_steps_back = input.rules.basic.progression_speed.check_steps_back;
 
     let current_point = match input.route.get_segment_last() {
         None => return WeightCalcResult::UseWithWeight(0),
@@ -165,9 +191,86 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
     let distance_last_points = point_steps_back.borrow().distance_between(&current_point);
     let average_distance_last_points = distance_last_points / (check_steps_back as f32);
 
-    if average_distance_last_points < average_distance_per_segment * 0.3 {
-        // return WeightCalcResult::DoNotUse;
-        return WeightCalcResult::UseWithWeight(0);
+    if average_distance_last_points
+        < average_distance_per_segment
+            * input
+                .rules
+                .basic
+                .progression_speed
+                .last_step_distance_below_avg_with_ratio
+    {
+        return WeightCalcResult::DoNotUse;
+    }
+
+    WeightCalcResult::UseWithWeight(0)
+}
+
+fn get_rule_for_tag(
+    rule: &Option<HashMap<String, RulesTagValueAction>>,
+    segment_tag: Option<&smartstring::alias::String>,
+) -> Option<WeightCalcResult> {
+    if let Some(ref rule_tag) = rule {
+        if let Some(segment_tag) = segment_tag {
+            let rule_tag = rule_tag.get(&segment_tag.to_string());
+            if let Some(rule_tag) = rule_tag {
+                return Some(match rule_tag {
+                    RulesTagValueAction::Avoid => WeightCalcResult::DoNotUse,
+                    RulesTagValueAction::Priority { value } => {
+                        WeightCalcResult::UseWithWeight(*value)
+                    }
+                });
+            }
+        }
+    }
+    None
+}
+
+pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
+    if let Some(res) = get_rule_for_tag(
+        &input.rules.highway,
+        input
+            .current_fork_segment
+            .get_line()
+            .borrow()
+            .tags
+            .borrow()
+            .highway(),
+    ) {
+        return res;
+    }
+
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
+    if let Some(res) = get_rule_for_tag(
+        &input.rules.surface,
+        input
+            .current_fork_segment
+            .get_line()
+            .borrow()
+            .tags
+            .borrow()
+            .surface(),
+    ) {
+        return res;
+    }
+
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
+    if let Some(res) = get_rule_for_tag(
+        &input.rules.smoothness,
+        input
+            .current_fork_segment
+            .get_line()
+            .borrow()
+            .tags
+            .borrow()
+            .smoothness(),
+    ) {
+        return res;
     }
 
     WeightCalcResult::UseWithWeight(0)
@@ -187,6 +290,7 @@ mod test {
             itinerary::Itinerary,
             navigator::WeightCalcResult,
             route::{segment::Segment, segment_list::SegmentList},
+            rules::RouterRules,
             walker::Walker,
         },
         test_utils::{graph_from_test_file, set_graph_static},
@@ -250,7 +354,9 @@ mod test {
                     to.clone(),
                     disabled_debug_writer.clone(),
                 ),
-                debug_logger: &debug_logger
+                debug_logger: &debug_logger,
+                rules: &RouterRules::default()
+
             });
             eprintln!("{:#?}", fork_weight);
             assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(215));
@@ -271,7 +377,8 @@ mod test {
                     to.clone(),
                     disabled_debug_writer.clone(),
                 ),
-                debug_logger: &debug_logger
+                debug_logger: &debug_logger,
+                rules: &RouterRules::default()
             });
             eprintln!("{:#?}", fork_weight);
             assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(162));

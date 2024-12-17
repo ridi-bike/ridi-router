@@ -1,10 +1,16 @@
 use bincode::ErrorKind;
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Name, Stream};
 use serde::{Deserialize, Serialize};
-use std::io::{self, prelude::*, BufReader};
+use std::{
+    collections::HashMap,
+    io::{self, prelude::*, BufReader},
+};
 use tracing::{info, trace, warn};
 
-use crate::router_runner::StartFinish;
+use crate::{
+    router::{route::RouteStats, rules::RouterRules},
+    router_runner::StartFinish,
+};
 
 #[derive(Debug)]
 pub enum IpcHandlerError {
@@ -30,17 +36,25 @@ pub struct RequestMessage {
     pub id: String,
     pub start: CoordsMessage,
     pub finish: CoordsMessage,
+    pub rules: RouterRules,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RouteMessage {
     pub coords: Vec<CoordsMessage>,
+    pub stats: RouteStats,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum RouterResult {
+    Error { message: String },
+    Ok { routes: Vec<RouteMessage> },
+}
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseMessage {
     pub id: String,
-    pub result: Result<Vec<RouteMessage>, String>,
+    pub result: RouterResult,
 }
 
 pub struct IpcHandler<'a> {
@@ -154,13 +168,6 @@ impl<'a> IpcHandler<'a> {
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
         eprintln!("message size sent {}", mes_len_bytes);
 
-        eprintln!(
-            "sending resp {} {} {}",
-            response_message.id,
-            response_message.result.is_ok(),
-            buffer.len()
-        );
-
         conn.get_mut()
             .write_all(&buffer[..])
             .map_err(|error| IpcHandlerError::WriteLine { error })?;
@@ -168,7 +175,11 @@ impl<'a> IpcHandler<'a> {
         Ok(())
     }
 
-    pub fn connect(&self, start_finish: &StartFinish) -> Result<ResponseMessage, IpcHandlerError> {
+    pub fn connect(
+        &self,
+        start_finish: &StartFinish,
+        rules: RouterRules,
+    ) -> Result<ResponseMessage, IpcHandlerError> {
         let conn = Stream::connect(self.socket_name.clone())
             .map_err(|error| IpcHandlerError::Connect { error })?;
 
@@ -184,6 +195,7 @@ impl<'a> IpcHandler<'a> {
                 lat: start_finish.finish_lat,
                 lon: start_finish.finish_lon,
             },
+            rules,
         };
         let req_buf = bincode::serialize(&req_msg)
             .map_err(|error| IpcHandlerError::SerializeMessage { error })?;

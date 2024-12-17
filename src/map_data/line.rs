@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 
+use geo::{HaversineDistance, Point};
 use serde::{Deserialize, Serialize};
 
-use super::graph::{MapDataElementTagRef, MapDataPointRef};
+use super::graph::{ElementTagSetRef, MapDataPointRef};
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum LineDirection {
@@ -16,7 +17,7 @@ pub struct MapDataLine {
     // pub id: String,
     pub points: (MapDataPointRef, MapDataPointRef),
     pub direction: LineDirection,
-    pub tags: (MapDataElementTagRef, MapDataElementTagRef),
+    pub tags: ElementTagSetRef,
 }
 impl MapDataLine {
     pub fn line_id(&self) -> String {
@@ -26,17 +27,19 @@ impl MapDataLine {
             self.points.1.borrow().id
         )
     }
-    pub fn tag_name(&self) -> Option<&String> {
-        self.tags.0.get()
-    }
-    pub fn tag_ref(&self) -> Option<&String> {
-        self.tags.1.get()
-    }
     pub fn is_one_way(&self) -> bool {
         self.direction == LineDirection::OneWay || self.direction == LineDirection::Roundabout
     }
     pub fn is_roundabout(&self) -> bool {
         self.direction == LineDirection::Roundabout
+    }
+    pub fn get_len_m(&self) -> f32 {
+        let point_1 = self.points.0.borrow();
+        let point_2 = self.points.1.borrow();
+        let geo_point_1 = Point::new(point_1.lon, point_1.lat);
+        let geo_point_2 = Point::new(point_2.lon, point_2.lat);
+
+        geo_point_1.haversine_distance(&geo_point_2)
     }
 }
 
