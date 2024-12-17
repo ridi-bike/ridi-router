@@ -203,6 +203,7 @@ impl RouterRunner {
         Self { mode }
     }
 
+    #[tracing::instrument(skip_all)]
     fn generate_route(
         start_finish: &StartFinish,
         rules: RouterRules,
@@ -213,17 +214,22 @@ impl RouterRunner {
                 point: "Start point".to_string(),
             })?;
 
+        info!("Start point {start}");
+
         let finish = MapDataGraph::get()
             .get_closest_to_coords(start_finish.finish_lat, start_finish.finish_lon)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Finish point".to_string(),
             })?;
 
+        info!("Finish point {finish}");
+
         let route_generator = Generator::new(start.clone(), finish.clone(), rules);
         let routes = route_generator.generate_routes();
         Ok(routes)
     }
 
+    #[tracing::instrument(skip_all)]
     fn run_dual(
         &self,
         data_source: &DataSource,
@@ -283,6 +289,7 @@ impl RouterRunner {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     fn run_cache(
         &self,
         data_source: &DataSource,
@@ -303,6 +310,7 @@ impl RouterRunner {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     fn run_server(
         &self,
         data_source: &DataSource,
@@ -331,7 +339,7 @@ impl RouterRunner {
         }
 
         let startup_end = startup_start.elapsed();
-        eprintln!("startup took {}s", startup_end.as_secs());
+        info!("startup took {}s", startup_end.as_secs());
 
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
@@ -376,6 +384,7 @@ impl RouterRunner {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     fn run_client(
         &self,
         start_finish: &StartFinish,
@@ -394,6 +403,7 @@ impl RouterRunner {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn run(&self) -> Result<(), RouterRunnerError> {
         match &self.mode {
             RouterMode::Dual {

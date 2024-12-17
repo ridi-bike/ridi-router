@@ -43,7 +43,7 @@ impl Default for BasicRuleProgressDirection {
     fn default() -> Self {
         Self {
             enabled: true,
-            check_steps_back: 100,
+            check_steps_back: 1000,
         }
     }
 }
@@ -59,7 +59,7 @@ impl Default for BasicRuleProgressSpeed {
     fn default() -> Self {
         Self {
             enabled: false,
-            check_steps_back: 100,
+            check_steps_back: 1000,
             last_step_distance_below_avg_with_ratio: 1.3,
         }
     }
@@ -87,6 +87,7 @@ pub struct RouterRules {
 }
 
 impl RouterRules {
+    #[tracing::instrument]
     pub fn read_from_file(file: PathBuf) -> Result<Self, RulesError> {
         let file = std::fs::read(file).map_err(|error| RulesError::FileRead { error })?;
         let text =
@@ -97,6 +98,7 @@ impl RouterRules {
         Ok(rules)
     }
 
+    #[tracing::instrument]
     pub fn read_from_stdin() -> Result<Self, RulesError> {
         let mut text = String::new();
         let stdin = io::stdin();

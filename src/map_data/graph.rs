@@ -1,7 +1,7 @@
 use std::{
     cmp::{Eq, Ordering},
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
     sync::OnceLock,
@@ -11,6 +11,7 @@ use std::{
 use geo::HaversineDistance;
 use geo::Point;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     map_data::{
@@ -171,7 +172,7 @@ impl ElementTags {
     }
 }
 
-trait MapDataElement: Debug {
+trait MapDataElement: Debug + Display {
     fn get(idx: usize) -> &'static Self;
 }
 impl MapDataElement for MapDataPoint {
@@ -189,6 +190,12 @@ impl MapDataElement for MapDataLine {
 pub struct MapDataElementRef<T: MapDataElement> {
     idx: usize,
     _marker: PhantomData<T>,
+}
+
+impl<T: MapDataElement + 'static> Display for MapDataElementRef<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Ref({}, idx: {})", self.borrow(), self.idx)
+    }
 }
 
 impl<T: MapDataElement> MapDataElementRef<T> {
@@ -229,7 +236,7 @@ impl<T: MapDataElement> Hash for MapDataElementRef<T> {
 
 impl<T: MapDataElement + 'static> Debug for MapDataElementRef<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.borrow().fmt(f)
+        Debug::fmt(&self.borrow(), f)
     }
 }
 
@@ -271,10 +278,10 @@ impl MapDataGraph {
 
         let mut packed = MapDataGraphPacked::default();
 
-        eprintln!("points len {}", self.points.len());
-        eprintln!("proximity_lookup len {}", self.point_grid.len(),);
-        eprintln!("lines len {}", self.lines.len());
-        eprintln!("tags len {:?}", self.tags.len());
+        info!("points len {}", self.points.len());
+        info!("proximity_lookup len {}", self.point_grid.len(),);
+        info!("lines len {}", self.lines.len());
+        info!("tags len {:?}", self.tags.len());
 
         rayon::scope(|scope| {
             scope.spawn(|_| {
@@ -293,17 +300,17 @@ impl MapDataGraph {
             });
         });
 
-        eprintln!("points len {}, {}", self.points.len(), packed.points.len());
-        eprintln!(
+        info!("points len {}, {}", self.points.len(), packed.points.len());
+        info!(
             "point_grid len {}, {}",
             self.point_grid.len(),
             packed.point_grid.len()
         );
-        eprintln!("lines len {} {}", self.lines.len(), packed.lines.len());
-        eprintln!("tags len {:?} {}", self.tags.len(), packed.tags.len());
+        info!("lines len {} {}", self.lines.len(), packed.lines.len());
+        info!("tags len {:?} {}", self.tags.len(), packed.tags.len());
 
         let pack_end = pack_start.elapsed();
-        eprint!("pack took {}s", pack_end.as_secs());
+        info!("pack took {}s", pack_end.as_secs());
 
         packed
     }
@@ -610,6 +617,7 @@ impl MapDataGraph {
 
         distances.get(0).map_or(None, |v| Some(v.0.clone()))
     }
+    #[tracing::instrument(skip(packed))]
     pub fn unpack(packed: MapDataGraphPacked) -> &'static MapDataGraph {
         let mut points = Vec::new();
         let points_map = HashMap::new();
@@ -625,35 +633,35 @@ impl MapDataGraph {
                 points =
                     bincode::deserialize(&packed.points[..]).expect("could not deserialize points");
                 let dur = start.elapsed();
-                eprintln!("points {}s", dur.as_secs());
+                info!("points {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
                 point_grid = bincode::deserialize(&packed.point_grid[..])
                     .expect("could not deserialize points");
                 let dur = start.elapsed();
-                eprintln!("point_grid {}s", dur.as_secs());
+                info!("point_grid {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
                 lines =
                     bincode::deserialize(&packed.lines[..]).expect("could not deserialize lines");
                 let dur = start.elapsed();
-                eprintln!("lines {}s", dur.as_secs());
+                info!("lines {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
                 tags = bincode::deserialize(&packed.tags[..]).expect("could not deserialize tags");
                 let dur = start.elapsed();
-                eprintln!("tags {}s", dur.as_secs());
+                info!("tags {}s", dur.as_secs());
             });
         });
         let unpack_duration = unpack_start.elapsed();
-        eprintln!("unpack took {}s", unpack_duration.as_secs());
-        eprintln!("points {}", points.len());
-        eprintln!("point_grid {}", point_grid.len());
-        eprintln!("lines {}", lines.len());
-        eprintln!("tags {:?}", tags.len());
+        info!("unpack took {}s", unpack_duration.as_secs());
+        info!("points {}", points.len());
+        info!("point_grid {}", point_grid.len());
+        info!("lines {}", lines.len());
+        info!("tags {:?}", tags.len());
 
         MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
             points,
@@ -674,6 +682,7 @@ impl MapDataGraph {
             map_data
         })
     }
+    #[tracing::instrument]
     pub fn init(data_source: &DataSource) -> () {
         MapDataGraph::get_or_init(Some(data_source));
     }
@@ -899,8 +908,8 @@ mod tests {
                     .get_point_ref_by_id(id)
                     .expect(format!("point {} must exist", id).as_str());
                 let point = point.borrow();
-                eprintln!("point {:#?}", point);
-                eprintln!("test {:#?}", test);
+                info!("point {:#?}", point);
+                info!("test {:#?}", test);
                 point.lat == test.lat
                     && point.lon == test.lon
                     && point.lines.len() == test.lines.len()
@@ -1041,8 +1050,8 @@ mod tests {
                     .iter()
                     .find(|l| l.line_id() == *id)
                     .expect(format!("line {} must exist", id).as_str());
-                eprintln!("line {:#?}", line);
-                eprintln!("test {:#?}", test_points);
+                info!("line {:#?}", line);
+                info!("test {:#?}", test_points);
                      line.points.0.borrow().id == test_points.0
                     && line.points.1.borrow().id == test_points.1
             }

@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::map_data::graph::MapDataPointRef;
 
 #[derive(Clone, Debug)]
@@ -7,6 +9,22 @@ pub struct Itinerary {
     waypoints: Vec<MapDataPointRef>,
     next: MapDataPointRef,
     waypoint_radius: f32,
+}
+
+impl Display for Itinerary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Itinerary({} - {} - {})",
+            self.start,
+            self.waypoints
+                .iter()
+                .map(|p| format!("{p}"))
+                .collect::<Vec<_>>()
+                .join(" - "),
+            self.finish
+        )
+    }
 }
 
 impl Itinerary {
@@ -23,6 +41,19 @@ impl Itinerary {
             waypoints,
             finish,
         }
+    }
+
+    pub fn id(&self) -> String {
+        format!(
+            "{}-{}-{}",
+            self.start.borrow().id,
+            self.waypoints
+                .iter()
+                .map(|p| format!("{}", p.borrow().id))
+                .collect::<Vec<_>>()
+                .join("-"),
+            self.finish.borrow().id
+        )
     }
 
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {

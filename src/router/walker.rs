@@ -1,11 +1,8 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
-use crate::{
-    debug_writer::DebugLogger,
-    map_data::{
-        graph::{MapDataGraph, MapDataPointRef},
-        rule::MapDataRuleType,
-    },
+use crate::map_data::{
+    graph::{MapDataGraph, MapDataPointRef},
+    rule::MapDataRuleType,
 };
 
 use super::route::{segment::Segment, segment_list::SegmentList, Route};
@@ -24,7 +21,6 @@ pub struct Walker {
     end: MapDataPointRef,
     route_walked: Route,
     next_fork_choice_point: Option<MapDataPointRef>,
-    pub debug_logger: Box<dyn DebugLogger>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -35,18 +31,13 @@ pub enum WalkerMoveResult {
 }
 
 impl Walker {
-    pub fn new(
-        start: MapDataPointRef,
-        end: MapDataPointRef,
-        debug_logger: Box<dyn DebugLogger>,
-    ) -> Self {
+    pub fn new(start: MapDataPointRef, end: MapDataPointRef) -> Self {
         Self {
             walker_id: 1,
             start: start.clone(),
             end,
             route_walked: Route::new(),
             next_fork_choice_point: None,
-            debug_logger,
         }
     }
 
@@ -268,11 +259,6 @@ impl Walker {
             if *point == self.end {
                 return Ok(WalkerMoveResult::Finish);
             }
-            self.debug_logger.log(format!(
-                "raw choices for {:#?} : {:#?}",
-                point,
-                MapDataGraph::get().get_adjacent(point.clone())
-            ));
 
             let available_segments = match self.route_walked.get_segment_last() {
                 None => self.get_fork_segments_for_point(&self.start),
@@ -284,11 +270,6 @@ impl Walker {
                     }
                 }
             };
-
-            self.debug_logger.log(format!(
-                "processed choices {:#?} : {:#?}",
-                point, available_segments
-            ));
 
             if available_segments.get_segment_count() > 1 && self.next_fork_choice_point.is_none() {
                 return Ok(WalkerMoveResult::Fork(available_segments));
@@ -365,9 +346,9 @@ mod tests {
     use std::collections::HashMap;
 
     use rusty_fork::rusty_fork_test;
+    use tracing::info;
 
     use crate::{
-        debug_writer::DebugLoggerVoidSink,
         map_data::{
             graph::MapDataGraph,
             osm::{OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
@@ -395,7 +376,6 @@ mod tests {
             let mut walker = Walker::new(
                 point1.clone(),
                 point2.clone(),
-                Box::new(DebugLoggerVoidSink::default()),
             );
 
             assert_eq!(
@@ -417,7 +397,6 @@ mod tests {
             let mut walker = Walker::new(
                 point1.clone(),
                 point2.clone(),
-                Box::new(DebugLoggerVoidSink::default()),
             );
 
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
@@ -448,7 +427,6 @@ mod tests {
             let mut walker = Walker::new(
                 point1.clone(),
                 point2.clone(),
-                Box::new(DebugLoggerVoidSink::default()),
             );
             assert_eq!(
                 walker.move_forward_to_next_fork(),
@@ -482,7 +460,6 @@ mod tests {
             let mut walker = Walker::new(
                 point1.clone(),
                 point2.clone(),
-                Box::new(DebugLoggerVoidSink::default()),
             );
 
             let choices = match walker.move_forward_to_next_fork() {
@@ -574,7 +551,6 @@ mod tests {
             let mut walker = Walker::new(
                 point1.clone(),
                 point2.clone(),
-                Box::new(DebugLoggerVoidSink::default()),
             );
 
             let choices = match walker.move_forward_to_next_fork() {
@@ -668,7 +644,6 @@ mod tests {
             let mut walker = Walker::new(
                 from.clone(),
                 to.clone(),
-                Box::new(DebugLoggerVoidSink::default()),
             );
 
             let choices = match walker.move_forward_to_next_fork() {
@@ -743,7 +718,6 @@ mod tests {
             let mut walker = Walker::new(
                 from.clone(),
                 to.clone(),
-                Box::new(DebugLoggerVoidSink::default()),
             );
 
             let choices = match walker.move_forward_to_next_fork() {
@@ -765,11 +739,7 @@ mod tests {
         let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
         let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
 
-        let mut walker = Walker::new(
-            from.clone(),
-            to.clone(),
-            Box::new(DebugLoggerVoidSink::default()),
-        );
+        let mut walker = Walker::new(from.clone(), to.clone());
 
         let choices = match walker.move_forward_to_next_fork() {
             Err(_) => panic!("Error received from move"),
@@ -786,7 +756,7 @@ mod tests {
             let can_go = MapDataGraph::get()
                 .test_get_point_ref_by_id(&can_go_id)
                 .unwrap();
-            eprintln!("go {}", can_go_id);
+            info!("go {}", can_go_id);
             assert!(choices.get_all_segment_points().contains(&can_go));
         }
 
@@ -794,7 +764,7 @@ mod tests {
             let cannot_go = MapDataGraph::get()
                 .test_get_point_ref_by_id(&cannot_go_id)
                 .unwrap();
-            eprintln!("no go {}", cannot_go_id);
+            info!("no go {}", cannot_go_id);
             assert!(!choices.get_all_segment_points().contains(&cannot_go));
         }
     }
