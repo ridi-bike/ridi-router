@@ -114,7 +114,7 @@ impl OsmDataReader {
                         .insert_relation(rel)
                         .map_err(|error| OsmDataReaderError::MapDataError { error });
                     if let Err(error) = res {
-                        error!(error=?error"Error, skipping relation");
+                        error!(error=?error, "Error, skipping relation");
                     }
                 }
             }
