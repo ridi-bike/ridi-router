@@ -290,6 +290,7 @@ mod test {
             itinerary::Itinerary,
             navigator::WeightCalcResult,
             route::{segment::Segment, segment_list::SegmentList},
+            rules::RouterRules,
             walker::Walker,
         },
         test_utils::{graph_from_test_file, set_graph_static},
@@ -353,7 +354,9 @@ mod test {
                     to.clone(),
                     disabled_debug_writer.clone(),
                 ),
-                debug_logger: &debug_logger
+                debug_logger: &debug_logger,
+                rules: &RouterRules::default()
+
             });
             eprintln!("{:#?}", fork_weight);
             assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(215));
@@ -374,7 +377,8 @@ mod test {
                     to.clone(),
                     disabled_debug_writer.clone(),
                 ),
-                debug_logger: &debug_logger
+                debug_logger: &debug_logger,
+                rules: &RouterRules::default()
             });
             eprintln!("{:#?}", fork_weight);
             assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(162));

@@ -798,7 +798,7 @@ mod tests {
             tags: Some(HashMap::from([("highway".to_string(), "omg".to_string())])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), true);
+        assert_eq!(map_data.way_is_ok(&osm_way), false);
 
         let osm_way = OsmWay {
             id: 1,
