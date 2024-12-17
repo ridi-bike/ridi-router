@@ -155,7 +155,7 @@ impl Route {
             let line = segment.get_line().borrow();
             let point_1 = line.points.0.borrow();
             let point_2 = line.points.1.borrow();
-            let geo_point_1 = GeoPoint::new(point_1.lon, point_2.lat);
+            let geo_point_1 = GeoPoint::new(point_1.lon, point_1.lat);
             let geo_point_2 = GeoPoint::new(point_2.lon, point_2.lat);
             let curr_bearing = if line.points.1 == *segment.get_end_point() {
                 geo_point_1.haversine_bearing(geo_point_2)
@@ -179,7 +179,7 @@ impl Route {
             smoothness: calc_stat_map(len_m, &smoothness),
             surface: calc_stat_map(len_m, &surface),
             mean_point: Point {
-                lat: (lat_sum / self.get_segment_count() as f64),
+                lat: lat_sum / self.get_segment_count() as f64,
                 lon: lon_sum / self.get_segment_count() as f64,
             },
             direction_change_ratio: tot_bearing_diff / len_m * 1000.,
