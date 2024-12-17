@@ -107,6 +107,7 @@ impl PointGrid {
 #[cfg(test)]
 mod test {
     use rusty_fork::rusty_fork_test;
+    use tracing::info;
 
     use super::PointGrid;
 

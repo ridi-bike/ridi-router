@@ -277,6 +277,7 @@ mod test {
     use std::path::PathBuf;
 
     use rusty_fork::rusty_fork_test;
+    use tracing::info;
 
     use crate::{
         map_data::graph::{MapDataGraph, MapDataPointRef},
