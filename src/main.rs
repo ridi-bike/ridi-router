@@ -2,7 +2,6 @@ use router_runner::RouterRunner;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-mod debug_writer;
 mod gpx_writer;
 mod ipc_handler;
 mod map_data;

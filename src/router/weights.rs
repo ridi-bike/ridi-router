@@ -2,10 +2,7 @@ use std::collections::HashMap;
 
 use geo::{HaversineBearing, Point};
 
-use crate::{
-    debug_writer::DebugLogger,
-    router::rules::{RouterRules, RulesTagValueAction},
-};
+use crate::router::rules::{RouterRules, RulesTagValueAction};
 
 use super::{
     itinerary::Itinerary,
@@ -20,7 +17,6 @@ pub struct WeightCalcInput<'a> {
     pub all_fork_segments: &'a SegmentList,
     pub itinerary: &'a Itinerary,
     pub walker_from_fork: Walker,
-    pub debug_logger: &'a Box<dyn DebugLogger>,
     pub rules: &'a RouterRules,
 }
 
@@ -72,22 +68,6 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         ((180.0 - fork_bearing.abs()) - (180.0 - next_bearing.abs())).abs();
 
     let ratio: f32 = 255.0 / 180.0;
-
-    input
-        .debug_logger
-        .log(format!("fork_bearing: {:#?}", fork_bearing));
-    input
-        .debug_logger
-        .log(format!("next_bearing: {:#?}", next_bearing));
-    input.debug_logger.log(format!(
-        "degree_offset_from_next: {:#?}",
-        degree_offset_from_next
-    ));
-    input.debug_logger.log(format!("ration: {:#?}", ratio));
-    input.debug_logger.log(format!(
-        "res: {:#?}",
-        255 - (degree_offset_from_next / ratio).round() as u8
-    ));
 
     WeightCalcResult::UseWithWeight(255 - (degree_offset_from_next / ratio).round() as u8)
 }
@@ -284,7 +264,6 @@ mod test {
     use rusty_fork::rusty_fork_test;
 
     use crate::{
-        debug_writer::{DebugLogger, DebugLoggerVoidSink},
         map_data::graph::{MapDataGraph, MapDataPointRef},
         router::{
             itinerary::Itinerary,
@@ -327,11 +306,9 @@ mod test {
             let to = MapDataGraph::get()
                 .test_get_point_ref_by_id(&33416714)
                 .expect("did not find end point");
-            let disabled_debug_writer = Box::new(DebugLoggerVoidSink::default());
             let walker = Walker::new(
                 from.clone(),
                 to.clone(),
-                disabled_debug_writer.clone(),
             );
 
             let fork_point = MapDataGraph::get()
@@ -342,7 +319,6 @@ mod test {
 
             let itinerary = Itinerary::new(from.clone(), to.clone(), Vec::new(), 0.);
 
-            let debug_logger: Box<dyn DebugLogger> = Box::new(DebugLoggerVoidSink::default());
 
             let fork_weight = weight_heading(WeightCalcInput {
                 route: walker.get_route(),
@@ -352,9 +328,7 @@ mod test {
                 walker_from_fork: Walker::new(
                     from.clone(),
                     to.clone(),
-                    disabled_debug_writer.clone(),
                 ),
-                debug_logger: &debug_logger,
                 rules: &RouterRules::default()
 
             });
@@ -375,9 +349,7 @@ mod test {
                 walker_from_fork: Walker::new(
                     from.clone(),
                     to.clone(),
-                    disabled_debug_writer.clone(),
                 ),
-                debug_logger: &debug_logger,
                 rules: &RouterRules::default()
             });
             eprintln!("{:#?}", fork_weight);

@@ -3,11 +3,7 @@ use std::{
     fmt::Debug,
 };
 
-use crate::{
-    debug_writer::{DebugLoggerFileSink, DebugLoggerVoidSink},
-    map_data::graph::MapDataPointRef,
-    router::rules::RouterRules,
-};
+use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
 
 use super::{
     itinerary::Itinerary,
@@ -144,17 +140,7 @@ pub struct Navigator {
 impl Navigator {
     pub fn new(itinerary: Itinerary, rules: RouterRules, weight_calcs: Vec<WeightCalc>) -> Self {
         Navigator {
-            walker: Walker::new(
-                itinerary.get_from().clone(),
-                itinerary.get_to().clone(),
-                // Box::new(DebugLoggerFileSink::new(
-                //     1,
-                //     itinerary.get_from().clone(),
-                //     itinerary.get_to().clone(),
-                //     itinerary.get_waypoints().clone(),
-                // )),
-                Box::new(DebugLoggerVoidSink::default()),
-            ),
+            walker: Walker::new(itinerary.get_from().clone(), itinerary.get_to().clone()),
             itinerary,
             rules,
             weight_calcs,
@@ -166,29 +152,15 @@ impl Navigator {
         let mut loop_counter = 0;
         loop {
             loop_counter += 1;
-            self.walker.debug_logger.log_step();
 
             let move_result = self.walker.move_forward_to_next_fork();
-            if let Ok(move_result) = &move_result {
-                self.walker
-                    .debug_logger
-                    .log_move(move_result, &self.walker.get_route().clone());
-            }
 
             if move_result == Ok(WalkerMoveResult::Finish) {
                 return NavigationResult::Finished(self.walker.get_route().clone());
             }
             if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
-                self.walker
-                    .debug_logger
-                    .log(format!("choices: {:#?}", fork_choices));
                 let (fork_choices, last_point) = {
                     let last_point = self.walker.get_last_point();
-                    self.walker.debug_logger.log(format!(
-                        "discarded choices: {:#?}",
-                        self.discarded_fork_choices
-                            .get_discarded_choices_for_point(&last_point)
-                    ));
                     (
                         fork_choices.exclude_segments_where_points_in(
                             &self
@@ -217,45 +189,26 @@ impl Navigator {
                                     walker_from_fork: Walker::new(
                                         fork_route_segment.get_end_point().clone(),
                                         self.itinerary.get_next().clone(),
-                                        Box::new(DebugLoggerVoidSink::default()),
                                     ),
-                                    debug_logger: &self.walker.debug_logger,
                                     rules: &self.rules,
                                 })
                             })
                             .collect::<Vec<_>>();
-                        self.walker.debug_logger.log(format!(
-                            "weight: {:#?}\n\t{:#?}",
-                            fork_route_segment.get_end_point().borrow().id,
-                            fork_weight_calc_results.clone(),
-                        ));
 
                         fork_weights.add_calc_result(
                             &fork_route_segment.get_end_point(),
                             &fork_weight_calc_results,
                         );
 
-                        self.walker.debug_logger.log(format!(
-                            "calc result: {:#?}\n\t{:#?}",
-                            fork_route_segment.get_end_point().borrow().id,
-                            &fork_weight_calc_results,
-                        ));
                         fork_weights
                     },
                 );
-                self.walker
-                    .debug_logger
-                    .log(format!("all weights: {:#?}", &fork_weights));
 
                 let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
                     self.discarded_fork_choices
                         .add_discarded_choice(&last_point, &chosen_fork_point);
-                    self.walker.debug_logger.log(format!(
-                        "fork action choice: {:#?}",
-                        chosen_fork_point.borrow().id
-                    ));
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     let move_back_segment_list = self.walker.move_backwards_to_prev_fork();
@@ -264,10 +217,6 @@ impl Navigator {
                         .get_route()
                         .get_segment_last()
                         .map(|s| s.clone());
-                    self.walker.debug_logger.log(format!(
-                        "fork action go back:\n\tlast:\n\t\t{:#?}\n\tfork:\n\t\t{:#?}",
-                        last_segment, move_back_segment_list
-                    ));
                     if self.walker.get_route().get_junction_before_last_segment() == None {
                         return NavigationResult::Stuck;
                     }
@@ -279,10 +228,6 @@ impl Navigator {
                     .get_route()
                     .get_segment_last()
                     .map(|s| s.clone());
-                self.walker.debug_logger.log(format!(
-                    "fork action go back:\n\tlast:\n\t\t{:#?}\n\tfork:\n\t\t{:#?}",
-                    last_segment, move_back_segment_list
-                ));
             }
 
             if loop_counter >= 1000000 {
