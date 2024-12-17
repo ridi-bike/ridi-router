@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     map_data::{
@@ -102,7 +102,7 @@ impl OsmDataReader {
                         .insert_way(way)
                         .map_err(|error| OsmDataReaderError::MapDataError { error });
                     if let Err(error) = res {
-                        eprint!("Error, skipping way {:#?}", error);
+                        error!(error=?error, "Error, skipping way");
                     }
                 }
                 OsmElementType::Relation => {
@@ -114,7 +114,7 @@ impl OsmDataReader {
                         .insert_relation(rel)
                         .map_err(|error| OsmDataReaderError::MapDataError { error });
                     if let Err(error) = res {
-                        eprint!("Error, skipping relation {:#?}", error);
+                        error!(error=?error"Error, skipping relation");
                     }
                 }
             }
