@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use geo::{HaversineBearing, Point};
+use geo::{Bearing, Haversine, HaversineBearing, Point};
 use tracing::{error, trace};
 
 use crate::router::rules::{RouterRules, RulesTagValueAction};
@@ -51,7 +51,8 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         input.itinerary.get_next().borrow().lon,
         input.itinerary.get_next().borrow().lat,
     );
-    let next_bearing = fork_point_geo.haversine_bearing(next_point_geo);
+    // let next_bearing = fork_point_geo.haversine_bearing(next_point_geo);
+    let next_bearing = Haversine::bearing(fork_point_geo, next_point_geo);
     let fork_line_one_geo = Point::new(
         fork_segment.get_line().borrow().points.0.borrow().lon,
         fork_segment.get_line().borrow().points.0.borrow().lat,
@@ -62,13 +63,14 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     );
     let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
     {
-        fork_line_one_geo.haversine_bearing(fork_line_two_geo)
+        // fork_line_one_geo.haversine_bearing(fork_line_two_geo)
+        Haversine::bearing(fork_line_one_geo, fork_line_two_geo)
     } else {
-        fork_line_two_geo.haversine_bearing(fork_line_one_geo)
+        // fork_line_two_geo.haversine_bearing(fork_line_one_geo)
+        Haversine::bearing(fork_line_two_geo, fork_line_one_geo)
     };
 
-    let degree_offset_from_next =
-        ((180.0 - fork_bearing.abs()) - (180.0 - next_bearing.abs())).abs();
+    let degree_offset_from_next = (fork_bearing - next_bearing).abs();
 
     let ratio: f32 = 255.0 / 180.0;
 
@@ -369,7 +371,7 @@ mod test {
                 rules: &RouterRules::default()
             });
             info!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(162));
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(96));
         }
     }
 }

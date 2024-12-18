@@ -1,9 +1,11 @@
+pub mod score;
 pub mod segment;
 pub mod segment_list;
 
 use std::{collections::HashMap, hash::Hash};
 
 use geo::{HaversineBearing, Point as GeoPoint};
+use score::Score;
 use serde::{Deserialize, Serialize};
 
 use crate::map_data::{line::MapDataLine, point::MapDataPoint};
@@ -135,8 +137,7 @@ impl Route {
         let mut highway: HashMap<String, f64> = HashMap::new();
         let mut surface: HashMap<String, f64> = HashMap::new();
         let mut smoothness: HashMap<String, f64> = HashMap::new();
-        let mut prev_bearing: Option<f32> = None;
-        let mut tot_bearing_diff: f64 = 0.;
+
         for segment in &self.route_segments {
             let line_len: f64 = segment.get_line().borrow().get_len_m().into();
             len_m += line_len;
@@ -150,25 +151,6 @@ impl Route {
             update_map(&surface_val, line_len, &mut surface);
             let smoothness_val = line_tags.smoothness();
             update_map(&smoothness_val, line_len, &mut smoothness);
-
-            let line = segment.get_line().borrow();
-            let point_1 = line.points.0.borrow();
-            let point_2 = line.points.1.borrow();
-            let geo_point_1 = GeoPoint::new(point_1.lon, point_1.lat);
-            let geo_point_2 = GeoPoint::new(point_2.lon, point_2.lat);
-            let curr_bearing = if line.points.1 == *segment.get_end_point() {
-                geo_point_1.haversine_bearing(geo_point_2)
-            } else {
-                geo_point_2.haversine_bearing(geo_point_1)
-            };
-            if let Some(prev_bearing) = prev_bearing {
-                tot_bearing_diff += (prev_bearing - curr_bearing).abs() as f64;
-            }
-            prev_bearing = if segment.get_end_point().borrow().is_junction() {
-                None
-            } else {
-                Some(curr_bearing)
-            };
         }
 
         RouteStats {
@@ -177,10 +159,14 @@ impl Route {
             highway: calc_stat_map(len_m, &highway),
             smoothness: calc_stat_map(len_m, &smoothness),
             surface: calc_stat_map(len_m, &surface),
-            score: tot_bearing_diff / len_m * 1000.,
+            score: Score::calc_score(&self),
             cluster: None,
             approximated_route: Vec::new(),
         }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<Segment> {
+        self.route_segments.iter()
     }
 }
 
