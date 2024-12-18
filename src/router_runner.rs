@@ -11,7 +11,11 @@ use crate::{
     map_data_cache::{MapDataCache, MapDataCacheError},
     osm_data_reader::DataSource,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
-    router::{generator::Generator, route::Route, rules::RouterRules},
+    router::{
+        generator::{Generator, RouteWithStats},
+        route::Route,
+        rules::RouterRules,
+    },
 };
 
 use clap::Subcommand;
@@ -207,7 +211,7 @@ impl RouterRunner {
     fn generate_route(
         start_finish: &StartFinish,
         rules: RouterRules,
-    ) -> Result<Vec<Route>, RouterRunnerError> {
+    ) -> Result<Vec<RouteWithStats>, RouterRunnerError> {
         let start = MapDataGraph::get()
             .get_closest_to_coords(start_finish.start_lat, start_finish.start_lon)
             .ok_or(RouterRunnerError::PointNotFound {
@@ -271,6 +275,7 @@ impl RouterRunner {
                             .iter()
                             .map(|route| RouteMessage {
                                 coords: route
+                                    .route
                                     .clone()
                                     .into_iter()
                                     .map(|segment| CoordsMessage {
@@ -278,7 +283,7 @@ impl RouterRunner {
                                         lon: segment.get_end_point().borrow().lon,
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
-                                stats: route.calc_stats(),
+                                stats: route.stats.clone(),
                             })
                             .collect(),
                     },
@@ -366,6 +371,7 @@ impl RouterRunner {
                             .iter()
                             .map(|route| RouteMessage {
                                 coords: route
+                                    .route
                                     .clone()
                                     .into_iter()
                                     .map(|segment| CoordsMessage {
@@ -373,7 +379,7 @@ impl RouterRunner {
                                         lon: segment.get_end_point().borrow().lon,
                                     })
                                     .collect::<Vec<CoordsMessage>>(),
-                                stats: route.calc_stats(),
+                                stats: route.stats.clone(),
                             })
                             .collect(),
                     },

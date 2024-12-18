@@ -10,7 +10,7 @@ use crate::map_data::{line::MapDataLine, point::MapDataPoint};
 
 use self::segment::Segment;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RouteStatElement {
     pub len_m: f64,
     pub percentage: f64,
@@ -21,15 +21,16 @@ pub struct Point {
     pub lat: f64,
     pub lon: f64,
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RouteStats {
     pub len_m: f64,
     pub junction_count: u32,
     pub highway: HashMap<String, RouteStatElement>,
     pub surface: HashMap<String, RouteStatElement>,
     pub smoothness: HashMap<String, RouteStatElement>,
-    pub mean_point: Point,
-    pub direction_change_ratio: f64,
+    pub score: f64,
+    pub cluster: Option<usize>,
+    pub approximated_route: Vec<(f32, f32)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +43,9 @@ impl Route {
         Route {
             route_segments: Vec::new(),
         }
+    }
+    pub fn get_route_chunk(&self, start: usize, end: usize) -> Vec<Segment> {
+        self.route_segments[start..end].to_vec()
     }
     pub fn get_segment_last(&self) -> Option<&Segment> {
         self.route_segments.last()
@@ -131,8 +135,6 @@ impl Route {
         let mut highway: HashMap<String, f64> = HashMap::new();
         let mut surface: HashMap<String, f64> = HashMap::new();
         let mut smoothness: HashMap<String, f64> = HashMap::new();
-        let mut lat_sum: f64 = 0.;
-        let mut lon_sum: f64 = 0.;
         let mut prev_bearing: Option<f32> = None;
         let mut tot_bearing_diff: f64 = 0.;
         for segment in &self.route_segments {
@@ -148,9 +150,6 @@ impl Route {
             update_map(&surface_val, line_len, &mut surface);
             let smoothness_val = line_tags.smoothness();
             update_map(&smoothness_val, line_len, &mut smoothness);
-
-            lat_sum += segment.get_end_point().borrow().lat as f64;
-            lon_sum += segment.get_end_point().borrow().lon as f64;
 
             let line = segment.get_line().borrow();
             let point_1 = line.points.0.borrow();
@@ -178,11 +177,9 @@ impl Route {
             highway: calc_stat_map(len_m, &highway),
             smoothness: calc_stat_map(len_m, &smoothness),
             surface: calc_stat_map(len_m, &surface),
-            mean_point: Point {
-                lat: lat_sum / self.get_segment_count() as f64,
-                lon: lon_sum / self.get_segment_count() as f64,
-            },
-            direction_change_ratio: tot_bearing_diff / len_m * 1000.,
+            score: tot_bearing_diff / len_m * 1000.,
+            cluster: None,
+            approximated_route: Vec::new(),
         }
     }
 }

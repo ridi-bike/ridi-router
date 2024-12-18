@@ -39,7 +39,7 @@ pub struct RequestMessage {
     pub rules: RouterRules,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RouteMessage {
     pub coords: Vec<CoordsMessage>,
     pub stats: RouteStats,

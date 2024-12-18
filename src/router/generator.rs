@@ -1,6 +1,6 @@
 use crate::{
     map_data::graph::{MapDataGraph, MapDataPointRef},
-    router::rules::RouterRules,
+    router::{clustering::Clustering, rules::RouterRules},
 };
 use geo::{HaversineDestination, Point};
 use rayon::prelude::*;
@@ -9,7 +9,7 @@ use tracing::info;
 use super::{
     itinerary::Itinerary,
     navigator::{NavigationResult, Navigator},
-    route::Route,
+    route::{Route, RouteStats},
     weights::{
         weight_check_distance_to_next, weight_heading, weight_no_loops, weight_prefer_same_road,
         weight_progress_speed, weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
@@ -18,6 +18,12 @@ use super::{
 
 const ITINERARY_VARIATION_DISTANCES: [f32; 2] = [10000., 20000.];
 const ITINERARY_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
+
+#[derive(Debug)]
+pub struct RouteWithStats {
+    pub stats: RouteStats,
+    pub route: Route,
+}
 
 pub struct Generator {
     start: MapDataPointRef,
@@ -77,10 +83,10 @@ impl Generator {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn generate_routes(self) -> Vec<Route> {
+    pub fn generate_routes(self) -> Vec<RouteWithStats> {
         let itineraries = self.generate_itineraries();
         info!("Created {} itineraries", itineraries.len());
-        itineraries
+        let routes = itineraries
             .into_par_iter()
             .map(|itinerary| {
                 Navigator::new(
@@ -104,6 +110,27 @@ impl Generator {
                 NavigationResult::Finished(route) => Some(route),
                 NavigationResult::Stopped(route) => Some(route),
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        let clustering = Clustering::generate(&routes);
+        routes
+            .iter()
+            .enumerate()
+            .map(|(idx, route)| {
+                let mut stats = route.calc_stats();
+                let approx_route = &clustering.approximated_routes[idx];
+                let cluster = clustering
+                    .clustering
+                    .0
+                    .iter()
+                    .find(|(_, member_indexes)| member_indexes.contains(&idx));
+                stats.cluster = cluster.map(|cl| *cl.0);
+                stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
+                RouteWithStats {
+                    stats,
+                    route: route.clone(),
+                }
+            })
+            .collect()
     }
 }

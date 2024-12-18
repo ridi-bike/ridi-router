@@ -14,6 +14,8 @@
 		"osmpbfreader",
 		"interprocess",
 		"bincode",
-		"smartstring"
+		"smartstring",
+		"Dbscan",
+		"ndarray"
 	]
 }
