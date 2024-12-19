@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
@@ -113,63 +115,27 @@ impl Generator {
             .collect::<Vec<_>>();
 
         let clustering = Clustering::generate(&routes);
-        let routes_with_stats = routes
-            .iter()
-            .enumerate()
-            .map(|(idx, route)| {
-                let mut stats = route.calc_stats();
-                let approx_route = &clustering.approximated_routes[idx];
-                let cluster = clustering
-                    .clustering
-                    .0
-                    .iter()
-                    .find(|(_, member_indexes)| member_indexes.contains(&idx));
-                stats.cluster = cluster.map(|cl| *cl.0);
-                stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
-                RouteWithStats {
-                    stats,
-                    route: route.clone(),
+
+        let mut cluster_best: HashMap<i32, RouteWithStats> = HashMap::new();
+        routes.iter().enumerate().for_each(|(idx, route)| {
+            let mut stats = route.calc_stats();
+            let approx_route = &clustering.approximated_routes[idx];
+            stats.cluster = Some(clustering.labels[idx] as usize);
+            stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
+            let route_with_stats = RouteWithStats {
+                stats,
+                route: route.clone(),
+            };
+
+            if let Some(current_best) = cluster_best.get(&clustering.labels[idx]) {
+                if current_best.stats.score < route_with_stats.stats.score {
+                    cluster_best.insert(clustering.labels[idx], route_with_stats);
                 }
-            })
-            .collect::<Vec<_>>();
+            } else {
+                cluster_best.insert(clustering.labels[idx], route_with_stats);
+            }
+        });
 
-        let mut best_routes = clustering
-            .clustering
-            .0
-            .iter()
-            .filter_map(|(_cluster_num, cluster_routes)| {
-                cluster_routes
-                    .iter()
-                    .fold((None, 0.), |acc, route_idx| {
-                        let route = &routes_with_stats[*route_idx];
-                        if route.stats.score > acc.1 {
-                            return (Some(route), route.stats.score);
-                        }
-                        acc
-                    })
-                    .0
-                    .cloned()
-            })
-            .collect::<Vec<_>>();
-
-        clustering
-            .clustering
-            .1
-            .iter()
-            .for_each(|outlier_route_idx| {
-                let route = &routes_with_stats[*outlier_route_idx];
-                let best_score = best_routes.iter().fold(0., |acc, r| {
-                    if r.stats.score > acc {
-                        r.stats.score
-                    } else {
-                        acc
-                    }
-                });
-                if route.stats.score >= best_score * 0.8 {
-                    best_routes.push(route.clone());
-                }
-            });
-
-        best_routes
+        cluster_best.into_iter().map(|el| el.1).collect()
     }
 }

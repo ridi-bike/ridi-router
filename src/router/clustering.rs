@@ -1,8 +1,5 @@
-use std::{collections::HashMap, fmt::Write};
-
 use super::route::Route;
-use ndarray::{Array, ArrayView};
-use petal_clustering::{Fit, HDbscan};
+use hdbscan::{Hdbscan, HdbscanHyperParams};
 use serde::{Deserialize, Serialize};
 
 const APPROXIMATION_POINTS: usize = 10;
@@ -10,13 +7,14 @@ const APPROXIMATION_POINTS: usize = 10;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Clustering {
     pub approximated_routes: Vec<Vec<[f32; 2]>>,
-    pub clustering: (HashMap<usize, Vec<usize>>, Vec<usize>),
+    pub labels: Vec<i32>,
 }
 
 impl Clustering {
     pub fn generate(routes: &Vec<Route>) -> Self {
         let mut approximated_routes = Vec::new();
-        let mut point_array = Array::zeros((0, 2 * APPROXIMATION_POINTS));
+        // let mut point_array = Array::zeros((0, 2 * APPROXIMATION_POINTS));
+        let mut points = Vec::new();
 
         for route in routes {
             let points_in_step = route.get_segment_count() as f32 / APPROXIMATION_POINTS as f32;
@@ -41,17 +39,20 @@ impl Clustering {
                     ]
                 })
                 .collect::<Vec<_>>();
-            point_array
-                .push_row(ArrayView::from(approximated_points.as_flattened()))
-                .unwrap();
+            points.push(approximated_points.as_flattened().to_vec());
             approximated_routes.push(approximated_points);
         }
 
-        let clustering = HDbscan::default().fit(&point_array);
+        let params = HdbscanHyperParams::builder()
+            .epsilon(0.05)
+            .min_cluster_size(1)
+            .build();
+        let alg = Hdbscan::new(&points, params);
+        let labels = alg.cluster().unwrap();
 
         Self {
             approximated_routes,
-            clustering,
+            labels,
         }
     }
 }

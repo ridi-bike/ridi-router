@@ -16,6 +16,7 @@
 		"bincode",
 		"smartstring",
 		"Dbscan",
-		"ndarray"
+		"ndarray",
+		"hdbscan"
 	]
 }
