@@ -20,6 +20,23 @@ impl Segment {
     pub fn get_line(&self) -> &MapDataLineRef {
         &self.line
     }
+    pub fn get_bearing(&self) -> f32 {
+        if self.end_point == self.line.borrow().points.0 {
+            return self
+                .line
+                .borrow()
+                .points
+                .0
+                .borrow()
+                .bearing(&self.line.borrow().points.1);
+        }
+        self.line
+            .borrow()
+            .points
+            .1
+            .borrow()
+            .bearing(&self.line.borrow().points.0)
+    }
 }
 
 impl Debug for Segment {

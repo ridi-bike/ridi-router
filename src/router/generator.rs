@@ -1,23 +1,32 @@
+use std::collections::HashMap;
+
 use crate::{
     map_data::graph::{MapDataGraph, MapDataPointRef},
-    router::rules::RouterRules,
+    router::{clustering::Clustering, rules::RouterRules},
 };
-use geo::{HaversineDestination, Point};
+use geo::{GeoNum, HaversineDestination, Point};
 use rayon::prelude::*;
-use tracing::info;
+use tracing::{info, trace};
 
 use super::{
     itinerary::Itinerary,
     navigator::{NavigationResult, Navigator},
-    route::Route,
+    route::{Route, RouteStats},
     weights::{
-        weight_check_distance_to_next, weight_heading, weight_no_loops, weight_prefer_same_road,
-        weight_progress_speed, weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
+        weight_check_distance_to_next, weight_heading, weight_no_loops, weight_no_sharp_turns,
+        weight_no_short_detours, weight_prefer_same_road, weight_progress_speed,
+        weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
     },
 };
 
-const ITINERARY_VARIATION_DISTANCES: [f32; 2] = [10000., 20000.];
+const ITINERARY_VARIATION_DISTANCES: [f32; 3] = [10000., 20000., 30000.];
 const ITINERARY_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
+
+#[derive(Debug, Clone)]
+pub struct RouteWithStats {
+    pub stats: RouteStats,
+    pub route: Route,
+}
 
 pub struct Generator {
     start: MapDataPointRef,
@@ -77,16 +86,18 @@ impl Generator {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn generate_routes(self) -> Vec<Route> {
+    pub fn generate_routes(self) -> Vec<RouteWithStats> {
         let itineraries = self.generate_itineraries();
         info!("Created {} itineraries", itineraries.len());
-        itineraries
+        let routes = itineraries
             .into_par_iter()
             .map(|itinerary| {
                 Navigator::new(
                     itinerary,
                     self.rules.clone(),
                     vec![
+                        weight_no_sharp_turns,
+                        weight_no_short_detours,
                         weight_progress_speed,
                         weight_check_distance_to_next,
                         weight_prefer_same_road,
@@ -104,6 +115,41 @@ impl Generator {
                 NavigationResult::Finished(route) => Some(route),
                 NavigationResult::Stopped(route) => Some(route),
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+
+        let clustering = Clustering::generate(&routes);
+
+        let mut cluster_best: HashMap<i32, RouteWithStats> = HashMap::new();
+        let mut noise = Vec::new();
+        routes.iter().enumerate().for_each(|(idx, route)| {
+            let mut stats = route.calc_stats();
+            let approx_route = &clustering.approximated_routes[idx];
+            stats.cluster = Some(clustering.labels[idx] as usize);
+            stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
+            let route_with_stats = RouteWithStats {
+                stats,
+                route: route.clone(),
+            };
+
+            let label = clustering.labels[idx];
+            if label != -1 {
+                if let Some(current_best) = cluster_best.get(&label) {
+                    if current_best.stats.score < route_with_stats.stats.score {
+                        cluster_best.insert(label, route_with_stats);
+                    }
+                } else {
+                    cluster_best.insert(label, route_with_stats);
+                }
+            } else {
+                noise.push(route_with_stats);
+            }
+        });
+
+        trace!(noise_count = noise.len(), "noise");
+
+        let mut best_routes = cluster_best.into_iter().map(|el| el.1).collect::<Vec<_>>();
+        noise.sort_by(|a, b| b.stats.score.total_cmp(&a.stats.score));
+        best_routes.append(&mut noise[..noise.len().min(3)].to_vec());
+        best_routes
     }
 }

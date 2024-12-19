@@ -294,14 +294,15 @@ dependencies = [
 
 [[package]]
 name = "geo"
-version = "0.28.0"
+version = "0.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f811f663912a69249fa620dcd2a005db7254529da2d8a0b23942e81f47084501"
+checksum = "34f0e6e028c581e82e6822a68869514e94c25e7f8ea669a2d8595bdf7461ccc5"
 dependencies = [
  "earcutr",
  "float_next_after",
  "geo-types",
  "geographiclib-rs",
+ "i_overlay",
  "log",
  "num-traits",
  "robust",
@@ -311,12 +312,13 @@ dependencies = [
 
 [[package]]
 name = "geo-types"
-version = "0.7.13"
+version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ff16065e5720f376fbced200a5ae0f47ace85fd70b7e54269790281353b6d61"
+checksum = "b6f47c611187777bbca61ea7aba780213f5f3441fd36294ab333e96cfa791b65"
 dependencies = [
  "approx",
  "num-traits",
+ "rayon",
  "rstar",
  "serde",
 ]
@@ -328,17 +330,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e5ed84f8089c70234b0a8e0aedb6dc733671612ddc0d37c6066052f9781960"
 dependencies = [
  "libm",
-]
-
-[[package]]
-name = "getrandom"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4567c8db10ae91089c99af84c68c38da3ec2f087c3f82960bcdbf3656b6f4d7"
-dependencies = [
- "cfg-if",
- "libc",
- "wasi",
 ]
 
 [[package]]
@@ -373,6 +364,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hdbscan"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f780b68c332f0ddc933771cb6025e3433f16f9175f7eac64fc1b3753c916a4ca"
+dependencies = [
+ "kdtree",
+ "num-traits",
+]
+
+[[package]]
 name = "heapless"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -393,6 +394,50 @@ name = "hermit-abi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
+
+[[package]]
+name = "i_float"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "775f9961a8d2f879725da8aff789bb20a3ddf297473e0c90af75e69313919490"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "i_key_sort"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "347c253b4748a1a28baf94c9ce133b6b166f08573157e05afe718812bc599fcd"
+
+[[package]]
+name = "i_overlay"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06740cd31c1f963823e007d8e6edcd2db634b2856f4f613e3df01737fd852482"
+dependencies = [
+ "i_float",
+ "i_key_sort",
+ "i_shape",
+ "i_tree",
+ "rayon",
+]
+
+[[package]]
+name = "i_shape"
+version = "1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27dbe9e5238d6b9c694c08415bf00fb370b089949bd818ab01f41f8927b8774c"
+dependencies = [
+ "i_float",
+ "serde",
+]
+
+[[package]]
+name = "i_tree"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "155181bc97d770181cf9477da51218a19ee92a8e5be642e796661aee2b601139"
 
 [[package]]
 name = "interprocess"
@@ -432,6 +477,16 @@ checksum = "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"
 name = "json-tools"
 version = "1.1.3-alpha.0"
 source = "git+https://github.com/tomsjansons/json-tools.git?branch=value-pairs#2b47444a5c412c20222cb0a4f006238e2f4f71cc"
+
+[[package]]
+name = "kdtree"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f0a0e9f770b65bac9aad00f97a67ab5c5319effed07f6da385da3c2115e47ba"
+dependencies = [
+ "num-traits",
+ "thiserror",
+]
 
 [[package]]
 name = "lazy_static"
@@ -563,12 +618,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391"
 
 [[package]]
-name = "ppv-lite86"
-version = "0.2.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b40af805b3121feab8a3c29f04d8ad262fa8e0561883e7653e024ae4479e6de"
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -624,36 +673,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rand"
-version = "0.8.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
-dependencies = [
- "libc",
- "rand_chacha",
- "rand_core",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-dependencies = [
- "getrandom",
-]
-
-[[package]]
 name = "rayon"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -687,10 +706,10 @@ dependencies = [
  "clap",
  "geo",
  "gpx",
+ "hdbscan",
  "interprocess",
  "json-tools",
  "osmpbfreader",
- "rand",
  "rayon",
  "rusty-fork",
  "serde",
@@ -815,9 +834,9 @@ dependencies = [
 
 [[package]]
 name = "spade"
-version = "2.9.0"
+version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f4ec45f91925e2c9ab3b6a857ee9ed36916990df76a1c475d783a328e247cc8"
+checksum = "93f5ef1f863aca7d1d7dda7ccfc36a0a4279bd6d3c375176e5e0712e25cb4889"
 dependencies = [
  "hashbrown",
  "num-traits",
@@ -1017,12 +1036,6 @@ checksum = "9f200f5b12eb75f8c1ed65abd4b2db8a6e1b138a20de009dacee265a2498f3f6"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "wasi"
-version = "0.11.0+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
 
 [[package]]
 name = "widestring"

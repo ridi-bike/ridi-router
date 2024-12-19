@@ -28,7 +28,7 @@ impl Default for BasicRulePreferSameRoad {
     fn default() -> Self {
         Self {
             enabled: true,
-            priority: 60,
+            priority: 30,
         }
     }
 }
@@ -36,14 +36,14 @@ impl Default for BasicRulePreferSameRoad {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BasicRuleProgressDirection {
     pub enabled: bool,
-    pub check_steps_back: usize,
+    pub check_junctions_back: usize,
 }
 
 impl Default for BasicRuleProgressDirection {
     fn default() -> Self {
         Self {
             enabled: true,
-            check_steps_back: 1000,
+            check_junctions_back: 30,
         }
     }
 }
@@ -65,6 +65,37 @@ impl Default for BasicRuleProgressSpeed {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BasicRuleNoShortDetour {
+    pub enabled: bool,
+    pub min_detour_len_m: f32,
+}
+
+impl Default for BasicRuleNoShortDetour {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_detour_len_m: 5000.,
+        }
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BasicRuleNoSharpTurns {
+    pub enabled: bool,
+    pub under_deg: f32,
+    pub priority: u8,
+}
+
+impl Default for BasicRuleNoSharpTurns {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            under_deg: 150.,
+            priority: 60,
+        }
+    }
+}
+
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct BasicRules {
     #[serde(default)]
@@ -75,6 +106,12 @@ pub struct BasicRules {
 
     #[serde(default)]
     pub progression_speed: BasicRuleProgressSpeed,
+
+    #[serde(default)]
+    pub no_short_detours: BasicRuleNoShortDetour,
+
+    #[serde(default)]
+    pub no_sharp_turns: BasicRuleNoSharpTurns,
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,4 @@
+pub mod clustering;
 pub mod generator;
 pub mod itinerary;
 pub mod navigator;
