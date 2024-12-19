@@ -19,7 +19,7 @@ use super::{
 const ITINERARY_VARIATION_DISTANCES: [f32; 2] = [10000., 20000.];
 const ITINERARY_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., -45., -90., -135.];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RouteWithStats {
     pub stats: RouteStats,
     pub route: Route,
@@ -113,7 +113,7 @@ impl Generator {
             .collect::<Vec<_>>();
 
         let clustering = Clustering::generate(&routes);
-        routes
+        let routes_with_stats = routes
             .iter()
             .enumerate()
             .map(|(idx, route)| {
@@ -131,6 +131,45 @@ impl Generator {
                     route: route.clone(),
                 }
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        let mut best_routes = clustering
+            .clustering
+            .0
+            .iter()
+            .filter_map(|(_cluster_num, cluster_routes)| {
+                cluster_routes
+                    .iter()
+                    .fold((None, 0.), |acc, route_idx| {
+                        let route = &routes_with_stats[*route_idx];
+                        if route.stats.score > acc.1 {
+                            return (Some(route), route.stats.score);
+                        }
+                        acc
+                    })
+                    .0
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+
+        clustering
+            .clustering
+            .1
+            .iter()
+            .for_each(|outlier_route_idx| {
+                let route = &routes_with_stats[*outlier_route_idx];
+                let best_score = best_routes.iter().fold(0., |acc, r| {
+                    if r.stats.score > acc {
+                        r.stats.score
+                    } else {
+                        acc
+                    }
+                });
+                if route.stats.score >= best_score * 0.8 {
+                    best_routes.push(route.clone());
+                }
+            });
+
+        best_routes
     }
 }

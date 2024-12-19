@@ -98,29 +98,6 @@ impl GpxWriter {
 
         write(&gpx, file).unwrap();
 
-        let mut gpx_approx = Gpx::default();
-        gpx_approx.version = GpxVersion::Gpx11;
-
-        for (idx, route) in self.routes.into_iter().enumerate() {
-            let mut gpx_route = GpxRoute::new();
-            gpx_route.name = Some(format!(
-                "r_{idx}_c_{}",
-                route.stats.cluster.map_or(-1, |c| c as isize)
-            ));
-            for coord in &route.stats.approximated_route {
-                let waypoint = Waypoint::new(Point::new(coord.1.into(), coord.0.into()));
-                gpx_route.points.push(waypoint);
-            }
-            gpx_approx.routes.push(gpx_route);
-        }
-
-        let mut gpx_approx_filename = PathBuf::from(&self.file_name);
-        gpx_approx_filename.set_extension("approx.gpx");
-        let gpx_approx_file = File::create(gpx_approx_filename)
-            .or_else(|error| Err(GpxWriterError::FileCreateError { error }))?;
-
-        write(&gpx_approx, gpx_approx_file).unwrap();
-
         Ok(())
     }
 }

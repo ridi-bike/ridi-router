@@ -86,12 +86,36 @@ impl Route {
         }
         false
     }
-    pub fn get_steps_from_end(&self, num_of_steps: usize) -> Option<Segment> {
-        if self.route_segments.len() < num_of_steps + 1 {
+    pub fn get_junctions_from_end(&self, num_of_junctions: usize) -> Option<Segment> {
+        if self.route_segments.len() < num_of_junctions + 1 {
+            return None;
+        }
+
+        let mut junction_num = 0;
+        let mut segment_num = 0;
+        let mut segment: Option<Segment> = None;
+        while junction_num < num_of_junctions {
+            segment = self
+                .route_segments
+                .get(self.route_segments.len() - segment_num - 1)
+                .cloned();
+            if let Some(ref segment) = segment {
+                if segment.get_end_point().borrow().is_junction() {
+                    junction_num += 1;
+                }
+                segment_num += 1;
+            } else {
+                return None;
+            }
+        }
+        segment
+    }
+    pub fn get_segments_from_end(&self, num_of_segments: usize) -> Option<Segment> {
+        if self.route_segments.len() < num_of_segments + 1 {
             return None;
         }
         self.route_segments
-            .get(self.route_segments.len() - 1 - num_of_steps)
+            .get(self.route_segments.len() - 1 - num_of_segments)
             .cloned()
     }
 

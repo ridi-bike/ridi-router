@@ -36,14 +36,14 @@ impl Default for BasicRulePreferSameRoad {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BasicRuleProgressDirection {
     pub enabled: bool,
-    pub check_steps_back: usize,
+    pub check_junctions_back: usize,
 }
 
 impl Default for BasicRuleProgressDirection {
     fn default() -> Self {
         Self {
             enabled: true,
-            check_steps_back: 1000,
+            check_junctions_back: 30,
         }
     }
 }

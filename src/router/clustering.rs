@@ -5,7 +5,7 @@ use ndarray::{Array, ArrayView};
 use petal_clustering::{Fit, HDbscan};
 use serde::{Deserialize, Serialize};
 
-const APPROX_POINTS: usize = 10;
+const APPROXIMATION_POINTS: usize = 10;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Clustering {
@@ -16,11 +16,11 @@ pub struct Clustering {
 impl Clustering {
     pub fn generate(routes: &Vec<Route>) -> Self {
         let mut approximated_routes = Vec::new();
-        let mut point_array = Array::zeros((0, 20));
+        let mut point_array = Array::zeros((0, 2 * APPROXIMATION_POINTS));
 
         for route in routes {
-            let points_in_step = route.get_segment_count() as f32 / APPROX_POINTS as f32;
-            let approximated_points = (0..APPROX_POINTS as u32)
+            let points_in_step = route.get_segment_count() as f32 / APPROXIMATION_POINTS as f32;
+            let approximated_points = (0..APPROXIMATION_POINTS as u32)
                 .map(|step| {
                     let route_chunk = route.get_route_chunk(
                         (step as f32 * points_in_step) as usize,

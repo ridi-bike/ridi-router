@@ -129,7 +129,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
     if !input.rules.basic.progression_direction.enabled {
         return WeightCalcResult::UseWithWeight(0);
     }
-    let check_steps_back = input.rules.basic.progression_direction.check_steps_back;
+    let check_junctions_back = input.rules.basic.progression_direction.check_junctions_back;
 
     let distance_to_end_current = match input.route.get_segment_last() {
         None => return WeightCalcResult::UseWithWeight(0),
@@ -139,15 +139,20 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
             .distance_between(&input.itinerary.get_next()),
     };
 
-    let distance_to_end_steps_back = match input.route.get_steps_from_end(check_steps_back) {
-        None => return WeightCalcResult::UseWithWeight(0),
-        Some(segment) => segment
-            .get_end_point()
-            .borrow()
-            .distance_between(&input.itinerary.get_next()),
-    };
+    let distance_to_end_junctions_back =
+        match input.route.get_junctions_from_end(check_junctions_back) {
+            None => return WeightCalcResult::UseWithWeight(0),
+            Some(segment) => segment
+                .get_end_point()
+                .borrow()
+                .distance_between(&input.itinerary.get_next()),
+        };
+    trace!(
+        distance = distance_to_end_junctions_back,
+        "distance to next"
+    );
 
-    if distance_to_end_current > distance_to_end_steps_back {
+    if distance_to_end_current > distance_to_end_junctions_back {
         return WeightCalcResult::DoNotUse;
     }
     WeightCalcResult::UseWithWeight(0)
@@ -172,7 +177,7 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
         .get_from()
         .borrow()
         .distance_between(&input.itinerary.get_next());
-    let point_steps_back = match input.route.get_steps_from_end(check_steps_back) {
+    let point_steps_back = match input.route.get_segments_from_end(check_steps_back) {
         None => return WeightCalcResult::UseWithWeight(0),
         Some(segment) => segment.get_end_point().clone(),
     };
