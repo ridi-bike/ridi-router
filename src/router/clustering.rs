@@ -44,8 +44,8 @@ impl Clustering {
         }
 
         let params = HdbscanHyperParams::builder()
-            .epsilon(0.05)
-            .min_cluster_size(1)
+            .epsilon(0.1)
+            .min_cluster_size(2)
             .build();
         let alg = Hdbscan::new(&points, params);
         let labels = alg.cluster().unwrap();

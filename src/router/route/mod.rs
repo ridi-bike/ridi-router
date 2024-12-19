@@ -86,6 +86,70 @@ impl Route {
         }
         false
     }
+    pub fn is_back_on_road_within_distance(
+        &self,
+        hw_ref: Option<smartstring::alias::String>,
+        hw_name: Option<smartstring::alias::String>,
+        len_check_m: f32,
+    ) -> bool {
+        let mut len_tot_m = 0.;
+
+        if hw_ref.is_none() && hw_name.is_none() {
+            return false;
+        }
+
+        if let Some(last_route_segment) = self.get_segment_last() {
+            if (last_route_segment
+                .get_line()
+                .borrow()
+                .tags
+                .borrow()
+                .hw_ref()
+                .is_some()
+                && last_route_segment
+                    .get_line()
+                    .borrow()
+                    .tags
+                    .borrow()
+                    .hw_ref()
+                    == hw_ref.as_ref())
+                || (last_route_segment
+                    .get_line()
+                    .borrow()
+                    .tags
+                    .borrow()
+                    .name()
+                    .is_some()
+                    && last_route_segment.get_line().borrow().tags.borrow().name()
+                        == hw_name.as_ref())
+            {
+                return false;
+            }
+        }
+
+        let mut prev_segment: Option<&Segment> = None;
+        for segment in self.iter().rev() {
+            if let Some(prev_segment) = prev_segment {
+                len_tot_m += prev_segment
+                    .get_end_point()
+                    .borrow()
+                    .distance_between(&segment.get_end_point());
+                if (segment.get_line().borrow().tags.borrow().hw_ref().is_some()
+                    && segment.get_line().borrow().tags.borrow().hw_ref() == hw_ref.as_ref())
+                    || (segment.get_line().borrow().tags.borrow().name().is_some()
+                        && segment.get_line().borrow().tags.borrow().name() == hw_name.as_ref())
+                {
+                    return len_check_m >= len_tot_m;
+                }
+            }
+            if len_tot_m > len_check_m {
+                return false;
+            }
+            prev_segment = Some(segment);
+        }
+
+        false
+    }
     pub fn get_junctions_from_end(&self, num_of_junctions: usize) -> Option<Segment> {
         if self.route_segments.len() < num_of_junctions + 1 {
             return None;

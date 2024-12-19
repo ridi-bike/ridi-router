@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{any::Any, collections::HashMap};
 
 use geo::{Bearing, Haversine, HaversineBearing, Point};
 use tracing::{error, trace};
@@ -117,6 +117,58 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
 pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_no_loops");
     if input.route.has_looped() {
+        return WeightCalcResult::DoNotUse;
+    }
+
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_no_sharp_turns(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_no_sharp_turns");
+
+    if !input.rules.basic.no_sharp_turns.enabled {
+        return WeightCalcResult::UseWithWeight(0);
+    }
+
+    let prev_segment = input.route.get_segment_last();
+
+    if let Some(prev_segment) = prev_segment {
+        let deg_diff =
+            (prev_segment.get_bearing() - input.current_fork_segment.get_bearing()).abs();
+        if deg_diff <= input.rules.basic.no_sharp_turns.under_deg {
+            return WeightCalcResult::UseWithWeight(input.rules.basic.no_sharp_turns.priority);
+        }
+    }
+    WeightCalcResult::UseWithWeight(0)
+}
+
+pub fn weight_no_short_detours(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_no_short_detours");
+    if !input.rules.basic.no_short_detours.enabled {
+        return WeightCalcResult::UseWithWeight(0);
+    }
+
+    let hw_ref = input
+        .current_fork_segment
+        .get_line()
+        .borrow()
+        .tags
+        .borrow()
+        .hw_ref()
+        .cloned();
+    let hw_name = input
+        .current_fork_segment
+        .get_line()
+        .borrow()
+        .tags
+        .borrow()
+        .name()
+        .cloned();
+    if input.route.is_back_on_road_within_distance(
+        hw_ref,
+        hw_name,
+        input.rules.basic.no_short_detours.min_detour_len_m,
+    ) {
         return WeightCalcResult::DoNotUse;
     }
 
