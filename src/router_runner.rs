@@ -1,6 +1,8 @@
 use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLock, time::Instant};
 
-use clap::Parser;
+use clap::{Args, Parser, ValueEnum};
+use geo::wkt;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
@@ -55,6 +57,40 @@ struct Cli {
     pub mode: CliMode,
 }
 
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum RoundTripDirection {
+    N,
+    NE,
+    E,
+    SE,
+    S,
+    SW,
+    W,
+    NW,
+}
+
+#[derive(Subcommand)]
+#[arg()]
+enum RoutingMode {
+    StartFinish {
+        #[arg(long, value_name = "LAT,LON")]
+        start: String,
+
+        #[arg(long, value_name = "LAT,LON")]
+        finish: String,
+    },
+    RoundTrip {
+        #[arg(long, value_name = "LAT,LON")]
+        center: String,
+
+        #[arg(value_enum)]
+        direction: RoundTripDirection,
+
+        #[arg(long, value_name = "KM")]
+        distance: u32,
+    },
+}
+
 #[derive(Subcommand)]
 enum CliMode {
     Cache {
@@ -78,11 +114,8 @@ enum CliMode {
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        #[arg(long, value_name = "COORDINATES")]
-        start: String,
-
-        #[arg(long, value_name = "COORDINATES")]
-        finish: String,
+        #[command(subcommand)]
+        routing_mode: RoutingMode,
 
         #[arg(long, value_name = "NAME")]
         socket_name: Option<String>,
@@ -100,23 +133,28 @@ enum CliMode {
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
 
-        #[arg(long, value_name = "COORDINATES")]
-        start: String,
-
-        #[arg(long, value_name = "COORDINATES")]
-        finish: String,
-
         #[arg(long, value_name = "FILE")]
         rule_file: Option<PathBuf>,
+
+        #[command(subcommand)]
+        routing_mode: RoutingMode,
     },
 }
 
-#[derive(Debug)]
-pub struct StartFinish {
-    pub start_lat: f32,
-    pub start_lon: f32,
-    pub finish_lat: f32,
-    pub finish_lon: f32,
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub enum RoutingParams {
+    StartFinish {
+        start_lat: f32,
+        start_lon: f32,
+        finish_lat: f32,
+        finish_lon: f32,
+    },
+    RoundTrip {
+        lat: f32,
+        lon: f32,
+        direction: RoundTripDirection,
+        distance: u32,
+    },
 }
 
 #[derive(Debug)]
@@ -131,7 +169,7 @@ pub enum RouterMode {
         socket_name: Option<String>,
     },
     Client {
-        start_finish: StartFinish,
+        routing_params: RoutingParams,
         data_destination: DataDestination,
         socket_name: Option<String>,
         rule_file: Option<PathBuf>,
@@ -139,7 +177,7 @@ pub enum RouterMode {
     Dual {
         data_source: DataSource,
         cache_dir: Option<PathBuf>,
-        start_finish: StartFinish,
+        routing_params: RoutingParams,
         data_destination: DataDestination,
         rule_file: Option<PathBuf>,
     },
@@ -168,15 +206,14 @@ impl RouterRunner {
             },
             CliMode::Client {
                 output,
-                start,
-                finish,
+                routing_mode,
                 socket_name,
                 rule_file,
             } => {
-                let start_finish = get_start_finish(start, finish)
+                let routing_params = get_router_params(routing_mode)
                     .expect("could not get start/finish coordinates");
                 RouterMode::Client {
-                    start_finish,
+                    routing_params,
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
                     socket_name,
@@ -187,16 +224,15 @@ impl RouterRunner {
                 input,
                 cache_dir,
                 output,
-                start,
-                finish,
+                routing_mode,
                 rule_file,
             } => {
-                let start_finish = get_start_finish(start, finish)
+                let routing_params = get_router_params(routing_mode)
                     .expect("could not get start/finish coordinates");
                 RouterMode::Dual {
                     data_source: get_data_source(input).expect("could not get data source"),
                     cache_dir,
-                    start_finish,
+                    routing_params,
                     data_destination: get_data_destination(output)
                         .expect("could not get data destination"),
                     rule_file,
@@ -209,11 +245,20 @@ impl RouterRunner {
 
     #[tracing::instrument(skip_all)]
     fn generate_route(
-        start_finish: &StartFinish,
+        routing_params: &RoutingParams,
         rules: RouterRules,
     ) -> Result<Vec<RouteWithStats>, RouterRunnerError> {
+        let (start_lat, start_lon, finish_lat, finish_lon) = match routing_params {
+            RoutingParams::StartFinish {
+                start_lat,
+                start_lon,
+                finish_lat,
+                finish_lon,
+            } => (*start_lat, *start_lon, *finish_lat, *finish_lon),
+            RoutingParams::RoundTrip { lat, lon, .. } => (*lat, *lon, *lat, *lon),
+        };
         let start = MapDataGraph::get()
-            .get_closest_to_coords(start_finish.start_lat, start_finish.start_lon)
+            .get_closest_to_coords(start_lat, start_lon)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Start point".to_string(),
             })?;
@@ -221,14 +266,24 @@ impl RouterRunner {
         info!("Start point {start}");
 
         let finish = MapDataGraph::get()
-            .get_closest_to_coords(start_finish.finish_lat, start_finish.finish_lon)
+            .get_closest_to_coords(finish_lat, finish_lon)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Finish point".to_string(),
             })?;
 
         info!("Finish point {finish}");
 
-        let route_generator = Generator::new(start.clone(), finish.clone(), rules);
+        let round_trip = if let RoutingParams::RoundTrip {
+            direction,
+            distance,
+            ..
+        } = routing_params
+        {
+            Some((*direction, *distance))
+        } else {
+            None
+        };
+        let route_generator = Generator::new(start.clone(), finish.clone(), round_trip, rules);
         let routes = route_generator.generate_routes();
         Ok(routes)
     }
@@ -238,7 +293,7 @@ impl RouterRunner {
         &self,
         data_source: &DataSource,
         cache_dir: Option<PathBuf>,
-        start_finish: &StartFinish,
+        routing_params: &RoutingParams,
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
@@ -261,7 +316,7 @@ impl RouterRunner {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
         }
-        let route_result = RouterRunner::generate_route(start_finish, rules);
+        let route_result = RouterRunner::generate_route(routing_params, rules);
         ResultWriter::write(
             data_destination.clone(),
             ResponseMessage {
@@ -351,12 +406,7 @@ impl RouterRunner {
         dbg!("ipc init done");
         ipc.listen(|request_message| {
             let route_res = RouterRunner::generate_route(
-                &StartFinish {
-                    start_lat: request_message.start.lat,
-                    start_lon: request_message.start.lon,
-                    finish_lat: request_message.finish.lat,
-                    finish_lon: request_message.finish.lon,
-                },
+                &request_message.routing_params,
                 request_message.rules,
             );
 
@@ -393,7 +443,7 @@ impl RouterRunner {
     #[tracing::instrument(skip(self))]
     fn run_client(
         &self,
-        start_finish: &StartFinish,
+        routing_params: &RoutingParams,
         data_destination: &DataDestination,
         socket_name: Option<String>,
         rule_file: Option<PathBuf>,
@@ -402,7 +452,7 @@ impl RouterRunner {
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
-            .connect(start_finish, rules)
+            .connect(routing_params.clone(), rules)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
@@ -413,7 +463,7 @@ impl RouterRunner {
     pub fn run(&self) -> Result<(), RouterRunnerError> {
         match &self.mode {
             RouterMode::Dual {
-                start_finish,
+                routing_params,
                 data_source,
                 cache_dir,
                 data_destination,
@@ -421,7 +471,7 @@ impl RouterRunner {
             } => self.run_dual(
                 &data_source,
                 cache_dir.clone(),
-                &start_finish,
+                routing_params,
                 &data_destination,
                 rule_file.clone(),
             ),
@@ -435,12 +485,12 @@ impl RouterRunner {
                 socket_name,
             } => self.run_server(&data_source, cache_dir.clone(), socket_name.clone()),
             RouterMode::Client {
-                start_finish,
+                routing_params,
                 data_destination,
                 socket_name,
                 rule_file,
             } => self.run_client(
-                &start_finish,
+                &routing_params,
                 &data_destination,
                 socket_name.clone(),
                 rule_file.clone(),
@@ -449,63 +499,106 @@ impl RouterRunner {
     }
 }
 
-fn get_start_finish(start: String, finish: String) -> Result<StartFinish, RouterRunnerError> {
-    let mut start = start.split(",");
-    let mut finish = finish.split(",");
-    Ok(StartFinish {
-        start_lat: start
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Start LAT".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Start LAT".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-        start_lon: start
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Start LON".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Start Lon".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-        finish_lat: finish
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Finish LAT".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Finish LAT".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-        finish_lon: finish
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Finish LON".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Finish LON".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-    })
+fn get_router_params(routing_mode: RoutingMode) -> Result<RoutingParams, RouterRunnerError> {
+    match routing_mode {
+        RoutingMode::StartFinish { start, finish } => {
+            let mut start = start.split(",");
+            let mut finish = finish.split(",");
+            return Ok(RoutingParams::StartFinish {
+                start_lat: start
+                    .next()
+                    .ok_or_else(|| RouterRunnerError::Coords {
+                        name: "Start LAT".to_string(),
+                        cause: "missing".to_string(),
+                        error: None,
+                    })?
+                    .parse()
+                    .map_err(|error| RouterRunnerError::Coords {
+                        name: "Start LAT".to_string(),
+                        cause: "not parsable as f64".to_string(),
+                        error: Some(error),
+                    })?,
+                start_lon: start
+                    .next()
+                    .ok_or_else(|| RouterRunnerError::Coords {
+                        name: "Start LON".to_string(),
+                        cause: "missing".to_string(),
+                        error: None,
+                    })?
+                    .parse()
+                    .map_err(|error| RouterRunnerError::Coords {
+                        name: "Start Lon".to_string(),
+                        cause: "not parsable as f64".to_string(),
+                        error: Some(error),
+                    })?,
+                finish_lat: finish
+                    .next()
+                    .ok_or_else(|| RouterRunnerError::Coords {
+                        name: "Finish LAT".to_string(),
+                        cause: "missing".to_string(),
+                        error: None,
+                    })?
+                    .parse()
+                    .map_err(|error| RouterRunnerError::Coords {
+                        name: "Finish LAT".to_string(),
+                        cause: "not parsable as f64".to_string(),
+                        error: Some(error),
+                    })?,
+                finish_lon: finish
+                    .next()
+                    .ok_or_else(|| RouterRunnerError::Coords {
+                        name: "Finish LON".to_string(),
+                        cause: "missing".to_string(),
+                        error: None,
+                    })?
+                    .parse()
+                    .map_err(|error| RouterRunnerError::Coords {
+                        name: "Finish LON".to_string(),
+                        cause: "not parsable as f64".to_string(),
+                        error: Some(error),
+                    })?,
+            });
+        }
+        RoutingMode::RoundTrip {
+            center,
+            direction,
+            distance,
+        } => {
+            let mut center = center.split(",");
+            let lat = center
+                .next()
+                .ok_or_else(|| RouterRunnerError::Coords {
+                    name: "LAT".to_string(),
+                    cause: "missing".to_string(),
+                    error: None,
+                })?
+                .parse()
+                .map_err(|error| RouterRunnerError::Coords {
+                    name: "LAT".to_string(),
+                    cause: "not parsable as f64".to_string(),
+                    error: Some(error),
+                })?;
+            let lon = center
+                .next()
+                .ok_or_else(|| RouterRunnerError::Coords {
+                    name: "LON".to_string(),
+                    cause: "missing".to_string(),
+                    error: None,
+                })?
+                .parse()
+                .map_err(|error| RouterRunnerError::Coords {
+                    name: "LON".to_string(),
+                    cause: "not parsable as f64".to_string(),
+                    error: Some(error),
+                })?;
+            return Ok(RoutingParams::RoundTrip {
+                lat,
+                lon,
+                distance,
+                direction,
+            });
+        }
+    }
 }
 fn get_data_source(file: PathBuf) -> Result<DataSource, RouterRunnerError> {
     if let Some(ext) = file.extension() {

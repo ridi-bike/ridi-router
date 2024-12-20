@@ -82,8 +82,8 @@ impl GpxWriter {
 
             gpx_route.description = Some(description);
 
-            for coord in &route.coords {
-                let waypoint = Waypoint::new(Point::new(coord.lon.into(), coord.lat.into()));
+            for (lat, lon) in &route.coords {
+                let waypoint = Waypoint::new(Point::new(*lon as f64, *lat as f64));
                 gpx_route.points.push(waypoint);
             }
 

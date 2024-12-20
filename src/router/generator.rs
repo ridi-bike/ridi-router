@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use crate::{
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
+    router_runner::RoundTripDirection,
 };
-use geo::{GeoNum, HaversineDestination, Point};
+use geo::{Destination, GeoNum, Haversine, HaversineDestination, Point};
 use rayon::prelude::*;
 use tracing::{info, trace};
 
@@ -31,14 +32,21 @@ pub struct RouteWithStats {
 pub struct Generator {
     start: MapDataPointRef,
     finish: MapDataPointRef,
+    round_trip: Option<(RoundTripDirection, u32)>,
     rules: RouterRules,
 }
 
 impl Generator {
-    pub fn new(start: MapDataPointRef, finish: MapDataPointRef, rules: RouterRules) -> Self {
+    pub fn new(
+        start: MapDataPointRef,
+        finish: MapDataPointRef,
+        round_trip: Option<(RoundTripDirection, u32)>,
+        rules: RouterRules,
+    ) -> Self {
         Self {
             start,
             finish,
+            round_trip,
             rules,
         }
     }
@@ -51,7 +59,7 @@ impl Generator {
                 ITINERARY_VARIATION_DISTANCES
                     .iter()
                     .map(|distance| {
-                        let wp_geo = point_geo.haversine_destination(*bearing, *distance);
+                        let wp_geo = Haversine::destination(point_geo, *bearing, *distance);
                         let wp = MapDataGraph::get().get_closest_to_coords(wp_geo.y(), wp_geo.x());
                         wp
                     })
