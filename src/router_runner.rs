@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    ipc_handler::{
-        CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult,
-    },
+    ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
     osm_data_reader::DataSource,
@@ -57,18 +55,6 @@ struct Cli {
     pub mode: CliMode,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-pub enum RoundTripDirection {
-    N,
-    NE,
-    E,
-    SE,
-    S,
-    SW,
-    W,
-    NW,
-}
-
 #[derive(Subcommand)]
 #[arg()]
 enum RoutingMode {
@@ -83,8 +69,12 @@ enum RoutingMode {
         #[arg(long, value_name = "LAT,LON")]
         center: String,
 
-        #[arg(value_enum)]
-        direction: RoundTripDirection,
+        #[arg(
+            long,
+            value_name = "DEGREES",
+            help = "Degrees, where: North: 0°, East: 90°, South: 180°, West: 270°"
+        )]
+        bearing: f32,
 
         #[arg(long, value_name = "KM")]
         distance: u32,
@@ -152,7 +142,7 @@ pub enum RoutingParams {
     RoundTrip {
         lat: f32,
         lon: f32,
-        direction: RoundTripDirection,
+        bearing: f32,
         distance: u32,
     },
 }
@@ -274,12 +264,10 @@ impl RouterRunner {
         info!("Finish point {finish}");
 
         let round_trip = if let RoutingParams::RoundTrip {
-            direction,
-            distance,
-            ..
+            bearing, distance, ..
         } = routing_params
         {
-            Some((*direction, *distance))
+            Some((*bearing, *distance))
         } else {
             None
         };
@@ -333,11 +321,13 @@ impl RouterRunner {
                                     .route
                                     .clone()
                                     .into_iter()
-                                    .map(|segment| CoordsMessage {
-                                        lat: segment.get_end_point().borrow().lat,
-                                        lon: segment.get_end_point().borrow().lon,
+                                    .map(|segment| {
+                                        (
+                                            segment.get_end_point().borrow().lat,
+                                            segment.get_end_point().borrow().lon,
+                                        )
                                     })
-                                    .collect::<Vec<CoordsMessage>>(),
+                                    .collect(),
                                 stats: route.stats.clone(),
                             })
                             .collect(),
@@ -424,11 +414,13 @@ impl RouterRunner {
                                     .route
                                     .clone()
                                     .into_iter()
-                                    .map(|segment| CoordsMessage {
-                                        lat: segment.get_end_point().borrow().lat,
-                                        lon: segment.get_end_point().borrow().lon,
+                                    .map(|segment| {
+                                        (
+                                            segment.get_end_point().borrow().lat,
+                                            segment.get_end_point().borrow().lon,
+                                        )
                                     })
-                                    .collect::<Vec<CoordsMessage>>(),
+                                    .collect(),
                                 stats: route.stats.clone(),
                             })
                             .collect(),
@@ -561,7 +553,7 @@ fn get_router_params(routing_mode: RoutingMode) -> Result<RoutingParams, RouterR
         }
         RoutingMode::RoundTrip {
             center,
-            direction,
+            bearing,
             distance,
         } => {
             let mut center = center.split(",");
@@ -595,7 +587,7 @@ fn get_router_params(routing_mode: RoutingMode) -> Result<RoutingParams, RouterR
                 lat,
                 lon,
                 distance,
-                direction,
+                bearing,
             });
         }
     }
