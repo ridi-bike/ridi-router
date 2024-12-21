@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    gpx_writer::write_debug_itinerary,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
 };
@@ -21,9 +22,7 @@ use super::{
 
 const START_FINISH_VARIATION_DISTANCES: [f32; 3] = [10000., 20000., 30000.];
 const START_FINISH_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., 225., 270., 315.];
-const ROUND_TRIP_TIP_DISTANCE_RATIOS: [f32; 10] =
-    [0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05];
-const ROUND_TRIP_SIDES_DISTANCE_RATIOS: [f32; 5] = [0.9, 0.7, 0.5, 0.2, 0.1];
+const ROUND_TRIP_DISTANCE_RATIOS: [f32; 4] = [1.0, 0.9, 0.8, 0.7];
 const ROUND_TRIP_BEARING_VARIATION: [f32; 5] = [-20., -10., 0., 10., 20.];
 
 #[derive(Debug, Clone)]
@@ -77,66 +76,73 @@ impl Generator {
         if let Some(round_trip) = self.round_trip {
             let start_geo = Point::new(self.start.borrow().lon, self.start.borrow().lat);
 
-            return ROUND_TRIP_SIDES_DISTANCE_RATIOS
+            return ROUND_TRIP_DISTANCE_RATIOS
                 .iter()
                 .map(|side_left_ratio| {
                     let bearing = round_trip.0;
-                    ROUND_TRIP_TIP_DISTANCE_RATIOS
+                    ROUND_TRIP_DISTANCE_RATIOS
                         .iter()
                         .map(|tip_ratio| {
-                            ROUND_TRIP_BEARING_VARIATION
+                            ROUND_TRIP_DISTANCE_RATIOS
                                 .iter()
-                                .filter_map(|bearing_variation| {
-                                    let mut tot_dist = round_trip.1 as f32;
-                                    let tip_geo = Haversine::destination(
-                                        start_geo.clone(),
-                                        bearing + bearing_variation,
-                                        tot_dist * tip_ratio,
-                                    );
-                                    tot_dist -= tot_dist * tip_ratio;
-                                    let tip_point = match MapDataGraph::get()
-                                        .get_closest_to_coords(tip_geo.y(), tip_geo.x())
-                                    {
-                                        None => return None,
-                                        Some(p) => p,
-                                    };
+                                .map(|side_right_ratio| {
+                                    ROUND_TRIP_BEARING_VARIATION
+                                        .iter()
+                                        .filter_map(|bearing_variation| {
+                                            let dist = round_trip.1 as f32 / 5.;
+                                            let tip_geo = Haversine::destination(
+                                                start_geo.clone(),
+                                                bearing + bearing_variation,
+                                                dist * tip_ratio,
+                                            );
 
-                                    let side_left_geo = Haversine::destination(
-                                        start_geo.clone(),
-                                        bearing + bearing_variation - 45.,
-                                        tot_dist * side_left_ratio,
-                                    );
-                                    tot_dist -= tot_dist * side_left_ratio;
+                                            let tip_point = match MapDataGraph::get()
+                                                .get_closest_to_coords(tip_geo.y(), tip_geo.x())
+                                            {
+                                                None => return None,
+                                                Some(p) => p,
+                                            };
 
-                                    let side_left_point = match MapDataGraph::get()
-                                        .get_closest_to_coords(side_left_geo.y(), side_left_geo.x())
-                                    {
-                                        None => return None,
-                                        Some(p) => p,
-                                    };
+                                            let side_left_geo = Haversine::destination(
+                                                start_geo.clone(),
+                                                bearing + bearing_variation - 45.,
+                                                dist * side_left_ratio,
+                                            );
 
-                                    let side_right_geo = Haversine::destination(
-                                        start_geo.clone(),
-                                        bearing + bearing_variation - 45.,
-                                        tot_dist,
-                                    );
+                                            let side_left_point = match MapDataGraph::get()
+                                                .get_closest_to_coords(
+                                                    side_left_geo.y(),
+                                                    side_left_geo.x(),
+                                                ) {
+                                                None => return None,
+                                                Some(p) => p,
+                                            };
 
-                                    let side_right_point = match MapDataGraph::get()
-                                        .get_closest_to_coords(
-                                            side_right_geo.y(),
-                                            side_right_geo.x(),
-                                        ) {
-                                        None => return None,
-                                        Some(p) => p,
-                                    };
+                                            let side_right_geo = Haversine::destination(
+                                                start_geo.clone(),
+                                                bearing + bearing_variation + 45.,
+                                                dist * side_right_ratio,
+                                            );
 
-                                    Some(Itinerary::new(
-                                        self.start.clone(),
-                                        self.finish.clone(),
-                                        vec![side_left_point, tip_point, side_right_point],
-                                        5.,
-                                    ))
+                                            let side_right_point = match MapDataGraph::get()
+                                                .get_closest_to_coords(
+                                                    side_right_geo.y(),
+                                                    side_right_geo.x(),
+                                                ) {
+                                                None => return None,
+                                                Some(p) => p,
+                                            };
+
+                                            Some(Itinerary::new_round_trip(
+                                                self.start.clone(),
+                                                self.finish.clone(),
+                                                vec![side_left_point, tip_point, side_right_point],
+                                                5.,
+                                            ))
+                                        })
+                                        .collect::<Vec<_>>()
                                 })
+                                .flatten()
                                 .collect::<Vec<_>>()
                         })
                         .flatten()
@@ -147,7 +153,7 @@ impl Generator {
         }
         let from_waypoints = self.create_waypoints_around(&self.start);
         let to_waypoints = self.create_waypoints_around(&self.finish);
-        let mut itineraries = vec![Itinerary::new(
+        let mut itineraries = vec![Itinerary::new_start_finish(
             self.start.clone(),
             self.finish.clone(),
             Vec::new(),
@@ -156,7 +162,7 @@ impl Generator {
 
         from_waypoints.iter().for_each(|from_wp| {
             to_waypoints.iter().for_each(|to_wp| {
-                itineraries.push(Itinerary::new(
+                itineraries.push(Itinerary::new_start_finish(
                     self.start.clone(),
                     self.finish.clone(),
                     vec![from_wp.clone(), to_wp.clone()],
@@ -170,6 +176,10 @@ impl Generator {
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
         let itineraries = self.generate_itineraries();
+        itineraries
+            .iter()
+            .enumerate()
+            .for_each(|(idx, i)| write_debug_itinerary(idx, i));
         info!("Created {} itineraries", itineraries.len());
         let routes = itineraries
             .into_par_iter()

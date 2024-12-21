@@ -16,9 +16,8 @@ pub enum WalkerError {
 }
 
 pub struct Walker {
-    walker_id: u16,
     start: MapDataPointRef,
-    end: MapDataPointRef,
+    finish: MapDataPointRef,
     route_walked: Route,
     next_fork_choice_point: Option<MapDataPointRef>,
 }
@@ -31,11 +30,10 @@ pub enum WalkerMoveResult {
 }
 
 impl Walker {
-    pub fn new(start: MapDataPointRef, end: MapDataPointRef) -> Self {
+    pub fn new(start: MapDataPointRef, finish: MapDataPointRef) -> Self {
         Self {
-            walker_id: 1,
             start: start.clone(),
-            end,
+            finish,
             route_walked: Route::new(),
             next_fork_choice_point: None,
         }
@@ -256,7 +254,7 @@ impl Walker {
                 Some(route_segment) => &route_segment.get_end_point(),
                 None => &self.start,
             };
-            if *point == self.end {
+            if *point == self.finish {
                 return Ok(WalkerMoveResult::Finish);
             }
 

@@ -9,6 +9,7 @@ pub struct Itinerary {
     waypoints: Vec<MapDataPointRef>,
     next: MapDataPointRef,
     waypoint_radius: f32,
+    visit_all_waypoints: bool,
 }
 
 impl Display for Itinerary {
@@ -28,7 +29,7 @@ impl Display for Itinerary {
 }
 
 impl Itinerary {
-    pub fn new(
+    pub fn new_start_finish(
         start: MapDataPointRef,
         finish: MapDataPointRef,
         waypoints: Vec<MapDataPointRef>,
@@ -40,6 +41,22 @@ impl Itinerary {
             next: waypoints.get(0).map_or(finish.clone(), |w| w.clone()),
             waypoints,
             finish,
+            visit_all_waypoints: false,
+        }
+    }
+    pub fn new_round_trip(
+        start: MapDataPointRef,
+        finish: MapDataPointRef,
+        waypoints: Vec<MapDataPointRef>,
+        waypoint_radius: f32,
+    ) -> Self {
+        Self {
+            start,
+            waypoint_radius,
+            next: waypoints.get(0).map_or(finish.clone(), |w| w.clone()),
+            waypoints,
+            finish,
+            visit_all_waypoints: true,
         }
     }
 
@@ -57,8 +74,9 @@ impl Itinerary {
     }
 
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {
-        if current.borrow().distance_between(&self.finish)
-            < current.borrow().distance_between(&self.next)
+        if !self.visit_all_waypoints
+            && current.borrow().distance_between(&self.finish)
+                < current.borrow().distance_between(&self.next)
         {
             self.next = self.finish.clone();
         } else if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
@@ -77,11 +95,11 @@ impl Itinerary {
         &self.next
     }
 
-    pub fn get_from(&self) -> &MapDataPointRef {
+    pub fn get_start(&self) -> &MapDataPointRef {
         &self.start
     }
 
-    pub fn get_to(&self) -> &MapDataPointRef {
+    pub fn get_finish(&self) -> &MapDataPointRef {
         &self.finish
     }
 

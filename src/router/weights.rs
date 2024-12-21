@@ -226,7 +226,7 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
     let total_distance = input
         .itinerary
-        .get_from()
+        .get_start()
         .borrow()
         .distance_between(&input.itinerary.get_next());
     let point_steps_back = match input.route.get_segments_from_end(check_steps_back) {
@@ -392,7 +392,7 @@ mod test {
 
             let segment = get_route_segment(fork_point, from.clone());
 
-            let itinerary = Itinerary::new(from.clone(), to.clone(), Vec::new(), 0.);
+            let itinerary = Itinerary::new_start_finish(from.clone(), to.clone(), Vec::new(), 0.);
 
 
             let fork_weight = weight_heading(WeightCalcInput {
