@@ -199,7 +199,10 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
-        let clustering = Clustering::generate(&routes);
+        let clustering = match Clustering::generate(&routes) {
+            None => return Vec::new(),
+            Some(c) => c,
+        };
 
         let mut cluster_best: HashMap<i32, RouteWithStats> = HashMap::new();
         let mut noise = Vec::new();
