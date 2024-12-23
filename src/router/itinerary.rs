@@ -81,12 +81,13 @@ impl Itinerary {
     }
 
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {
-        if !self.visit_all_waypoints
-            && current.borrow().distance_between(&self.finish)
-                < current.borrow().distance_between(&self.next)
-        {
-            self.next = self.finish.clone();
-        } else if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
+        // if !self.visit_all_waypoints
+        //     && current.borrow().distance_between(&self.finish)
+        //         < current.borrow().distance_between(&self.next)
+        // {
+        //     self.next = self.finish.clone();
+        // } else if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
+        if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 self.next = self
                     .waypoints

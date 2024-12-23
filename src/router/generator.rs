@@ -157,7 +157,7 @@ impl Generator {
             self.start.clone(),
             self.finish.clone(),
             Vec::new(),
-            5000.,
+            1000.,
         )];
 
         from_waypoints.iter().for_each(|from_wp| {
@@ -166,7 +166,7 @@ impl Generator {
                     self.start.clone(),
                     self.finish.clone(),
                     vec![from_wp.clone(), to_wp.clone()],
-                    5000.,
+                    1000.,
                 ))
             })
         });
@@ -176,6 +176,7 @@ impl Generator {
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
         let itineraries = self.generate_itineraries();
+
         itineraries
             .iter()
             .enumerate()
@@ -209,16 +210,6 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
-        if true {
-            return routes
-                .iter()
-                .map(|r| RouteWithStats {
-                    route: r.clone(),
-                    stats: r.calc_stats(),
-                })
-                .collect();
-        }
-
         let clustering = match Clustering::generate(&routes) {
             None => return Vec::new(),
             Some(c) => c,
@@ -226,31 +217,38 @@ impl Generator {
 
         let mut cluster_best: HashMap<i32, RouteWithStats> = HashMap::new();
         let mut noise = Vec::new();
-        routes.iter().enumerate().for_each(|(idx, route)| {
-            let mut stats = route.calc_stats();
-            let approx_route = &clustering.approximated_routes[idx];
-            stats.cluster = Some(clustering.labels[idx] as usize);
-            stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
-            let route_with_stats = RouteWithStats {
-                stats,
-                route: route.clone(),
-            };
+        let _routes: Vec<_> = routes
+            .iter()
+            .enumerate()
+            .map(|(idx, route)| {
+                let mut stats = route.calc_stats();
+                let approx_route = &clustering.approximated_routes[idx];
+                stats.cluster = Some(clustering.labels[idx] as usize);
+                stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
+                let route_with_stats = RouteWithStats {
+                    stats,
+                    route: route.clone(),
+                };
 
-            let label = clustering.labels[idx];
-            if label != -1 {
-                if let Some(current_best) = cluster_best.get(&label) {
-                    if current_best.stats.score < route_with_stats.stats.score {
-                        cluster_best.insert(label, route_with_stats);
+                let label = clustering.labels[idx];
+                if label != -1 {
+                    if let Some(current_best) = cluster_best.get(&label) {
+                        if current_best.stats.score < route_with_stats.stats.score {
+                            cluster_best.insert(label, route_with_stats.clone());
+                        }
+                    } else {
+                        cluster_best.insert(label, route_with_stats.clone());
                     }
                 } else {
-                    cluster_best.insert(label, route_with_stats);
+                    noise.push(route_with_stats.clone());
                 }
-            } else {
-                noise.push(route_with_stats);
-            }
-        });
 
-        trace!(noise_count = noise.len(), "noise");
+                route_with_stats
+            })
+            .collect();
+
+        info!(route_count = routes.len(), "routes");
+        info!(noise_count = noise.len(), "noise");
 
         let mut best_routes = cluster_best.into_iter().map(|el| el.1).collect::<Vec<_>>();
         noise.sort_by(|a, b| b.stats.score.total_cmp(&a.stats.score));

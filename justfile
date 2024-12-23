@@ -74,13 +74,13 @@ run-load-cache-show:
 	gpxsee map-data/output.gpx &
 
 run-gr:
-	cargo run --release -- dual --start 37.0458401,22.1265497 --finish 37.0744365,22.4263953 --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece
+	cargo run --release -- dual --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece start-finish --start 37.0458401,22.1265497 --finish 37.0744365,22.4263953
 
 run-gr-short:
 	cargo run --release -- dual --start 37.0331605,22.1573558 --finish 37.041196,22.182086 --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece 
 
 run-lv-round:
-	cargo run --release -- dual --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia round-trip --center {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
+	cargo run --release -- dual --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file map-data/rules-prefer-unpaved.json round-trip --center {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
 
 cache-lv:
 	cargo run --release -- cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia
