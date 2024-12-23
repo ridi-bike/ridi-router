@@ -51,7 +51,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         input.itinerary.get_next().borrow().lon,
         input.itinerary.get_next().borrow().lat,
     );
-    // let next_bearing = fork_point_geo.haversine_bearing(next_point_geo);
+
     let next_bearing = Haversine::bearing(fork_point_geo, next_point_geo);
     let fork_line_one_geo = Point::new(
         fork_segment.get_line().borrow().points.0.borrow().lon,
@@ -63,10 +63,8 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     );
     let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
     {
-        // fork_line_one_geo.haversine_bearing(fork_line_two_geo)
         Haversine::bearing(fork_line_one_geo, fork_line_two_geo)
     } else {
-        // fork_line_two_geo.haversine_bearing(fork_line_one_geo)
         Haversine::bearing(fork_line_two_geo, fork_line_one_geo)
     };
 
@@ -183,7 +181,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
     }
     let check_junctions_back = input.rules.basic.progression_direction.check_junctions_back;
 
-    let distance_to_end_current = match input.route.get_segment_last() {
+    let distance_to_next_current = match input.route.get_segment_last() {
         None => return WeightCalcResult::UseWithWeight(0),
         Some(segment) => segment
             .get_end_point()
@@ -191,7 +189,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
             .distance_between(&input.itinerary.get_next()),
     };
 
-    let distance_to_end_junctions_back =
+    let distance_to_next_junctions_back =
         match input.route.get_junctions_from_end(check_junctions_back) {
             None => return WeightCalcResult::UseWithWeight(0),
             Some(segment) => segment
@@ -200,11 +198,11 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
                 .distance_between(&input.itinerary.get_next()),
         };
     trace!(
-        distance = distance_to_end_junctions_back,
+        distance = distance_to_next_junctions_back,
         "distance to next"
     );
 
-    if distance_to_end_current > distance_to_end_junctions_back {
+    if distance_to_next_current > distance_to_next_junctions_back {
         return WeightCalcResult::DoNotUse;
     }
     WeightCalcResult::UseWithWeight(0)

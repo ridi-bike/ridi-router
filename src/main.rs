@@ -17,8 +17,11 @@ mod router_runner;
 mod test_utils;
 
 fn main() {
-    let subscriber = FmtSubscriber::builder()
-        .with_writer(io::stderr)
+    let subscriber = tracing_subscriber::fmt()
+        // .json()
+        // .with_writer(io::stderr)
+        .with_ansi(false)
+        .with_writer(std::fs::File::create("./log.log").unwrap())
         .with_file(true)
         .with_line_number(true)
         .with_thread_names(true)

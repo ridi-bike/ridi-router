@@ -1,10 +1,13 @@
 use geo::Point;
-use gpx::{write, Gpx, GpxVersion, Route as GpxRoute, Waypoint};
+use gpx::{write, Gpx, GpxVersion, Route as GpxRoute, Track, TrackSegment, Waypoint};
 use std::{collections::HashMap, fs::File, io::Error, isize, path::PathBuf};
 
 use crate::{
     ipc_handler::RouteMessage,
-    router::{itinerary::Itinerary, route::RouteStatElement},
+    router::{
+        itinerary::Itinerary,
+        route::{segment::Segment, RouteStatElement},
+    },
 };
 
 #[derive(Debug)]
@@ -47,7 +50,42 @@ pub fn write_debug_itinerary(idx: usize, itinerary: &Itinerary) -> () {
         wp.name = Some(format!("wp {wp_idx}"));
         gpx.waypoints.push(wp);
     }
-    let debug_filename = PathBuf::from(format!("/tmp/{}.gpx", idx));
+    let debug_filename = PathBuf::from(format!("/tmp/{}.wp.gpx", idx));
+    let debug_file = File::create(debug_filename)
+        .or_else(|error| Err(GpxWriterError::FileCreateError { error }))
+        .unwrap();
+
+    write(&gpx, debug_file).unwrap();
+}
+
+pub fn write_debug_segment(idx: usize, all_segments: Vec<Segment>, route: Vec<Segment>) -> () {
+    let mut gpx = Gpx::default();
+    gpx.version = GpxVersion::Gpx11;
+
+    for segment in all_segments {
+        let mut track = Track::new();
+        let mut track_segment = TrackSegment::new();
+        track_segment.points.push(Waypoint::new(Point::new(
+            segment.get_line().borrow().points.0.borrow().lon as f64,
+            segment.get_line().borrow().points.0.borrow().lat as f64,
+        )));
+        track_segment.points.push(Waypoint::new(Point::new(
+            segment.get_line().borrow().points.1.borrow().lon as f64,
+            segment.get_line().borrow().points.1.borrow().lat as f64,
+        )));
+        track.segments.push(track_segment);
+
+        gpx.tracks.push(track);
+    }
+    let mut gpx_route = GpxRoute::new();
+    for segment in route {
+        gpx_route.points.push(Waypoint::new(Point::new(
+            segment.get_end_point().borrow().lon as f64,
+            segment.get_end_point().borrow().lat as f64,
+        )));
+    }
+    gpx.routes.push(gpx_route);
+    let debug_filename = PathBuf::from(format!("/tmp/{}.seg.gpx", idx));
     let debug_file = File::create(debug_filename)
         .or_else(|error| Err(GpxWriterError::FileCreateError { error }))
         .unwrap();

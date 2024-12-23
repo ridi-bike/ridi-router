@@ -5,7 +5,11 @@ use std::{
 
 use tracing::{field::DebugValue, info, trace};
 
-use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
+use crate::{
+    gpx_writer::write_debug_segment,
+    map_data::graph::MapDataPointRef,
+    router::{itinerary::CheckSetResult, rules::RouterRules},
+};
 
 use super::{
     itinerary::Itinerary,
@@ -230,6 +234,7 @@ impl Navigator {
                     self.walker.move_backwards_to_prev_fork();
                     if self.walker.get_route().get_junction_before_last_segment() == None {
                         info!("Stuck");
+                        self.walker.get_route().write_debug();
                         return NavigationResult::Stuck;
                     }
                 }
