@@ -17,7 +17,6 @@ pub enum WalkerError {
 
 pub struct Walker {
     start: MapDataPointRef,
-    finish: MapDataPointRef,
     route_walked: Route,
     next_fork_choice_point: Option<MapDataPointRef>,
 }
@@ -30,10 +29,9 @@ pub enum WalkerMoveResult {
 }
 
 impl Walker {
-    pub fn new(start: MapDataPointRef, finish: MapDataPointRef) -> Self {
+    pub fn new(start: MapDataPointRef) -> Self {
         Self {
             start: start.clone(),
-            finish,
             route_walked: Route::new(),
             next_fork_choice_point: None,
         }
@@ -248,13 +246,16 @@ impl Walker {
         }
     }
 
-    pub fn move_forward_to_next_fork(&mut self) -> Result<WalkerMoveResult, WalkerError> {
+    pub fn move_forward_to_next_fork<T: Fn(MapDataPointRef) -> bool>(
+        &mut self,
+        is_finished: T,
+    ) -> Result<WalkerMoveResult, WalkerError> {
         loop {
             let point = match self.route_walked.get_segment_last() {
                 Some(route_segment) => &route_segment.get_end_point(),
                 None => &self.start,
             };
-            if *point == self.finish {
+            if is_finished(point.clone()) {
                 return Ok(WalkerMoveResult::Finish);
             }
 
@@ -373,11 +374,10 @@ mod tests {
 
             let mut walker = Walker::new(
                 point1.clone(),
-                point2.clone(),
             );
 
             assert_eq!(
-                walker.move_forward_to_next_fork(),
+                walker.move_forward_to_next_fork(|p| p == point2),
                 Ok(WalkerMoveResult::Finish)
             );
             assert_eq!(walker.get_route().clone(), Route::new());
@@ -394,14 +394,13 @@ mod tests {
 
             let mut walker = Walker::new(
                 point1.clone(),
-                point2.clone(),
             );
 
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
             walker.set_fork_choice_point_ref(choice);
 
             assert_eq!(
-                walker.move_forward_to_next_fork(),
+                walker.move_forward_to_next_fork(|p| p == point2),
                 Err(WalkerError::WrongForkChoice {
                     id: 6,
                     available_fork_ids: vec![1, 3]
@@ -424,10 +423,9 @@ mod tests {
 
             let mut walker = Walker::new(
                 point1.clone(),
-                point2.clone(),
             );
             assert_eq!(
-                walker.move_forward_to_next_fork(),
+                walker.move_forward_to_next_fork(|p| p == point2),
                 Ok(WalkerMoveResult::Finish)
             );
             let route = walker.get_route().clone();
@@ -457,10 +455,9 @@ mod tests {
 
             let mut walker = Walker::new(
                 point1.clone(),
-                point2.clone(),
             );
 
-            let choices = match walker.move_forward_to_next_fork() {
+            let choices = match walker.move_forward_to_next_fork(|p| p == point2) {
                 Err(_) => panic!("Error received from move"),
                 Ok(WalkerMoveResult::Fork(c)) => c,
                 _ => panic!("did not get choices for routes"),
@@ -484,7 +481,7 @@ mod tests {
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
             walker.set_fork_choice_point_ref(choice);
 
-            let choices = match walker.move_forward_to_next_fork() {
+            let choices = match walker.move_forward_to_next_fork(|p| p == point2) {
                 Err(_) => panic!("Error received from move"),
                 Ok(WalkerMoveResult::Fork(c)) => c,
                 _ => panic!("did not get choices for routes"),
@@ -503,7 +500,7 @@ mod tests {
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             walker.set_fork_choice_point_ref(choice);
 
-            assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
+            assert!(walker.move_forward_to_next_fork(|p| p == point2) == Ok(WalkerMoveResult::Finish));
 
             let route = walker.get_route().clone();
             assert_eq!(route.get_segment_count(), 4);
@@ -548,10 +545,9 @@ mod tests {
 
             let mut walker = Walker::new(
                 point1.clone(),
-                point2.clone(),
             );
 
-            let choices = match walker.move_forward_to_next_fork() {
+            let choices = match walker.move_forward_to_next_fork(|p| p == point2) {
                 Err(_) => panic!("Error received from move"),
                 Ok(WalkerMoveResult::Fork(c)) => c,
                 _ => panic!("did not get choices for routes"),
@@ -575,7 +571,7 @@ mod tests {
 
             walker.set_fork_choice_point_ref(choice1);
 
-            assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::DeadEnd));
+            assert!(walker.move_forward_to_next_fork(|p| p == point2) == Ok(WalkerMoveResult::DeadEnd));
 
             let choices = match walker.move_backwards_to_prev_fork() {
                 None => panic!("Expected to be back at point 3 with choices"),
@@ -598,7 +594,7 @@ mod tests {
             let choice2 = MapDataGraph::get().test_get_point_ref_by_id(&4).unwrap();
             walker.set_fork_choice_point_ref(choice2);
 
-            assert!(walker.move_forward_to_next_fork() == Ok(WalkerMoveResult::Finish));
+            assert!(walker.move_forward_to_next_fork(|p| p == point2) == Ok(WalkerMoveResult::Finish));
 
             let route = walker.get_route().clone();
             assert_eq!(route.get_segment_count(), 3);
@@ -636,15 +632,14 @@ mod tests {
                 )
             );
 
-            let from = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
-            let to = MapDataGraph::get().test_get_point_ref_by_id(&131).unwrap();
+            let start = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
+            let finish = MapDataGraph::get().test_get_point_ref_by_id(&131).unwrap();
 
             let mut walker = Walker::new(
-                from.clone(),
-                to.clone(),
+                start.clone(),
             );
 
-            let choices = match walker.move_forward_to_next_fork() {
+            let choices = match walker.move_forward_to_next_fork(|p| p == finish) {
                 Err(_) => panic!("Error received from move"),
                 Ok(WalkerMoveResult::Fork(c)) => c,
                 _ => panic!("did not get choices for routes"),
@@ -665,7 +660,7 @@ mod tests {
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
             walker.set_fork_choice_point_ref(choice);
 
-            let choices = match walker.move_forward_to_next_fork() {
+            let choices = match walker.move_forward_to_next_fork(|p| p == finish) {
                 Err(_) => panic!("Error received from move"),
                 Ok(WalkerMoveResult::Fork(c)) => c,
                 _ => panic!("did not get choices for routes"),
@@ -689,7 +684,7 @@ mod tests {
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&131).unwrap();
             walker.set_fork_choice_point_ref(choice);
 
-            match walker.move_forward_to_next_fork() {
+            match walker.move_forward_to_next_fork(|p| p == finish) {
                 Err(_) => panic!("Error received from move"),
                 Ok(WalkerMoveResult::Finish) => {}
                 _ => panic!("expected to reach finish"),
@@ -710,15 +705,14 @@ mod tests {
                 )
             );
 
-            let from = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
-            let to = MapDataGraph::get().test_get_point_ref_by_id(&9).unwrap();
+            let start = MapDataGraph::get().test_get_point_ref_by_id(&6).unwrap();
+            let finish = MapDataGraph::get().test_get_point_ref_by_id(&9).unwrap();
 
             let mut walker = Walker::new(
-                from.clone(),
-                to.clone(),
+                start.clone(),
             );
 
-            let choices = match walker.move_forward_to_next_fork() {
+            let choices = match walker.move_forward_to_next_fork(|p| p == finish) {
                 Err(_) => panic!("Error received from move"),
                 Ok(WalkerMoveResult::Fork(c)) => c,
                 _ => panic!("did not get choices for routes"),
@@ -734,12 +728,12 @@ mod tests {
     fn rule_test(test_data: OsmTestData, can_go_ids: Vec<u64>, cannot_go_ids: Vec<u64>) -> () {
         set_graph_static(graph_from_test_dataset(test_data));
 
-        let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
-        let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+        let start = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
+        let finish = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
 
-        let mut walker = Walker::new(from.clone(), to.clone());
+        let mut walker = Walker::new(start.clone());
 
-        let choices = match walker.move_forward_to_next_fork() {
+        let choices = match walker.move_forward_to_next_fork(|p| p == finish) {
             Err(_) => panic!("Error received from move"),
             Ok(WalkerMoveResult::Fork(c)) => c,
             Ok(v) => {

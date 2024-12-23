@@ -73,6 +73,13 @@ impl Itinerary {
         )
     }
 
+    pub fn is_finished(&self, current: MapDataPointRef) -> bool {
+        if current == self.next && self.next == self.finish {
+            return true;
+        }
+        false
+    }
+
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {
         if !self.visit_all_waypoints
             && current.borrow().distance_between(&self.finish)

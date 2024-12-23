@@ -27,7 +27,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_heading");
 
     let mut walker = input.walker_from_fork;
-    let next_fork = match walker.move_forward_to_next_fork() {
+    let next_fork = match walker.move_forward_to_next_fork(|p| input.itinerary.is_finished(p)) {
         Ok(v) => v,
         Err(e) => {
             error!("weight calc error {:#?}", e);
@@ -383,7 +383,6 @@ mod test {
                 .expect("did not find end point");
             let walker = Walker::new(
                 from.clone(),
-                to.clone(),
             );
 
             let fork_point = MapDataGraph::get()
@@ -402,7 +401,6 @@ mod test {
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),
-                    to.clone(),
                 ),
                 rules: &RouterRules::default()
 
@@ -423,7 +421,6 @@ mod test {
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),
-                    to.clone(),
                 ),
                 rules: &RouterRules::default()
             });

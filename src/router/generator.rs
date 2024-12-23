@@ -137,7 +137,7 @@ impl Generator {
                                                 self.start.clone(),
                                                 self.finish.clone(),
                                                 vec![side_left_point, tip_point, side_right_point],
-                                                5.,
+                                                5000.,
                                             ))
                                         })
                                         .collect::<Vec<_>>()
@@ -157,7 +157,7 @@ impl Generator {
             self.start.clone(),
             self.finish.clone(),
             Vec::new(),
-            10.,
+            5000.,
         )];
 
         from_waypoints.iter().for_each(|from_wp| {
@@ -166,7 +166,7 @@ impl Generator {
                     self.start.clone(),
                     self.finish.clone(),
                     vec![from_wp.clone(), to_wp.clone()],
-                    1000.,
+                    5000.,
                 ))
             })
         });
@@ -209,6 +209,16 @@ impl Generator {
             })
             .collect::<Vec<_>>();
 
+        if true {
+            return routes
+                .iter()
+                .map(|r| RouteWithStats {
+                    route: r.clone(),
+                    stats: r.calc_stats(),
+                })
+                .collect();
+        }
+
         let clustering = match Clustering::generate(&routes) {
             None => return Vec::new(),
             Some(c) => c,
@@ -244,7 +254,9 @@ impl Generator {
 
         let mut best_routes = cluster_best.into_iter().map(|el| el.1).collect::<Vec<_>>();
         noise.sort_by(|a, b| b.stats.score.total_cmp(&a.stats.score));
-        best_routes.append(&mut noise[..noise.len().min(3)].to_vec());
+
+        let noise_count = if best_routes.len() > 10 { 3 } else { 10 };
+        best_routes.append(&mut noise[..noise.len().min(noise_count)].to_vec());
         best_routes
     }
 }

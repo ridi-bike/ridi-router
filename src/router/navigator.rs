@@ -141,11 +141,8 @@ pub struct Navigator {
 
 impl Navigator {
     pub fn new(itinerary: Itinerary, rules: RouterRules, weight_calcs: Vec<WeightCalc>) -> Self {
-        Navigator {
-            walker: Walker::new(
-                itinerary.get_start().clone(),
-                itinerary.get_finish().clone(),
-            ),
+        Self {
+            walker: Walker::new(itinerary.get_start().clone()),
             itinerary,
             rules,
             weight_calcs,
@@ -161,7 +158,9 @@ impl Navigator {
         loop {
             loop_counter += 1;
 
-            let move_result = self.walker.move_forward_to_next_fork();
+            let move_result = self
+                .walker
+                .move_forward_to_next_fork(|p| self.itinerary.is_finished(p));
 
             trace!(
                 step = loop_counter,
@@ -203,7 +202,6 @@ impl Navigator {
                                     all_fork_segments: &fork_choices,
                                     walker_from_fork: Walker::new(
                                         fork_route_segment.get_end_point().clone(),
-                                        self.itinerary.get_next().clone(),
                                     ),
                                     rules: &self.rules,
                                 });
