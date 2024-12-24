@@ -2,7 +2,6 @@ use std::io;
 
 use router_runner::RouterRunner;
 use tracing::Level;
-use tracing_subscriber::FmtSubscriber;
 
 mod gpx_writer;
 mod ipc_handler;
@@ -18,17 +17,14 @@ mod test_utils;
 
 fn main() {
     let subscriber = tracing_subscriber::fmt()
-        // .json()
-        // .with_writer(io::stderr)
+        .with_writer(io::stderr)
         .with_ansi(false)
-        .with_writer(std::fs::File::create("./log.log").unwrap())
         .with_file(true)
         .with_line_number(true)
         .with_thread_names(true)
-        .with_max_level(Level::TRACE)
+        .with_max_level(Level::INFO)
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
-    let router = RouterRunner::init();
-    router.run().unwrap();
+    RouterRunner::run().unwrap();
 }
