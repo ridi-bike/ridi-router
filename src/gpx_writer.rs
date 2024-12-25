@@ -10,8 +10,9 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum GpxWriterError {
+    #[error("File Creation Error cause {error}")]
     FileCreateError { error: Error },
 }
 

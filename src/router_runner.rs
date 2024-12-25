@@ -1,9 +1,6 @@
-use std::{
-    error::Error, num::ParseFloatError, path::PathBuf, str::FromStr, string::ParseError,
-    sync::OnceLock, time::Instant,
-};
+use std::{ffi::OsString, num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
 
-use clap::{Args, Parser, ValueEnum};
+use clap::{builder::OsStr, Parser};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -15,60 +12,44 @@ use crate::{
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{
         generator::{Generator, RouteWithStats},
-        route::Route,
         rules::RouterRules,
     },
 };
 
 use clap::Subcommand;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum RouterRunnerError {
-    OutputFileInvalid {
-        filename: String,
-    },
-    InputFileInvalid {
-        filename: String,
-    },
-    InputFileFormatIncorrect {
-        filename: PathBuf,
-    },
-    OutputFileFormatIncorrect {
-        filename: PathBuf,
-    },
+    #[error("Output File Invalid '{filename}'")]
+    OutputFileInvalid { filename: String },
+
+    #[error("Input File Invalid '{filename}'")]
+    InputFileInvalid { filename: String },
+
+    #[error("Input File Format Incorrect for '{filename}'")]
+    InputFileFormatIncorrect { filename: PathBuf },
+
+    #[error("Output File Format Incorrect for '{filename}'")]
+    OutputFileFormatIncorrect { filename: PathBuf },
+
+    #[error("Coordinate error for {name}: {cause}{}", .error.as_ref().map(|e| format!(": {}", e)).unwrap_or_default())]
     Coords {
         name: String,
         cause: String,
         error: Option<ParseFloatError>,
     },
-    Ipc {
-        error: IpcHandlerError,
-    },
-    PointNotFound {
-        point: String,
-    },
-    ResultWrite {
-        error: ResultWriterError,
-    },
-    CacheWrite {
-        error: MapDataCacheError,
-    },
-}
 
-impl Error for RouterRunnerError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        None
-    }
+    #[error("IPC error: {error}")]
+    Ipc { error: IpcHandlerError },
 
-    fn description(&self) -> &str {
-        "description() is deprecated; use Display"
-    }
+    #[error("Could not find {point} on map")]
+    PointNotFound { point: String },
 
-    fn cause(&self) -> Option<&dyn Error> {
-        self.source()
-    }
+    #[error("Failed to write result: {error}")]
+    ResultWrite { error: ResultWriterError },
 
-    fn provide<'a>(&'a self, request: &mut std::error::Request<'a>) {}
+    #[error("Failed to write cache: {error}")]
+    CacheWrite { error: MapDataCacheError },
 }
 
 #[derive(Parser)]
@@ -79,7 +60,7 @@ struct Cli {
     pub mode: CliMode,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Coords {
     lat: f32,
     lon: f32,
@@ -157,9 +138,9 @@ impl FromStr for DataDestination {
     }
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Clone, Subcommand, Debug, Serialize, Deserialize)]
 #[arg()]
-enum RoutingMode {
+pub enum RoutingMode {
     StartFinish {
         #[arg(long, value_name = "LAT,LON", value_parser = clap::value_parser!(Coords))]
         start: Coords,
@@ -203,7 +184,12 @@ enum CliMode {
         socket_name: Option<String>,
     },
     Client {
-        #[arg(long, value_name = "FILE", default_value = DataDestination::Stdout)]
+        #[arg(
+            long,
+            value_name = "FILE",
+            required = false,
+            default_value = "DataDestination::Stdout"
+        )]
         output: DataDestination,
 
         #[command(subcommand)]
@@ -222,7 +208,12 @@ enum CliMode {
         #[arg(long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
 
-        #[arg(long, value_name = "FILE", default_value = DataDestination::Stdout)]
+        #[arg(
+            long,
+            value_name = "FILE",
+            required = false,
+            default_value = "DataDestination::Stdout"
+        )]
         output: DataDestination,
 
         #[arg(long, value_name = "FILE")]
@@ -391,10 +382,8 @@ impl RouterRunner {
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         dbg!("ipc init done");
         ipc.listen(|request_message| {
-            let route_res = RouterRunner::generate_route(
-                &request_message.routing_params,
-                request_message.rules,
-            );
+            let route_res =
+                RouterRunner::generate_route(&request_message.routing_mode, request_message.rules);
 
             ResponseMessage {
                 id: request_message.id,
@@ -439,7 +428,7 @@ impl RouterRunner {
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
-            .connect(routing_mode.clone(), rules)
+            .connect(routing_mode, rules)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;

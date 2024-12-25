@@ -17,6 +17,7 @@
 		"smartstring",
 		"Dbscan",
 		"ndarray",
-		"hdbscan"
+		"hdbscan",
+		"thiserror"
 	]
 }

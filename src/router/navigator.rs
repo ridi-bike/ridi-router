@@ -3,13 +3,9 @@ use std::{
     fmt::Debug,
 };
 
-use tracing::{field::DebugValue, info, trace};
+use tracing::{info, trace};
 
-use crate::{
-    gpx_writer::write_debug_segment,
-    map_data::graph::MapDataPointRef,
-    router::{itinerary::CheckSetResult, rules::RouterRules},
-};
+use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
 
 use super::{
     itinerary::Itinerary,

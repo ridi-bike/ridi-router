@@ -18,7 +18,6 @@ mod test_utils;
 fn main() {
     let subscriber = tracing_subscriber::fmt()
         .with_writer(io::stderr)
-        .with_ansi(false)
         .with_file(true)
         .with_line_number(true)
         .with_thread_names(true)

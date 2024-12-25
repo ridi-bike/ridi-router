@@ -6,26 +6,43 @@ use tracing::{info, trace, warn};
 
 use crate::{
     router::{route::RouteStats, rules::RouterRules},
-    router_runner::RoutingParams,
+    router_runner::RoutingMode,
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum IpcHandlerError {
+    #[error("Namespace Name cannot be created, cause {error}")]
     NamespaceName { error: io::Error },
+
+    #[error("Failed to create IPC listener: {error}")]
     CreateListener { error: io::Error },
+
+    #[error("Socket address already in use: {error}")]
     SocketAddressInUse { error: io::Error },
+
+    #[error("Failed to read from IPC connection: {error}")]
     ReadLine { error: io::Error },
+
+    #[error("Failed to write line to IPC connection: {error}")]
     WriteLine { error: io::Error },
+
+    #[error("Failed to write data to IPC connection: {error}")]
     WriteAll { error: io::Error },
+
+    #[error("Failed to connect to IPC socket: {error}")]
     Connect { error: io::Error },
+
+    #[error("Failed to deserialize message: {error}")]
     DeserializeMessage { error: Box<ErrorKind> },
+
+    #[error("Failed to serialize message: {error}")]
     SerializeMessage { error: Box<ErrorKind> },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestMessage {
     pub id: String,
-    pub routing_params: RoutingParams,
+    pub routing_mode: RoutingMode,
     pub rules: RouterRules,
 }
 
@@ -167,7 +184,7 @@ impl<'a> IpcHandler<'a> {
 
     pub fn connect(
         &self,
-        routing_params: RoutingParams,
+        routing_mode: &RoutingMode,
         rules: RouterRules,
     ) -> Result<ResponseMessage, IpcHandlerError> {
         let conn = Stream::connect(self.socket_name.clone())
@@ -177,7 +194,7 @@ impl<'a> IpcHandler<'a> {
 
         let req_msg = RequestMessage {
             id: "ooo".to_string(),
-            routing_params,
+            routing_mode: routing_mode.clone(),
             rules,
         };
         let req_buf = bincode::serialize(&req_msg)

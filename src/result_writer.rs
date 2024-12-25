@@ -10,12 +10,21 @@ use crate::{
     ipc_handler::ResponseMessage,
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ResultWriterError {
+    #[error("JSON Serialization error {error}")]
     SerializeJson { error: serde_json::Error },
+
+    #[error("GPX writing failed: {error}")]
     Gpx { error: GpxWriterError },
+
+    #[error("Failed to generate routes: {error}")]
     RoutesGenerationFailed { error: String },
+
+    #[error("Failed to write to stdout: {error}")]
     Stdout { error: io::Error },
+
+    #[error("Failed to write to file: {error}")]
     FileWrite { error: io::Error },
 }
 

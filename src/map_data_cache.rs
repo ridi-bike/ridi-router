@@ -27,10 +27,15 @@ fn write_cache_file(
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum MapDataCacheError {
+    #[error("File error cause {error}")]
     FileError { error: io::Error },
+
+    #[error("Required cache value is missing")]
     MissingValue,
+
+    #[error("Unexpected value encountered during cache operation")]
     UnexpectedValue,
 }
 pub struct MapDataCache {
