@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, io, path::PathBuf};
+use std::{cell::OnceCell, io, path::PathBuf, sync::OnceLock};
 use tracing::error;
 
 use rusqlite::Connection;
@@ -22,6 +22,8 @@ pub enum DebugWriterError {
     DbOpen { error: rusqlite::Error },
     #[error("Could not setup debug log database schema: {error}")]
     DbSchemaSetup { error: rusqlite::Error },
+    #[error("Could not setup execute PRAGMA: {error:?}")]
+    DbPragma { error: rusqlite::Error },
     #[error("Could not execute sql in database: {error}")]
     DbWrite { error: rusqlite::Error },
     #[error("Could not prepare sql: {error}")]
@@ -35,19 +37,24 @@ pub struct DebugWriter {
 impl DebugWriter {
     pub fn init(filename: Option<PathBuf>) -> Result<(), DebugWriterError> {
         if let Some(filename) = filename {
+            if std::fs::exists(&filename)
+                .map_err(|error| DebugWriterError::DbFileCheck { error })?
+            {
+                std::fs::remove_file(&filename)
+                    .map_err(|error| DebugWriterError::DbFileRemove { error })?;
+            }
             DEBUG_WRITER.with(|oc| {
-                if std::fs::exists(&filename)
-                    .map_err(|error| DebugWriterError::DbFileCheck { error })?
-                {
-                    std::fs::remove_file(&filename)
-                        .map_err(|error| DebugWriterError::DbFileRemove { error })?;
-                }
                 let connection = Connection::open(&filename)
                     .map_err(|error| DebugWriterError::DbOpen { error })?;
+
+                connection
+                    .pragma_update(None, "journal_mode", "WAL")
+                    .map_err(|error| DebugWriterError::DbPragma { error })?;
+
                 connection
                     .execute(
                         "
-                        create table itineraries (
+                        create table if not exists itineraries (
                             id text not null primary key,
                             waypoint_count number not null,
                             radius decimal not null,
@@ -57,10 +64,11 @@ impl DebugWriter {
                         (),
                     )
                     .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
+
                 connection
                     .execute(
                         "
-                        create table waypoints (
+                        create table if not exists waypoints (
                             itinerary_id text not null,
                             seq number not null,
                             lat decimal not null,
@@ -74,7 +82,7 @@ impl DebugWriter {
                 connection
                     .execute(
                         "
-                        create table steps (
+                        create table if not exists steps (
                             itinerary_id text not null,
                             num number not null,
                             move_result text not null
