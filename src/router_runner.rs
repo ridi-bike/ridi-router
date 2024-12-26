@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
+    debug_writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
@@ -279,7 +280,9 @@ impl RouterRunner {
         routing_mode: &RoutingMode,
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
+        debug_file: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
+        DebugWriter::init(debug_file).expect("Failed to set up debugging");
         let rules = RouterRules::read(rule_file).expect("Failed to read rules");
         let mut data_cache = MapDataCache::init(cache_dir);
         let cached_map_data = data_cache.read_cache();
@@ -448,12 +451,14 @@ impl RouterRunner {
                 rule_file,
                 input,
                 output,
+                debug_file,
             } => RouterRunner::run_dual(
                 &input,
                 cache_dir.clone(),
                 routing_mode,
                 &output,
                 rule_file.clone(),
+                debug_file.clone(),
             ),
             CliMode::Cache { input, cache_dir } => {
                 RouterRunner::run_cache(input, cache_dir.clone())

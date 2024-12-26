@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    debug_writer::DebugWriter,
     gpx_writer::write_debug_itinerary,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
@@ -180,7 +181,7 @@ impl Generator {
         itineraries
             .iter()
             .enumerate()
-            .for_each(|(idx, i)| write_debug_itinerary(idx, i));
+            .for_each(|(idx, i)| DebugWriter::write_itinerary(i));
         info!("Created {} itineraries", itineraries.len());
         let routes = itineraries
             .into_par_iter()

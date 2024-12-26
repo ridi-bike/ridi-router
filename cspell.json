@@ -18,6 +18,7 @@
 		"Dbscan",
 		"ndarray",
 		"hdbscan",
-		"thiserror"
+		"thiserror",
+		"rusqlite"
 	]
 }

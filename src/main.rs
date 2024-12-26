@@ -3,6 +3,7 @@ use std::io;
 use router_runner::RouterRunner;
 use tracing::Level;
 
+mod debug_writer;
 mod gpx_writer;
 mod ipc_handler;
 mod map_data;
