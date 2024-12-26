@@ -1,9 +1,8 @@
-use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::{
     map_data::{
-        graph::{MapDataGraph, MapDataGraphPacked},
+        graph::MapDataGraph,
         osm::{
             OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
             OsmWay,

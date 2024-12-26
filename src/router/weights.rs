@@ -1,6 +1,6 @@
-use std::{any::Any, collections::HashMap};
+use std::collections::HashMap;
 
-use geo::{Bearing, Haversine, HaversineBearing, Point};
+use geo::{Bearing, Haversine, Point};
 use tracing::{error, trace};
 
 use crate::router::rules::{RouterRules, RulesTagValueAction};

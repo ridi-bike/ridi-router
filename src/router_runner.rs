@@ -1,6 +1,6 @@
-use std::{ffi::OsString, num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
+use std::{num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
 
-use clap::{builder::OsStr, Parser};
+use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -218,6 +218,9 @@ enum CliMode {
 
         #[arg(long, value_name = "FILE")]
         rule_file: Option<PathBuf>,
+
+        #[arg(long, value_name = "FILE")]
+        debug_file: Option<PathBuf>,
 
         #[command(subcommand)]
         routing_mode: RoutingMode,

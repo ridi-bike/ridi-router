@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use crate::{
-    gpx_writer::{write_debug_itinerary, write_debug_segment},
+    gpx_writer::write_debug_itinerary,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
 };
-use geo::{Bearing, Destination, GeoNum, Haversine, Point};
+use geo::{Destination, Haversine, Point};
 use rayon::prelude::*;
-use tracing::{info, trace};
+use tracing::info;
 
 use super::{
     itinerary::Itinerary,

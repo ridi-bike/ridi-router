@@ -2,7 +2,7 @@ pub mod score;
 pub mod segment;
 pub mod segment_list;
 
-use std::{collections::HashMap, hash::Hash};
+use std::collections::HashMap;
 
 use score::Score;
 use serde::{Deserialize, Serialize};

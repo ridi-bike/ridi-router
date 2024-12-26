@@ -1,8 +1,6 @@
 use std::{io, path::PathBuf, time::Instant};
 
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
-};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use tracing::info;
 
 use crate::map_data::graph::MapDataGraphPacked;

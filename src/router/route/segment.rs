@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use serde::{Deserialize, Serialize};
-
 use crate::map_data::graph::{MapDataLineRef, MapDataPointRef};
 
 #[derive(PartialEq, Clone)]
