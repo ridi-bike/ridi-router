@@ -21,7 +21,10 @@ pub struct WeightCalcInput<'a> {
     pub rules: &'a RouterRules,
 }
 
-pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
+pub struct WeightCalc {
+    pub name: String,
+    pub calc: fn(input: WeightCalcInput) -> WeightCalcResult,
+}
 
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_heading");

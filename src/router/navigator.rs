@@ -170,18 +170,18 @@ impl Navigator {
                 return NavigationResult::Finished(self.walker.get_route().clone());
             }
             if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
-                let (fork_choices, last_point) = {
-                    let last_point = self.walker.get_last_point();
-                    (
-                        fork_choices.exclude_segments_where_points_in(
-                            &self
-                                .discarded_fork_choices
-                                .get_discarded_choices_for_point(&last_point)
-                                .map_or(Vec::new(), |d| d),
-                        ),
-                        last_point,
-                    )
-                };
+                let last_point = self.walker.get_last_point();
+                let discarded_choices = &self
+                    .discarded_fork_choices
+                    .get_discarded_choices_for_point(&last_point)
+                    .map_or(Vec::new(), |d| d);
+                DebugWriter::write_fork_choices(
+                    self.itinerary.id(),
+                    loop_counter,
+                    &fork_choices,
+                    &discarded_choices,
+                );
+                let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
 
                 self.itinerary.check_set_next(last_point.clone());
 
@@ -192,7 +192,7 @@ impl Navigator {
                             .weight_calcs
                             .iter()
                             .map(|weight_calc| {
-                                let weight_calc_result = weight_calc(WeightCalcInput {
+                                let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
                                     route: self.walker.get_route(),
                                     itinerary: &self.itinerary,
                                     current_fork_segment: &fork_route_segment,
@@ -202,7 +202,13 @@ impl Navigator {
                                     ),
                                     rules: &self.rules,
                                 });
-                                trace!(result = debug(&weight_calc_result), "Weight calc");
+                                DebugWriter::write_fork_choice_weight(
+                                    self.itinerary.id(),
+                                    loop_counter,
+                                    &fork_route_segment.get_end_point().borrow().id,
+                                    &weight_calc.name,
+                                    &weight_calc_result,
+                                );
                                 weight_calc_result
                             })
                             .collect::<Vec<_>>();
@@ -216,27 +222,46 @@ impl Navigator {
                     },
                 );
 
-                trace!(fork_weights = debug(&fork_weights), "Fork weights");
                 let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
                     self.discarded_fork_choices
                         .add_discarded_choice(&last_point, &chosen_fork_point);
+                    DebugWriter::write_step_result(
+                        self.itinerary.id(),
+                        loop_counter,
+                        "ForkChoice",
+                        Some(chosen_fork_point.borrow().id),
+                    );
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     self.walker.move_backwards_to_prev_fork();
+                    DebugWriter::write_step_result(
+                        self.itinerary.id(),
+                        loop_counter,
+                        "MoveBack",
+                        None,
+                    );
                     if self.walker.get_route().get_junction_before_last_segment() == None {
                         info!("Stuck");
+                        DebugWriter::write_step_result(
+                            self.itinerary.id(),
+                            loop_counter,
+                            "Stuck",
+                            None,
+                        );
                         self.walker.get_route().write_debug();
                         return NavigationResult::Stuck;
                     }
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
+                DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "MoveBack", None);
                 self.walker.move_backwards_to_prev_fork();
             }
 
             if loop_counter >= 1000000 {
                 info!("Reached loop {loop_counter}, stopping");
+                DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
                 return NavigationResult::Stopped(self.walker.get_route().clone());
             }
         }

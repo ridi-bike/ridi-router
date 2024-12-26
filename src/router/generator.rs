@@ -17,7 +17,7 @@ use super::{
     weights::{
         weight_check_distance_to_next, weight_heading, weight_no_loops, weight_no_sharp_turns,
         weight_no_short_detours, weight_prefer_same_road, weight_progress_speed,
-        weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
+        weight_rules_highway, weight_rules_smoothness, weight_rules_surface, WeightCalc,
     },
 };
 
@@ -188,16 +188,46 @@ impl Generator {
                     itinerary,
                     self.rules.clone(),
                     vec![
-                        weight_no_sharp_turns,
-                        weight_no_short_detours,
-                        weight_progress_speed,
-                        weight_check_distance_to_next,
-                        weight_prefer_same_road,
-                        weight_no_loops,
-                        weight_heading,
-                        weight_rules_highway,
-                        weight_rules_surface,
-                        weight_rules_smoothness,
+                        WeightCalc {
+                            name: "weight_no_sharp_turns".to_string(),
+                            calc: weight_no_sharp_turns,
+                        },
+                        WeightCalc {
+                            name: "weight_no_short_detours".to_string(),
+                            calc: weight_no_short_detours,
+                        },
+                        WeightCalc {
+                            name: "weight_progress_speed".to_string(),
+                            calc: weight_progress_speed,
+                        },
+                        WeightCalc {
+                            name: "weight_check_distance_to_next".to_string(),
+                            calc: weight_check_distance_to_next,
+                        },
+                        WeightCalc {
+                            name: "weight_prefer_same_road".to_string(),
+                            calc: weight_prefer_same_road,
+                        },
+                        WeightCalc {
+                            name: "weight_no_loops".to_string(),
+                            calc: weight_no_loops,
+                        },
+                        WeightCalc {
+                            name: "weight_heading".to_string(),
+                            calc: weight_heading,
+                        },
+                        WeightCalc {
+                            name: "weight_rules_highway".to_string(),
+                            calc: weight_rules_highway,
+                        },
+                        WeightCalc {
+                            name: "weight_rules_surface".to_string(),
+                            calc: weight_rules_surface,
+                        },
+                        WeightCalc {
+                            name: "weight_rules_smoothness".to_string(),
+                            calc: weight_rules_smoothness,
+                        },
                     ],
                 )
                 .generate_routes()
