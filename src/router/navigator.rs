@@ -5,7 +5,9 @@ use std::{
 
 use tracing::{info, trace};
 
-use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
+use crate::{
+    debug_writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
+};
 
 use super::{
     itinerary::Itinerary,
@@ -142,7 +144,7 @@ pub struct Navigator {
 impl Navigator {
     pub fn new(itinerary: Itinerary, rules: RouterRules, weight_calcs: Vec<WeightCalc>) -> Self {
         Self {
-            walker: Walker::new(itinerary.get_start().clone()),
+            walker: Walker::new(itinerary.start.clone()),
             itinerary,
             rules,
             weight_calcs,
@@ -162,14 +164,9 @@ impl Navigator {
                 .walker
                 .move_forward_to_next_fork(|p| self.itinerary.is_finished(p));
 
-            trace!(
-                step = loop_counter,
-                move_result = debug(&move_result),
-                "Next step"
-            );
+            DebugWriter::write_step(self.itinerary.id(), loop_counter, &move_result);
 
             if move_result == Ok(WalkerMoveResult::Finish) {
-                trace!("Finished with route");
                 return NavigationResult::Finished(self.walker.get_route().clone());
             }
             if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
@@ -271,7 +268,7 @@ mod test {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_start().clone(),
+                    None => &input.itinerary.start.clone(),
                 };
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 6
@@ -298,7 +295,7 @@ mod test {
             fn weight2(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_finish().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
 
                 if prev_point.borrow().id == 3
@@ -328,7 +325,7 @@ mod test {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_finish().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
 
                 if prev_point.borrow().id == 3 {
@@ -410,7 +407,7 @@ mod test {
             fn weight1(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_finish().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 6
@@ -422,7 +419,7 @@ mod test {
             fn weight2(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_finish().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
 
                 if prev_point.borrow().id == 3

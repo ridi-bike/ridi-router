@@ -4,12 +4,12 @@ use crate::map_data::graph::MapDataPointRef;
 
 #[derive(Clone, Debug)]
 pub struct Itinerary {
-    start: MapDataPointRef,
-    finish: MapDataPointRef,
-    waypoints: Vec<MapDataPointRef>,
-    next: MapDataPointRef,
-    waypoint_radius: f32,
-    visit_all_waypoints: bool,
+    pub start: MapDataPointRef,
+    pub finish: MapDataPointRef,
+    pub waypoints: Vec<MapDataPointRef>,
+    pub next: MapDataPointRef,
+    pub waypoint_radius: f32,
+    pub visit_all_waypoints: bool,
 }
 
 impl Display for Itinerary {
@@ -81,12 +81,6 @@ impl Itinerary {
     }
 
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {
-        // if !self.visit_all_waypoints
-        //     && current.borrow().distance_between(&self.finish)
-        //         < current.borrow().distance_between(&self.next)
-        // {
-        //     self.next = self.finish.clone();
-        // } else if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
         if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 self.next = self
@@ -97,21 +91,5 @@ impl Itinerary {
                 self.next = self.finish.clone();
             }
         }
-    }
-
-    pub fn get_next(&self) -> &MapDataPointRef {
-        &self.next
-    }
-
-    pub fn get_start(&self) -> &MapDataPointRef {
-        &self.start
-    }
-
-    pub fn get_finish(&self) -> &MapDataPointRef {
-        &self.finish
-    }
-
-    pub fn get_waypoints(&self) -> &Vec<MapDataPointRef> {
-        &self.waypoints
     }
 }

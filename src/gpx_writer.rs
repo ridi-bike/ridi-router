@@ -31,21 +31,21 @@ pub fn write_debug_itinerary(idx: usize, itinerary: &Itinerary) -> () {
     let mut gpx = Gpx::default();
     gpx.version = GpxVersion::Gpx11;
     let geo_p = Point::new(
-        itinerary.get_start().borrow().lon as f64,
-        itinerary.get_start().borrow().lat as f64,
+        itinerary.start.borrow().lon as f64,
+        itinerary.start.borrow().lat as f64,
     );
     let mut wp = Waypoint::new(geo_p);
     wp.name = Some("Start".to_string());
     gpx.waypoints.push(wp);
     let geo_p = Point::new(
-        itinerary.get_finish().borrow().lon as f64,
-        itinerary.get_finish().borrow().lat as f64,
+        itinerary.finish.borrow().lon as f64,
+        itinerary.finish.borrow().lat as f64,
     );
     let mut wp = Waypoint::new(geo_p);
     wp.name = Some("Finish".to_string());
     gpx.waypoints.push(wp);
 
-    for (wp_idx, wp) in itinerary.get_waypoints().iter().enumerate() {
+    for (wp_idx, wp) in itinerary.waypoints.iter().enumerate() {
         let geo_p = Point::new(wp.borrow().lon as f64, wp.borrow().lat as f64);
         let mut wp = Waypoint::new(geo_p);
         wp.name = Some(format!("wp {wp_idx}"));

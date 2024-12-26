@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    debug_writer::DebugWriter,
+    debug_writer::{DebugWriter, DebugWriterError},
     gpx_writer::write_debug_itinerary,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
@@ -176,12 +176,10 @@ impl Generator {
 
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
-        let itineraries = self.generate_itineraries()[..1].to_vec();
+        let itineraries = self.generate_itineraries().to_vec();
 
-        itineraries
-            .iter()
-            .enumerate()
-            .for_each(|(idx, i)| DebugWriter::write_itinerary(i));
+        DebugWriter::write_itineraries(&itineraries);
+
         info!("Created {} itineraries", itineraries.len());
         let routes = itineraries
             .into_par_iter()

@@ -48,8 +48,8 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         fork_segment.get_end_point().borrow().lat,
     );
     let next_point_geo = Point::new(
-        input.itinerary.get_next().borrow().lon,
-        input.itinerary.get_next().borrow().lat,
+        input.itinerary.next.borrow().lon,
+        input.itinerary.next.borrow().lat,
     );
 
     let next_bearing = Haversine::bearing(fork_point_geo, next_point_geo);
@@ -186,7 +186,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
         Some(segment) => segment
             .get_end_point()
             .borrow()
-            .distance_between(&input.itinerary.get_next()),
+            .distance_between(&input.itinerary.next),
     };
 
     let distance_to_next_junctions_back =
@@ -195,7 +195,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
             Some(segment) => segment
                 .get_end_point()
                 .borrow()
-                .distance_between(&input.itinerary.get_next()),
+                .distance_between(&input.itinerary.next),
         };
     trace!(
         distance = distance_to_next_junctions_back,
@@ -224,9 +224,9 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
     let total_distance = input
         .itinerary
-        .get_start()
+        .start
         .borrow()
-        .distance_between(&input.itinerary.get_next());
+        .distance_between(&input.itinerary.next);
     let point_steps_back = match input.route.get_segments_from_end(check_steps_back) {
         None => return WeightCalcResult::UseWithWeight(0),
         Some(segment) => segment.get_end_point().clone(),

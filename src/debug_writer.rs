@@ -3,7 +3,10 @@ use tracing::error;
 
 use rusqlite::Connection;
 
-use crate::router::itinerary::Itinerary;
+use crate::router::{
+    itinerary::Itinerary,
+    walker::{WalkerError, WalkerMoveResult},
+};
 
 thread_local! {
     static DEBUG_WRITER: OnceCell<Option<DebugWriter>> = OnceCell::new();
@@ -45,25 +48,38 @@ impl DebugWriter {
                     .execute(
                         "
                         create table itineraries (
-                          id text not null primary key,
-                          waypoint_count number not null,
-                          radius decimal not null,
-                          visit_all_wps number not null
+                            id text not null primary key,
+                            waypoint_count number not null,
+                            radius decimal not null,
+                            visit_all_wps number not null
                         );
-                    ",
+                        ",
                         (),
                     )
                     .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
                 connection
                     .execute(
                         "
-                        create table itinerary_waypoints (
-                          itinerary_id text not null,
-                          seq number not null,
-                          lat decimal not null,
-                          lon decimal not null
+                        create table waypoints (
+                            itinerary_id text not null,
+                            seq number not null,
+                            lat decimal not null,
+                            lon decimal not null
                         );
-                    ",
+                        ",
+                        (),
+                    )
+                    .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
+
+                connection
+                    .execute(
+                        "
+                        create table steps (
+                            itinerary_id text not null,
+                            num number not null,
+                            move_result text not null
+                        );
+                        ",
                         (),
                     )
                     .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
@@ -81,7 +97,11 @@ impl DebugWriter {
         Ok(())
     }
 
-    pub fn write_itinerary(itinerary: &Itinerary) -> () {
+    pub fn write_step(
+        itinerary_id: String,
+        step: u32,
+        move_result: &Result<WalkerMoveResult, WalkerError>,
+    ) {
         let res: Result<(), DebugWriterError> = DEBUG_WRITER.with(|oc| {
             if let Some(debug_writer) = oc.get() {
                 if let Some(debug_writer) = debug_writer {
@@ -89,53 +109,91 @@ impl DebugWriter {
                         .connection
                         .prepare(
                             "
-                            insert into itineraries 
-                            (id, waypoint_count, radius, visit_all_wps)
+                            insert into steps 
+                            (itinerary_id, num, move_result)
                             values 
-                            (?1, ?2, ?3, ?4)
+                            (?1, ?2, ?3)
                             ",
                         )
                         .map_err(|error| DebugWriterError::DbPrepare { error })?;
 
+                    let move_result = match move_result {
+                        Err(_) => "Error",
+                        Ok(WalkerMoveResult::Finish) => "Finish",
+                        Ok(WalkerMoveResult::DeadEnd) => "Dead End",
+                        Ok(WalkerMoveResult::Fork(_)) => "Fork",
+                    };
                     statement
-                        .execute([
-                            itinerary.id(),
-                            itinerary.get_waypoints().len().to_string(),
-                            itinerary.waypoint_radius.to_string(),
-                            if itinerary.visit_all_waypoints {
-                                1.to_string()
-                            } else {
-                                0.to_string()
-                            },
-                        ])
+                        .execute([itinerary_id, step.to_string(), move_result.to_string()])
                         .map_err(|error| DebugWriterError::DbWrite { error })?;
+                }
+            }
+            Ok(())
+        });
 
-                    let mut statement = debug_writer
-                        .connection
-                        .prepare(
-                            "
-                            insert into itinerary_waypoints 
-                            (itinerary_id, seq, lat, lon) 
-                            values (?1, ?2, ?3, ?4)
-                            ",
-                        )
-                        .map_err(|error| DebugWriterError::DbPrepare { error })?;
+        if let Err(error) = res {
+            error!(error = ?error, "Could not write debug log")
+        }
+    }
 
-                    itinerary
-                        .get_waypoints()
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, wp)| {
-                            statement
-                                .execute([
-                                    itinerary.id(),
-                                    idx.to_string(),
-                                    wp.borrow().lat.to_string(),
-                                    wp.borrow().lon.to_string(),
-                                ])
-                                .map_err(|error| DebugWriterError::DbWrite { error })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
+    pub fn write_itineraries(itineraries: &Vec<Itinerary>) -> () {
+        let res: Result<(), DebugWriterError> = DEBUG_WRITER.with(|oc| {
+            if let Some(debug_writer) = oc.get() {
+                if let Some(debug_writer) = debug_writer {
+                    for itinerary in itineraries {
+                        let mut statement = debug_writer
+                            .connection
+                            .prepare(
+                                "
+                                insert into itineraries 
+                                (id, waypoint_count, radius, visit_all_wps)
+                                values 
+                                (?1, ?2, ?3, ?4)
+                                ",
+                            )
+                            .map_err(|error| DebugWriterError::DbPrepare { error })?;
+
+                        statement
+                            .execute([
+                                itinerary.id(),
+                                itinerary.waypoints.len().to_string(),
+                                itinerary.waypoint_radius.to_string(),
+                                if itinerary.visit_all_waypoints {
+                                    1.to_string()
+                                } else {
+                                    0.to_string()
+                                },
+                            ])
+                            .map_err(|error| DebugWriterError::DbWrite { error })?;
+
+                        let mut statement = debug_writer
+                            .connection
+                            .prepare(
+                                "
+                                insert into waypoints 
+                                (itinerary_id, seq, lat, lon) 
+                                values 
+                                (?1, ?2, ?3, ?4)
+                                ",
+                            )
+                            .map_err(|error| DebugWriterError::DbPrepare { error })?;
+
+                        itinerary
+                            .waypoints
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, wp)| {
+                                statement
+                                    .execute([
+                                        itinerary.id(),
+                                        idx.to_string(),
+                                        wp.borrow().lat.to_string(),
+                                        wp.borrow().lon.to_string(),
+                                    ])
+                                    .map_err(|error| DebugWriterError::DbWrite { error })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                    }
                 }
             }
             Ok(())
