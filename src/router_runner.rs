@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    debug_writer::DebugWriter,
+    debug::viewer::DebugViewer,
+    debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
