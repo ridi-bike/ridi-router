@@ -6,7 +6,7 @@ use std::{
 use tracing::{info, trace};
 
 use crate::{
-    debug_writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
+    debug::writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
 };
 
 use super::{

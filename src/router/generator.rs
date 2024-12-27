@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    debug_writer::{DebugWriter, DebugWriterError},
+    debug::writer::DebugWriter,
     gpx_writer::write_debug_itinerary,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
