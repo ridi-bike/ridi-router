@@ -37,6 +37,8 @@ pub enum DebugWriterError {
     },
     #[error("Could not write record")]
     Write { error: csv::Error },
+    #[error("Could not flush file")]
+    Flush { error: io::Error },
 }
 
 static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -51,12 +53,12 @@ pub struct DebugWriter {
 
 impl DebugWriter {
     fn exec<T: Fn(&mut csv::Writer<File>) -> Result<(), DebugWriterError>>(
-        file_id: &str,
-        item_id: &str,
+        file_type_id: &str,
         header_row: &[&str],
         cb: T,
     ) -> () {
         if let Some(debug_dir) = DEBUG_DIR.get() {
+            let file_id = format!("{file_type_id}-{:?}", std::thread::current().id());
             let res = DEBUG_WRITER.with(|debug_writer| -> Result<(), DebugWriterError> {
                 let debug_writer = debug_writer.get_or_init(|| {
                     RwLock::new(DebugWriter {
@@ -70,11 +72,14 @@ impl DebugWriter {
                             error: error.to_string(),
                         })?;
 
-                if let Some(writer) = debug_writer_write.files.get_mut(file_id) {
+                if let Some(writer) = debug_writer_write.files.get_mut(&file_id) {
                     cb(writer)?;
+                    writer
+                        .flush()
+                        .map_err(|error| DebugWriterError::Flush { error })?;
                 } else {
                     let mut file_name = debug_dir.clone();
-                    file_name.push(format!("{item_id}.{file_id}"));
+                    file_name.push(&file_id);
                     file_name.set_extension("csv");
                     let file = File::create(&file_name)
                         .map_err(|error| DebugWriterError::FileCreate { file_name, error })?;
@@ -83,12 +88,15 @@ impl DebugWriter {
                         .write_record(header_row)
                         .map_err(|error| DebugWriterError::Write { error })?;
                     cb(&mut writer)?;
-                    debug_writer_write.files.insert(file_id.to_string(), writer);
+                    writer
+                        .flush()
+                        .map_err(|error| DebugWriterError::Flush { error })?;
+                    debug_writer_write.files.insert(file_id, writer);
                 }
                 Ok(())
             });
             if let Err(error) = res {
-                error!(error = display(error), "Failed to write to log");
+                error!(error = debug(error), "Failed to write to log");
             }
         }
     }
@@ -98,9 +106,9 @@ impl DebugWriter {
             if std::fs::exists(&dir_name).map_err(|error| DebugWriterError::DirCheck { error })? {
                 std::fs::remove_dir_all(&dir_name)
                     .map_err(|error| DebugWriterError::DirRemove { error })?;
-                std::fs::create_dir_all(&dir_name)
-                    .map_err(|error| DebugWriterError::DirRemove { error })?;
             }
+            std::fs::create_dir_all(&dir_name)
+                .map_err(|error| DebugWriterError::DirRemove { error })?;
             DEBUG_DIR.get_or_init(|| dir_name);
         }
 
@@ -114,8 +122,7 @@ impl DebugWriter {
         chosen_fork_point_id: Option<u64>,
     ) {
         DebugWriter::exec(
-            "steps",
-            &itinerary_id,
+            "step_result",
             &["itinerary_id", "step_num", "result", "chosen_fork_point_id"],
             |writer| {
                 writer
@@ -142,8 +149,7 @@ impl DebugWriter {
             WeightCalcResult::UseWithWeight(v) => ("UseWithWeight", v),
         };
         DebugWriter::exec(
-            "steps",
-            &itinerary_id,
+            "fork_choice_weight",
             &[
                 "itinerary_id",
                 "step_num",
@@ -176,8 +182,7 @@ impl DebugWriter {
     ) {
         for segment in segment_list.clone().into_iter() {
             DebugWriter::exec(
-                "steps",
-                &itinerary_id,
+                "fork_choices",
                 &[
                     "itinerary_id",
                     "step_num",
@@ -259,7 +264,6 @@ impl DebugWriter {
         };
         DebugWriter::exec(
             "steps",
-            &itinerary_id,
             &["itinerary_id", "step_num", "move_result"],
             |writer| {
                 writer
@@ -277,8 +281,7 @@ impl DebugWriter {
     pub fn write_itineraries(itineraries: &Vec<Itinerary>) -> () {
         for itinerary in itineraries {
             DebugWriter::exec(
-                "steps",
-                &itinerary.id(),
+                "itineraries",
                 &["itinerary_id", "waypoints_count", "radius", "visit_all"],
                 |writer| {
                     writer
@@ -294,9 +297,8 @@ impl DebugWriter {
             );
             for (idx, wp) in itinerary.waypoints.iter().enumerate() {
                 DebugWriter::exec(
-                    "steps",
-                    &itinerary.id(),
-                    &["itinerary_id", "step_num", "move_result"],
+                    "itinerary_waypoints",
+                    &["itinerary_id", "idx", "lat", "lon"],
                     |writer| {
                         writer
                             .write_record([
