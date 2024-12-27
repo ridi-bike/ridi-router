@@ -220,8 +220,8 @@ enum CliMode {
         #[arg(long, value_name = "FILE")]
         rule_file: Option<PathBuf>,
 
-        #[arg(long, value_name = "FILE")]
-        debug_file: Option<PathBuf>,
+        #[arg(long, value_name = "DIR")]
+        debug_dir: Option<PathBuf>,
 
         #[command(subcommand)]
         routing_mode: RoutingMode,
@@ -280,9 +280,9 @@ impl RouterRunner {
         routing_mode: &RoutingMode,
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
-        debug_file: Option<PathBuf>,
+        debug_dir: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
-        DebugWriter::init(debug_file).expect("Failed to set up debugging");
+        DebugWriter::init(debug_dir).expect("Failed to set up debugging");
         let rules = RouterRules::read(rule_file).expect("Failed to read rules");
         let mut data_cache = MapDataCache::init(cache_dir);
         let cached_map_data = data_cache.read_cache();
@@ -451,14 +451,14 @@ impl RouterRunner {
                 rule_file,
                 input,
                 output,
-                debug_file,
+                debug_dir: debug_dir,
             } => RouterRunner::run_dual(
                 &input,
                 cache_dir.clone(),
                 routing_mode,
                 &output,
                 rule_file.clone(),
-                debug_file.clone(),
+                debug_dir.clone(),
             ),
             CliMode::Cache { input, cache_dir } => {
                 RouterRunner::run_cache(input, cache_dir.clone())

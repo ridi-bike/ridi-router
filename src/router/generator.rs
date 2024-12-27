@@ -176,7 +176,7 @@ impl Generator {
 
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
-        let itineraries = self.generate_itineraries().to_vec();
+        let itineraries = self.generate_itineraries()[..1].to_vec();
 
         DebugWriter::write_itineraries(&itineraries);
 

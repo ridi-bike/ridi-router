@@ -1,7 +1,12 @@
-use std::{cell::OnceCell, io, path::PathBuf, sync::OnceLock, time::Duration};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io,
+    path::PathBuf,
+    sync::{LazyLock, OnceLock, PoisonError, RwLock, RwLockReadGuard},
+    time::Duration,
+};
 use tracing::error;
-
-use rusqlite::Connection;
 
 use crate::{
     map_data::graph::MapDataPointRef,
@@ -13,172 +18,90 @@ use crate::{
     },
 };
 
-static DEBUG_FILE_NAME: OnceLock<PathBuf> = OnceLock::new();
-
-thread_local! {
-    static DEBUG_WRITER: OnceCell<Option<DebugWriter>> = OnceCell::new();
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum DebugWriterError {
-    #[error("Could not check if debug log db file exists: {error}")]
-    DbFileCheck { error: io::Error },
-    #[error("Could not remove existing debug log db file: {error}")]
-    DbFileRemove { error: io::Error },
-    #[error("Could not open debug log database: {error}")]
-    DbOpen { error: rusqlite::Error },
-    #[error("Could not setup debug log database schema: {error}")]
-    DbSchemaSetup { error: rusqlite::Error },
-    #[error("Could not setup execute PRAGMA: {error:?}")]
-    DbPragma { error: rusqlite::Error },
-    #[error("Could not execute sql in database: {error}")]
-    DbWrite { error: rusqlite::Error },
-    #[error("Could not prepare sql: {error}")]
-    DbPrepare { error: rusqlite::Error },
-    #[error("Could not set busy timeout: {error}")]
-    DbBusyTimeout { error: rusqlite::Error },
+    #[error("Could not check if debug dir exists: {error}")]
+    DirCheck { error: io::Error },
+    #[error("Could not remove existing debug dir: {error}")]
+    DirRemove { error: io::Error },
+    #[error("Could not create debug dir: {error}")]
+    DirCreate { error: io::Error },
+    #[error("Could not read global debug_writer")]
+    StaticRead { error: String },
+    #[error("Could not get write lock on debug_writer")]
+    StaticWrite { error: String },
+    #[error("Could not create file")]
+    FileCreate {
+        file_name: PathBuf,
+        error: io::Error,
+    },
+    #[error("Could not write record")]
+    Write { error: csv::Error },
+}
+
+static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+thread_local! {
+    static DEBUG_WRITER: OnceLock<RwLock<DebugWriter>> = OnceLock::new();
 }
 
 pub struct DebugWriter {
-    connection: Connection,
+    files: HashMap<String, csv::Writer<File>>,
 }
 
 impl DebugWriter {
-    fn exec<T: Fn(&DebugWriter) -> Result<(), DebugWriterError>>(
+    fn exec<T: Fn(&mut csv::Writer<File>) -> Result<(), DebugWriterError>>(
+        file_id: &str,
+        item_id: &str,
+        header_row: &[&str],
         cb: T,
-    ) -> Result<(), DebugWriterError> {
-        DEBUG_WRITER.with(|oc| {
-            if oc.get().is_none() {
-                if let Some(filename) = DEBUG_FILE_NAME.get() {
-                    let connection = Connection::open(&filename)
-                        .map_err(|error| DebugWriterError::DbOpen { error })?;
+    ) -> () {
+        if let Some(debug_dir) = DEBUG_DIR.get() {
+            let res = DEBUG_WRITER.with(|debug_writer| -> Result<(), DebugWriterError> {
+                let debug_writer = debug_writer.get_or_init(|| {
+                    RwLock::new(DebugWriter {
+                        files: HashMap::new(),
+                    })
+                });
+                let mut debug_writer_write =
+                    debug_writer
+                        .write()
+                        .map_err(|error| DebugWriterError::StaticRead {
+                            error: error.to_string(),
+                        })?;
 
-                    connection
-                        .pragma_update(None, "journal_mode", "WAL")
-                        .map_err(|error| DebugWriterError::DbPragma { error })?;
-
-                    connection
-                        // .busy_timeout(Duration::from_secs(20))
-                        .busy_handler(Some(|_v| true))
-                        .map_err(|error| DebugWriterError::DbBusyTimeout { error })?;
-
-                    connection
-                        .execute(
-                            "
-                            create table if not exists itineraries (
-                                id text not null primary key,
-                                waypoint_count number not null,
-                                radius decimal not null,
-                                visit_all_wps number not null
-                            );
-                            ",
-                            (),
-                        )
-                        .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
-
-                    connection
-                        .execute(
-                            "
-                            create table if not exists waypoints (
-                                itinerary_id text not null,
-                                seq number not null,
-                                lat decimal not null,
-                                lon decimal not null
-                            );
-                            ",
-                            (),
-                        )
-                        .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
-
-                    connection
-                        .execute(
-                            "
-                            create table if not exists steps (
-                                itinerary_id text not null,
-                                num number not null,
-                                move_result text not null
-                            );
-                            ",
-                            (),
-                        )
-                        .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
-
-                    connection
-                        .execute(
-                            "
-                            create table if not exists fork_choices (
-                                itinerary_id text not null,
-                                step_num number not null,
-                                end_point_id number not null,
-                                line_point_0_lat decimal not null,
-                                line_point_0_lon decimal not null,
-                                line_point_1_lat decimal not null,
-                                line_point_1_lon decimal not null,
-                                segment_end_point number not null,
-                                discarded number not null
-                            );
-                            ",
-                            (),
-                        )
-                        .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
-
-                    connection
-                        .execute(
-                            "
-                            create table if not exists fork_choice_weights (
-                                itinerary_id text not null,
-                                step_num number not null,
-                                end_point_id number not null,
-                                weight_name text not null,
-                                weight_type text not null,
-                                weight_value number not null
-                            );
-                            ",
-                            (),
-                        )
-                        .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
-
-                    connection
-                        .execute(
-                            "
-                            create table if not exists step_result (
-                                itinerary_id text not null,
-                                step_num number not null,
-                                result text not null,
-                                chosen_fork_point_id number not null
-                            );
-                            ",
-                            (),
-                        )
-                        .map_err(|error| DebugWriterError::DbSchemaSetup { error })?;
-
-                    oc.get_or_init(move || Some(DebugWriter { connection }));
+                if let Some(writer) = debug_writer_write.files.get_mut(file_id) {
+                    cb(writer)?;
+                } else {
+                    let mut file_name = debug_dir.clone();
+                    file_name.push(format!("{item_id}.{file_id}"));
+                    file_name.set_extension("csv");
+                    let file = File::create(&file_name)
+                        .map_err(|error| DebugWriterError::FileCreate { file_name, error })?;
+                    let mut writer = csv::Writer::from_writer(file);
+                    writer
+                        .write_record(header_row)
+                        .map_err(|error| DebugWriterError::Write { error })?;
+                    cb(&mut writer)?;
+                    debug_writer_write.files.insert(file_id.to_string(), writer);
                 }
+                Ok(())
+            });
+            if let Err(error) = res {
+                error!(error = display(error), "Failed to write to log");
             }
-            if let Some(debug_writer) = oc.get() {
-                if let Some(debug_writer) = debug_writer {
-                    cb(debug_writer)?;
-                }
-            }
-            Ok(())
-        })?;
-
-        Ok(())
+        }
     }
 
-    pub fn init(filename: Option<PathBuf>) -> Result<(), DebugWriterError> {
-        if let Some(filename) = filename {
-            if std::fs::exists(&filename)
-                .map_err(|error| DebugWriterError::DbFileCheck { error })?
-            {
-                std::fs::remove_file(&filename)
-                    .map_err(|error| DebugWriterError::DbFileRemove { error })?;
+    pub fn init(dir_name: Option<PathBuf>) -> Result<(), DebugWriterError> {
+        if let Some(dir_name) = dir_name {
+            if std::fs::exists(&dir_name).map_err(|error| DebugWriterError::DirCheck { error })? {
+                std::fs::remove_dir_all(&dir_name)
+                    .map_err(|error| DebugWriterError::DirRemove { error })?;
+                std::fs::create_dir_all(&dir_name)
+                    .map_err(|error| DebugWriterError::DirRemove { error })?;
             }
-            DEBUG_FILE_NAME.get_or_init(move || filename);
-        } else {
-            DEBUG_WRITER.with(|oc| {
-                oc.get_or_init(|| None);
-            });
+            DEBUG_DIR.get_or_init(|| dir_name);
         }
 
         Ok(())
@@ -190,42 +113,22 @@ impl DebugWriter {
         result: &str,
         chosen_fork_point_id: Option<u64>,
     ) {
-        let res: Result<(), DebugWriterError> = DEBUG_WRITER.with(|oc| {
-            if let Some(debug_writer) = oc.get() {
-                if let Some(debug_writer) = debug_writer {
-                    let mut statement = debug_writer
-                        .connection
-                        .prepare(
-                            "
-                            insert into step_result 
-                            (
-                                itinerary_id,
-                                step_num,
-                                result,
-                                chosen_fork_point_id
-                            )
-                            values 
-                            (?1, ?2, ?3, ?4)
-                            ",
-                        )
-                        .map_err(|error| DebugWriterError::DbPrepare { error })?;
-
-                    statement
-                        .execute([
-                            itinerary_id.clone(),
-                            step.to_string(),
-                            result.to_string(),
-                            chosen_fork_point_id.map_or(0, |v| v).to_string(),
-                        ])
-                        .map_err(|error| DebugWriterError::DbWrite { error })?;
-                }
-            }
-            Ok(())
-        });
-
-        if let Err(error) = res {
-            error!(error = ?error, "Could not write debug log")
-        }
+        DebugWriter::exec(
+            "steps",
+            &itinerary_id,
+            &["itinerary_id", "step_num", "result", "chosen_fork_point_id"],
+            |writer| {
+                writer
+                    .write_record([
+                        itinerary_id.clone(),
+                        step.to_string(),
+                        result.to_string(),
+                        chosen_fork_point_id.map_or(0, |v| v).to_string(),
+                    ])
+                    .map_err(|error| DebugWriterError::Write { error })?;
+                Ok(())
+            },
+        );
     }
     pub fn write_fork_choice_weight(
         itinerary_id: String,
@@ -234,47 +137,35 @@ impl DebugWriter {
         weight_name: &String,
         weight_result: &WeightCalcResult,
     ) {
-        let res = DebugWriter::exec(|debug_writer| {
-            let mut statement = debug_writer
-                .connection
-                .prepare(
-                    "
-                            insert into fork_choice_weights
-                            (
-                                itinerary_id,
-                                step_num,
-                                end_point_id,
-                                weight_name,
-                                weight_type,
-                                weight_value
-                            )
-                            values 
-                            (?1, ?2, ?3, ?4, ?5, ?6)
-                            ",
-                )
-                .map_err(|error| DebugWriterError::DbPrepare { error })?;
-
-            let (weight_type, weight_value) = match weight_result {
-                WeightCalcResult::DoNotUse => ("DoNotUse", &0),
-                WeightCalcResult::UseWithWeight(v) => ("UseWithWeight", v),
-            };
-            statement
-                .execute([
-                    itinerary_id.clone(),
-                    step.to_string(),
-                    end_point_id.to_string(),
-                    weight_name.to_string(),
-                    weight_type.to_string(),
-                    weight_value.to_string(),
-                ])
-                .map_err(|error| DebugWriterError::DbWrite { error })?;
-
-            Ok(())
-        });
-
-        if let Err(error) = res {
-            error!(error = ?error, "Could not write debug log")
-        }
+        let (weight_type, weight_value) = match weight_result {
+            WeightCalcResult::DoNotUse => ("DoNotUse", &0),
+            WeightCalcResult::UseWithWeight(v) => ("UseWithWeight", v),
+        };
+        DebugWriter::exec(
+            "steps",
+            &itinerary_id,
+            &[
+                "itinerary_id",
+                "step_num",
+                "end_point_id",
+                "weight_name",
+                "weight_type",
+                "weight_value",
+            ],
+            |writer| {
+                writer
+                    .write_record([
+                        itinerary_id.clone(),
+                        step.to_string(),
+                        end_point_id.to_string(),
+                        weight_name.to_string(),
+                        weight_type.to_string(),
+                        weight_value.to_string(),
+                    ])
+                    .map_err(|error| DebugWriterError::Write { error })?;
+                Ok(())
+            },
+        );
     }
 
     pub fn write_fork_choices(
@@ -283,91 +174,75 @@ impl DebugWriter {
         segment_list: &SegmentList,
         discarded_choices: &Vec<MapDataPointRef>,
     ) {
-        let res = DebugWriter::exec(|debug_writer| {
-            let mut statement = debug_writer
-                .connection
-                .prepare(
-                    "
-                            insert into fork_choices 
-                            (
-                                itinerary_id,
-                                step_num,
-                                end_point_id,
-                                line_point_0_lat,
-                                line_point_0_lon,
-                                line_point_1_lat,
-                                line_point_1_lon,
-                                segment_end_point,
-                                discarded
-                            )
-                            values 
-                            (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                            ",
-                )
-                .map_err(|error| DebugWriterError::DbPrepare { error })?;
-
-            for segment in segment_list.clone().into_iter() {
-                statement
-                    .execute([
-                        itinerary_id.clone(),
-                        step.to_string(),
-                        segment.get_end_point().borrow().id.to_string(),
-                        segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .0
-                            .borrow()
-                            .lat
+        for segment in segment_list.clone().into_iter() {
+            DebugWriter::exec(
+                "steps",
+                &itinerary_id,
+                &[
+                    "itinerary_id",
+                    "step_num",
+                    "end_point_id",
+                    "line_point_0_lat",
+                    "line_point_0_lon",
+                    "line_point_1_lat",
+                    "line_point_1_lon",
+                    "segment_end_point",
+                    "discarded",
+                ],
+                |writer| {
+                    writer
+                        .write_record([
+                            itinerary_id.clone(),
+                            step.to_string(),
+                            segment.get_end_point().borrow().id.to_string(),
+                            segment
+                                .get_line()
+                                .borrow()
+                                .points
+                                .0
+                                .borrow()
+                                .lat
+                                .to_string(),
+                            segment
+                                .get_line()
+                                .borrow()
+                                .points
+                                .0
+                                .borrow()
+                                .lon
+                                .to_string(),
+                            segment
+                                .get_line()
+                                .borrow()
+                                .points
+                                .1
+                                .borrow()
+                                .lat
+                                .to_string(),
+                            segment
+                                .get_line()
+                                .borrow()
+                                .points
+                                .1
+                                .borrow()
+                                .lon
+                                .to_string(),
+                            if segment.get_end_point() == &segment.get_line().borrow().points.0 {
+                                0
+                            } else {
+                                1
+                            }
                             .to_string(),
-                        segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .0
-                            .borrow()
-                            .lon
-                            .to_string(),
-                        segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .1
-                            .borrow()
-                            .lat
-                            .to_string(),
-                        segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .1
-                            .borrow()
-                            .lon
-                            .to_string(),
-                        if segment.get_end_point() == &segment.get_line().borrow().points.0 {
-                            0
-                        } else {
-                            1
-                        }
-                        .to_string(),
-                        if discarded_choices
-                            .iter()
-                            .find(|c| c == &segment.get_end_point())
-                            .is_some()
-                        {
-                            1
-                        } else {
-                            0
-                        }
-                        .to_string(),
-                    ])
-                    .map_err(|error| DebugWriterError::DbWrite { error })?;
-            }
-            Ok(())
-        });
-
-        if let Err(error) = res {
-            error!(error = ?error, "Could not write debug log")
+                            discarded_choices
+                                .iter()
+                                .find(|c| c == &segment.get_end_point())
+                                .is_some()
+                                .to_string(),
+                        ])
+                        .map_err(|error| DebugWriterError::Write { error })?;
+                    Ok(())
+                },
+            );
         }
     }
 
@@ -376,101 +251,65 @@ impl DebugWriter {
         step: u32,
         move_result: &Result<WalkerMoveResult, WalkerError>,
     ) {
-        let res = DebugWriter::exec(|debug_writer| {
-            let mut statement = debug_writer
-                .connection
-                .prepare(
-                    "
-                            insert into steps 
-                            (itinerary_id, num, move_result)
-                            values 
-                            (?1, ?2, ?3)
-                            ",
-                )
-                .map_err(|error| DebugWriterError::DbPrepare { error })?;
-
-            let move_result = match move_result {
-                Err(_) => "Error",
-                Ok(WalkerMoveResult::Finish) => "Finish",
-                Ok(WalkerMoveResult::DeadEnd) => "Dead End",
-                Ok(WalkerMoveResult::Fork(_)) => "Fork",
-            };
-            statement
-                .execute([
-                    itinerary_id.clone(),
-                    step.to_string(),
-                    move_result.to_string(),
-                ])
-                .map_err(|error| DebugWriterError::DbWrite { error })?;
-            Ok(())
-        });
-
-        if let Err(error) = res {
-            error!(error = ?error, "Could not write debug log")
-        }
+        let move_result = match move_result {
+            Err(_) => "Error",
+            Ok(WalkerMoveResult::Finish) => "Finish",
+            Ok(WalkerMoveResult::DeadEnd) => "Dead End",
+            Ok(WalkerMoveResult::Fork(_)) => "Fork",
+        };
+        DebugWriter::exec(
+            "steps",
+            &itinerary_id,
+            &["itinerary_id", "step_num", "move_result"],
+            |writer| {
+                writer
+                    .write_record([
+                        itinerary_id.clone(),
+                        step.to_string(),
+                        move_result.to_string(),
+                    ])
+                    .map_err(|error| DebugWriterError::Write { error })?;
+                Ok(())
+            },
+        );
     }
 
     pub fn write_itineraries(itineraries: &Vec<Itinerary>) -> () {
-        let res = DebugWriter::exec(|debug_writer| {
-            for itinerary in itineraries {
-                let mut statement = debug_writer
-                    .connection
-                    .prepare(
-                        "
-                                insert into itineraries 
-                                (id, waypoint_count, radius, visit_all_wps)
-                                values 
-                                (?1, ?2, ?3, ?4)
-                                ",
-                    )
-                    .map_err(|error| DebugWriterError::DbPrepare { error })?;
-
-                statement
-                    .execute([
-                        itinerary.id(),
-                        itinerary.waypoints.len().to_string(),
-                        itinerary.waypoint_radius.to_string(),
-                        if itinerary.visit_all_waypoints {
-                            1.to_string()
-                        } else {
-                            0.to_string()
-                        },
-                    ])
-                    .map_err(|error| DebugWriterError::DbWrite { error })?;
-
-                let mut statement = debug_writer
-                    .connection
-                    .prepare(
-                        "
-                                insert into waypoints 
-                                (itinerary_id, seq, lat, lon) 
-                                values 
-                                (?1, ?2, ?3, ?4)
-                                ",
-                    )
-                    .map_err(|error| DebugWriterError::DbPrepare { error })?;
-
-                itinerary
-                    .waypoints
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, wp)| {
-                        statement
-                            .execute([
+        for itinerary in itineraries {
+            DebugWriter::exec(
+                "steps",
+                &itinerary.id(),
+                &["itinerary_id", "waypoints_count", "radius", "visit_all"],
+                |writer| {
+                    writer
+                        .write_record([
+                            itinerary.id(),
+                            itinerary.waypoints.len().to_string(),
+                            itinerary.waypoint_radius.to_string(),
+                            itinerary.visit_all_waypoints.to_string(),
+                        ])
+                        .map_err(|error| DebugWriterError::Write { error })?;
+                    Ok(())
+                },
+            );
+            for (idx, wp) in itinerary.waypoints.iter().enumerate() {
+                DebugWriter::exec(
+                    "steps",
+                    &itinerary.id(),
+                    &["itinerary_id", "step_num", "move_result"],
+                    |writer| {
+                        writer
+                            .write_record([
                                 itinerary.id(),
                                 idx.to_string(),
                                 wp.borrow().lat.to_string(),
                                 wp.borrow().lon.to_string(),
                             ])
-                            .map_err(|error| DebugWriterError::DbWrite { error })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                            .map_err(|error| DebugWriterError::Write { error })?;
+                        Ok(())
+                    },
+                );
             }
-            Ok(())
-        });
-
-        if let Err(error) = res {
-            error!(error = ?error, "Could not write debug log")
         }
     }
 }
