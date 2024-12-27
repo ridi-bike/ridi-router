@@ -1,8 +1,7 @@
 use std::{
     error::Error,
     fs::File,
-    io::{self, prelude::BufRead, BufReader, Cursor, Read, Write},
-    net::{TcpListener, TcpStream},
+    io::{Cursor, Read},
     path::PathBuf,
 };
 use tiny_http::{Header, Method, Request, Response, Server};
