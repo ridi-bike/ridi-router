@@ -6,7 +6,7 @@ use std::{
     sync::{LazyLock, OnceLock, PoisonError, RwLock, RwLockReadGuard},
     time::Duration,
 };
-use tracing::error;
+use tracing::{dispatcher::get_default, error};
 
 use crate::{
     map_data::graph::MapDataPointRef,
@@ -17,6 +17,57 @@ use crate::{
         walker::{WalkerError, WalkerMoveResult},
     },
 };
+
+pub const DEBUG_STREAMS: LazyLock<[(&'static str, Vec<&'static str>); 6]> = LazyLock::new(|| {
+    [
+        (
+            "step_result",
+            vec!["itinerary_id", "step_num", "result", "chosen_fork_point_id"],
+        ),
+        (
+            "fork_choice_weight",
+            vec![
+                "itinerary_id",
+                "step_num",
+                "end_point_id",
+                "weight_name",
+                "weight_type",
+                "weight_value",
+            ],
+        ),
+        (
+            "fork_choices",
+            vec![
+                "itinerary_id",
+                "step_num",
+                "end_point_id",
+                "line_point_0_lat",
+                "line_point_0_lon",
+                "line_point_1_lat",
+                "line_point_1_lon",
+                "segment_end_point",
+                "discarded",
+            ],
+        ),
+        ("steps", vec!["itinerary_id", "step_num", "move_result"]),
+        (
+            "itineraries",
+            vec!["itinerary_id", "waypoints_count", "radius", "visit_all"],
+        ),
+        (
+            "itinerary_waypoints",
+            vec!["itinerary_id", "idx", "lat", "lon"],
+        ),
+    ]
+});
+
+fn get_debug_file(file_id: &'static str) -> (&'static str, Vec<&'static str>) {
+    DEBUG_STREAMS
+        .iter()
+        .find(|f| f.0 == file_id)
+        .unwrap()
+        .clone()
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum DebugWriterError {
@@ -121,21 +172,18 @@ impl DebugWriter {
         result: &str,
         chosen_fork_point_id: Option<u64>,
     ) {
-        DebugWriter::exec(
-            "step_result",
-            &["itinerary_id", "step_num", "result", "chosen_fork_point_id"],
-            |writer| {
-                writer
-                    .write_record([
-                        itinerary_id.clone(),
-                        step.to_string(),
-                        result.to_string(),
-                        chosen_fork_point_id.map_or(0, |v| v).to_string(),
-                    ])
-                    .map_err(|error| DebugWriterError::Write { error })?;
-                Ok(())
-            },
-        );
+        let debug_file = get_debug_file("step_result");
+        DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+            writer
+                .write_record([
+                    itinerary_id.clone(),
+                    step.to_string(),
+                    result.to_string(),
+                    chosen_fork_point_id.map_or(0, |v| v).to_string(),
+                ])
+                .map_err(|error| DebugWriterError::Write { error })?;
+            Ok(())
+        });
     }
     pub fn write_fork_choice_weight(
         itinerary_id: String,
@@ -148,30 +196,20 @@ impl DebugWriter {
             WeightCalcResult::DoNotUse => ("DoNotUse", &0),
             WeightCalcResult::UseWithWeight(v) => ("UseWithWeight", v),
         };
-        DebugWriter::exec(
-            "fork_choice_weight",
-            &[
-                "itinerary_id",
-                "step_num",
-                "end_point_id",
-                "weight_name",
-                "weight_type",
-                "weight_value",
-            ],
-            |writer| {
-                writer
-                    .write_record([
-                        itinerary_id.clone(),
-                        step.to_string(),
-                        end_point_id.to_string(),
-                        weight_name.to_string(),
-                        weight_type.to_string(),
-                        weight_value.to_string(),
-                    ])
-                    .map_err(|error| DebugWriterError::Write { error })?;
-                Ok(())
-            },
-        );
+        let debug_file = get_debug_file("fork_choice_weight");
+        DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+            writer
+                .write_record([
+                    itinerary_id.clone(),
+                    step.to_string(),
+                    end_point_id.to_string(),
+                    weight_name.to_string(),
+                    weight_type.to_string(),
+                    weight_value.to_string(),
+                ])
+                .map_err(|error| DebugWriterError::Write { error })?;
+            Ok(())
+        });
     }
 
     pub fn write_fork_choices(
@@ -180,74 +218,61 @@ impl DebugWriter {
         segment_list: &SegmentList,
         discarded_choices: &Vec<MapDataPointRef>,
     ) {
+        let debug_file = get_debug_file("fork_choices");
         for segment in segment_list.clone().into_iter() {
-            DebugWriter::exec(
-                "fork_choices",
-                &[
-                    "itinerary_id",
-                    "step_num",
-                    "end_point_id",
-                    "line_point_0_lat",
-                    "line_point_0_lon",
-                    "line_point_1_lat",
-                    "line_point_1_lon",
-                    "segment_end_point",
-                    "discarded",
-                ],
-                |writer| {
-                    writer
-                        .write_record([
-                            itinerary_id.clone(),
-                            step.to_string(),
-                            segment.get_end_point().borrow().id.to_string(),
-                            segment
-                                .get_line()
-                                .borrow()
-                                .points
-                                .0
-                                .borrow()
-                                .lat
-                                .to_string(),
-                            segment
-                                .get_line()
-                                .borrow()
-                                .points
-                                .0
-                                .borrow()
-                                .lon
-                                .to_string(),
-                            segment
-                                .get_line()
-                                .borrow()
-                                .points
-                                .1
-                                .borrow()
-                                .lat
-                                .to_string(),
-                            segment
-                                .get_line()
-                                .borrow()
-                                .points
-                                .1
-                                .borrow()
-                                .lon
-                                .to_string(),
-                            if segment.get_end_point() == &segment.get_line().borrow().points.0 {
-                                0
-                            } else {
-                                1
-                            }
+            DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+                writer
+                    .write_record([
+                        itinerary_id.clone(),
+                        step.to_string(),
+                        segment.get_end_point().borrow().id.to_string(),
+                        segment
+                            .get_line()
+                            .borrow()
+                            .points
+                            .0
+                            .borrow()
+                            .lat
                             .to_string(),
-                            discarded_choices
-                                .iter()
-                                .find(|c| c == &segment.get_end_point())
-                                .is_some()
-                                .to_string(),
-                        ])
-                        .map_err(|error| DebugWriterError::Write { error })?;
-                    Ok(())
-                },
-            );
+                        segment
+                            .get_line()
+                            .borrow()
+                            .points
+                            .0
+                            .borrow()
+                            .lon
+                            .to_string(),
+                        segment
+                            .get_line()
+                            .borrow()
+                            .points
+                            .1
+                            .borrow()
+                            .lat
+                            .to_string(),
+                        segment
+                            .get_line()
+                            .borrow()
+                            .points
+                            .1
+                            .borrow()
+                            .lon
+                            .to_string(),
+                        if segment.get_end_point() == &segment.get_line().borrow().points.0 {
+                            0
+                        } else {
+                            1
+                        }
+                        .to_string(),
+                        discarded_choices
+                            .iter()
+                            .find(|c| c == &segment.get_end_point())
+                            .is_some()
+                            .to_string(),
+                    ])
+                    .map_err(|error| DebugWriterError::Write { error })?;
+                Ok(())
+            });
         }
     }
 
@@ -262,55 +287,46 @@ impl DebugWriter {
             Ok(WalkerMoveResult::DeadEnd) => "Dead End",
             Ok(WalkerMoveResult::Fork(_)) => "Fork",
         };
-        DebugWriter::exec(
-            "steps",
-            &["itinerary_id", "step_num", "move_result"],
-            |writer| {
-                writer
-                    .write_record([
-                        itinerary_id.clone(),
-                        step.to_string(),
-                        move_result.to_string(),
-                    ])
-                    .map_err(|error| DebugWriterError::Write { error })?;
-                Ok(())
-            },
-        );
+        let debug_file = get_debug_file("steps");
+        DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+            writer
+                .write_record([
+                    itinerary_id.clone(),
+                    step.to_string(),
+                    move_result.to_string(),
+                ])
+                .map_err(|error| DebugWriterError::Write { error })?;
+            Ok(())
+        });
     }
 
     pub fn write_itineraries(itineraries: &Vec<Itinerary>) -> () {
+        let debug_file = get_debug_file("itineraries");
         for itinerary in itineraries {
-            DebugWriter::exec(
-                "itineraries",
-                &["itinerary_id", "waypoints_count", "radius", "visit_all"],
-                |writer| {
+            DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+                writer
+                    .write_record([
+                        itinerary.id(),
+                        itinerary.waypoints.len().to_string(),
+                        itinerary.waypoint_radius.to_string(),
+                        itinerary.visit_all_waypoints.to_string(),
+                    ])
+                    .map_err(|error| DebugWriterError::Write { error })?;
+                Ok(())
+            });
+            let debug_file = get_debug_file("itinerary_waypoints");
+            for (idx, wp) in itinerary.waypoints.iter().enumerate() {
+                DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
                     writer
                         .write_record([
                             itinerary.id(),
-                            itinerary.waypoints.len().to_string(),
-                            itinerary.waypoint_radius.to_string(),
-                            itinerary.visit_all_waypoints.to_string(),
+                            idx.to_string(),
+                            wp.borrow().lat.to_string(),
+                            wp.borrow().lon.to_string(),
                         ])
                         .map_err(|error| DebugWriterError::Write { error })?;
                     Ok(())
-                },
-            );
-            for (idx, wp) in itinerary.waypoints.iter().enumerate() {
-                DebugWriter::exec(
-                    "itinerary_waypoints",
-                    &["itinerary_id", "idx", "lat", "lon"],
-                    |writer| {
-                        writer
-                            .write_record([
-                                itinerary.id(),
-                                idx.to_string(),
-                                wp.borrow().lat.to_string(),
-                                wp.borrow().lon.to_string(),
-                            ])
-                            .map_err(|error| DebugWriterError::Write { error })?;
-                        Ok(())
-                    },
-                );
+                });
             }
         }
     }

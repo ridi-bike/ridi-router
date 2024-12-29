@@ -19,6 +19,6 @@
 		"ndarray",
 		"hdbscan",
 		"thiserror",
-		"rusqlite"
+		"duckdb"
 	]
 }

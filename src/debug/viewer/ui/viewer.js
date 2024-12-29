@@ -1,6 +1,6 @@
 import van from './van-1.5.2.debug.js'
 
-const {button, div, pre} = van.tags
+const { button, div, pre } = van.tags
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
