@@ -1,14 +1,11 @@
 use std::{
     error::Error,
     fs::File,
-    io::{Cursor, Read},
+    io::{self, Cursor, Read},
     path::PathBuf,
 };
 use tiny_http::{Header, Method, Request, Response, Server};
 use tracing::info;
-
-// const HTML: &str = include_str!("./viewer.html");
-// const JS: &str = include_str!("./viewer.js");
 
 #[derive(Debug, thiserror::Error)]
 pub enum DebugViewerError {
@@ -69,7 +66,7 @@ impl DebugViewer {
         Ok(match request.url() {
             "/" => {
                 let mut contents = String::new();
-                File::open("./src/debug/viewer/viewer.html")
+                File::open("./src/debug/viewer/ui/viewer.html")
                     .map_err(|error| DebugViewerError::FileOpen { error })?
                     .read_to_string(&mut contents)
                     .map_err(|error| DebugViewerError::FileOpen { error })?;
@@ -81,7 +78,31 @@ impl DebugViewer {
             }
             "/viewer.js" => {
                 let mut contents = String::new();
-                File::open("./src/debug/viewer/viewer.js")
+                File::open("./src/debug/viewer/ui/viewer.js")
+                    .map_err(|error| DebugViewerError::FileOpen { error })?
+                    .read_to_string(&mut contents)
+                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+
+                Response::from_string(contents).with_header(
+                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
+                        .map_err(|_| DebugViewerError::HeaderCreate)?,
+                )
+            }
+            "/van-1.5.2.debug.js" => {
+                let mut contents = String::new();
+                File::open("./src/debug/viewer/ui/van-1.5.2.debug.js")
+                    .map_err(|error| DebugViewerError::FileOpen { error })?
+                    .read_to_string(&mut contents)
+                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+
+                Response::from_string(contents).with_header(
+                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
+                        .map_err(|_| DebugViewerError::HeaderCreate)?,
+                )
+            }
+            "/van-1.5.2.js" => {
+                let mut contents = String::new();
+                File::open("./src/debug/viewer/ui/van-1.5.2.js")
                     .map_err(|error| DebugViewerError::FileOpen { error })?
                     .read_to_string(&mut contents)
                     .map_err(|error| DebugViewerError::FileOpen { error })?;
