@@ -22,7 +22,7 @@ use crate::{
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
 pub struct DebugStreamStepResults {
     pub itinerary_id: String,
-    pub step_num: String,
+    pub step_num: i64,
     pub result: String,
     pub chosen_fork_point_id: String,
 }
@@ -30,47 +30,47 @@ pub struct DebugStreamStepResults {
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
 pub struct DebugStreamForkChoiceWeights {
     pub itinerary_id: String,
-    pub step_num: String,
+    pub step_num: i64,
     pub end_point_id: String,
     pub weight_name: String,
     pub weight_type: String,
-    pub weight_value: String,
+    pub weight_value: i64,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
-pub struct DebugStreamForkCHoices {
+pub struct DebugStreamForkChoices {
     pub itinerary_id: String,
-    pub step_num: String,
+    pub step_num: i64,
     pub end_point_id: String,
-    pub line_point_0_lat: String,
-    pub line_point_0_lon: String,
-    pub line_point_1_lat: String,
-    pub line_point_1_lon: String,
-    pub segment_end_point: String,
-    pub discarded: String,
+    pub line_point_0_lat: f64,
+    pub line_point_0_lon: f64,
+    pub line_point_1_lat: f64,
+    pub line_point_1_lon: f64,
+    pub segment_end_point: i64,
+    pub discarded: bool,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
 pub struct DebugStreamSteps {
     pub itinerary_id: String,
-    pub step_num: String,
+    pub step_num: i64,
     pub move_result: String,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
 pub struct DebugStreamItineraries {
     pub itinerary_id: String,
-    pub waypoints_count: String,
-    pub radius: String,
-    pub visit_all: String,
+    pub waypoints_count: i64,
+    pub radius: i64,
+    pub visit_all: bool,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
 pub struct DebugStreamItineraryWaypoints {
     pub itinerary_id: String,
-    pub idx: String,
-    pub lat: String,
-    pub lon: String,
+    pub idx: i64,
+    pub lat: f64,
+    pub lon: f64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -176,7 +176,7 @@ impl DebugWriter {
             writer
                 .serialize(DebugStreamStepResults {
                     itinerary_id: itinerary_id.clone(),
-                    step_num: step.to_string(),
+                    step_num: step as i64,
                     result: result.to_string(),
                     chosen_fork_point_id: chosen_fork_point_id.map_or(0, |v| v).to_string(),
                 })
@@ -199,11 +199,11 @@ impl DebugWriter {
             writer
                 .serialize(DebugStreamForkChoiceWeights {
                     itinerary_id: itinerary_id.clone(),
-                    step_num: step.to_string(),
+                    step_num: step as i64,
                     end_point_id: end_point_id.to_string(),
                     weight_name: weight_name.to_string(),
                     weight_type: weight_type.to_string(),
-                    weight_value: weight_value.to_string(),
+                    weight_value: *weight_value as i64,
                 })
                 .map_err(|error| DebugWriterError::Write { error })?;
             Ok(())
@@ -217,57 +217,27 @@ impl DebugWriter {
         discarded_choices: &Vec<MapDataPointRef>,
     ) {
         for segment in segment_list.clone().into_iter() {
-            DebugWriter::exec(DebugStreamForkCHoices::name(), |writer| {
+            DebugWriter::exec(DebugStreamForkChoices::name(), |writer| {
                 writer
-                    .serialize(DebugStreamForkCHoices {
+                    .serialize(DebugStreamForkChoices {
                         itinerary_id: itinerary_id.clone(),
-                        step_num: step.to_string(),
+                        step_num: step as i64,
                         end_point_id: segment.get_end_point().borrow().id.to_string(),
-                        line_point_0_lat: segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .0
-                            .borrow()
-                            .lat
-                            .to_string(),
-                        line_point_0_lon: segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .0
-                            .borrow()
-                            .lon
-                            .to_string(),
-                        line_point_1_lat: segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .1
-                            .borrow()
-                            .lat
-                            .to_string(),
-                        line_point_1_lon: segment
-                            .get_line()
-                            .borrow()
-                            .points
-                            .1
-                            .borrow()
-                            .lon
-                            .to_string(),
+                        line_point_0_lat: segment.get_line().borrow().points.0.borrow().lat as f64,
+                        line_point_0_lon: segment.get_line().borrow().points.0.borrow().lon as f64,
+                        line_point_1_lat: segment.get_line().borrow().points.1.borrow().lat as f64,
+                        line_point_1_lon: segment.get_line().borrow().points.1.borrow().lon as f64,
                         segment_end_point: if segment.get_end_point()
                             == &segment.get_line().borrow().points.0
                         {
                             0
                         } else {
                             1
-                        }
-                        .to_string(),
+                        } as i64,
                         discarded: discarded_choices
                             .iter()
                             .find(|c| c == &segment.get_end_point())
-                            .is_some()
-                            .to_string(),
+                            .is_some(),
                     })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())
@@ -290,7 +260,7 @@ impl DebugWriter {
             writer
                 .serialize(DebugStreamSteps {
                     itinerary_id: itinerary_id.clone(),
-                    step_num: step.to_string(),
+                    step_num: step as i64,
                     move_result: move_result.to_string(),
                 })
                 .map_err(|error| DebugWriterError::Write { error })?;
@@ -304,9 +274,9 @@ impl DebugWriter {
                 writer
                     .serialize(DebugStreamItineraries {
                         itinerary_id: itinerary.id(),
-                        waypoints_count: itinerary.waypoints.len().to_string(),
-                        radius: itinerary.waypoint_radius.to_string(),
-                        visit_all: itinerary.visit_all_waypoints.to_string(),
+                        waypoints_count: itinerary.waypoints.len() as i64,
+                        radius: itinerary.waypoint_radius as i64,
+                        visit_all: itinerary.visit_all_waypoints,
                     })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())
@@ -316,9 +286,9 @@ impl DebugWriter {
                     writer
                         .serialize(DebugStreamItineraryWaypoints {
                             itinerary_id: itinerary.id(),
-                            idx: idx.to_string(),
-                            lat: wp.borrow().lat.to_string(),
-                            lon: wp.borrow().lon.to_string(),
+                            idx: idx as i64,
+                            lat: wp.borrow().lat as f64,
+                            lon: wp.borrow().lon as f64,
                         })
                         .map_err(|error| DebugWriterError::Write { error })?;
                     Ok(())

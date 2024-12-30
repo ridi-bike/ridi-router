@@ -6,13 +6,14 @@ use std::{
     fs::{self, File},
     io::{self, Cursor, Read},
     path::PathBuf,
+    task::Wake,
 };
 use struct_field_names_as_array::FieldNamesAsSlice;
 use tiny_http::{Header, Method, Request, Response, Server};
 use tracing::info;
 
 use crate::debug::writer::{
-    DebugStreamForkCHoices, DebugStreamForkChoiceWeights, DebugStreamItineraries,
+    DebugStreamForkChoiceWeights, DebugStreamForkChoices, DebugStreamItineraries,
     DebugStreamItineraryWaypoints, DebugStreamStepResults, DebugStreamSteps,
 };
 
@@ -77,7 +78,9 @@ impl DebugViewer {
 
         for request in server.incoming_requests() {
             if request.method() != &Method::Get {
-                request.respond(Response::from_string("not allowed").with_status_code(405));
+                request
+                    .respond(Response::from_string("not allowed").with_status_code(405))
+                    .map_err(|error| DebugViewerError::Respond { error })?;
                 continue;
             }
 
@@ -91,7 +94,7 @@ impl DebugViewer {
 
             if url_for_debug_stream_name(DebugStreamSteps::name()) == request.url()
                 || url_for_debug_stream_name(DebugStreamStepResults::name()) == request.url()
-                || url_for_debug_stream_name(DebugStreamForkCHoices::name()) == request.url()
+                || url_for_debug_stream_name(DebugStreamForkChoices::name()) == request.url()
                 || url_for_debug_stream_name(DebugStreamForkChoiceWeights::name()) == request.url()
                 || url_for_debug_stream_name(DebugStreamItineraries::name()) == request.url()
                 || url_for_debug_stream_name(DebugStreamItineraryWaypoints::name()) == request.url()
@@ -168,6 +171,46 @@ impl DebugViewer {
                     &file_path,
                 )?;
             }
+            if file_name.starts_with(DebugStreamStepResults::name()) {
+                Self::create_or_insert(
+                    &db_con,
+                    &mut created_streams,
+                    &DebugStreamStepResults::name().to_string(),
+                    &file_path,
+                )?;
+            }
+            if file_name.starts_with(DebugStreamItineraries::name()) {
+                Self::create_or_insert(
+                    &db_con,
+                    &mut created_streams,
+                    &DebugStreamItineraries::name().to_string(),
+                    &file_path,
+                )?;
+            }
+            if file_name.starts_with(DebugStreamItineraryWaypoints::name()) {
+                Self::create_or_insert(
+                    &db_con,
+                    &mut created_streams,
+                    &DebugStreamItineraryWaypoints::name().to_string(),
+                    &file_path,
+                )?;
+            }
+            if file_name.starts_with(DebugStreamForkChoices::name()) {
+                Self::create_or_insert(
+                    &db_con,
+                    &mut created_streams,
+                    &DebugStreamForkChoices::name().to_string(),
+                    &file_path,
+                )?;
+            }
+            if file_name.starts_with(DebugStreamForkChoiceWeights::name()) {
+                Self::create_or_insert(
+                    &db_con,
+                    &mut created_streams,
+                    &DebugStreamForkChoiceWeights::name().to_string(),
+                    &file_path,
+                )?;
+            }
         }
         Ok(())
     }
@@ -205,6 +248,10 @@ impl DebugViewer {
             Ok(Response::from_string(
                 serde_json::to_string(&rows)
                     .map_err(|error| DebugViewerError::Serialize { error })?,
+            )
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .map_err(|_| DebugViewerError::HeaderCreate)?,
             ))
         } else if request.url() == url_for_debug_stream_name(DebugStreamStepResults::name()) {
             let mut statement = db_con
@@ -230,19 +277,23 @@ impl DebugViewer {
             Ok(Response::from_string(
                 serde_json::to_string(&rows)
                     .map_err(|error| DebugViewerError::Serialize { error })?,
+            )
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .map_err(|_| DebugViewerError::HeaderCreate)?,
             ))
-        } else if request.url() == url_for_debug_stream_name(DebugStreamForkCHoices::name()) {
+        } else if request.url() == url_for_debug_stream_name(DebugStreamForkChoices::name()) {
             let mut statement = db_con
                 .prepare(&format!(
                     "SELECT {} FROM {}",
-                    DebugStreamForkCHoices::FIELD_NAMES_AS_SLICE.join(","),
-                    DebugStreamForkCHoices::name()
+                    DebugStreamForkChoices::FIELD_NAMES_AS_SLICE.join(","),
+                    DebugStreamForkChoices::name()
                 ))
                 .map_err(|error| DebugViewerError::DbStatementError { error })?;
 
             let rows = statement
                 .query_map([], |row| {
-                    Ok(DebugStreamForkCHoices {
+                    Ok(DebugStreamForkChoices {
                         itinerary_id: row.get(0)?,
                         step_num: row.get(1)?,
                         end_point_id: row.get(2)?,
@@ -260,6 +311,10 @@ impl DebugViewer {
             Ok(Response::from_string(
                 serde_json::to_string(&rows)
                     .map_err(|error| DebugViewerError::Serialize { error })?,
+            )
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .map_err(|_| DebugViewerError::HeaderCreate)?,
             ))
         } else if request.url() == url_for_debug_stream_name(DebugStreamForkChoiceWeights::name()) {
             let mut statement = db_con
@@ -287,6 +342,10 @@ impl DebugViewer {
             Ok(Response::from_string(
                 serde_json::to_string(&rows)
                     .map_err(|error| DebugViewerError::Serialize { error })?,
+            )
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .map_err(|_| DebugViewerError::HeaderCreate)?,
             ))
         } else if request.url() == url_for_debug_stream_name(DebugStreamItineraries::name()) {
             let mut statement = db_con
@@ -312,6 +371,10 @@ impl DebugViewer {
             Ok(Response::from_string(
                 serde_json::to_string(&rows)
                     .map_err(|error| DebugViewerError::Serialize { error })?,
+            )
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .map_err(|_| DebugViewerError::HeaderCreate)?,
             ))
         } else if request.url() == url_for_debug_stream_name(DebugStreamItineraryWaypoints::name())
         {
@@ -338,6 +401,10 @@ impl DebugViewer {
             Ok(Response::from_string(
                 serde_json::to_string(&rows)
                     .map_err(|error| DebugViewerError::Serialize { error })?,
+            )
+            .with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                    .map_err(|_| DebugViewerError::HeaderCreate)?,
             ))
         } else {
             Err(DebugViewerError::Unexpected)?
