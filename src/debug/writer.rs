@@ -1,72 +1,76 @@
+use derive_name::Name;
+use serde::Serialize;
 use std::{
     collections::HashMap,
     fs::File,
     io,
     path::PathBuf,
-    sync::{LazyLock, OnceLock, PoisonError, RwLock, RwLockReadGuard},
-    time::Duration,
+    sync::{OnceLock, RwLock},
 };
-use tracing::{dispatcher::get_default, error};
+use tracing::error;
 
 use crate::{
     map_data::graph::MapDataPointRef,
     router::{
         itinerary::Itinerary,
         navigator::WeightCalcResult,
-        route::{segment::Segment, segment_list::SegmentList},
+        route::segment_list::SegmentList,
         walker::{WalkerError, WalkerMoveResult},
     },
 };
 
-pub const DEBUG_STREAMS: LazyLock<[(&'static str, Vec<&'static str>); 6]> = LazyLock::new(|| {
-    [
-        (
-            "step_result",
-            vec!["itinerary_id", "step_num", "result", "chosen_fork_point_id"],
-        ),
-        (
-            "fork_choice_weight",
-            vec![
-                "itinerary_id",
-                "step_num",
-                "end_point_id",
-                "weight_name",
-                "weight_type",
-                "weight_value",
-            ],
-        ),
-        (
-            "fork_choices",
-            vec![
-                "itinerary_id",
-                "step_num",
-                "end_point_id",
-                "line_point_0_lat",
-                "line_point_0_lon",
-                "line_point_1_lat",
-                "line_point_1_lon",
-                "segment_end_point",
-                "discarded",
-            ],
-        ),
-        ("steps", vec!["itinerary_id", "step_num", "move_result"]),
-        (
-            "itineraries",
-            vec!["itinerary_id", "waypoints_count", "radius", "visit_all"],
-        ),
-        (
-            "itinerary_waypoints",
-            vec!["itinerary_id", "idx", "lat", "lon"],
-        ),
-    ]
-});
+#[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+pub struct DebugStreamStepResults {
+    pub itinerary_id: String,
+    pub step_num: String,
+    pub result: String,
+    pub chosen_fork_point_id: String,
+}
 
-fn get_debug_file(file_id: &'static str) -> (&'static str, Vec<&'static str>) {
-    DEBUG_STREAMS
-        .iter()
-        .find(|f| f.0 == file_id)
-        .unwrap()
-        .clone()
+#[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+pub struct DebugStreamForkChoiceWeights {
+    pub itinerary_id: String,
+    pub step_num: String,
+    pub end_point_id: String,
+    pub weight_name: String,
+    pub weight_type: String,
+    pub weight_value: String,
+}
+
+#[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+pub struct DebugStreamForkCHoices {
+    pub itinerary_id: String,
+    pub step_num: String,
+    pub end_point_id: String,
+    pub line_point_0_lat: String,
+    pub line_point_0_lon: String,
+    pub line_point_1_lat: String,
+    pub line_point_1_lon: String,
+    pub segment_end_point: String,
+    pub discarded: String,
+}
+
+#[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+pub struct DebugStreamSteps {
+    pub itinerary_id: String,
+    pub step_num: String,
+    pub move_result: String,
+}
+
+#[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+pub struct DebugStreamItineraries {
+    pub itinerary_id: String,
+    pub waypoints_count: String,
+    pub radius: String,
+    pub visit_all: String,
+}
+
+#[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+pub struct DebugStreamItineraryWaypoints {
+    pub itinerary_id: String,
+    pub idx: String,
+    pub lat: String,
+    pub lon: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -105,7 +109,6 @@ pub struct DebugWriter {
 impl DebugWriter {
     fn exec<T: Fn(&mut csv::Writer<File>) -> Result<(), DebugWriterError>>(
         file_type_id: &str,
-        header_row: &[&str],
         cb: T,
     ) -> () {
         if let Some(debug_dir) = DEBUG_DIR.get() {
@@ -135,9 +138,6 @@ impl DebugWriter {
                     let file = File::create(&file_name)
                         .map_err(|error| DebugWriterError::FileCreate { file_name, error })?;
                     let mut writer = csv::Writer::from_writer(file);
-                    writer
-                        .write_record(header_row)
-                        .map_err(|error| DebugWriterError::Write { error })?;
                     cb(&mut writer)?;
                     writer
                         .flush()
@@ -172,15 +172,14 @@ impl DebugWriter {
         result: &str,
         chosen_fork_point_id: Option<u64>,
     ) {
-        let debug_file = get_debug_file("step_result");
-        DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+        DebugWriter::exec(DebugStreamStepResults::name(), |writer| {
             writer
-                .write_record([
-                    itinerary_id.clone(),
-                    step.to_string(),
-                    result.to_string(),
-                    chosen_fork_point_id.map_or(0, |v| v).to_string(),
-                ])
+                .serialize(DebugStreamStepResults {
+                    itinerary_id: itinerary_id.clone(),
+                    step_num: step.to_string(),
+                    result: result.to_string(),
+                    chosen_fork_point_id: chosen_fork_point_id.map_or(0, |v| v).to_string(),
+                })
                 .map_err(|error| DebugWriterError::Write { error })?;
             Ok(())
         });
@@ -196,17 +195,16 @@ impl DebugWriter {
             WeightCalcResult::DoNotUse => ("DoNotUse", &0),
             WeightCalcResult::UseWithWeight(v) => ("UseWithWeight", v),
         };
-        let debug_file = get_debug_file("fork_choice_weight");
-        DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+        DebugWriter::exec(DebugStreamForkChoiceWeights::name(), |writer| {
             writer
-                .write_record([
-                    itinerary_id.clone(),
-                    step.to_string(),
-                    end_point_id.to_string(),
-                    weight_name.to_string(),
-                    weight_type.to_string(),
-                    weight_value.to_string(),
-                ])
+                .serialize(DebugStreamForkChoiceWeights {
+                    itinerary_id: itinerary_id.clone(),
+                    step_num: step.to_string(),
+                    end_point_id: end_point_id.to_string(),
+                    weight_name: weight_name.to_string(),
+                    weight_type: weight_type.to_string(),
+                    weight_value: weight_value.to_string(),
+                })
                 .map_err(|error| DebugWriterError::Write { error })?;
             Ok(())
         });
@@ -218,15 +216,14 @@ impl DebugWriter {
         segment_list: &SegmentList,
         discarded_choices: &Vec<MapDataPointRef>,
     ) {
-        let debug_file = get_debug_file("fork_choices");
         for segment in segment_list.clone().into_iter() {
-            DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+            DebugWriter::exec(DebugStreamForkCHoices::name(), |writer| {
                 writer
-                    .write_record([
-                        itinerary_id.clone(),
-                        step.to_string(),
-                        segment.get_end_point().borrow().id.to_string(),
-                        segment
+                    .serialize(DebugStreamForkCHoices {
+                        itinerary_id: itinerary_id.clone(),
+                        step_num: step.to_string(),
+                        end_point_id: segment.get_end_point().borrow().id.to_string(),
+                        line_point_0_lat: segment
                             .get_line()
                             .borrow()
                             .points
@@ -234,7 +231,7 @@ impl DebugWriter {
                             .borrow()
                             .lat
                             .to_string(),
-                        segment
+                        line_point_0_lon: segment
                             .get_line()
                             .borrow()
                             .points
@@ -242,7 +239,7 @@ impl DebugWriter {
                             .borrow()
                             .lon
                             .to_string(),
-                        segment
+                        line_point_1_lat: segment
                             .get_line()
                             .borrow()
                             .points
@@ -250,7 +247,7 @@ impl DebugWriter {
                             .borrow()
                             .lat
                             .to_string(),
-                        segment
+                        line_point_1_lon: segment
                             .get_line()
                             .borrow()
                             .points
@@ -258,18 +255,20 @@ impl DebugWriter {
                             .borrow()
                             .lon
                             .to_string(),
-                        if segment.get_end_point() == &segment.get_line().borrow().points.0 {
+                        segment_end_point: if segment.get_end_point()
+                            == &segment.get_line().borrow().points.0
+                        {
                             0
                         } else {
                             1
                         }
                         .to_string(),
-                        discarded_choices
+                        discarded: discarded_choices
                             .iter()
                             .find(|c| c == &segment.get_end_point())
                             .is_some()
                             .to_string(),
-                    ])
+                    })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())
             });
@@ -287,43 +286,40 @@ impl DebugWriter {
             Ok(WalkerMoveResult::DeadEnd) => "Dead End",
             Ok(WalkerMoveResult::Fork(_)) => "Fork",
         };
-        let debug_file = get_debug_file("steps");
-        DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+        DebugWriter::exec(DebugStreamSteps::name(), |writer| {
             writer
-                .write_record([
-                    itinerary_id.clone(),
-                    step.to_string(),
-                    move_result.to_string(),
-                ])
+                .serialize(DebugStreamSteps {
+                    itinerary_id: itinerary_id.clone(),
+                    step_num: step.to_string(),
+                    move_result: move_result.to_string(),
+                })
                 .map_err(|error| DebugWriterError::Write { error })?;
             Ok(())
         });
     }
 
     pub fn write_itineraries(itineraries: &Vec<Itinerary>) -> () {
-        let debug_file = get_debug_file("itineraries");
         for itinerary in itineraries {
-            DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+            DebugWriter::exec(DebugStreamItineraries::name(), |writer| {
                 writer
-                    .write_record([
-                        itinerary.id(),
-                        itinerary.waypoints.len().to_string(),
-                        itinerary.waypoint_radius.to_string(),
-                        itinerary.visit_all_waypoints.to_string(),
-                    ])
+                    .serialize(DebugStreamItineraries {
+                        itinerary_id: itinerary.id(),
+                        waypoints_count: itinerary.waypoints.len().to_string(),
+                        radius: itinerary.waypoint_radius.to_string(),
+                        visit_all: itinerary.visit_all_waypoints.to_string(),
+                    })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())
             });
-            let debug_file = get_debug_file("itinerary_waypoints");
             for (idx, wp) in itinerary.waypoints.iter().enumerate() {
-                DebugWriter::exec(debug_file.0, &debug_file.1, |writer| {
+                DebugWriter::exec(DebugStreamItineraryWaypoints::name(), |writer| {
                     writer
-                        .write_record([
-                            itinerary.id(),
-                            idx.to_string(),
-                            wp.borrow().lat.to_string(),
-                            wp.borrow().lon.to_string(),
-                        ])
+                        .serialize(DebugStreamItineraryWaypoints {
+                            itinerary_id: itinerary.id(),
+                            idx: idx.to_string(),
+                            lat: wp.borrow().lat.to_string(),
+                            lon: wp.borrow().lon.to_string(),
+                        })
                         .map_err(|error| DebugWriterError::Write { error })?;
                     Ok(())
                 });
