@@ -8,6 +8,7 @@ use std::{
     sync::{OnceLock, RwLock},
 };
 use tracing::error;
+use typeshare::typeshare;
 
 use crate::{
     map_data::graph::MapDataPointRef,
@@ -20,32 +21,40 @@ use crate::{
 };
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+#[typeshare]
 pub struct DebugStreamStepResults {
     pub itinerary_id: String,
+    #[typeshare(serialized_as = "number")]
     pub step_num: i64,
     pub result: String,
     pub chosen_fork_point_id: String,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+#[typeshare]
 pub struct DebugStreamForkChoiceWeights {
     pub itinerary_id: String,
+    #[typeshare(serialized_as = "number")]
     pub step_num: i64,
     pub end_point_id: String,
     pub weight_name: String,
     pub weight_type: String,
+    #[typeshare(serialized_as = "number")]
     pub weight_value: i64,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+#[typeshare]
 pub struct DebugStreamForkChoices {
     pub itinerary_id: String,
+    #[typeshare(serialized_as = "number")]
     pub step_num: i64,
     pub end_point_id: String,
     pub line_point_0_lat: f64,
     pub line_point_0_lon: f64,
     pub line_point_1_lat: f64,
     pub line_point_1_lon: f64,
+    #[typeshare(serialized_as = "number")]
     pub segment_end_point: i64,
     pub discarded: bool,
 }
@@ -53,21 +62,27 @@ pub struct DebugStreamForkChoices {
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
 pub struct DebugStreamSteps {
     pub itinerary_id: String,
+    #[typeshare(serialized_as = "number")]
     pub step_num: i64,
     pub move_result: String,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+#[typeshare]
 pub struct DebugStreamItineraries {
     pub itinerary_id: String,
+    #[typeshare(serialized_as = "number")]
     pub waypoints_count: i64,
+    #[typeshare(serialized_as = "number")]
     pub radius: i64,
     pub visit_all: bool,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+#[typeshare]
 pub struct DebugStreamItineraryWaypoints {
     pub itinerary_id: String,
+    #[typeshare(serialized_as = "number")]
     pub idx: i64,
     pub lat: f64,
     pub lon: f64,

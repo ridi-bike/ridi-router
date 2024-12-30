@@ -19,6 +19,7 @@
 		"ndarray",
 		"hdbscan",
 		"thiserror",
-		"duckdb"
+		"duckdb",
+		"typeshare"
 	]
 }
