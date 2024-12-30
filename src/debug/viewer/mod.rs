@@ -1,10 +1,14 @@
 use derive_name::Name;
-use duckdb::{Connection, Result};
+use duckdb::{params, Connection, Result, Row};
+use qstring::QString;
+use serde::Serialize;
+use sql_builder::{bind::Bind, SqlBuilder};
 use std::{
     error::Error,
     ffi::OsString,
     fs::{self, File},
     io::{self, Cursor, Read},
+    num::ParseIntError,
     path::PathBuf,
     task::Wake,
 };
@@ -54,14 +58,17 @@ pub enum DebugViewerError {
     #[error("Can't read file name")]
     CantReadFileName { error: OsString },
 
-    #[error("Unexpected file found {file_name}")]
-    UnexpectedFile { file_name: String },
-
     #[error("Could not execute db statement {error}")]
     DbStatementError { error: duckdb::Error },
 
     #[error("Could not serialize {error}")]
     Serialize { error: serde_json::Error },
+
+    #[error("Could not build query: {error}")]
+    SqlBuilder { error: anyhow::Error },
+
+    #[error("Could not parse number: {error}")]
+    Parse { error: ParseIntError },
 }
 pub struct DebugViewer;
 
@@ -92,12 +99,24 @@ impl DebugViewer {
                 continue;
             }
 
-            if url_for_debug_stream_name(DebugStreamSteps::name()) == request.url()
-                || url_for_debug_stream_name(DebugStreamStepResults::name()) == request.url()
-                || url_for_debug_stream_name(DebugStreamForkChoices::name()) == request.url()
-                || url_for_debug_stream_name(DebugStreamForkChoiceWeights::name()) == request.url()
-                || url_for_debug_stream_name(DebugStreamItineraries::name()) == request.url()
-                || url_for_debug_stream_name(DebugStreamItineraryWaypoints::name()) == request.url()
+            if request
+                .url()
+                .starts_with(&url_for_debug_stream_name(DebugStreamSteps::name()))
+                || request
+                    .url()
+                    .starts_with(&url_for_debug_stream_name(DebugStreamStepResults::name()))
+                || request
+                    .url()
+                    .starts_with(&url_for_debug_stream_name(DebugStreamForkChoices::name()))
+                || request.url().starts_with(&url_for_debug_stream_name(
+                    DebugStreamForkChoiceWeights::name(),
+                ))
+                || request
+                    .url()
+                    .starts_with(&url_for_debug_stream_name(DebugStreamItineraries::name()))
+                || request.url().starts_with(&url_for_debug_stream_name(
+                    DebugStreamItineraryWaypoints::name(),
+                ))
             {
                 let response = DebugViewer::handle_data_request(&request, &db_conn)?;
                 request
@@ -215,6 +234,59 @@ impl DebugViewer {
         Ok(())
     }
 
+    fn handle_data_for_table<F, T>(
+        db_con: &Connection,
+        table_name: &str,
+        field_names: &[&str],
+        query_itinerary_id: Option<String>,
+        query_limit: Option<u16>,
+        query_offset: Option<u16>,
+        map_row: F,
+    ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError>
+    where
+        F: FnMut(&Row<'_>) -> Result<T>,
+        T: Serialize,
+    {
+        let mut sql = SqlBuilder::select_from(table_name);
+        let sql = sql.fields(field_names);
+        let sql = if let Some(it_id) = query_itinerary_id {
+            sql.and_where("itinerary_id = ?".binds(&[&it_id]))
+        } else {
+            sql
+        };
+        let sql = if let Some(limit) = query_limit {
+            sql.limit(limit)
+        } else {
+            sql
+        };
+        let sql = if let Some(offset) = query_offset {
+            sql.offset(offset)
+        } else {
+            sql
+        };
+        let sql = sql
+            .sql()
+            .map_err(|error| DebugViewerError::SqlBuilder { error })?;
+
+        let mut statement = db_con
+            .prepare(&sql)
+            .map_err(|error| DebugViewerError::DbStatementError { error })?;
+
+        let rows = statement
+            .query_map([], map_row)
+            .map_err(|error| DebugViewerError::DbStatementError { error })?
+            .collect::<Result<Vec<_>>>()
+            .map_err(|error| DebugViewerError::DbStatementError { error })?;
+
+        Ok(Response::from_string(
+            serde_json::to_string(&rows).map_err(|error| DebugViewerError::Serialize { error })?,
+        )
+        .with_header(
+            Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                .map_err(|_| DebugViewerError::HeaderCreate)?,
+        ))
+    }
+
     fn handle_data_request(
         request: &Request,
         db_con: &Connection,
@@ -224,75 +296,84 @@ impl DebugViewer {
             request.method(),
             request.url(),
         );
+        let query = request.url().split("?").collect::<Vec<_>>();
+        let query = query
+            .get(1)
+            .map_or_else(|| "?".to_string(), |v| format!("?{}", *v));
+        let query = QString::from(query.as_str());
+        let query_itinerary_id = query.get("itinerary_id").map(|v| v.to_string());
+        let query_limit = query
+            .get("limit")
+            .map(|v| -> Result<u16, DebugViewerError> {
+                v.parse().map_err(|error| DebugViewerError::Parse { error })
+            });
+        let query_limit = if let Some(limit) = query_limit {
+            Some(limit?)
+        } else {
+            None
+        };
+        let query_offset = query
+            .get("offset")
+            .map(|v| -> Result<u16, DebugViewerError> {
+                v.parse().map_err(|error| DebugViewerError::Parse { error })
+            });
+        let query_offset = if let Some(offset) = query_offset {
+            Some(offset?)
+        } else {
+            None
+        };
 
-        if request.url() == url_for_debug_stream_name(DebugStreamSteps::name()) {
-            let mut statement = db_con
-                .prepare(&format!(
-                    "SELECT {} FROM {}",
-                    DebugStreamSteps::FIELD_NAMES_AS_SLICE.join(","),
-                    DebugStreamSteps::name()
-                ))
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-
-            let rows = statement
-                .query_map([], |row| {
+        if request
+            .url()
+            .starts_with(&url_for_debug_stream_name(DebugStreamSteps::name()))
+        {
+            Ok(Self::handle_data_for_table(
+                &db_con,
+                DebugStreamSteps::name(),
+                DebugStreamSteps::FIELD_NAMES_AS_SLICE,
+                query_itinerary_id,
+                query_limit,
+                query_offset,
+                |row| {
                     Ok(DebugStreamSteps {
                         itinerary_id: row.get(0)?,
                         step_num: row.get(1)?,
                         move_result: row.get(2)?,
                     })
-                })
-                .map_err(|error| DebugViewerError::DbStatementError { error })?
-                .collect::<Result<Vec<_>>>()
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-            Ok(Response::from_string(
-                serde_json::to_string(&rows)
-                    .map_err(|error| DebugViewerError::Serialize { error })?,
-            )
-            .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .map_err(|_| DebugViewerError::HeaderCreate)?,
-            ))
-        } else if request.url() == url_for_debug_stream_name(DebugStreamStepResults::name()) {
-            let mut statement = db_con
-                .prepare(&format!(
-                    "SELECT {} FROM {}",
-                    DebugStreamStepResults::FIELD_NAMES_AS_SLICE.join(","),
-                    DebugStreamStepResults::name()
-                ))
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-
-            let rows = statement
-                .query_map([], |row| {
+                },
+            )?)
+        } else if request
+            .url()
+            .starts_with(&url_for_debug_stream_name(DebugStreamStepResults::name()))
+        {
+            Ok(Self::handle_data_for_table(
+                &db_con,
+                DebugStreamStepResults::name(),
+                DebugStreamStepResults::FIELD_NAMES_AS_SLICE,
+                query_itinerary_id,
+                query_limit,
+                query_offset,
+                |row| {
                     Ok(DebugStreamStepResults {
                         itinerary_id: row.get(0)?,
                         step_num: row.get(1)?,
                         result: row.get(2)?,
                         chosen_fork_point_id: row.get(3)?,
                     })
-                })
-                .map_err(|error| DebugViewerError::DbStatementError { error })?
-                .collect::<Result<Vec<_>>>()
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-            Ok(Response::from_string(
-                serde_json::to_string(&rows)
-                    .map_err(|error| DebugViewerError::Serialize { error })?,
-            )
-            .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .map_err(|_| DebugViewerError::HeaderCreate)?,
-            ))
-        } else if request.url() == url_for_debug_stream_name(DebugStreamForkChoices::name()) {
-            let mut statement = db_con
-                .prepare(&format!(
-                    "SELECT {} FROM {}",
-                    DebugStreamForkChoices::FIELD_NAMES_AS_SLICE.join(","),
-                    DebugStreamForkChoices::name()
-                ))
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-
-            let rows = statement
-                .query_map([], |row| {
+                },
+            )?)
+        } else if request
+            .url()
+            .starts_with(&url_for_debug_stream_name(DebugStreamForkChoices::name()))
+        {
+            Ok(Self::handle_data_for_table(
+                &db_con,
+                DebugStreamForkChoices::name(),
+                DebugStreamForkChoices::FIELD_NAMES_AS_SLICE,
+                query_itinerary_id,
+                query_limit,
+                query_offset,
+                |row| {
                     Ok(DebugStreamForkChoices {
                         itinerary_id: row.get(0)?,
                         step_num: row.get(1)?,
@@ -304,29 +385,19 @@ impl DebugViewer {
                         segment_end_point: row.get(7)?,
                         discarded: row.get(8)?,
                     })
-                })
-                .map_err(|error| DebugViewerError::DbStatementError { error })?
-                .collect::<Result<Vec<_>>>()
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-            Ok(Response::from_string(
-                serde_json::to_string(&rows)
-                    .map_err(|error| DebugViewerError::Serialize { error })?,
-            )
-            .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .map_err(|_| DebugViewerError::HeaderCreate)?,
-            ))
-        } else if request.url() == url_for_debug_stream_name(DebugStreamForkChoiceWeights::name()) {
-            let mut statement = db_con
-                .prepare(&format!(
-                    "SELECT {} FROM {}",
-                    DebugStreamForkChoiceWeights::FIELD_NAMES_AS_SLICE.join(","),
-                    DebugStreamForkChoiceWeights::name()
-                ))
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-
-            let rows = statement
-                .query_map([], |row| {
+                },
+            )?)
+        } else if request.url().starts_with(&url_for_debug_stream_name(
+            DebugStreamForkChoiceWeights::name(),
+        )) {
+            Ok(Self::handle_data_for_table(
+                &db_con,
+                DebugStreamForkChoiceWeights::name(),
+                DebugStreamForkChoiceWeights::FIELD_NAMES_AS_SLICE,
+                query_itinerary_id,
+                query_limit,
+                query_offset,
+                |row| {
                     Ok(DebugStreamForkChoiceWeights {
                         itinerary_id: row.get(0)?,
                         step_num: row.get(1)?,
@@ -335,77 +406,47 @@ impl DebugViewer {
                         weight_type: row.get(4)?,
                         weight_value: row.get(5)?,
                     })
-                })
-                .map_err(|error| DebugViewerError::DbStatementError { error })?
-                .collect::<Result<Vec<_>>>()
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-            Ok(Response::from_string(
-                serde_json::to_string(&rows)
-                    .map_err(|error| DebugViewerError::Serialize { error })?,
-            )
-            .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .map_err(|_| DebugViewerError::HeaderCreate)?,
-            ))
-        } else if request.url() == url_for_debug_stream_name(DebugStreamItineraries::name()) {
-            let mut statement = db_con
-                .prepare(&format!(
-                    "SELECT {} FROM {}",
-                    DebugStreamItineraries::FIELD_NAMES_AS_SLICE.join(","),
-                    DebugStreamItineraries::name()
-                ))
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-
-            let rows = statement
-                .query_map([], |row| {
+                },
+            )?)
+        } else if request
+            .url()
+            .starts_with(&url_for_debug_stream_name(DebugStreamItineraries::name()))
+        {
+            Ok(Self::handle_data_for_table(
+                &db_con,
+                DebugStreamItineraries::name(),
+                DebugStreamItineraries::FIELD_NAMES_AS_SLICE,
+                query_itinerary_id,
+                query_limit,
+                query_offset,
+                |row| {
                     Ok(DebugStreamItineraries {
                         itinerary_id: row.get(0)?,
                         waypoints_count: row.get(1)?,
                         radius: row.get(2)?,
                         visit_all: row.get(3)?,
                     })
-                })
-                .map_err(|error| DebugViewerError::DbStatementError { error })?
-                .collect::<Result<Vec<_>>>()
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-            Ok(Response::from_string(
-                serde_json::to_string(&rows)
-                    .map_err(|error| DebugViewerError::Serialize { error })?,
-            )
-            .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .map_err(|_| DebugViewerError::HeaderCreate)?,
-            ))
-        } else if request.url() == url_for_debug_stream_name(DebugStreamItineraryWaypoints::name())
-        {
-            let mut statement = db_con
-                .prepare(&format!(
-                    "SELECT {} FROM {}",
-                    DebugStreamItineraryWaypoints::FIELD_NAMES_AS_SLICE.join(","),
-                    DebugStreamItineraryWaypoints::name()
-                ))
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-
-            let rows = statement
-                .query_map([], |row| {
+                },
+            )?)
+        } else if request.url().starts_with(&url_for_debug_stream_name(
+            DebugStreamItineraryWaypoints::name(),
+        )) {
+            Ok(Self::handle_data_for_table(
+                &db_con,
+                DebugStreamItineraryWaypoints::name(),
+                DebugStreamItineraryWaypoints::FIELD_NAMES_AS_SLICE,
+                query_itinerary_id,
+                query_limit,
+                query_offset,
+                |row| {
                     Ok(DebugStreamItineraryWaypoints {
                         itinerary_id: row.get(0)?,
                         idx: row.get(1)?,
                         lat: row.get(2)?,
                         lon: row.get(3)?,
                     })
-                })
-                .map_err(|error| DebugViewerError::DbStatementError { error })?
-                .collect::<Result<Vec<_>>>()
-                .map_err(|error| DebugViewerError::DbStatementError { error })?;
-            Ok(Response::from_string(
-                serde_json::to_string(&rows)
-                    .map_err(|error| DebugViewerError::Serialize { error })?,
-            )
-            .with_header(
-                Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .map_err(|_| DebugViewerError::HeaderCreate)?,
-            ))
+                },
+            )?)
         } else {
             Err(DebugViewerError::Unexpected)?
         }
