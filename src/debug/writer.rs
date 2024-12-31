@@ -60,6 +60,7 @@ pub struct DebugStreamForkChoices {
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
+#[typeshare]
 pub struct DebugStreamSteps {
     pub itinerary_id: String,
     #[typeshare(serialized_as = "number")]

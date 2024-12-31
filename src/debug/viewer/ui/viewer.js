@@ -1,26 +1,49 @@
-import van from './van-1.5.2.debug.js'
+import van from "./van-1.5.2.debug.js";
 
-const { button, div, pre } = van.tags
+const { button, div, table, td, th, tr } = van.tags;
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+const Itineraries = () => {
+  const itineraries = van.state(
+    /** @type {import("./api-types.ts").DebugStreamItineraries[]} */ ([]),
+  );
 
-const Run = ({ sleepMs }) => {
-	const steps = van.state(0)
-		; (async () => { for (; steps.val < 40; ++steps.val) await sleep(sleepMs) })()
-	return pre(() => `${" ".repeat(40 - steps.val)}🚐💨Hello VanJS!${"_".repeat(steps.val)}`)
-}
+  fetch("http://0.0.0.0:1337/data/DebugStreamItineraries?limit=20&offset=0")
+    .then((req) => req.json())
+    .then((data) => (itineraries.val = data))
+    .catch(console.error);
 
-const Hello = () => {
-	const dom = div()
-	return div(
-		dom,
-		button({ onclick: () => van.add(dom, Run({ sleepMs: 2000 })) }, "Hello 🐌"),
-		button({ onclick: () => van.add(dom, Run({ sleepMs: 500 })) }, "Hello 🐢"),
-		button({ onclick: () => van.add(dom, Run({ sleepMs: 100 })) }, "Hello 🚶‍♂️"),
-		button({ onclick: () => van.add(dom, Run({ sleepMs: 10 })) }, "Hello 🏎️"),
-		button({ onclick: () => van.add(dom, Run({ sleepMs: 2 })) }, "Hello 🚀"),
-	)
-}
+  van.derive(() => console.log(itineraries.val));
 
-van.add(document.body, Hello())
+  return div(() =>
+    table([
+      tr([th("id"), th("wp_"), th("radius"), th("visit_all")]),
+      ...itineraries.val.map((it) =>
+        tr([
+          td(it.itinerary_id),
+          td(it.waypoints_count),
+          td(it.radius),
+          td(it.visit_all),
+        ]),
+      ),
+    ]),
+  );
+};
 
+const MapContainer = () => {
+  const mapContainer = div({ id: "map-container", class: "w-64 h-64" });
+
+  var map = new maplibregl.Map({
+    container: mapContainer,
+    style: "https://demotiles.maplibre.org/style.json", // style URL
+    center: [0, 0], // starting position [lng, lat]
+    zoom: 1, // starting zoom
+  });
+
+  return mapContainer;
+};
+
+const App = () => {
+  return div(Itineraries(), MapContainer());
+};
+
+van.add(document.body, App());

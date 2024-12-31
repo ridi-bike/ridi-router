@@ -20,6 +20,7 @@
 		"hdbscan",
 		"thiserror",
 		"duckdb",
-		"typeshare"
+		"typeshare",
+		"maplibregl"
 	]
 }
