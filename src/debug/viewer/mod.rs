@@ -21,7 +21,14 @@ use crate::debug::writer::{
     DebugStreamItineraryWaypoints, DebugStreamStepResults, DebugStreamSteps,
 };
 
-const FILES_URLS: [&str; 4] = ["/", "/viewer.js", "/van-1.5.2.js", "/van-1.5.2.debug.js"];
+const FILES_URLS: [&str; 6] = [
+    "/",
+    "/viewer.js",
+    "/van-1.5.2.js",
+    "/van-1.5.2.debug.js",
+    "/maplibre-gl.js",
+    "/maplibre-gl.css",
+];
 
 fn url_for_debug_stream_name(name: &str) -> String {
     format!("/data/{name}")
@@ -92,7 +99,15 @@ impl DebugViewer {
             }
 
             if FILES_URLS.contains(&request.url()) {
-                let response = DebugViewer::handle_file_request(&request)?;
+                let response = match DebugViewer::handle_file_request(&request) {
+                    Err(e) => {
+                        request
+                            .respond(Response::from_string(format!("{e:?}")).with_status_code(500))
+                            .map_err(|error| DebugViewerError::Respond { error })?;
+                        continue;
+                    }
+                    Ok(resp) => resp,
+                };
                 request
                     .respond(response)
                     .map_err(|error| DebugViewerError::Respond { error })?;
@@ -118,7 +133,15 @@ impl DebugViewer {
                     DebugStreamItineraryWaypoints::name(),
                 ))
             {
-                let response = DebugViewer::handle_data_request(&request, &db_conn)?;
+                let response = match DebugViewer::handle_data_request(&request, &db_conn) {
+                    Err(e) => {
+                        request
+                            .respond(Response::from_string(format!("{e:?}")).with_status_code(500))
+                            .map_err(|error| DebugViewerError::Respond { error })?;
+                        continue;
+                    }
+                    Ok(resp) => resp,
+                };
                 request
                     .respond(response)
                     .map_err(|error| DebugViewerError::Respond { error })?;
@@ -264,6 +287,7 @@ impl DebugViewer {
         } else {
             sql
         };
+        let sql = sql.order_by("itinerary_id", false);
         let sql = sql
             .sql()
             .map_err(|error| DebugViewerError::SqlBuilder { error })?;
@@ -507,6 +531,30 @@ impl DebugViewer {
 
                 Response::from_string(contents).with_header(
                     Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
+                        .map_err(|_| DebugViewerError::HeaderCreate)?,
+                )
+            }
+            "/maplibre-gl.js" => {
+                let mut contents = String::new();
+                File::open("./src/debug/viewer/ui/maplibre-gl.js")
+                    .map_err(|error| DebugViewerError::FileOpen { error })?
+                    .read_to_string(&mut contents)
+                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+
+                Response::from_string(contents).with_header(
+                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
+                        .map_err(|_| DebugViewerError::HeaderCreate)?,
+                )
+            }
+            "/maplibre-gl.css" => {
+                let mut contents = String::new();
+                File::open("./src/debug/viewer/ui/maplibre-gl.css")
+                    .map_err(|error| DebugViewerError::FileOpen { error })?
+                    .read_to_string(&mut contents)
+                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+
+                Response::from_string(contents).with_header(
+                    Header::from_bytes(&b"Content-Type"[..], &b"text/css"[..])
                         .map_err(|_| DebugViewerError::HeaderCreate)?,
                 )
             }

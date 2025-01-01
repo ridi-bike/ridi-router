@@ -44,3 +44,9 @@ export interface DebugStreamStepResults {
 	chosen_fork_point_id: string;
 }
 
+export interface DebugStreamSteps {
+	itinerary_id: string;
+	step_num: number;
+	move_result: string;
+}
+
