@@ -1,5 +1,10 @@
 {
-	"compilerOptions": {},
+	"compilerOptions": {
+		"target": "esnext",
+		"strict": true,
+		"allowJs": true,
+		"checkJs": true
+	},
 	"files": [
 		"viewer.js"
 	]

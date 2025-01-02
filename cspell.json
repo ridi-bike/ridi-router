@@ -21,6 +21,8 @@
 		"thiserror",
 		"duckdb",
 		"typeshare",
-		"maplibregl"
+		"maplibregl",
+		"malibre",
+		"qstring"
 	]
 }

@@ -10,7 +10,6 @@ use std::{
     io::{self, Cursor, Read},
     num::ParseIntError,
     path::PathBuf,
-    task::Wake,
 };
 use struct_field_names_as_array::FieldNamesAsSlice;
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -21,13 +20,14 @@ use crate::debug::writer::{
     DebugStreamItineraryWaypoints, DebugStreamStepResults, DebugStreamSteps,
 };
 
-const FILES_URLS: [&str; 6] = [
+const FILES_URLS: [&str; 7] = [
     "/",
     "/viewer.js",
     "/van-1.5.2.js",
     "/van-1.5.2.debug.js",
     "/maplibre-gl.js",
     "/maplibre-gl.css",
+    "/turf.js",
 ];
 
 fn url_for_debug_stream_name(name: &str) -> String {
@@ -292,6 +292,7 @@ impl DebugViewer {
             .sql()
             .map_err(|error| DebugViewerError::SqlBuilder { error })?;
 
+        eprintln!("{}", sql);
         let mut statement = db_con
             .prepare(&sql)
             .map_err(|error| DebugViewerError::DbStatementError { error })?;
@@ -449,6 +450,10 @@ impl DebugViewer {
                         waypoints_count: row.get(1)?,
                         radius: row.get(2)?,
                         visit_all: row.get(3)?,
+                        start_lat: row.get(4)?,
+                        start_lon: row.get(5)?,
+                        finish_lat: row.get(6)?,
+                        finish_lon: row.get(7)?,
                     })
                 },
             )?)
@@ -555,6 +560,18 @@ impl DebugViewer {
 
                 Response::from_string(contents).with_header(
                     Header::from_bytes(&b"Content-Type"[..], &b"text/css"[..])
+                        .map_err(|_| DebugViewerError::HeaderCreate)?,
+                )
+            }
+            "/turf.js" => {
+                let mut contents = String::new();
+                File::open("./src/debug/viewer/ui/turf.js")
+                    .map_err(|error| DebugViewerError::FileOpen { error })?
+                    .read_to_string(&mut contents)
+                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+
+                Response::from_string(contents).with_header(
+                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
                         .map_err(|_| DebugViewerError::HeaderCreate)?,
                 )
             }

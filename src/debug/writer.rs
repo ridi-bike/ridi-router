@@ -77,6 +77,10 @@ pub struct DebugStreamItineraries {
     #[typeshare(serialized_as = "number")]
     pub radius: i64,
     pub visit_all: bool,
+    pub start_lat: f32,
+    pub start_lon: f32,
+    pub finish_lat: f32,
+    pub finish_lon: f32,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
@@ -293,6 +297,10 @@ impl DebugWriter {
                         waypoints_count: itinerary.waypoints.len() as i64,
                         radius: itinerary.waypoint_radius as i64,
                         visit_all: itinerary.visit_all_waypoints,
+                        start_lat: itinerary.start.borrow().lat,
+                        start_lon: itinerary.start.borrow().lon,
+                        finish_lat: itinerary.finish.borrow().lat,
+                        finish_lon: itinerary.finish.borrow().lon,
                     })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())

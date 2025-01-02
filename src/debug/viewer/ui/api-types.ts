@@ -28,6 +28,10 @@ export interface DebugStreamItineraries {
 	waypoints_count: number;
 	radius: number;
 	visit_all: boolean;
+	start_lat: number;
+	start_lon: number;
+	finish_lat: number;
+	finish_lon: number;
 }
 
 export interface DebugStreamItineraryWaypoints {
