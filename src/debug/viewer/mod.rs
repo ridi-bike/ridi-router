@@ -20,18 +20,10 @@ use crate::debug::writer::{
     DebugStreamItineraryWaypoints, DebugStreamStepResults, DebugStreamSteps,
 };
 
-const FILES_URLS: [&str; 7] = [
-    "/",
-    "/viewer.js",
-    "/van-1.5.2.js",
-    "/van-1.5.2.debug.js",
-    "/maplibre-gl.js",
-    "/maplibre-gl.css",
-    "/turf.js",
-];
+const DATA_PREFIX: &str = "/data/";
 
 fn url_for_debug_stream_name(name: &str) -> String {
-    format!("/data/{name}")
+    format!("{DATA_PREFIX}{name}")
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -98,41 +90,7 @@ impl DebugViewer {
                 continue;
             }
 
-            if FILES_URLS.contains(&request.url()) {
-                let response = match DebugViewer::handle_file_request(&request) {
-                    Err(e) => {
-                        request
-                            .respond(Response::from_string(format!("{e:?}")).with_status_code(500))
-                            .map_err(|error| DebugViewerError::Respond { error })?;
-                        continue;
-                    }
-                    Ok(resp) => resp,
-                };
-                request
-                    .respond(response)
-                    .map_err(|error| DebugViewerError::Respond { error })?;
-                continue;
-            }
-
-            if request
-                .url()
-                .starts_with(&url_for_debug_stream_name(DebugStreamSteps::name()))
-                || request
-                    .url()
-                    .starts_with(&url_for_debug_stream_name(DebugStreamStepResults::name()))
-                || request
-                    .url()
-                    .starts_with(&url_for_debug_stream_name(DebugStreamForkChoices::name()))
-                || request.url().starts_with(&url_for_debug_stream_name(
-                    DebugStreamForkChoiceWeights::name(),
-                ))
-                || request
-                    .url()
-                    .starts_with(&url_for_debug_stream_name(DebugStreamItineraries::name()))
-                || request.url().starts_with(&url_for_debug_stream_name(
-                    DebugStreamItineraryWaypoints::name(),
-                ))
-            {
+            if request.url().starts_with(DATA_PREFIX) {
                 let response = match DebugViewer::handle_data_request(&request, &db_conn) {
                     Err(e) => {
                         request
@@ -147,6 +105,19 @@ impl DebugViewer {
                     .map_err(|error| DebugViewerError::Respond { error })?;
                 continue;
             }
+
+            let response = match DebugViewer::handle_file_request(&request) {
+                Err(e) => {
+                    request
+                        .respond(Response::from_string(format!("{e:?}")).with_status_code(500))
+                        .map_err(|error| DebugViewerError::Respond { error })?;
+                    continue;
+                }
+                Ok(resp) => resp,
+            };
+            request
+                .respond(response)
+                .map_err(|error| DebugViewerError::Respond { error })?;
         }
 
         Ok(())
@@ -481,101 +452,45 @@ impl DebugViewer {
         }
     }
 
-    fn handle_file_request(
-        request: &Request,
-    ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError> {
+    fn handle_file_request(request: &Request) -> Result<Response<File>, DebugViewerError> {
         println!(
             "received request! method: {:?}, url: {:?}",
             request.method(),
             request.url(),
         );
 
-        Ok(match request.url() {
-            "/" => {
-                let mut contents = String::new();
-                File::open("./src/debug/viewer/ui/viewer.html")
-                    .map_err(|error| DebugViewerError::FileOpen { error })?
-                    .read_to_string(&mut contents)
-                    .map_err(|error| DebugViewerError::FileOpen { error })?;
-
-                Response::from_string(contents).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..])
-                        .map_err(|_| DebugViewerError::HeaderCreate)?,
-                )
+        let mut file_name = request.url().to_string();
+        loop {
+            let file_name_len = file_name.len();
+            file_name = file_name.replace("../", "");
+            file_name = file_name.replace("./", "");
+            if file_name.len() == file_name_len {
+                break;
             }
-            "/viewer.js" => {
-                let mut contents = String::new();
-                File::open("./src/debug/viewer/ui/viewer.js")
-                    .map_err(|error| DebugViewerError::FileOpen { error })?
-                    .read_to_string(&mut contents)
-                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+        }
+        let file_name = if file_name == "/" {
+            "/index.html".to_string()
+        } else {
+            file_name
+        };
+        let file_name = format!("./src/debug/viewer/ui/dist{file_name}");
 
-                Response::from_string(contents).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
-                        .map_err(|_| DebugViewerError::HeaderCreate)?,
-                )
-            }
-            "/van-1.5.2.debug.js" => {
-                let mut contents = String::new();
-                File::open("./src/debug/viewer/ui/van-1.5.2.debug.js")
-                    .map_err(|error| DebugViewerError::FileOpen { error })?
-                    .read_to_string(&mut contents)
-                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+        let file = File::open(&file_name).map_err(|error| DebugViewerError::FileOpen { error })?;
 
-                Response::from_string(contents).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
-                        .map_err(|_| DebugViewerError::HeaderCreate)?,
-                )
-            }
-            "/van-1.5.2.js" => {
-                let mut contents = String::new();
-                File::open("./src/debug/viewer/ui/van-1.5.2.js")
-                    .map_err(|error| DebugViewerError::FileOpen { error })?
-                    .read_to_string(&mut contents)
-                    .map_err(|error| DebugViewerError::FileOpen { error })?;
+        let mime_type = match PathBuf::from(file_name).extension() {
+            None => "",
+            Some(extension) => match extension.to_str() {
+                Some("js") => "text/javascript",
+                Some("css") => "text/css",
+                Some("html") => "text/html",
+                Some("svg") => "image/svg+xml",
+                _ => "",
+            },
+        };
 
-                Response::from_string(contents).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
-                        .map_err(|_| DebugViewerError::HeaderCreate)?,
-                )
-            }
-            "/maplibre-gl.js" => {
-                let mut contents = String::new();
-                File::open("./src/debug/viewer/ui/maplibre-gl.js")
-                    .map_err(|error| DebugViewerError::FileOpen { error })?
-                    .read_to_string(&mut contents)
-                    .map_err(|error| DebugViewerError::FileOpen { error })?;
-
-                Response::from_string(contents).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
-                        .map_err(|_| DebugViewerError::HeaderCreate)?,
-                )
-            }
-            "/maplibre-gl.css" => {
-                let mut contents = String::new();
-                File::open("./src/debug/viewer/ui/maplibre-gl.css")
-                    .map_err(|error| DebugViewerError::FileOpen { error })?
-                    .read_to_string(&mut contents)
-                    .map_err(|error| DebugViewerError::FileOpen { error })?;
-
-                Response::from_string(contents).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"text/css"[..])
-                        .map_err(|_| DebugViewerError::HeaderCreate)?,
-                )
-            }
-            "/turf.js" => {
-                let mut contents = String::new();
-                File::open("./src/debug/viewer/ui/turf.js")
-                    .map_err(|error| DebugViewerError::FileOpen { error })?
-                    .read_to_string(&mut contents)
-                    .map_err(|error| DebugViewerError::FileOpen { error })?;
-
-                Response::from_string(contents).with_header(
-                    Header::from_bytes(&b"Content-Type"[..], &b"text/javascript"[..])
-                        .map_err(|_| DebugViewerError::HeaderCreate)?,
-                )
-            }
-            _ => Err(DebugViewerError::Unexpected)?,
-        })
+        Ok(Response::from_file(file).with_header(
+            Header::from_bytes(&b"Content-Type"[..], &mime_type.as_bytes()[..])
+                .map_err(|_| DebugViewerError::HeaderCreate)?,
+        ))
     }
 }

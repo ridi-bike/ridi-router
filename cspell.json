@@ -22,7 +22,8 @@
 		"duckdb",
 		"typeshare",
 		"maplibregl",
-		"malibre",
+		"maplibre",
+		"vanjs",
 		"qstring"
 	]
 }

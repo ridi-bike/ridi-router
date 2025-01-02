@@ -1,5 +1,5 @@
 types-gen:
-	typeshare ./src --lang=typescript --output-file=./src/debug/viewer/ui/api-types.ts
+	typeshare ./src --lang=typescript --output-file=./src/debug/viewer/ui/src/api-types.ts
 
 gps-query-range := '100000' # 100km
 gps-query-from := '56.951861,24.113821' # riga
