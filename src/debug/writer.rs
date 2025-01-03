@@ -27,7 +27,8 @@ pub struct DebugStreamStepResults {
     #[typeshare(serialized_as = "number")]
     pub step_num: i64,
     pub result: String,
-    pub chosen_fork_point_id: String,
+    #[typeshare(serialized_as = "number")]
+    pub chosen_fork_point_id: i64,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
@@ -49,7 +50,8 @@ pub struct DebugStreamForkChoices {
     pub itinerary_id: String,
     #[typeshare(serialized_as = "number")]
     pub step_num: i64,
-    pub end_point_id: String,
+    #[typeshare(serialized_as = "number")]
+    pub end_point_id: i64,
     pub line_point_0_lat: f64,
     pub line_point_0_lon: f64,
     pub line_point_1_lat: f64,
@@ -201,7 +203,7 @@ impl DebugWriter {
                     itinerary_id: itinerary_id.clone(),
                     step_num: step as i64,
                     result: result.to_string(),
-                    chosen_fork_point_id: chosen_fork_point_id.map_or(0, |v| v).to_string(),
+                    chosen_fork_point_id: chosen_fork_point_id.map_or(0, |v| v as i64),
                 })
                 .map_err(|error| DebugWriterError::Write { error })?;
             Ok(())
@@ -245,7 +247,7 @@ impl DebugWriter {
                     .serialize(DebugStreamForkChoices {
                         itinerary_id: itinerary_id.clone(),
                         step_num: step as i64,
-                        end_point_id: segment.get_end_point().borrow().id.to_string(),
+                        end_point_id: segment.get_end_point().borrow().id as i64,
                         line_point_0_lat: segment.get_line().borrow().points.0.borrow().lat as f64,
                         line_point_0_lon: segment.get_line().borrow().points.0.borrow().lon as f64,
                         line_point_1_lat: segment.get_line().borrow().points.1.borrow().lat as f64,

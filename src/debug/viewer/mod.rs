@@ -257,6 +257,7 @@ impl DebugViewer {
         query_itinerary_id: Option<String>,
         query_limit: Option<u16>,
         query_offset: Option<u16>,
+        query_step_num: Option<u32>,
         map_row: F,
     ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError>
     where
@@ -267,6 +268,11 @@ impl DebugViewer {
         let sql = sql.fields(field_names);
         let sql = if let Some(it_id) = query_itinerary_id {
             sql.and_where("itinerary_id = ?".binds(&[&it_id]))
+        } else {
+            sql
+        };
+        let sql = if let Some(step_num) = query_step_num {
+            sql.and_where("step_num = ?".binds(&[&step_num]))
         } else {
             sql
         };
@@ -390,6 +396,16 @@ impl DebugViewer {
             .map_or_else(|| "?".to_string(), |v| format!("?{}", *v));
         let query = QString::from(query.as_str());
         let query_itinerary_id = query.get("itinerary_id").map(|v| v.to_string());
+        let query_step_num = query
+            .get("step_num")
+            .map(|v| -> Result<u32, DebugViewerError> {
+                v.parse().map_err(|error| DebugViewerError::Parse { error })
+            });
+        let query_step_num = if let Some(step_num) = query_step_num {
+            Some(step_num?)
+        } else {
+            None
+        };
         let query_limit = query
             .get("limit")
             .map(|v| -> Result<u16, DebugViewerError> {
@@ -422,6 +438,7 @@ impl DebugViewer {
                 query_itinerary_id,
                 query_limit,
                 query_offset,
+                query_step_num,
                 |row| {
                     Ok(DebugStreamSteps {
                         itinerary_id: row.get(0)?,
@@ -442,6 +459,7 @@ impl DebugViewer {
                 query_itinerary_id,
                 query_limit,
                 query_offset,
+                query_step_num,
                 |row| {
                     Ok(DebugStreamStepResults {
                         itinerary_id: row.get(0)?,
@@ -462,6 +480,7 @@ impl DebugViewer {
                 query_itinerary_id,
                 query_limit,
                 query_offset,
+                query_step_num,
                 |row| {
                     Ok(DebugStreamForkChoices {
                         itinerary_id: row.get(0)?,
@@ -486,6 +505,7 @@ impl DebugViewer {
                 query_itinerary_id,
                 query_limit,
                 query_offset,
+                query_step_num,
                 |row| {
                     Ok(DebugStreamForkChoiceWeights {
                         itinerary_id: row.get(0)?,
@@ -508,6 +528,7 @@ impl DebugViewer {
                 query_itinerary_id,
                 query_limit,
                 query_offset,
+                query_step_num,
                 |row| {
                     Ok(DebugStreamItineraries {
                         itinerary_id: row.get(0)?,
@@ -531,6 +552,7 @@ impl DebugViewer {
                 query_itinerary_id,
                 query_limit,
                 query_offset,
+                query_step_num,
                 |row| {
                     Ok(DebugStreamItineraryWaypoints {
                         itinerary_id: row.get(0)?,

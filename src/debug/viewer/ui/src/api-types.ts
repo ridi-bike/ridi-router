@@ -14,7 +14,7 @@ export interface DebugStreamForkChoiceWeights {
 export interface DebugStreamForkChoices {
 	itinerary_id: string;
 	step_num: number;
-	end_point_id: string;
+	end_point_id: number;
 	line_point_0_lat: number;
 	line_point_0_lon: number;
 	line_point_1_lat: number;
@@ -45,7 +45,7 @@ export interface DebugStreamStepResults {
 	itinerary_id: string;
 	step_num: number;
 	result: string;
-	chosen_fork_point_id: string;
+	chosen_fork_point_id: number;
 }
 
 export interface DebugStreamSteps {

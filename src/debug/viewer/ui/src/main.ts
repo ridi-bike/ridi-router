@@ -6,13 +6,22 @@ import * as turf from "@turf/turf";
 
 import van from "vanjs-core";
 import {
+  DebugStreamForkChoices,
   DebugStreamItineraries,
   DebugStreamItineraryWaypoints,
+  DebugStreamStepResults,
   DebugStreamSteps,
 } from "./api-types";
 import { MapActions, SelectionState } from "./types";
+import {
+  tableClass,
+  tdClass,
+  theadClass,
+  thClass,
+  trClass,
+} from "./data-table";
 
-const { button, div, table, td, th, tr } = van.tags;
+const { button, thead, tbody, div, span, table, td, th, tr } = van.tags;
 const selection = van.state<SelectionState>({
   itinerary: null,
   step: null,
@@ -69,48 +78,57 @@ const Itineraries = () => {
       () => (page.val > 0 ? page.val-- : void 0),
     ),
     () =>
-      table([
-        tr([
-          th("num"),
-          th("id"),
-          th("wps"),
-          th("radius"),
-          th("visit_all"),
-          th("start"),
-          th("finish"),
-        ]),
-        ...itineraries.val.map((it, idx) =>
-          tr(
-            {
-              class: () =>
-                selection.val.itinerary?.itinerary_id === it.itinerary_id
-                  ? "bg-red-100"
-                  : "",
-            },
-            [
-              td(page.val * pageSize + idx + 1),
-              td(
-                button(
-                  {
-                    class: "dark:hover:bg-gray-800 hover:bg-gray-200",
-                    onclick: () => {
-                      selection.val = {
-                        step: null,
-                        itinerary: it,
-                      };
-                      itineraryWaypoints.val = [];
-                      steps.val = [];
+      table({ class: tableClass() }, [
+        thead(
+          { class: theadClass() },
+          tr([
+            th({ class: thClass() }, "num"),
+            th({ class: thClass() }, "id"),
+            th({ class: thClass() }, "wps"),
+            th({ class: thClass() }, "radius"),
+            th({ class: thClass() }, "visit_all"),
+            th({ class: thClass() }, "start"),
+            th({ class: thClass() }, "finish"),
+          ]),
+        ),
+        tbody(
+          ...itineraries.val.map((it, idx) =>
+            tr(
+              {
+                class: () =>
+                  trClass({
+                    "bg-red-100":
+                      selection.val.itinerary?.itinerary_id === it.itinerary_id,
+                    "dark:bg-red-900":
+                      selection.val.itinerary?.itinerary_id === it.itinerary_id,
+                  }),
+              },
+              [
+                td({ class: tdClass() }, page.val * pageSize + idx + 1),
+                td(
+                  { class: tdClass() },
+                  button(
+                    {
+                      class: "dark:hover:bg-yellow-800 hover:bg-yellow-200",
+                      onclick: () => {
+                        selection.val = {
+                          step: null,
+                          itinerary: it,
+                        };
+                        itineraryWaypoints.val = [];
+                        steps.val = [];
+                      },
                     },
-                  },
-                  it.itinerary_id,
+                    it.itinerary_id,
+                  ),
                 ),
-              ),
-              td(it.waypoints_count),
-              td(it.radius),
-              td(it.visit_all),
-              td(`${it.start_lat},${it.start_lon}`),
-              td(`${it.finish_lat},${it.finish_lon}`),
-            ],
+                td({ class: tdClass() }, it.waypoints_count),
+                td({ class: tdClass() }, it.radius),
+                td({ class: tdClass() }, it.visit_all),
+                td({ class: tdClass() }, `${it.start_lat},${it.start_lon}`),
+                td({ class: tdClass() }, `${it.finish_lat},${it.finish_lon}`),
+              ],
+            ),
           ),
         ),
       ]),
@@ -217,17 +235,27 @@ const ItineraryWaypoints = () => {
       () => (page.val > 0 ? page.val-- : void 0),
     ),
     () =>
-      table([
-        tr([th("num"), th("idx"), th("lat"), th("lon")]),
-        ...itineraryWaypoints.val.map((it, idx) =>
+      table(
+        { class: tableClass() },
+        thead({ class: theadClass() }, [
           tr([
-            td(page.val * pageSize + idx + 1),
-            td(it.idx),
-            td(it.lat),
-            td(it.lon),
+            th({ class: thClass() }, "num"),
+            th({ class: thClass() }, "idx"),
+            th({ class: thClass() }, "lat"),
+            th({ class: thClass() }, "lon"),
           ]),
-        ),
-      ]),
+          tbody(
+            ...itineraryWaypoints.val.map((it, idx) =>
+              tr({ class: trClass() }, [
+                td({ class: tdClass() }, page.val * pageSize + idx + 1),
+                td({ class: tdClass() }, it.idx),
+                td({ class: tdClass() }, it.lat),
+                td({ class: tdClass() }, it.lon),
+              ]),
+            ),
+          ),
+        ]),
+      ),
   );
 };
 
@@ -278,37 +306,135 @@ const Steps = () => {
       () => (page.val > 0 ? page.val-- : void 0),
     ),
     () =>
-      table([
-        tr([th("step_num"), th("move_result")]),
-        ...steps.val.map((step) =>
-          tr(
-            {
-              class: () =>
-                selection.val.step?.step_num === step.step_num
-                  ? "bg-red-100"
-                  : "",
-            },
-            [
-              td(step.step_num),
-              td(
-                button(
-                  {
-                    class: "dark:hover:bg-sky-800 hover:bg-sky-200",
-                    onclick: () => {
-                      console.log("step click");
-                      selection.val = {
-                        ...selection.val,
-                        step,
-                      };
-                    },
-                  },
-                  step.move_result,
-                ),
-              ),
-            ],
-          ),
+      table(
+        { class: tableClass() },
+        thead(
+          { class: theadClass() },
+          tr([
+            th({ class: thClass() }, "step_num"),
+            th({ class: thClass() }, "move_result"),
+          ]),
         ),
-      ]),
+        tbody(
+          ...steps.val.map((step) => [
+            tr(
+              {
+                class: () =>
+                  trClass("font-bold", {
+                    "bg-red-100":
+                      selection.val.step?.step_num === step.step_num,
+                    "dark:bg-red-900":
+                      selection.val.step?.step_num === step.step_num,
+                  }),
+              },
+              [
+                td({ class: tdClass() }, step.step_num),
+                td(
+                  { class: tdClass() },
+                  button(
+                    {
+                      class: "dark:hover:bg-sky-800 hover:bg-sky-200",
+                      onclick: () => {
+                        console.log("step click");
+                        selection.val = {
+                          ...selection.val,
+                          step,
+                        };
+                      },
+                    },
+                    step.move_result,
+                  ),
+                ),
+              ],
+            ),
+            tr(
+              { class: trClass() },
+              td({ class: tdClass() }, "Choices:"),
+              td(
+                { class: tdClass() },
+                ForkChoices(step.itinerary_id, step.step_num),
+              ),
+            ),
+            tr(
+              { class: trClass() },
+              td({ class: tdClass() }, "Step Result:"),
+              td(
+                { class: tdClass() },
+                StepResult(step.itinerary_id, step.step_num),
+              ),
+            ),
+          ]),
+        ),
+      ),
+  );
+};
+
+const ForkChoices = (itineraryId: string, stepNum: number) => {
+  const forkCHoices = van.state<DebugStreamForkChoices[]>([]);
+  fetch(
+    `http://0.0.0.0:1337/data/DebugStreamForkChoices?itinerary_id=${itineraryId}&step_num=${stepNum}`,
+  )
+    .then((resp) => resp.json())
+    .then((data) => (forkCHoices.val = data));
+  return div(() =>
+    table(
+      { class: tableClass() },
+      thead(
+        { class: theadClass() },
+        tr(
+          th({ class: thClass() }, "discarded"),
+          th({ class: thClass() }, "end point id"),
+          th({ class: thClass() }, "segment end point num"),
+          th({ class: thClass() }, "point 0"),
+          th({ class: thClass() }, "point 1"),
+        ),
+      ),
+      tbody(
+        ...forkCHoices.val.map((forkCh) =>
+          tr({ class: trClass() }, [
+            td({ class: tdClass() }, forkCh.discarded),
+            td({ class: tdClass() }, forkCh.end_point_id),
+            td({ class: tdClass() }, forkCh.segment_end_point),
+            td(
+              { class: tdClass() },
+              `${forkCh.line_point_0_lat},${forkCh.line_point_0_lon}`,
+            ),
+            td(
+              { class: tdClass() },
+              `${forkCh.line_point_1_lat}, ${forkCh.line_point_1_lon}`,
+            ),
+          ]),
+        ),
+      ),
+    ),
+  );
+};
+const StepResult = (itineraryId: string, stepNum: number) => {
+  const stepResults = van.state<DebugStreamStepResults[]>([]);
+  fetch(
+    `http://0.0.0.0:1337/data/DebugStreamStepResults?itinerary_id=${itineraryId}&step_num=${stepNum}`,
+  )
+    .then((resp) => resp.json())
+    .then((data) => (stepResults.val = data));
+  return div({ class: "pl-4" }, () =>
+    table(
+      { class: tableClass() },
+      thead(
+        { class: theadClass() },
+        tr(
+          th({ class: theadClass() }, "result"),
+          th({ class: theadClass() }, "chosen fork point id"),
+        ),
+      ),
+      tbody(
+        ...stepResults.val.map((stepRes) =>
+          tr({ class: trClass() }, [
+            td({ class: tdClass() }, stepRes.result),
+            td({ class: tdClass() }, stepRes.chosen_fork_point_id),
+          ]),
+        ),
+      ),
+    ),
   );
 };
 

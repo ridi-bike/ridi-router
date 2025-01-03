@@ -15,7 +15,9 @@
   "dependencies": {
     "@tailwindcss/vite": "4.0.0-beta.8",
     "@turf/turf": "^7.2.0",
+    "clsx": "^2.1.1",
     "maplibre-gl": "^5.0.0",
+    "tailwind-merge": "^2.6.0",
     "tailwindcss": "4.0.0-beta.8",
     "vanjs-core": "^1.5.2"
   }
