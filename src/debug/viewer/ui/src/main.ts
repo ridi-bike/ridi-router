@@ -72,11 +72,12 @@ const Itineraries = () => {
   );
 
   return div(
-    Pagination(
-      page.val,
-      () => page.val++,
-      () => (page.val > 0 ? page.val-- : void 0),
-    ),
+    () =>
+      Pagination(
+        page.val,
+        () => page.val++,
+        () => (page.val > 0 ? page.val-- : void 0),
+      ),
     () =>
       table({ class: tableClass() }, [
         thead(
@@ -230,11 +231,12 @@ const ItineraryWaypoints = () => {
   });
 
   return div(
-    Pagination(
-      page.val,
-      () => page.val++,
-      () => (page.val > 0 ? page.val-- : void 0),
-    ),
+    () =>
+      Pagination(
+        page.val,
+        () => page.val++,
+        () => (page.val > 0 ? page.val-- : void 0),
+      ),
     () =>
       table(
         { class: tableClass() },
@@ -301,11 +303,12 @@ const Steps = () => {
   });
 
   return div(
-    Pagination(
-      page.val,
-      () => page.val++,
-      () => (page.val > 0 ? page.val-- : void 0),
-    ),
+    () =>
+      Pagination(
+        page.val,
+        () => page.val++,
+        () => (page.val > 0 ? page.val-- : void 0),
+      ),
     () =>
       table(
         { class: tableClass() },
@@ -340,6 +343,7 @@ const Steps = () => {
                         selection.val = {
                           ...selection.val,
                           step,
+                          forkChoice: null,
                         };
                       },
                     },

@@ -64,7 +64,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         fork_segment.get_line().borrow().points.1.borrow().lon,
         fork_segment.get_line().borrow().points.1.borrow().lat,
     );
-    let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
+    let fork_bearing = if &fork_segment.get_line().borrow().points.0 == fork_segment.get_end_point()
     {
         Haversine::bearing(fork_line_one_geo, fork_line_two_geo)
     } else {
