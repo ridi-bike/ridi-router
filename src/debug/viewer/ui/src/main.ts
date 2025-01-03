@@ -1,4 +1,5 @@
 import "./style.css";
+import "maplibre-gl/dist/maplibre-gl.css";
 
 import * as maplibregl from "maplibre-gl";
 import * as turf from "@turf/turf";
@@ -110,12 +111,9 @@ const ItineraryWaypoints = () => {
   );
 
   van.derive(() => {
-    if (mapActions.current) {
-      for (const [_id, marker] of mapActions.current.markers.entries()) {
-        marker.remove();
-      }
-      mapActions.current.markers = new Map();
-    }
+    mapActions.current?.removeMarkers();
+    mapActions.current?.removePoints();
+
     if (!selection.val.itinerary) {
       return;
     }
@@ -202,6 +200,27 @@ const MapContainer = () => {
 
   map.on("load", () => {
     mapActions.current = {
+      removePoints: () => {
+        for (const pointId of mapActions.current?.points || []) {
+          map.removeLayer(pointId);
+          map.removeSource(pointId);
+          map.removeLayer(`${pointId}-radius`);
+          map.removeSource(`${pointId}-radius`);
+        }
+        if (mapActions.current) {
+          mapActions.current.points = [];
+        }
+      },
+      removeMarkers: () => {
+        console.log("remove markers");
+        for (const [_id, marker] of mapActions.current?.markers.entries() ||
+          []) {
+          marker.remove();
+        }
+        if (mapActions.current) {
+          mapActions.current.markers = new Map();
+        }
+      },
       addPoint: ({ id, lat, lon, pointName, radius }) => {
         map.addSource(id, {
           type: "geojson",
@@ -247,14 +266,15 @@ const MapContainer = () => {
             },
           });
         }
+        mapActions.current?.points.push(id);
       },
       addMarker: ({ id, lat, lon, markerName }) => {
-        console.log("add marker", lat, lon, id);
         const marker = new maplibregl.Marker();
-        marker.setLngLat([lon, lat]).addTo(map);
+        marker.setLngLat([lon, lat]);
         const popup = new maplibregl.Popup();
         popup.setText(markerName);
         marker.setPopup(popup);
+        marker.addTo(map);
         if (!mapActions.current) {
           throw new Error("not set");
         }

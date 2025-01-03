@@ -10,6 +10,8 @@ export type MapActions = {
       lon: number;
       markerName: string;
     }) => void;
+    removeMarkers: () => void;
+    removePoints: () => void;
     addPoint: (params: {
       id: string;
       lat: number;
