@@ -1,4 +1,4 @@
-import { DebugStreamItineraries } from "./api-types.js";
+import { DebugStreamItineraries, DebugStreamSteps } from "./api-types.js";
 import type turf from "@turf/turf";
 import * as maplibregl from "maplibre-gl";
 
@@ -23,6 +23,9 @@ export type MapActions = {
     markers: Map<string, maplibregl.Marker>;
     setCenter: (center: maplibregl.LngLatLike) => void;
     setView: (bbox: ReturnType<typeof turf.bbox>) => void;
+    addRoute: (id: string, route: [number, number][], color: string) => void;
+    routes: string[];
+    removeRoutes: () => void;
   };
 };
 
@@ -30,4 +33,5 @@ export type PaginationClick = () => void;
 
 export type SelectionState = {
   itinerary: null | DebugStreamItineraries;
+  step: null | DebugStreamSteps;
 };

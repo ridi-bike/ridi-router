@@ -52,5 +52,6 @@ export interface DebugStreamSteps {
 	itinerary_id: string;
 	step_num: number;
 	move_result: string;
+	route: string;
 }
 

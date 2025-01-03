@@ -69,6 +69,24 @@ impl Route {
         self.debug_route_segments.push(segment.clone());
         self.route_segments.push(segment)
     }
+
+    pub fn get_route_chunk_since_junction_before_last(&self) -> Vec<Segment> {
+        let idx_from = match self.get_segment_last() {
+            None => 0,
+            Some(last_segment) => self
+                .route_segments
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_idx, route_segment)| {
+                    route_segment.get_end_point().borrow().is_junction()
+                        && route_segment.get_end_point().borrow().id
+                            != last_segment.get_end_point().borrow().id
+                })
+                .map_or(0, |v| v.0),
+        };
+        self.route_segments[idx_from..].to_vec()
+    }
     pub fn get_junction_before_last_segment(&self) -> Option<&Segment> {
         match self.get_segment_last() {
             None => None,

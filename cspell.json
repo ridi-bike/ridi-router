@@ -24,6 +24,7 @@
 		"maplibregl",
 		"maplibre",
 		"vanjs",
-		"qstring"
+		"qstring",
+		"bbox"
 	]
 }

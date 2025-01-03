@@ -7,7 +7,7 @@ use std::{
     error::Error,
     ffi::OsString,
     fs::{self, File},
-    io::{self, Cursor, Read},
+    io::{self, Cursor},
     num::ParseIntError,
     path::PathBuf,
 };
@@ -68,6 +68,12 @@ pub enum DebugViewerError {
 
     #[error("Could not parse number: {error}")]
     Parse { error: ParseIntError },
+
+    #[error("Missing query parameter: {param_name}")]
+    MissingQueryParam { param_name: &'static str },
+
+    #[error("Serde deserialize error on route chunks: {error}")]
+    SerdeDesRouteChunks { error: serde_json::Error },
 }
 pub struct DebugViewer;
 
@@ -99,6 +105,22 @@ impl DebugViewer {
                         continue;
                     }
                     Ok(resp) => resp,
+                };
+                request
+                    .respond(response)
+                    .map_err(|error| DebugViewerError::Respond { error })?;
+                continue;
+            }
+
+            if request.url().starts_with("/calc/route") {
+                let response = match Self::handle_calc_route(&request, &db_conn) {
+                    Err(e) => {
+                        request
+                            .respond(Response::from_string(format!("{e:?}")).with_status_code(500))
+                            .map_err(|error| DebugViewerError::Respond { error })?;
+                        continue;
+                    }
+                    Ok(r) => r,
                 };
                 request
                     .respond(response)
@@ -259,6 +281,23 @@ impl DebugViewer {
             sql
         };
         let sql = sql.order_by("itinerary_id", false);
+        let sql = if table_name == "DebugStreamForkChoiceWeights" {
+            sql.order_by("weight_name", true)
+        } else {
+            sql
+        };
+        let sql = if table_name == "DebugStreamForkChoices" {
+            sql.order_by("discarded", true)
+        } else {
+            sql
+        };
+        let sql = if table_name != "DebugStreamItineraries"
+            && table_name != "DebugStreamItineraryWaypoints"
+        {
+            sql.order_by("step_num", false)
+        } else {
+            sql
+        };
         let sql = sql
             .sql()
             .map_err(|error| DebugViewerError::SqlBuilder { error })?;
@@ -283,12 +322,65 @@ impl DebugViewer {
         ))
     }
 
+    fn handle_calc_route(
+        request: &Request,
+        db_con: &Connection,
+    ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError> {
+        println!(
+            "received CALC request! method: {:?}, url: {:?}",
+            request.method(),
+            request.url(),
+        );
+        let query = request.url().split("?").collect::<Vec<_>>();
+        let query = query
+            .get(1)
+            .map_or_else(|| "?".to_string(), |v| format!("?{}", *v));
+        let query = QString::from(query.as_str());
+        let query_itinerary_id = query.get("itinerary_id").map(|v| v.to_string()).map_or(
+            Err(DebugViewerError::MissingQueryParam {
+                param_name: "itinerary_id",
+            }),
+            |v| Ok(v),
+        )?;
+        let query_step = query.get("step").map_or(
+            Err(DebugViewerError::MissingQueryParam { param_name: "step" }),
+            |v| -> Result<u32, DebugViewerError> {
+                v.parse().map_err(|error| DebugViewerError::Parse { error })
+            },
+        )?;
+
+        let mut statement = db_con
+            .prepare(
+                "select route from DebugStreamSteps
+                    where itinerary_id = ? and step_num <= ?",
+            )
+            .map_err(|error| DebugViewerError::DbStatementError { error })?;
+
+        let rows: Vec<String> = statement
+            .query_map(params![query_itinerary_id, query_step], |row| {
+                Ok(String::from(row.get::<usize, String>(0)?))
+            })
+            .map_err(|error| DebugViewerError::DbStatementError { error })?
+            .collect::<Result<Vec<_>>>()
+            .map_err(|error| DebugViewerError::DbStatementError { error })?;
+
+        let rows = rows
+            .iter()
+            .map(|row| serde_json::from_str::<Vec<(f64, f64)>>(row))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| DebugViewerError::SerdeDesRouteChunks { error })?;
+
+        Ok(Response::from_string(
+            serde_json::to_string(&rows).map_err(|error| DebugViewerError::Serialize { error })?,
+        ))
+    }
+
     fn handle_data_request(
         request: &Request,
         db_con: &Connection,
     ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError> {
         println!(
-            "received request! method: {:?}, url: {:?}",
+            "received DATA request! method: {:?}, url: {:?}",
             request.method(),
             request.url(),
         );
@@ -335,6 +427,7 @@ impl DebugViewer {
                         itinerary_id: row.get(0)?,
                         step_num: row.get(1)?,
                         move_result: row.get(2)?,
+                        route: row.get(3)?,
                     })
                 },
             )?)
@@ -454,7 +547,7 @@ impl DebugViewer {
 
     fn handle_file_request(request: &Request) -> Result<Response<File>, DebugViewerError> {
         println!(
-            "received request! method: {:?}, url: {:?}",
+            "received FILE request! method: {:?}, url: {:?}",
             request.method(),
             request.url(),
         );

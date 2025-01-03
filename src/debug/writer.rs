@@ -15,7 +15,7 @@ use crate::{
     router::{
         itinerary::Itinerary,
         navigator::WeightCalcResult,
-        route::segment_list::SegmentList,
+        route::{segment, segment_list::SegmentList, Route},
         walker::{WalkerError, WalkerMoveResult},
     },
 };
@@ -66,6 +66,7 @@ pub struct DebugStreamSteps {
     #[typeshare(serialized_as = "number")]
     pub step_num: i64,
     pub move_result: String,
+    pub route: String,
 }
 
 #[derive(Serialize, derive_name::Name, struct_field_names_as_array::FieldNamesAsSlice)]
@@ -114,6 +115,8 @@ pub enum DebugWriterError {
     Write { error: csv::Error },
     #[error("Could not flush file")]
     Flush { error: io::Error },
+    #[error("COuld not serialize route")]
+    SerializeRoute { error: serde_json::Error },
 }
 
 static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -269,6 +272,7 @@ impl DebugWriter {
         itinerary_id: String,
         step: u32,
         move_result: &Result<WalkerMoveResult, WalkerError>,
+        route: &Route,
     ) {
         let move_result = match move_result {
             Err(_) => "Error",
@@ -282,6 +286,19 @@ impl DebugWriter {
                     itinerary_id: itinerary_id.clone(),
                     step_num: step as i64,
                     move_result: move_result.to_string(),
+                    route: serde_json::to_string(
+                        &route
+                            .get_route_chunk_since_junction_before_last()
+                            .iter()
+                            .map(|segment| {
+                                (
+                                    segment.get_end_point().borrow().lat,
+                                    segment.get_end_point().borrow().lon,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .map_err(|error| DebugWriterError::SerializeRoute { error })?,
                 })
                 .map_err(|error| DebugWriterError::Write { error })?;
             Ok(())

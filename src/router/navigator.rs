@@ -164,7 +164,12 @@ impl Navigator {
                 .walker
                 .move_forward_to_next_fork(|p| self.itinerary.is_finished(p));
 
-            DebugWriter::write_step(self.itinerary.id(), loop_counter, &move_result);
+            DebugWriter::write_step(
+                self.itinerary.id(),
+                loop_counter,
+                &move_result,
+                self.walker.get_route(),
+            );
 
             if move_result == Ok(WalkerMoveResult::Finish) {
                 return NavigationResult::Finished(self.walker.get_route().clone());
