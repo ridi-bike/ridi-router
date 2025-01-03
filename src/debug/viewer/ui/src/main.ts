@@ -7,6 +7,7 @@ import * as turf from "@turf/turf";
 import van from "vanjs-core";
 import {
   DebugStreamForkChoices,
+  DebugStreamForkChoiceWeights,
   DebugStreamItineraries,
   DebugStreamItineraryWaypoints,
   DebugStreamStepResults,
@@ -21,18 +22,17 @@ import {
   trClass,
 } from "./data-table";
 
-const { button, thead, tbody, div, span, table, td, th, tr } = van.tags;
+const { button, thead, tbody, div, table, td, th, tr } = van.tags;
+
 const selection = van.state<SelectionState>({
   itinerary: null,
   step: null,
+  forkChoice: null,
 });
 const itineraries = van.state([] as DebugStreamItineraries[]);
 const itineraryWaypoints = van.state([] as DebugStreamItineraryWaypoints[]);
 const steps = van.state([] as DebugStreamSteps[]);
-// const stepResults = van.state([] as DebugStreamStepResults[]);
-// const forkChoices = van.state([] as DebugStreamForkChoices[]);
-// const forkChoiceWeights = van.state([] as DebugStreamForkChoiceWeights[]);
-//
+
 const mapActions: MapActions = {
   current: null,
 };
@@ -113,6 +113,7 @@ const Itineraries = () => {
                       onclick: () => {
                         selection.val = {
                           step: null,
+                          forkChoice: null,
                           itinerary: it,
                         };
                         itineraryWaypoints.val = [];
@@ -347,25 +348,72 @@ const Steps = () => {
                 ),
               ],
             ),
-            tr(
-              { class: trClass() },
-              td({ class: tdClass() }, "Choices:"),
-              td(
-                { class: tdClass() },
-                ForkChoices(step.itinerary_id, step.step_num),
-              ),
-            ),
-            tr(
-              { class: trClass() },
-              td({ class: tdClass() }, "Step Result:"),
-              td(
-                { class: tdClass() },
-                StepResult(step.itinerary_id, step.step_num),
-              ),
-            ),
+            () =>
+              selection.val.step?.step_num === step.step_num
+                ? tr(
+                    { class: trClass() },
+                    td({ class: tdClass() }, "Choices:"),
+                    td(
+                      { class: tdClass() },
+                      ForkChoices(step.itinerary_id, step.step_num),
+                    ),
+                  )
+                : tr(),
+            () =>
+              selection.val.step?.step_num === step.step_num
+                ? tr(
+                    { class: trClass() },
+                    td({ class: tdClass() }, "Step Result:"),
+                    td(
+                      { class: tdClass() },
+                      StepResult(step.itinerary_id, step.step_num),
+                    ),
+                  )
+                : tr(),
           ]),
         ),
       ),
+  );
+};
+
+const ForkChoiceWeights = (
+  itineraryId: string,
+  stepNum: number,
+  endPointId: number,
+) => {
+  const forkChoiceWeights = van.state<DebugStreamForkChoiceWeights[]>([]);
+  fetch(
+    `http://0.0.0.0:1337/data/DebugStreamForkChoiceWeights?itinerary_id=${itineraryId}&step_num=${stepNum}`,
+  )
+    .then((resp) => resp.json())
+    .then((data) => {
+      console.log({ data });
+      forkChoiceWeights.val = (data as DebugStreamForkChoiceWeights[]).filter(
+        (r) => r.end_point_id === endPointId,
+      );
+    });
+
+  return div(() =>
+    table(
+      { class: tableClass() },
+      thead(
+        { class: theadClass() },
+        tr(
+          th({ class: thClass() }, "weight name"),
+          th({ class: thClass() }, "weight type"),
+          th({ class: thClass() }, "weight value"),
+        ),
+      ),
+      tbody(
+        ...forkChoiceWeights.val.map((forkChW) =>
+          tr({ class: trClass() }, [
+            td({ class: tdClass() }, forkChW.weight_name),
+            td({ class: tdClass() }, forkChW.weight_type),
+            td({ class: tdClass() }, forkChW.weight_value),
+          ]),
+        ),
+      ),
+    ),
   );
 };
 
@@ -376,6 +424,27 @@ const ForkChoices = (itineraryId: string, stepNum: number) => {
   )
     .then((resp) => resp.json())
     .then((data) => (forkCHoices.val = data));
+
+  van.derive(() => {
+    mapActions.current?.removeForks();
+    if (selection.val.forkChoice) {
+      mapActions.current?.addFork(
+        selection.val.forkChoice.end_point_id.toString(),
+        [
+          [
+            selection.val.forkChoice.line_point_0_lat,
+            selection.val.forkChoice.line_point_0_lon,
+          ],
+          [
+            selection.val.forkChoice.line_point_1_lat,
+            selection.val.forkChoice.line_point_1_lon,
+          ],
+        ],
+        "red",
+      );
+    }
+  });
+
   return div(() =>
     table(
       { class: tableClass() },
@@ -390,21 +459,52 @@ const ForkChoices = (itineraryId: string, stepNum: number) => {
         ),
       ),
       tbody(
-        ...forkCHoices.val.map((forkCh) =>
-          tr({ class: trClass() }, [
-            td({ class: tdClass() }, forkCh.discarded),
-            td({ class: tdClass() }, forkCh.end_point_id),
-            td({ class: tdClass() }, forkCh.segment_end_point),
-            td(
-              { class: tdClass() },
-              `${forkCh.line_point_0_lat},${forkCh.line_point_0_lon}`,
-            ),
-            td(
-              { class: tdClass() },
-              `${forkCh.line_point_1_lat}, ${forkCh.line_point_1_lon}`,
-            ),
-          ]),
-        ),
+        forkCHoices.val.map((forkCh) => [
+          tr(
+            {
+              class: trClass({
+                "bg-red-100":
+                  selection.val.forkChoice?.end_point_id == forkCh.end_point_id,
+                "dark:bg-red-900":
+                  selection.val.forkChoice?.end_point_id == forkCh.end_point_id,
+              }),
+            },
+            [
+              td({ class: tdClass() }, forkCh.discarded),
+              td(
+                { class: tdClass() },
+                button(
+                  {
+                    class: "hover:bg-yellow-100 dark:hover:bg-yellow-800",
+                    onclick: () => {
+                      selection.val = {
+                        ...selection.val,
+                        forkChoice: forkCh,
+                      };
+                    },
+                  },
+                  forkCh.end_point_id,
+                ),
+              ),
+              td({ class: tdClass() }, forkCh.segment_end_point),
+              td(
+                { class: tdClass() },
+                `${forkCh.line_point_0_lat},${forkCh.line_point_0_lon}`,
+              ),
+              td(
+                { class: tdClass() },
+                `${forkCh.line_point_1_lat}, ${forkCh.line_point_1_lon}`,
+              ),
+            ],
+          ),
+          () =>
+            selection.val.forkChoice?.end_point_id === forkCh.end_point_id
+              ? tr(
+                  { class: tdClass() },
+                  ForkChoiceWeights(itineraryId, stepNum, forkCh.end_point_id),
+                )
+              : tr(),
+        ]),
       ),
     ),
   );
@@ -439,7 +539,7 @@ const StepResult = (itineraryId: string, stepNum: number) => {
 };
 
 const MapContainer = () => {
-  const mapContainer = div({ class: "h-96 w-96" });
+  const mapContainer = div({ class: "h-screen w-screen" });
 
   var map = new maplibregl.Map({
     container: mapContainer,
@@ -451,6 +551,40 @@ const MapContainer = () => {
   map.on("load", () => {
     mapActions.current = {
       routes: [],
+      forks: [],
+      removeForks: () => {
+        for (const forkId of mapActions.current?.forks || []) {
+          map.removeLayer(forkId);
+          map.removeSource(forkId);
+        }
+        if (mapActions.current) {
+          mapActions.current.forks = [];
+        }
+      },
+      addFork: (id, fork, color) => {
+        map.addSource(id, {
+          type: "geojson",
+          data: {
+            type: "LineString",
+            coordinates: fork.map((c) => [c[1], c[0]]),
+          },
+        });
+        map.addLayer({
+          id,
+          type: "line",
+          source: id,
+          layout: {
+            "line-cap": "round",
+            "line-join": "round",
+          },
+          paint: {
+            "line-color": color,
+            "line-width": 5,
+            "line-opacity": 0.8,
+          },
+        });
+        mapActions.current?.forks.push(id);
+      },
       removeRoutes: () => {
         for (const routeId of mapActions.current?.routes || []) {
           map.removeLayer(routeId);
@@ -578,7 +712,11 @@ const MapContainer = () => {
 };
 
 const App = () => {
-  return div(Itineraries(), ItineraryWaypoints(), Steps(), MapContainer());
+  return div(
+    { class: "flex flex-col lg:flex-row" },
+    div(Itineraries(), ItineraryWaypoints(), Steps()),
+    MapContainer(),
+  );
 };
 
 van.add(document.body, App());

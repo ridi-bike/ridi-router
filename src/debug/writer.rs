@@ -37,7 +37,8 @@ pub struct DebugStreamForkChoiceWeights {
     pub itinerary_id: String,
     #[typeshare(serialized_as = "number")]
     pub step_num: i64,
-    pub end_point_id: String,
+    #[typeshare(serialized_as = "number")]
+    pub end_point_id: i64,
     pub weight_name: String,
     pub weight_type: String,
     #[typeshare(serialized_as = "number")]
@@ -225,7 +226,7 @@ impl DebugWriter {
                 .serialize(DebugStreamForkChoiceWeights {
                     itinerary_id: itinerary_id.clone(),
                     step_num: step as i64,
-                    end_point_id: end_point_id.to_string(),
+                    end_point_id: *end_point_id as i64,
                     weight_name: weight_name.to_string(),
                     weight_type: weight_type.to_string(),
                     weight_value: *weight_value as i64,

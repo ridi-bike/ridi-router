@@ -5,7 +5,7 @@
 export interface DebugStreamForkChoiceWeights {
 	itinerary_id: string;
 	step_num: number;
-	end_point_id: string;
+	end_point_id: number;
 	weight_name: string;
 	weight_type: string;
 	weight_value: number;
