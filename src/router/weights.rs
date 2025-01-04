@@ -56,24 +56,24 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     );
 
     let next_bearing = Haversine::bearing(fork_point_geo, next_point_geo);
-    let fork_line_one_geo = Point::new(
+    let fork_line_0_geo = Point::new(
         fork_segment.get_line().borrow().points.0.borrow().lon,
         fork_segment.get_line().borrow().points.0.borrow().lat,
     );
-    let fork_line_two_geo = Point::new(
+    let fork_line_1_geo = Point::new(
         fork_segment.get_line().borrow().points.1.borrow().lon,
         fork_segment.get_line().borrow().points.1.borrow().lat,
     );
-    let fork_bearing = if &fork_segment.get_line().borrow().points.0 == fork_segment.get_end_point()
+    let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
     {
-        Haversine::bearing(fork_line_one_geo, fork_line_two_geo)
+        Haversine::bearing(fork_line_0_geo, fork_line_1_geo)
     } else {
-        Haversine::bearing(fork_line_two_geo, fork_line_one_geo)
+        Haversine::bearing(fork_line_1_geo, fork_line_0_geo)
     };
 
     let degree_offset_from_next = (fork_bearing - next_bearing).abs();
 
-    let ratio: f32 = 255.0 / 180.0;
+    let ratio: f32 = 255.0 / 360.0;
 
     WeightCalcResult::UseWithWeight(255 - (degree_offset_from_next / ratio).round() as u8)
 }

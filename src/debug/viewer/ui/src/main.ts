@@ -20,7 +20,8 @@ import {
   theadClass,
   thClass,
   trClass,
-} from "./data-table";
+} from "./styles/table";
+import { Pagination } from "./components/pagination";
 
 const { button, thead, tbody, div, table, td, th, tr } = van.tags;
 
@@ -37,27 +38,6 @@ const mapActions: MapActions = {
   current: null,
 };
 
-const Pagination = (page: number, next: () => void, back: () => void) => {
-  return div(
-    { class: "flex flex-row" },
-    button(
-      {
-        class: "dark:hover:bg-gray-800 hover:bg-gray-200 px-4 py-1",
-        onclick: back,
-      },
-      "<",
-    ),
-    div({ class: "px-4 py-1" }, page),
-    button(
-      {
-        class: "dark:hover:bg-gray-800 hover:bg-gray-200 px-4 py-1",
-        onclick: next,
-      },
-      ">",
-    ),
-  );
-};
-
 const Itineraries = () => {
   const pageSize = 20;
   const page = van.state(0);
@@ -72,12 +52,7 @@ const Itineraries = () => {
   );
 
   return div(
-    () =>
-      Pagination(
-        page.val,
-        () => page.val++,
-        () => (page.val > 0 ? page.val-- : void 0),
-      ),
+    () => Pagination(page.val, (p) => (page.val = p)),
     () =>
       table({ class: tableClass() }, [
         thead(
@@ -231,12 +206,7 @@ const ItineraryWaypoints = () => {
   });
 
   return div(
-    () =>
-      Pagination(
-        page.val,
-        () => page.val++,
-        () => (page.val > 0 ? page.val-- : void 0),
-      ),
+    () => Pagination(page.val, (p) => (page.val = p)),
     () =>
       table(
         { class: tableClass() },
@@ -303,12 +273,7 @@ const Steps = () => {
   });
 
   return div(
-    () =>
-      Pagination(
-        page.val,
-        () => page.val++,
-        () => (page.val > 0 ? page.val-- : void 0),
-      ),
+    () => Pagination(page.val, (p) => (page.val = p)),
     () =>
       table(
         { class: tableClass() },

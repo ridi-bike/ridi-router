@@ -1,5 +1,5 @@
 import { ClassValue } from "clsx";
-import { cn } from "./util";
+import { cn } from "../util";
 
 export const tableClass = (...inputs: ClassValue[]) =>
   cn(
