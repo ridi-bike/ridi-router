@@ -82,8 +82,11 @@ run-gr:
 run-gr-short:
 	cargo run --release -- dual --start 37.0331605,22.1573558 --finish 37.041196,22.182086 --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece 
 
-run-lv-round:
+run-lv-round-debug:
 	cargo run --release -- dual --debug-dir ./map-data/debug --input /map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file map-data/rules-prefer-unpaved.json round-trip --center {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
+
+run-lv-round:
+	cargo run --release -- dual --input /map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file map-data/rules-prefer-unpaved.json round-trip --center {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
 
 cache-lv:
 	cargo run --release -- cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia

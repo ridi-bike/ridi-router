@@ -1,6 +1,13 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 use crate::map_data::graph::MapDataPointRef;
+
+#[derive(Clone, Debug)]
+struct WaypointHistoryElement {
+    pub on_point: MapDataPointRef,
+    pub from_point: MapDataPointRef,
+    pub to_point: MapDataPointRef,
+}
 
 #[derive(Clone, Debug)]
 pub struct Itinerary {
@@ -10,6 +17,7 @@ pub struct Itinerary {
     pub next: MapDataPointRef,
     pub waypoint_radius: f32,
     pub visit_all_waypoints: bool,
+    pub switched_wps_on: Vec<WaypointHistoryElement>,
 }
 
 impl Display for Itinerary {
@@ -42,6 +50,7 @@ impl Itinerary {
             waypoints,
             finish,
             visit_all_waypoints: false,
+            switched_wps_on: Vec::new(),
         }
     }
     pub fn new_round_trip(
@@ -57,6 +66,7 @@ impl Itinerary {
             waypoints,
             finish,
             visit_all_waypoints: true,
+            switched_wps_on: Vec::new(),
         }
     }
 
@@ -83,12 +93,31 @@ impl Itinerary {
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> () {
         if current.borrow().distance_between(&self.next) <= self.waypoint_radius {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
+                let prev_point = self.next.clone();
                 self.next = self
                     .waypoints
                     .get(idx + 1)
-                    .map_or(self.finish.clone(), |w| w.clone())
+                    .map_or(self.finish.clone(), |w| w.clone());
+                self.switched_wps_on.push(WaypointHistoryElement {
+                    on_point: current.clone(),
+                    from_point: prev_point,
+                    to_point: self.next.clone(),
+                });
             } else {
+                self.switched_wps_on.push(WaypointHistoryElement {
+                    on_point: current.clone(),
+                    from_point: self.next.clone(),
+                    to_point: self.finish.clone(),
+                });
                 self.next = self.finish.clone();
+            }
+        }
+    }
+    pub fn check_set_back(&mut self, current: MapDataPointRef) -> () {
+        if let Some(history) = self.switched_wps_on.last() {
+            if history.on_point == current {
+                self.next = history.from_point.clone();
+                self.switched_wps_on.pop();
             }
         }
     }

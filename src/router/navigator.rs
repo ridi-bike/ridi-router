@@ -241,6 +241,8 @@ impl Navigator {
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     self.walker.move_backwards_to_prev_fork();
+                    self.itinerary
+                        .check_set_back(self.walker.get_last_point().clone());
                     DebugWriter::write_step_result(
                         self.itinerary.id(),
                         loop_counter,
@@ -262,6 +264,8 @@ impl Navigator {
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "MoveBack", None);
                 self.walker.move_backwards_to_prev_fork();
+                self.itinerary
+                    .check_set_back(self.walker.get_last_point().clone());
             }
 
             if loop_counter >= 1000000 {

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::{
     debug::writer::DebugWriter,
-    gpx_writer::write_debug_itinerary,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules},
 };
@@ -23,8 +22,8 @@ use super::{
 
 const START_FINISH_VARIATION_DISTANCES: [f32; 3] = [10000., 20000., 30000.];
 const START_FINISH_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., 225., 270., 315.];
-const ROUND_TRIP_DISTANCE_RATIOS: [f32; 4] = [1.0, 0.9, 0.8, 0.7];
-const ROUND_TRIP_BEARING_VARIATION: [f32; 5] = [-20., -10., 0., 10., 20.];
+const ROUND_TRIP_DISTANCE_RATIOS: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
+const ROUND_TRIP_BEARING_VARIATION: [f32; 4] = [-25., -10., 10., 25.];
 
 #[derive(Debug, Clone)]
 pub struct RouteWithStats {
@@ -138,7 +137,7 @@ impl Generator {
                                                 self.start.clone(),
                                                 self.finish.clone(),
                                                 vec![side_left_point, tip_point, side_right_point],
-                                                1000.,
+                                                3000.,
                                             ))
                                         })
                                         .collect::<Vec<_>>()
@@ -158,7 +157,7 @@ impl Generator {
             self.start.clone(),
             self.finish.clone(),
             Vec::new(),
-            1000.,
+            3000.,
         )];
 
         from_waypoints.iter().for_each(|from_wp| {
@@ -167,7 +166,7 @@ impl Generator {
                     self.start.clone(),
                     self.finish.clone(),
                     vec![from_wp.clone(), to_wp.clone()],
-                    1000.,
+                    3000.,
                 ))
             })
         });
