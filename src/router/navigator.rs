@@ -281,7 +281,7 @@ mod test {
             itinerary::Itinerary,
             navigator::{NavigationResult, WeightCalcResult},
             rules::RouterRules,
-            weights::WeightCalcInput,
+            weights::{WeightCalc, WeightCalcInput},
         },
         test_utils::{
             graph_from_test_dataset, route_matches_ids, set_graph_static, test_dataset_1,
@@ -311,7 +311,11 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(itinerary.clone(), RouterRules::default(), vec![weight]);
+            let mut navigator = Navigator::new(
+                itinerary.clone(),
+                RouterRules::default(),
+                vec![WeightCalc{calc: weight, name:"weight".to_string()}]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -335,7 +339,11 @@ mod test {
                 }
                 WeightCalcResult::UseWithWeight(1)
             }
-            let navigator = Navigator::new(itinerary,RouterRules::default(), vec![weight2]);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{ calc:weight2, name:"weight2".to_string() }]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -377,7 +385,11 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{ calc: weight, name:"weight".to_string() }]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -401,7 +413,11 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{calc: weight, name:"weight".to_string()}]
+            );
 
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
                 assert!(false);
@@ -423,7 +439,11 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{ calc: weight, name:"weight".to_string()}]
+            );
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
                 assert!(false);
             }
@@ -463,7 +483,11 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight1, weight2]);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{calc: weight1, name:"weight1".to_string()}, WeightCalc{ calc: weight2, name:"weight2".to_string()}]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {

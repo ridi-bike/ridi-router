@@ -26,6 +26,17 @@ pub struct WeightCalc {
     pub calc: fn(input: WeightCalcInput) -> WeightCalcResult,
 }
 
+fn get_priority_from_headings(bearing_next: f32, bearing_fork: f32) -> u8 {
+    let adj = bearing_next.min(bearing_fork);
+    let angle = bearing_next.max(bearing_fork) - adj;
+
+    let degree_diff = if angle > 180. { 360. - angle } else { angle };
+
+    let ratio: f32 = 255.0 / 180.0;
+
+    255 - (degree_diff * ratio).round() as u8
+}
+
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_heading");
 
@@ -71,11 +82,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         Haversine::bearing(fork_line_1_geo, fork_line_0_geo)
     };
 
-    let degree_offset_from_next = (fork_bearing - next_bearing).abs();
-
-    let ratio: f32 = 255.0 / 360.0;
-
-    WeightCalcResult::UseWithWeight(255 - (degree_offset_from_next / ratio).round() as u8)
+    WeightCalcResult::UseWithWeight(get_priority_from_headings(next_bearing, fork_bearing))
 }
 
 pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
@@ -351,7 +358,33 @@ mod test {
         test_utils::{graph_from_test_file, set_graph_static},
     };
 
-    use super::{weight_heading, WeightCalcInput};
+    use super::{get_priority_from_headings, weight_heading, WeightCalcInput};
+
+    #[test]
+    fn get_prio_from_headings() {
+        let tests = vec![
+            (0., 0., 255),
+            (180., 0., 0),
+            (90., 0., 127),
+            (0., 180., 0),
+            (0., 90., 127),
+            (0., 45., 191),
+            (0., 135., 64),
+            (15., 60., 191),
+            (60., 15., 191),
+            (15., 330., 191),
+            (330., 15., 191),
+            (0., 315., 191),
+            (1., 316., 191),
+            (180., 316., 62),
+            (316., 180., 62),
+        ];
+        for test in tests {
+            println!("test: {}-{}: {}", test.0, test.1, test.2);
+            let res = get_priority_from_headings(test.0, test.1);
+            assert_eq!(test.2, res);
+        }
+    }
 
     fn get_route_segment(
         end_point: MapDataPointRef,
