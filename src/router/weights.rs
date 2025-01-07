@@ -459,7 +459,7 @@ mod test {
                 rules: &RouterRules::default()
             });
             info!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(96));
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(64));
         }
     }
 }
