@@ -3,9 +3,11 @@ use std::{
     fmt::Debug,
 };
 
-use tracing::{field::DebugValue, info, trace};
+use tracing::{info, trace};
 
-use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
+use crate::{
+    debug::writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
+};
 
 use super::{
     itinerary::Itinerary,
@@ -141,8 +143,8 @@ pub struct Navigator {
 
 impl Navigator {
     pub fn new(itinerary: Itinerary, rules: RouterRules, weight_calcs: Vec<WeightCalc>) -> Self {
-        Navigator {
-            walker: Walker::new(itinerary.get_from().clone(), itinerary.get_to().clone()),
+        Self {
+            walker: Walker::new(itinerary.start.clone()),
             itinerary,
             rules,
             weight_calcs,
@@ -158,31 +160,33 @@ impl Navigator {
         loop {
             loop_counter += 1;
 
-            let move_result = self.walker.move_forward_to_next_fork();
+            let move_result = self
+                .walker
+                .move_forward_to_next_fork(|p| self.itinerary.is_finished(p));
 
-            trace!(
-                step = loop_counter,
-                move_result = debug(&move_result),
-                "Next step"
+            DebugWriter::write_step(
+                self.itinerary.id(),
+                loop_counter,
+                &move_result,
+                self.walker.get_route(),
             );
 
             if move_result == Ok(WalkerMoveResult::Finish) {
-                trace!("Finished with route");
                 return NavigationResult::Finished(self.walker.get_route().clone());
             }
             if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
-                let (fork_choices, last_point) = {
-                    let last_point = self.walker.get_last_point();
-                    (
-                        fork_choices.exclude_segments_where_points_in(
-                            &self
-                                .discarded_fork_choices
-                                .get_discarded_choices_for_point(&last_point)
-                                .map_or(Vec::new(), |d| d),
-                        ),
-                        last_point,
-                    )
-                };
+                let last_point = self.walker.get_last_point();
+                let discarded_choices = &self
+                    .discarded_fork_choices
+                    .get_discarded_choices_for_point(&last_point)
+                    .map_or(Vec::new(), |d| d);
+                DebugWriter::write_fork_choices(
+                    self.itinerary.id(),
+                    loop_counter,
+                    &fork_choices,
+                    &discarded_choices,
+                );
+                let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
 
                 self.itinerary.check_set_next(last_point.clone());
 
@@ -193,18 +197,23 @@ impl Navigator {
                             .weight_calcs
                             .iter()
                             .map(|weight_calc| {
-                                let weight_calc_result = weight_calc(WeightCalcInput {
+                                let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
                                     route: self.walker.get_route(),
                                     itinerary: &self.itinerary,
                                     current_fork_segment: &fork_route_segment,
                                     all_fork_segments: &fork_choices,
                                     walker_from_fork: Walker::new(
                                         fork_route_segment.get_end_point().clone(),
-                                        self.itinerary.get_next().clone(),
                                     ),
                                     rules: &self.rules,
                                 });
-                                trace!(result = debug(&weight_calc_result), "Weight calc");
+                                DebugWriter::write_fork_choice_weight(
+                                    self.itinerary.id(),
+                                    loop_counter,
+                                    &fork_route_segment.get_end_point().borrow().id,
+                                    &weight_calc.name,
+                                    &weight_calc_result,
+                                );
                                 weight_calc_result
                             })
                             .collect::<Vec<_>>();
@@ -218,26 +227,50 @@ impl Navigator {
                     },
                 );
 
-                trace!(fork_weights = debug(&fork_weights), "Fork weights");
                 let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
                     self.discarded_fork_choices
                         .add_discarded_choice(&last_point, &chosen_fork_point);
+                    DebugWriter::write_step_result(
+                        self.itinerary.id(),
+                        loop_counter,
+                        "ForkChoice",
+                        Some(chosen_fork_point.borrow().id),
+                    );
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     self.walker.move_backwards_to_prev_fork();
+                    self.itinerary
+                        .check_set_back(self.walker.get_last_point().clone());
+                    DebugWriter::write_step_result(
+                        self.itinerary.id(),
+                        loop_counter,
+                        "MoveBack",
+                        None,
+                    );
                     if self.walker.get_route().get_junction_before_last_segment() == None {
                         info!("Stuck");
+                        DebugWriter::write_step_result(
+                            self.itinerary.id(),
+                            loop_counter,
+                            "Stuck",
+                            None,
+                        );
+                        self.walker.get_route().write_debug();
                         return NavigationResult::Stuck;
                     }
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
+                DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "MoveBack", None);
                 self.walker.move_backwards_to_prev_fork();
+                self.itinerary
+                    .check_set_back(self.walker.get_last_point().clone());
             }
 
             if loop_counter >= 1000000 {
                 info!("Reached loop {loop_counter}, stopping");
+                DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
                 return NavigationResult::Stopped(self.walker.get_route().clone());
             }
         }
@@ -252,7 +285,7 @@ mod test {
             itinerary::Itinerary,
             navigator::{NavigationResult, WeightCalcResult},
             rules::RouterRules,
-            weights::WeightCalcInput,
+            weights::{WeightCalc, WeightCalcInput},
         },
         test_utils::{
             graph_from_test_dataset, route_matches_ids, set_graph_static, test_dataset_1,
@@ -269,7 +302,7 @@ mod test {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_from().clone(),
+                    None => &input.itinerary.start.clone(),
                 };
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 6
@@ -281,8 +314,12 @@ mod test {
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
-            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(itinerary.clone(), RouterRules::default(), vec![weight]);
+            let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
+            let mut navigator = Navigator::new(
+                itinerary.clone(),
+                RouterRules::default(),
+                vec![WeightCalc{calc: weight, name:"weight".to_string()}]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -296,7 +333,7 @@ mod test {
             fn weight2(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_to().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
 
                 if prev_point.borrow().id == 3
@@ -306,7 +343,11 @@ mod test {
                 }
                 WeightCalcResult::UseWithWeight(1)
             }
-            let navigator = Navigator::new(itinerary,RouterRules::default(), vec![weight2]);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{ calc:weight2, name:"weight2".to_string() }]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -326,7 +367,7 @@ mod test {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_to().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
 
                 if prev_point.borrow().id == 3 {
@@ -347,8 +388,12 @@ mod test {
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
-            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
+            let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{ calc: weight, name:"weight".to_string() }]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
@@ -371,8 +416,12 @@ mod test {
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
-            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
+            let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{calc: weight, name:"weight".to_string()}]
+            );
 
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
                 assert!(false);
@@ -393,8 +442,12 @@ mod test {
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
-            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight]);
+            let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{ calc: weight, name:"weight".to_string()}]
+            );
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
                 assert!(false);
             }
@@ -408,7 +461,7 @@ mod test {
             fn weight1(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_to().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 6
@@ -420,7 +473,7 @@ mod test {
             fn weight2(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
                     Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.get_to().clone(),
+                    None => &input.itinerary.finish.clone(),
                 };
 
                 if prev_point.borrow().id == 3
@@ -433,8 +486,12 @@ mod test {
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
-            let itinerary = Itinerary::new(from, to, Vec::new(), 0.);
-            let navigator = Navigator::new(itinerary, RouterRules::default(), vec![weight1, weight2]);
+            let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
+            let navigator = Navigator::new(
+                itinerary,
+                RouterRules::default(),
+                vec![WeightCalc{calc: weight1, name:"weight1".to_string()}, WeightCalc{ calc: weight2, name:"weight2".to_string()}]
+            );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {

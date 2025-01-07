@@ -1,6 +1,6 @@
-use std::{any::Any, collections::HashMap};
+use std::collections::HashMap;
 
-use geo::{Bearing, Haversine, HaversineBearing, Point};
+use geo::{Bearing, Haversine, Point};
 use tracing::{error, trace};
 
 use crate::router::rules::{RouterRules, RulesTagValueAction};
@@ -21,13 +21,27 @@ pub struct WeightCalcInput<'a> {
     pub rules: &'a RouterRules,
 }
 
-pub type WeightCalc = fn(input: WeightCalcInput) -> WeightCalcResult;
+pub struct WeightCalc {
+    pub name: String,
+    pub calc: fn(input: WeightCalcInput) -> WeightCalcResult,
+}
+
+fn get_priority_from_headings(bearing_next: f32, bearing_fork: f32) -> u8 {
+    let adj = bearing_next.min(bearing_fork);
+    let angle = bearing_next.max(bearing_fork) - adj;
+
+    let degree_diff = if angle > 180. { 360. - angle } else { angle };
+
+    let ratio: f32 = 255.0 / 180.0;
+
+    255 - (degree_diff * ratio).round() as u8
+}
 
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_heading");
 
     let mut walker = input.walker_from_fork;
-    let next_fork = match walker.move_forward_to_next_fork() {
+    let next_fork = match walker.move_forward_to_next_fork(|p| input.itinerary.is_finished(p)) {
         Ok(v) => v,
         Err(e) => {
             error!("weight calc error {:#?}", e);
@@ -48,33 +62,27 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         fork_segment.get_end_point().borrow().lat,
     );
     let next_point_geo = Point::new(
-        input.itinerary.get_next().borrow().lon,
-        input.itinerary.get_next().borrow().lat,
+        input.itinerary.next.borrow().lon,
+        input.itinerary.next.borrow().lat,
     );
-    // let next_bearing = fork_point_geo.haversine_bearing(next_point_geo);
+
     let next_bearing = Haversine::bearing(fork_point_geo, next_point_geo);
-    let fork_line_one_geo = Point::new(
+    let fork_line_0_geo = Point::new(
         fork_segment.get_line().borrow().points.0.borrow().lon,
         fork_segment.get_line().borrow().points.0.borrow().lat,
     );
-    let fork_line_two_geo = Point::new(
+    let fork_line_1_geo = Point::new(
         fork_segment.get_line().borrow().points.1.borrow().lon,
         fork_segment.get_line().borrow().points.1.borrow().lat,
     );
     let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
     {
-        // fork_line_one_geo.haversine_bearing(fork_line_two_geo)
-        Haversine::bearing(fork_line_one_geo, fork_line_two_geo)
+        Haversine::bearing(fork_line_0_geo, fork_line_1_geo)
     } else {
-        // fork_line_two_geo.haversine_bearing(fork_line_one_geo)
-        Haversine::bearing(fork_line_two_geo, fork_line_one_geo)
+        Haversine::bearing(fork_line_1_geo, fork_line_0_geo)
     };
 
-    let degree_offset_from_next = (fork_bearing - next_bearing).abs();
-
-    let ratio: f32 = 255.0 / 180.0;
-
-    WeightCalcResult::UseWithWeight(255 - (degree_offset_from_next / ratio).round() as u8)
+    WeightCalcResult::UseWithWeight(get_priority_from_headings(next_bearing, fork_bearing))
 }
 
 pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
@@ -183,28 +191,28 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
     }
     let check_junctions_back = input.rules.basic.progression_direction.check_junctions_back;
 
-    let distance_to_end_current = match input.route.get_segment_last() {
+    let distance_to_next_current = match input.route.get_segment_last() {
         None => return WeightCalcResult::UseWithWeight(0),
         Some(segment) => segment
             .get_end_point()
             .borrow()
-            .distance_between(&input.itinerary.get_next()),
+            .distance_between(&input.itinerary.next),
     };
 
-    let distance_to_end_junctions_back =
+    let distance_to_next_junctions_back =
         match input.route.get_junctions_from_end(check_junctions_back) {
             None => return WeightCalcResult::UseWithWeight(0),
             Some(segment) => segment
                 .get_end_point()
                 .borrow()
-                .distance_between(&input.itinerary.get_next()),
+                .distance_between(&input.itinerary.next),
         };
     trace!(
-        distance = distance_to_end_junctions_back,
+        distance = distance_to_next_junctions_back,
         "distance to next"
     );
 
-    if distance_to_end_current > distance_to_end_junctions_back {
+    if distance_to_next_current > distance_to_next_junctions_back {
         return WeightCalcResult::DoNotUse;
     }
     WeightCalcResult::UseWithWeight(0)
@@ -226,9 +234,9 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
     let total_distance = input
         .itinerary
-        .get_from()
+        .start
         .borrow()
-        .distance_between(&input.itinerary.get_next());
+        .distance_between(&input.itinerary.next);
     let point_steps_back = match input.route.get_segments_from_end(check_steps_back) {
         None => return WeightCalcResult::UseWithWeight(0),
         Some(segment) => segment.get_end_point().clone(),
@@ -350,7 +358,33 @@ mod test {
         test_utils::{graph_from_test_file, set_graph_static},
     };
 
-    use super::{weight_heading, WeightCalcInput};
+    use super::{get_priority_from_headings, weight_heading, WeightCalcInput};
+
+    #[test]
+    fn get_prio_from_headings() {
+        let tests = vec![
+            (0., 0., 255),
+            (180., 0., 0),
+            (90., 0., 127),
+            (0., 180., 0),
+            (0., 90., 127),
+            (0., 45., 191),
+            (0., 135., 64),
+            (15., 60., 191),
+            (60., 15., 191),
+            (15., 330., 191),
+            (330., 15., 191),
+            (0., 315., 191),
+            (1., 316., 191),
+            (180., 316., 62),
+            (316., 180., 62),
+        ];
+        for test in tests {
+            println!("test: {}-{}: {}", test.0, test.1, test.2);
+            let res = get_priority_from_headings(test.0, test.1);
+            assert_eq!(test.2, res);
+        }
+    }
 
     fn get_route_segment(
         end_point: MapDataPointRef,
@@ -383,7 +417,6 @@ mod test {
                 .expect("did not find end point");
             let walker = Walker::new(
                 from.clone(),
-                to.clone(),
             );
 
             let fork_point = MapDataGraph::get()
@@ -392,7 +425,7 @@ mod test {
 
             let segment = get_route_segment(fork_point, from.clone());
 
-            let itinerary = Itinerary::new(from.clone(), to.clone(), Vec::new(), 0.);
+            let itinerary = Itinerary::new_start_finish(from.clone(), to.clone(), Vec::new(), 0.);
 
 
             let fork_weight = weight_heading(WeightCalcInput {
@@ -402,13 +435,12 @@ mod test {
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),
-                    to.clone(),
                 ),
                 rules: &RouterRules::default()
 
             });
             info!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(215));
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(176));
 
             let fork_point = MapDataGraph::get()
                 .test_get_point_ref_by_id(&9212889586)
@@ -423,12 +455,11 @@ mod test {
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),
-                    to.clone(),
                 ),
                 rules: &RouterRules::default()
             });
             info!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(96));
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(64));
         }
     }
 }

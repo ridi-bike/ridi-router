@@ -1,47 +1,54 @@
 use bincode::ErrorKind;
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Name, Stream};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    io::{self, prelude::*, BufReader},
-};
+use std::io::{self, prelude::*, BufReader};
 use tracing::{info, trace, warn};
 
 use crate::{
     router::{route::RouteStats, rules::RouterRules},
-    router_runner::StartFinish,
+    router_runner::RoutingMode,
 };
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum IpcHandlerError {
+    #[error("Namespace Name cannot be created, cause {error}")]
     NamespaceName { error: io::Error },
-    CreateListener { error: io::Error },
-    SocketAddressInUse { error: io::Error },
-    ReadLine { error: io::Error },
-    WriteLine { error: io::Error },
-    WriteAll { error: io::Error },
-    Connect { error: io::Error },
-    DeserializeMessage { error: Box<ErrorKind> },
-    SerializeMessage { error: Box<ErrorKind> },
-}
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct CoordsMessage {
-    pub lat: f32,
-    pub lon: f32,
+    #[error("Failed to create IPC listener: {error}")]
+    CreateListener { error: io::Error },
+
+    #[error("Socket address already in use: {error}")]
+    SocketAddressInUse { error: io::Error },
+
+    #[error("Failed to read from IPC connection: {error}")]
+    ReadLine { error: io::Error },
+
+    #[error("Failed to write line to IPC connection: {error}")]
+    WriteLine { error: io::Error },
+
+    #[error("Failed to write data to IPC connection: {error}")]
+    WriteAll { error: io::Error },
+
+    #[error("Failed to connect to IPC socket: {error}")]
+    Connect { error: io::Error },
+
+    #[error("Failed to deserialize message: {error}")]
+    DeserializeMessage { error: Box<ErrorKind> },
+
+    #[error("Failed to serialize message: {error}")]
+    SerializeMessage { error: Box<ErrorKind> },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestMessage {
     pub id: String,
-    pub start: CoordsMessage,
-    pub finish: CoordsMessage,
+    pub routing_mode: RoutingMode,
     pub rules: RouterRules,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RouteMessage {
-    pub coords: Vec<CoordsMessage>,
+    pub coords: Vec<(f32, f32)>,
     pub stats: RouteStats,
 }
 
@@ -177,7 +184,7 @@ impl<'a> IpcHandler<'a> {
 
     pub fn connect(
         &self,
-        start_finish: &StartFinish,
+        routing_mode: &RoutingMode,
         rules: RouterRules,
     ) -> Result<ResponseMessage, IpcHandlerError> {
         let conn = Stream::connect(self.socket_name.clone())
@@ -187,14 +194,7 @@ impl<'a> IpcHandler<'a> {
 
         let req_msg = RequestMessage {
             id: "ooo".to_string(),
-            start: CoordsMessage {
-                lat: start_finish.start_lat,
-                lon: start_finish.start_lon,
-            },
-            finish: CoordsMessage {
-                lat: start_finish.finish_lat,
-                lon: start_finish.finish_lon,
-            },
+            routing_mode: routing_mode.clone(),
             rules,
         };
         let req_buf = bincode::serialize(&req_msg)

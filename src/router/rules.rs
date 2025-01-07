@@ -43,7 +43,7 @@ impl Default for BasicRuleProgressDirection {
     fn default() -> Self {
         Self {
             enabled: true,
-            check_junctions_back: 30,
+            check_junctions_back: 50,
         }
     }
 }

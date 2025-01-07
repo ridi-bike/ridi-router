@@ -1,50 +1,62 @@
-use std::{num::ParseFloatError, path::PathBuf, string::ParseError, sync::OnceLock, time::Instant};
+use std::{num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
 
 use clap::Parser;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    ipc_handler::{
-        CoordsMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult,
+    debug::{
+        viewer::{DebugViewer, DebugViewerError},
+        writer::DebugWriter,
     },
+    ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
     osm_data_reader::DataSource,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{
         generator::{Generator, RouteWithStats},
-        route::Route,
         rules::RouterRules,
     },
 };
 
 use clap::Subcommand;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum RouterRunnerError {
-    InputFileFormatIncorrect {
-        filename: PathBuf,
-    },
-    OutputFileFormatIncorrect {
-        filename: PathBuf,
-    },
+    #[error("Output File Invalid '{filename}'")]
+    OutputFileInvalid { filename: String },
+
+    #[error("Input File Invalid '{filename}'")]
+    InputFileInvalid { filename: String },
+
+    #[error("Input File Format Incorrect for '{filename}'")]
+    InputFileFormatIncorrect { filename: PathBuf },
+
+    #[error("Output File Format Incorrect for '{filename}'")]
+    OutputFileFormatIncorrect { filename: PathBuf },
+
+    #[error("Coordinate error for {name}: {cause}{}", .error.as_ref().map(|e| format!(": {}", e)).unwrap_or_default())]
     Coords {
         name: String,
         cause: String,
         error: Option<ParseFloatError>,
     },
-    Ipc {
-        error: IpcHandlerError,
-    },
-    PointNotFound {
-        point: String,
-    },
-    ResultWrite {
-        error: ResultWriterError,
-    },
-    CacheWrite {
-        error: MapDataCacheError,
-    },
+
+    #[error("IPC error: {error}")]
+    Ipc { error: IpcHandlerError },
+
+    #[error("Could not find {point} on map")]
+    PointNotFound { point: String },
+
+    #[error("Failed to write result: {error}")]
+    ResultWrite { error: ResultWriterError },
+
+    #[error("Failed to write cache: {error}")]
+    CacheWrite { error: MapDataCacheError },
+
+    #[error("Failed run debug viewer: {error}")]
+    DebugViewer { error: DebugViewerError },
 }
 
 #[derive(Parser)]
@@ -55,18 +67,122 @@ struct Cli {
     pub mode: CliMode,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Coords {
+    lat: f32,
+    lon: f32,
+}
+
+impl FromStr for Coords {
+    type Err = RouterRunnerError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut split = s.split(",");
+        let lat = split
+            .next()
+            .ok_or_else(|| RouterRunnerError::Coords {
+                name: "Start LAT".to_string(),
+                cause: "missing".to_string(),
+                error: None,
+            })?
+            .parse()
+            .map_err(|error| RouterRunnerError::Coords {
+                name: "Start LAT".to_string(),
+                cause: "not parsable as f64".to_string(),
+                error: Some(error),
+            })?;
+
+        let lon = split
+            .next()
+            .ok_or_else(|| RouterRunnerError::Coords {
+                name: "Start LON".to_string(),
+                cause: "missing".to_string(),
+                error: None,
+            })?
+            .parse()
+            .map_err(|error| RouterRunnerError::Coords {
+                name: "Start Lon".to_string(),
+                cause: "not parsable as f64".to_string(),
+                error: Some(error),
+            })?;
+        Ok(Coords { lat, lon })
+    }
+}
+
+impl FromStr for DataSource {
+    type Err = RouterRunnerError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let file = PathBuf::from_str(s).map_err(|_error| RouterRunnerError::InputFileInvalid {
+            filename: s.to_string(),
+        })?;
+        if let Some(ext) = file.extension() {
+            if ext == "json" {
+                return Ok(DataSource::JsonFile { file });
+            } else if ext == "pbf" {
+                return Ok(DataSource::PbfFile { file });
+            }
+        }
+        Err(RouterRunnerError::InputFileFormatIncorrect { filename: file })
+    }
+}
+
+impl FromStr for DataDestination {
+    type Err = RouterRunnerError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let file = PathBuf::from_str(s).map_err(|_error| RouterRunnerError::OutputFileInvalid {
+            filename: s.to_string(),
+        })?;
+        if let Some(ext) = file.extension() {
+            if ext == "json" {
+                return Ok(DataDestination::Json { file });
+            } else if ext == "gpx" {
+                return Ok(DataDestination::Gpx { file });
+            }
+        }
+        return Err(RouterRunnerError::OutputFileFormatIncorrect { filename: file });
+    }
+}
+
+#[derive(Clone, Subcommand, Debug, Serialize, Deserialize)]
+#[arg()]
+pub enum RoutingMode {
+    StartFinish {
+        #[arg(long, value_name = "LAT,LON", value_parser = clap::value_parser!(Coords))]
+        start: Coords,
+
+        #[arg(long, value_name = "LAT,LON")]
+        finish: Coords,
+    },
+    RoundTrip {
+        #[arg(long, value_name = "LAT,LON")]
+        center: Coords,
+
+        #[arg(
+            long,
+            value_name = "DEGREES",
+            help = "Degrees, where: North: 0°, East: 90°, South: 180°, West: 270°"
+        )]
+        bearing: f32,
+
+        #[arg(long, value_name = "KM")]
+        distance: u32,
+    },
+}
+
 #[derive(Subcommand)]
 enum CliMode {
     Cache {
         #[arg(long, value_name = "FILE")]
-        input: PathBuf,
+        input: DataSource,
 
         #[arg(long, value_name = "FILE")]
         cache_dir: PathBuf,
     },
     Server {
         #[arg(long, value_name = "FILE")]
-        input: PathBuf,
+        input: DataSource,
 
         #[arg(long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
@@ -75,14 +191,16 @@ enum CliMode {
         socket_name: Option<String>,
     },
     Client {
-        #[arg(long, value_name = "FILE")]
-        output: Option<PathBuf>,
+        #[arg(
+            long,
+            value_name = "FILE",
+            required = false,
+            default_value = "DataDestination::Stdout"
+        )]
+        output: DataDestination,
 
-        #[arg(long, value_name = "COORDINATES")]
-        start: String,
-
-        #[arg(long, value_name = "COORDINATES")]
-        finish: String,
+        #[command(subcommand)]
+        routing_mode: RoutingMode,
 
         #[arg(long, value_name = "NAME")]
         socket_name: Option<String>,
@@ -92,128 +210,52 @@ enum CliMode {
     },
     Dual {
         #[arg(long, value_name = "FILE")]
-        input: PathBuf,
+        input: DataSource,
 
         #[arg(long, value_name = "FILE")]
         cache_dir: Option<PathBuf>,
 
+        #[arg(
+            long,
+            value_name = "FILE",
+            required = false,
+            default_value = "DataDestination::Stdout"
+        )]
+        output: DataDestination,
+
         #[arg(long, value_name = "FILE")]
-        output: Option<PathBuf>,
-
-        #[arg(long, value_name = "COORDINATES")]
-        start: String,
-
-        #[arg(long, value_name = "COORDINATES")]
-        finish: String,
-
-        #[arg(long, value_name = "FILE")]
         rule_file: Option<PathBuf>,
+
+        #[arg(long, value_name = "DIR")]
+        debug_dir: Option<PathBuf>,
+
+        #[command(subcommand)]
+        routing_mode: RoutingMode,
+    },
+    DebugViewer {
+        #[arg(long, value_name = "DIR")]
+        debug_dir: PathBuf,
     },
 }
 
-#[derive(Debug)]
-pub struct StartFinish {
-    pub start_lat: f32,
-    pub start_lon: f32,
-    pub finish_lat: f32,
-    pub finish_lon: f32,
-}
-
-#[derive(Debug)]
-pub enum RouterMode {
-    Cache {
-        data_source: DataSource,
-        cache_dir: PathBuf,
-    },
-    Server {
-        data_source: DataSource,
-        cache_dir: Option<PathBuf>,
-        socket_name: Option<String>,
-    },
-    Client {
-        start_finish: StartFinish,
-        data_destination: DataDestination,
-        socket_name: Option<String>,
-        rule_file: Option<PathBuf>,
-    },
-    Dual {
-        data_source: DataSource,
-        cache_dir: Option<PathBuf>,
-        start_finish: StartFinish,
-        data_destination: DataDestination,
-        rule_file: Option<PathBuf>,
-    },
-}
-
-pub struct RouterRunner {
-    mode: RouterMode,
-}
+pub struct RouterRunner;
 
 impl RouterRunner {
-    pub fn init() -> Self {
-        let cli = Cli::parse();
-        let mode = match cli.mode {
-            CliMode::Cache { input, cache_dir } => RouterMode::Cache {
-                data_source: get_data_source(input).expect("could not get data source"),
-                cache_dir,
-            },
-            CliMode::Server {
-                input,
-                cache_dir,
-                socket_name,
-            } => RouterMode::Server {
-                data_source: get_data_source(input).expect("could not get data source"),
-                cache_dir,
-                socket_name,
-            },
-            CliMode::Client {
-                output,
-                start,
-                finish,
-                socket_name,
-                rule_file,
-            } => {
-                let start_finish = get_start_finish(start, finish)
-                    .expect("could not get start/finish coordinates");
-                RouterMode::Client {
-                    start_finish,
-                    data_destination: get_data_destination(output)
-                        .expect("could not get data destination"),
-                    socket_name,
-                    rule_file,
-                }
-            }
-            CliMode::Dual {
-                input,
-                cache_dir,
-                output,
-                start,
-                finish,
-                rule_file,
-            } => {
-                let start_finish = get_start_finish(start, finish)
-                    .expect("could not get start/finish coordinates");
-                RouterMode::Dual {
-                    data_source: get_data_source(input).expect("could not get data source"),
-                    cache_dir,
-                    start_finish,
-                    data_destination: get_data_destination(output)
-                        .expect("could not get data destination"),
-                    rule_file,
-                }
-            }
-        };
-
-        Self { mode }
-    }
-
     #[tracing::instrument(skip_all)]
     fn generate_route(
-        start_finish: &StartFinish,
+        routing_mode: &RoutingMode,
         rules: RouterRules,
     ) -> Result<Vec<RouteWithStats>, RouterRunnerError> {
+        let (start_lat, start_lon, finish_lat, finish_lon) = match routing_mode {
+            RoutingMode::StartFinish { start, finish } => {
+                (start.lat, start.lon, finish.lat, finish.lon)
+            }
+            RoutingMode::RoundTrip { center, .. } => {
+                (center.lat, center.lon, center.lat, center.lon)
+            }
+        };
         let start = MapDataGraph::get()
-            .get_closest_to_coords(start_finish.start_lat, start_finish.start_lon)
+            .get_closest_to_coords(start_lat, start_lon)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Start point".to_string(),
             })?;
@@ -221,27 +263,36 @@ impl RouterRunner {
         info!("Start point {start}");
 
         let finish = MapDataGraph::get()
-            .get_closest_to_coords(start_finish.finish_lat, start_finish.finish_lon)
+            .get_closest_to_coords(finish_lat, finish_lon)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Finish point".to_string(),
             })?;
 
         info!("Finish point {finish}");
 
-        let route_generator = Generator::new(start.clone(), finish.clone(), rules);
+        let round_trip = if let RoutingMode::RoundTrip {
+            bearing, distance, ..
+        } = routing_mode
+        {
+            Some((*bearing, *distance))
+        } else {
+            None
+        };
+        let route_generator = Generator::new(start.clone(), finish.clone(), round_trip, rules);
         let routes = route_generator.generate_routes();
         Ok(routes)
     }
 
     #[tracing::instrument(skip_all)]
     fn run_dual(
-        &self,
         data_source: &DataSource,
         cache_dir: Option<PathBuf>,
-        start_finish: &StartFinish,
+        routing_mode: &RoutingMode,
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
+        debug_dir: Option<PathBuf>,
     ) -> Result<(), RouterRunnerError> {
+        DebugWriter::init(debug_dir).expect("Failed to set up debugging");
         let rules = RouterRules::read(rule_file).expect("Failed to read rules");
         let mut data_cache = MapDataCache::init(cache_dir);
         let cached_map_data = data_cache.read_cache();
@@ -261,7 +312,7 @@ impl RouterRunner {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
         }
-        let route_result = RouterRunner::generate_route(start_finish, rules);
+        let route_result = RouterRunner::generate_route(routing_mode, rules);
         ResultWriter::write(
             data_destination.clone(),
             ResponseMessage {
@@ -278,11 +329,13 @@ impl RouterRunner {
                                     .route
                                     .clone()
                                     .into_iter()
-                                    .map(|segment| CoordsMessage {
-                                        lat: segment.get_end_point().borrow().lat,
-                                        lon: segment.get_end_point().borrow().lon,
+                                    .map(|segment| {
+                                        (
+                                            segment.get_end_point().borrow().lat,
+                                            segment.get_end_point().borrow().lon,
+                                        )
                                     })
-                                    .collect::<Vec<CoordsMessage>>(),
+                                    .collect(),
                                 stats: route.stats.clone(),
                             })
                             .collect(),
@@ -294,12 +347,8 @@ impl RouterRunner {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    fn run_cache(
-        &self,
-        data_source: &DataSource,
-        cache_dir: PathBuf,
-    ) -> Result<(), RouterRunnerError> {
+    #[tracing::instrument]
+    fn run_cache(data_source: &DataSource, cache_dir: PathBuf) -> Result<(), RouterRunnerError> {
         let startup_start = Instant::now();
 
         let data_cache = MapDataCache::init(Some(cache_dir));
@@ -315,9 +364,8 @@ impl RouterRunner {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument]
     fn run_server(
-        &self,
         data_source: &DataSource,
         cache_dir: Option<PathBuf>,
         socket_name: Option<String>,
@@ -350,15 +398,8 @@ impl RouterRunner {
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         dbg!("ipc init done");
         ipc.listen(|request_message| {
-            let route_res = RouterRunner::generate_route(
-                &StartFinish {
-                    start_lat: request_message.start.lat,
-                    start_lon: request_message.start.lon,
-                    finish_lat: request_message.finish.lat,
-                    finish_lon: request_message.finish.lon,
-                },
-                request_message.rules,
-            );
+            let route_res =
+                RouterRunner::generate_route(&request_message.routing_mode, request_message.rules);
 
             ResponseMessage {
                 id: request_message.id,
@@ -374,11 +415,13 @@ impl RouterRunner {
                                     .route
                                     .clone()
                                     .into_iter()
-                                    .map(|segment| CoordsMessage {
-                                        lat: segment.get_end_point().borrow().lat,
-                                        lon: segment.get_end_point().borrow().lon,
+                                    .map(|segment| {
+                                        (
+                                            segment.get_end_point().borrow().lat,
+                                            segment.get_end_point().borrow().lon,
+                                        )
                                     })
-                                    .collect::<Vec<CoordsMessage>>(),
+                                    .collect(),
                                 stats: route.stats.clone(),
                             })
                             .collect(),
@@ -390,10 +433,9 @@ impl RouterRunner {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument]
     fn run_client(
-        &self,
-        start_finish: &StartFinish,
+        routing_mode: &RoutingMode,
         data_destination: &DataDestination,
         socket_name: Option<String>,
         rule_file: Option<PathBuf>,
@@ -402,132 +444,53 @@ impl RouterRunner {
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
-            .connect(start_finish, rules)
+            .connect(routing_mode, rules)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    pub fn run(&self) -> Result<(), RouterRunnerError> {
-        match &self.mode {
-            RouterMode::Dual {
-                start_finish,
-                data_source,
+    #[tracing::instrument]
+    pub fn run() -> Result<(), RouterRunnerError> {
+        let cli = Cli::parse();
+        match &cli.mode {
+            CliMode::Dual {
+                routing_mode,
                 cache_dir,
-                data_destination,
                 rule_file,
-            } => self.run_dual(
-                &data_source,
+                input,
+                output,
+                debug_dir,
+            } => RouterRunner::run_dual(
+                &input,
                 cache_dir.clone(),
-                &start_finish,
-                &data_destination,
+                routing_mode,
+                &output,
                 rule_file.clone(),
+                debug_dir.clone(),
             ),
-            RouterMode::Cache {
-                data_source,
-                cache_dir,
-            } => self.run_cache(data_source, cache_dir.clone()),
-            RouterMode::Server {
-                data_source,
+            CliMode::Cache { input, cache_dir } => {
+                RouterRunner::run_cache(input, cache_dir.clone())
+            }
+            CliMode::Server {
+                input,
                 cache_dir,
                 socket_name,
-            } => self.run_server(&data_source, cache_dir.clone(), socket_name.clone()),
-            RouterMode::Client {
-                start_finish,
-                data_destination,
+            } => RouterRunner::run_server(&input, cache_dir.clone(), socket_name.clone()),
+            CliMode::Client {
+                routing_mode,
+                output,
                 socket_name,
                 rule_file,
-            } => self.run_client(
-                &start_finish,
-                &data_destination,
+            } => RouterRunner::run_client(
+                &routing_mode,
+                &output,
                 socket_name.clone(),
                 rule_file.clone(),
             ),
+            CliMode::DebugViewer { debug_dir } => Ok(DebugViewer::run(debug_dir.clone())
+                .map_err(|error| RouterRunnerError::DebugViewer { error })?),
         }
     }
-}
-
-fn get_start_finish(start: String, finish: String) -> Result<StartFinish, RouterRunnerError> {
-    let mut start = start.split(",");
-    let mut finish = finish.split(",");
-    Ok(StartFinish {
-        start_lat: start
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Start LAT".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Start LAT".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-        start_lon: start
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Start LON".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Start Lon".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-        finish_lat: finish
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Finish LAT".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Finish LAT".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-        finish_lon: finish
-            .next()
-            .ok_or_else(|| RouterRunnerError::Coords {
-                name: "Finish LON".to_string(),
-                cause: "missing".to_string(),
-                error: None,
-            })?
-            .parse()
-            .map_err(|error| RouterRunnerError::Coords {
-                name: "Finish LON".to_string(),
-                cause: "not parsable as f64".to_string(),
-                error: Some(error),
-            })?,
-    })
-}
-fn get_data_source(file: PathBuf) -> Result<DataSource, RouterRunnerError> {
-    if let Some(ext) = file.extension() {
-        if ext == "json" {
-            return Ok(DataSource::JsonFile { file });
-        } else if ext == "pbf" {
-            return Ok(DataSource::PbfFile { file });
-        }
-    }
-    Err(RouterRunnerError::InputFileFormatIncorrect { filename: file })
-}
-fn get_data_destination(output: Option<PathBuf>) -> Result<DataDestination, RouterRunnerError> {
-    if let Some(output) = output {
-        if let Some(ext) = output.extension() {
-            if ext == "json" {
-                return Ok(DataDestination::Json { file: output });
-            } else if ext == "gpx" {
-                return Ok(DataDestination::Gpx { file: output });
-            }
-        }
-        return Err(RouterRunnerError::OutputFileFormatIncorrect { filename: output });
-    }
-
-    Ok(DataDestination::Stdout)
 }

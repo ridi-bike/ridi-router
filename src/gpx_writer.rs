@@ -1,11 +1,18 @@
 use geo::Point;
-use gpx::{write, Gpx, GpxVersion, Route as GpxRoute, Waypoint};
+use gpx::{write, Gpx, GpxVersion, Route as GpxRoute, Track, TrackSegment, Waypoint};
 use std::{collections::HashMap, fs::File, io::Error, isize, path::PathBuf};
 
-use crate::{ipc_handler::RouteMessage, router::route::RouteStatElement};
+use crate::{
+    ipc_handler::RouteMessage,
+    router::{
+        itinerary::Itinerary,
+        route::{segment::Segment, RouteStatElement},
+    },
+};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum GpxWriterError {
+    #[error("File Creation Error cause {error}")]
     FileCreateError { error: Error },
 }
 
@@ -18,6 +25,73 @@ fn sort_by_longest(map: HashMap<String, RouteStatElement>) -> Vec<(String, Route
     let mut vec = Vec::from_iter(map.into_iter());
     vec.sort_by(|a, b| b.1.len_m.total_cmp(&a.1.len_m));
     vec
+}
+
+pub fn write_debug_itinerary(idx: usize, itinerary: &Itinerary) -> () {
+    let mut gpx = Gpx::default();
+    gpx.version = GpxVersion::Gpx11;
+    let geo_p = Point::new(
+        itinerary.start.borrow().lon as f64,
+        itinerary.start.borrow().lat as f64,
+    );
+    let mut wp = Waypoint::new(geo_p);
+    wp.name = Some("Start".to_string());
+    gpx.waypoints.push(wp);
+    let geo_p = Point::new(
+        itinerary.finish.borrow().lon as f64,
+        itinerary.finish.borrow().lat as f64,
+    );
+    let mut wp = Waypoint::new(geo_p);
+    wp.name = Some("Finish".to_string());
+    gpx.waypoints.push(wp);
+
+    for (wp_idx, wp) in itinerary.waypoints.iter().enumerate() {
+        let geo_p = Point::new(wp.borrow().lon as f64, wp.borrow().lat as f64);
+        let mut wp = Waypoint::new(geo_p);
+        wp.name = Some(format!("wp {wp_idx}"));
+        gpx.waypoints.push(wp);
+    }
+    let debug_filename = PathBuf::from(format!("/tmp/{}.wp.gpx", idx));
+    let debug_file = File::create(debug_filename)
+        .or_else(|error| Err(GpxWriterError::FileCreateError { error }))
+        .unwrap();
+
+    write(&gpx, debug_file).unwrap();
+}
+
+pub fn write_debug_segment(idx: usize, all_segments: Vec<Segment>, route: Vec<Segment>) -> () {
+    let mut gpx = Gpx::default();
+    gpx.version = GpxVersion::Gpx11;
+
+    for segment in all_segments {
+        let mut track = Track::new();
+        let mut track_segment = TrackSegment::new();
+        track_segment.points.push(Waypoint::new(Point::new(
+            segment.get_line().borrow().points.0.borrow().lon as f64,
+            segment.get_line().borrow().points.0.borrow().lat as f64,
+        )));
+        track_segment.points.push(Waypoint::new(Point::new(
+            segment.get_line().borrow().points.1.borrow().lon as f64,
+            segment.get_line().borrow().points.1.borrow().lat as f64,
+        )));
+        track.segments.push(track_segment);
+
+        gpx.tracks.push(track);
+    }
+    let mut gpx_route = GpxRoute::new();
+    for segment in route {
+        gpx_route.points.push(Waypoint::new(Point::new(
+            segment.get_end_point().borrow().lon as f64,
+            segment.get_end_point().borrow().lat as f64,
+        )));
+    }
+    gpx.routes.push(gpx_route);
+    let debug_filename = PathBuf::from(format!("/tmp/{}.seg.gpx", idx));
+    let debug_file = File::create(debug_filename)
+        .or_else(|error| Err(GpxWriterError::FileCreateError { error }))
+        .unwrap();
+
+    write(&gpx, debug_file).unwrap();
 }
 
 impl GpxWriter {
@@ -82,8 +156,8 @@ impl GpxWriter {
 
             gpx_route.description = Some(description);
 
-            for coord in &route.coords {
-                let waypoint = Waypoint::new(Point::new(coord.lon.into(), coord.lat.into()));
+            for (lat, lon) in &route.coords {
+                let waypoint = Waypoint::new(Point::new(*lon as f64, *lat as f64));
                 gpx_route.points.push(waypoint);
             }
 

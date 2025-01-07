@@ -1,7 +1,3 @@
-use geo::{Bearing, Haversine, Point};
-
-use crate::router::generator::RouteWithStats;
-
 use super::Route;
 
 pub struct Score;

@@ -2,13 +2,15 @@ pub mod score;
 pub mod segment;
 pub mod segment_list;
 
-use std::{collections::HashMap, hash::Hash};
+use std::collections::HashMap;
 
-use geo::{HaversineBearing, Point as GeoPoint};
 use score::Score;
 use serde::{Deserialize, Serialize};
 
-use crate::map_data::{line::MapDataLine, point::MapDataPoint};
+use crate::{
+    gpx_writer::write_debug_segment,
+    map_data::{line::MapDataLine, point::MapDataPoint},
+};
 
 use self::segment::Segment;
 
@@ -38,12 +40,14 @@ pub struct RouteStats {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Route {
     route_segments: Vec<Segment>,
+    debug_route_segments: Vec<Segment>,
 }
 
 impl Route {
     pub fn new() -> Self {
         Route {
             route_segments: Vec::new(),
+            debug_route_segments: Vec::new(),
         }
     }
     pub fn get_route_chunk(&self, start: usize, end: usize) -> Vec<Segment> {
@@ -62,7 +66,26 @@ impl Route {
         self.route_segments.pop()
     }
     pub fn add_segment(&mut self, segment: Segment) -> () {
+        self.debug_route_segments.push(segment.clone());
         self.route_segments.push(segment)
+    }
+
+    pub fn get_route_chunk_since_junction_before_last(&self) -> Vec<Segment> {
+        let idx_from = match self.get_segment_last() {
+            None => 0,
+            Some(last_segment) => self
+                .route_segments
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_idx, route_segment)| {
+                    route_segment.get_end_point().borrow().is_junction()
+                        && route_segment.get_end_point().borrow().id
+                            != last_segment.get_end_point().borrow().id
+                })
+                .map_or(0, |v| v.0),
+        };
+        self.route_segments[idx_from..].to_vec()
     }
     pub fn get_junction_before_last_segment(&self) -> Option<&Segment> {
         match self.get_segment_last() {
@@ -256,11 +279,22 @@ impl Route {
     pub fn iter(&self) -> std::slice::Iter<Segment> {
         self.route_segments.iter()
     }
+
+    pub fn write_debug(&self) -> () {
+        write_debug_segment(
+            0,
+            self.debug_route_segments.clone(),
+            self.route_segments.clone(),
+        );
+    }
 }
 
 impl From<Vec<Segment>> for Route {
     fn from(route_segments: Vec<Segment>) -> Self {
-        Route { route_segments }
+        Route {
+            debug_route_segments: route_segments.clone(),
+            route_segments,
+        }
     }
 }
 

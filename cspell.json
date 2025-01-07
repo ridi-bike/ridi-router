@@ -17,6 +17,14 @@
 		"smartstring",
 		"Dbscan",
 		"ndarray",
-		"hdbscan"
+		"hdbscan",
+		"thiserror",
+		"duckdb",
+		"typeshare",
+		"maplibregl",
+		"maplibre",
+		"vanjs",
+		"qstring",
+		"bbox"
 	]
 }
