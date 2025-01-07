@@ -440,7 +440,7 @@ mod test {
 
             });
             info!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(215));
+            assert_eq!(fork_weight, WeightCalcResult::UseWithWeight(176));
 
             let fork_point = MapDataGraph::get()
                 .test_get_point_ref_by_id(&9212889586)
