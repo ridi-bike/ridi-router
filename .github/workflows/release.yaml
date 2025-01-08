@@ -6,10 +6,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
+  prepare-version:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      next_version: ${{ steps.semver.outputs.next }}
 
     steps:
     - name: Generate token
@@ -23,18 +25,6 @@ jobs:
       with:
         fetch-depth: 0
         token: ${{ steps.generate_token.outputs.token }}
-    
-    - name: Cache cargo and build files
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/
-          ~/.cargo/git/
-          target/
-        key: ${{ runner.os }}-cargo
-        restore-keys: |
-          ${{ runner.os }}-cargo
     
     - name: Get Next Version
       id: semver
@@ -51,20 +41,6 @@ jobs:
         VERSION_CLEAN="${VERSION#v}"  # Remove leading 'v' if present
         sed -i "s/^version = .*/version = \"$VERSION_CLEAN\"/" Cargo.toml
         
-    - name: Run tests
-      run: cargo test
-      
-    - name: Build Release
-      run: cargo build --release
-
-    - name: Verify Release Binary
-      run: |
-        BINARY_PATH="target/release/ridi-router"
-        if [[ ! -f "$BINARY_PATH" ]]; then
-          echo "Error: Release binary not found at $BINARY_PATH"
-          exit 1
-        fi
-      
     - name: Generate Release Notes
       run: |
         git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD^)..HEAD --pretty=format:"* %s" > RELEASE_NOTES.md
@@ -78,16 +54,107 @@ jobs:
         git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
         git push origin main
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
+    - name: Upload Release Notes
+      uses: actions/upload-artifact@v3
       with:
-        tag_name: ${{ steps.semver.outputs.next }}
-        name: Release ${{ steps.semver.outputs.next }}
-        body_path: RELEASE_NOTES.md
-        files: |
-          target/release/ridi-router
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
-        
+        name: RELEASE_NOTES
+        path: RELEASE_NOTES.md
+
+  build:
+    needs: prepare-version
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: linux-amd64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: windows-amd64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            name: windows-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macos-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: macos-arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo and build files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ matrix.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.os }}-${{ matrix.target }}-cargo-
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare binary
+        shell: bash
+        run: |
+          mkdir dist
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/ridi-router.exe" "dist/ridi-router-${{ matrix.name }}.exe"
+          else
+            cp "target/${{ matrix.target }}/release/ridi-router" "dist/ridi-router-${{ matrix.name }}"
+            chmod +x "dist/ridi-router-${{ matrix.name }}"
+          fi
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v3
+        with:
+          name: binary-${{ matrix.name }}
+          path: dist/*
+
+  create-release:
+    needs: [prepare-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Generate token
+        id: generate_token
+        uses: tibdex/github-app-token@v1
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir release_files
+          cp artifacts/binary-*/ridi-router-* release_files/
+          cp artifacts/RELEASE_NOTES/RELEASE_NOTES.md .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.prepare-version.outputs.next_version }}
+          name: Release ${{ needs.prepare-version.outputs.next_version }}
+          body_path: RELEASE_NOTES.md
+          files: |
+            release_files/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
