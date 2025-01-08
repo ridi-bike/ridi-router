@@ -5,10 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    debug::{
-        viewer::{DebugViewer, DebugViewerError},
-        writer::DebugWriter,
-    },
+    debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
@@ -55,8 +52,11 @@ pub enum RouterRunnerError {
     #[error("Failed to write cache: {error}")]
     CacheWrite { error: MapDataCacheError },
 
+    #[cfg(feature = "debug-viewer")]
     #[error("Failed run debug viewer: {error}")]
-    DebugViewer { error: DebugViewerError },
+    DebugViewer {
+        error: crate::debug::viewer::DebugViewerError,
+    },
 }
 
 #[derive(Parser)]
@@ -232,6 +232,7 @@ enum CliMode {
         #[command(subcommand)]
         routing_mode: RoutingMode,
     },
+    #[cfg(feature = "debug-viewer")]
     DebugViewer {
         #[arg(long, value_name = "DIR")]
         debug_dir: PathBuf,
@@ -489,8 +490,11 @@ impl RouterRunner {
                 socket_name.clone(),
                 rule_file.clone(),
             ),
-            CliMode::DebugViewer { debug_dir } => Ok(DebugViewer::run(debug_dir.clone())
-                .map_err(|error| RouterRunnerError::DebugViewer { error })?),
+            #[cfg(feature = "debug-viewer")]
+            CliMode::DebugViewer { debug_dir } => {
+                Ok(crate::debug::viewer::DebugViewer::run(debug_dir.clone())
+                    .map_err(|error| RouterRunnerError::DebugViewer { error })?)
+            }
         }
     }
 }

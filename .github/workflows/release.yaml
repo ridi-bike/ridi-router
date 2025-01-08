@@ -60,6 +60,44 @@ jobs:
         name: RELEASE_NOTES
         path: RELEASE_NOTES.md
 
+  build-debug-viewer:
+    needs: prepare-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo and build files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ubuntu-x86_64-cargo-debug-viewer-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-x86_64-cargo-debug-viewer-
+
+      - name: Build with debug-viewer
+        run: cargo build --release --target x86_64-unknown-linux-gnu --features debug-viewer
+
+      - name: Prepare debug-viewer binary
+        run: |
+          mkdir dist
+          cp "target/x86_64-unknown-linux-gnu/release/ridi-router" "dist/ridi-router-debug-viewer-linux-amd64"
+          chmod +x "dist/ridi-router-debug-viewer-linux-amd64"
+
+      - name: Upload debug-viewer binary
+        uses: actions/upload-artifact@v3
+        with:
+          name: binary-debug-viewer-linux-amd64
+          path: dist/*
+
   build:
     needs: prepare-version
     strategy:
@@ -123,7 +161,7 @@ jobs:
           path: dist/*
 
   create-release:
-    needs: [prepare-version, build]
+    needs: [prepare-version, build, build-debug-viewer]
     runs-on: ubuntu-latest
     permissions:
       contents: write
