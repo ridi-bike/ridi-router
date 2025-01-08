@@ -1,8 +1,9 @@
-name: PR test
+name: Cache Cargo on Main
 
-on:
-  pull_request:
-    branches: [ "main" ]
+on: 
+  push:
+    branches:
+      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,5 +28,5 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cargo
 
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Run build
+      run: cargo build
