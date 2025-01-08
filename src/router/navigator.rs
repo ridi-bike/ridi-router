@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
 };
 
-use tracing::{info, trace};
+use tracing::info;
 
 use crate::{
     debug::writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
@@ -257,7 +257,6 @@ impl Navigator {
                             "Stuck",
                             None,
                         );
-                        self.walker.get_route().write_debug();
                         return NavigationResult::Stuck;
                     }
                 }
