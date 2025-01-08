@@ -15,7 +15,7 @@ use crate::{
     router::{
         itinerary::Itinerary,
         navigator::WeightCalcResult,
-        route::{segment, segment_list::SegmentList, Route},
+        route::{segment_list::SegmentList, Route},
         walker::{WalkerError, WalkerMoveResult},
     },
 };
