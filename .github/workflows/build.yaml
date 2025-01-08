@@ -15,19 +15,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Cache cargo registry
+    - name: Cache cargo and build files
       uses: actions/cache@v4
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          ~/.cargo/bin/
+          ~/.cargo/registry/
+          ~/.cargo/git/
+          target/
+        key: ${{ runner.os }}-cargo
         restore-keys: |
-          ${{ runner.os }}-cargo-
-
-    - name: Build
-      run: cargo build --verbose
+          ${{ runner.os }}-cargo
 
     - name: Run tests
       run: cargo test --verbose

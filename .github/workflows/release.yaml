@@ -24,16 +24,17 @@ jobs:
         fetch-depth: 0
         token: ${{ steps.generate_token.outputs.token }}
     
-    - name: Cache cargo registry
+    - name: Cache cargo and build files
       uses: actions/cache@v4
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          ~/.cargo/bin/
+          ~/.cargo/registry/
+          ~/.cargo/git/
+          target/
+        key: ${{ runner.os }}-cargo
         restore-keys: |
-          ${{ runner.os }}-cargo-release-
+          ${{ runner.os }}-cargo
     
     - name: Get Next Version
       id: semver
