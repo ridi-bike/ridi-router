@@ -69,10 +69,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             name: linux-amd64
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-gcc
             name: windows-amd64
           # - os: windows-latest
-          #   target: aarch64-pc-windows-msvc
+          #   target: aarch64-pc-windows-gcc
           #   name: windows-arm64
           - os: macos-latest
             target: x86_64-apple-darwin
@@ -89,6 +89,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Install MinGW-w64 (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: x64
 
       - name: Cache cargo and build files
         uses: actions/cache@v4
