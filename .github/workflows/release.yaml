@@ -40,6 +40,7 @@ jobs:
         VERSION="${{ steps.semver.outputs.next }}"
         VERSION_CLEAN="${VERSION#v}"  # Remove leading 'v' if present
         sed -i "s/^version = .*/version = \"$VERSION_CLEAN\"/" Cargo.toml
+        cargo update --package ridi-router
         
     - name: Generate Release Notes
       run: |
@@ -161,6 +162,7 @@ jobs:
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             # Skip as binary is already prepared in the build step
             echo "macOS universal binary already prepared"
+            chmod +x "dist/ridi-router-${{ matrix.name }}"
           else
             cp "target/${{ matrix.target }}/release/ridi-router" "dist/ridi-router-${{ matrix.name }}"
             chmod +x "dist/ridi-router-${{ matrix.name }}"
