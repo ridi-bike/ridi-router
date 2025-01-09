@@ -131,6 +131,9 @@ impl FromStr for DataDestination {
     type Err = RouterRunnerError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "DataDestination::Stdout" {
+            return Ok(DataDestination::Stdout);
+        }
         let file = PathBuf::from_str(s).map_err(|_error| RouterRunnerError::OutputFileInvalid {
             filename: s.to_string(),
         })?;
@@ -148,71 +151,45 @@ impl FromStr for DataDestination {
 #[derive(Clone, Subcommand, Debug, Serialize, Deserialize)]
 #[arg()]
 pub enum RoutingMode {
+    /// Generate a route between specific Start coordinates and specific Finish coordinates
     StartFinish {
         #[arg(long, value_name = "LAT,LON", value_parser = clap::value_parser!(Coords))]
+        /// Start coordinates in the format of 11.12543,32.12432
         start: Coords,
 
         #[arg(long, value_name = "LAT,LON")]
+        /// Finish coordinates in the format of 11.12543,32.12432
         finish: Coords,
     },
+    /// Generate a route that starts and finishes at the same point and loops in a direction
+    /// for a specified distance
     RoundTrip {
         #[arg(long, value_name = "LAT,LON")]
-        center: Coords,
+        /// Start and finish coordinates in the format of 11.12543,32.12432
+        start_finish: Coords,
 
-        #[arg(
-            long,
-            value_name = "DEGREES",
-            help = "Degrees, where: North: 0°, East: 90°, South: 180°, West: 270°"
-        )]
+        #[arg(long, value_name = "DEGREES")]
+        /// Degrees, where: North: 0°, East: 90°, South: 180°, West: 270°
         bearing: f32,
 
-        #[arg(long, value_name = "KM")]
+        #[arg(long, value_name = "METERS")]
+        /// Distance in meters of the desired trip distance
         distance: u32,
     },
 }
 
 #[derive(Subcommand)]
 enum CliMode {
-    Cache {
+    /// Load input data and generate a route
+    GenerateRoute {
         #[arg(long, value_name = "FILE")]
+        /// Input file name for json or osm.pbf file
         input: DataSource,
 
         #[arg(long, value_name = "FILE")]
-        cache_dir: PathBuf,
-    },
-    Server {
-        #[arg(long, value_name = "FILE")]
-        input: DataSource,
-
-        #[arg(long, value_name = "FILE")]
-        cache_dir: Option<PathBuf>,
-
-        #[arg(long, value_name = "NAME")]
-        socket_name: Option<String>,
-    },
-    Client {
-        #[arg(
-            long,
-            value_name = "FILE",
-            required = false,
-            default_value = "DataDestination::Stdout"
-        )]
-        output: DataDestination,
-
-        #[command(subcommand)]
-        routing_mode: RoutingMode,
-
-        #[arg(long, value_name = "NAME")]
-        socket_name: Option<String>,
-
-        #[arg(long, value_name = "FILE")]
-        rule_file: Option<PathBuf>,
-    },
-    Dual {
-        #[arg(long, value_name = "FILE")]
-        input: DataSource,
-
-        #[arg(long, value_name = "FILE")]
+        /// Directory to store the generated cache. If specified, it will attempt to read form the
+        /// cache, if not found, inout file will be read. If cache is not present, it will be
+        /// generated for future
         cache_dir: Option<PathBuf>,
 
         #[arg(
@@ -221,20 +198,79 @@ enum CliMode {
             required = false,
             default_value = "DataDestination::Stdout"
         )]
+        /// Destination json or gpx file path and name. If not specified, results piped to screen
         output: DataDestination,
 
         #[arg(long, value_name = "FILE")]
+        /// JSON file with specified rules for route generation. Default values used if file not
+        /// specified
         rule_file: Option<PathBuf>,
 
         #[arg(long, value_name = "DIR")]
+        /// Write debug files to a directory. Will slow down the route generation. Used for
+        /// examining route generation rules. Can be viewed with the 'debug-viewer' binary
         debug_dir: Option<PathBuf>,
 
         #[command(subcommand)]
+        /// Routing mode to generate a route between start and finish coordinates or a round trip
+        /// mode to generate a route with the same start and finish coordinates
         routing_mode: RoutingMode,
+    },
+    /// Start a server for generating routes
+    StartServer {
+        #[arg(long, value_name = "FILE")]
+        /// Input file name for json or osm.pbf file
+        input: DataSource,
+
+        #[arg(long, value_name = "FILE")]
+        /// Directory to store the generated cache. If specified, it will attempt to read form the
+        /// cache, if not found, inout file will be read. If cache is not present, it will be
+        /// generated for future
+        cache_dir: Option<PathBuf>,
+
+        #[arg(long, value_name = "NAME")]
+        /// Socket name in advanced cases where several servers are required to be running at the same time
+        socket_name: Option<String>,
+    },
+    /// Start a client to connect to a running server to generate a route
+    StartClient {
+        #[arg(
+            long,
+            value_name = "FILE",
+            required = false,
+            default_value = "DataDestination::Stdout"
+        )]
+        /// Destination json or gpx file path and name. If not specified, results piped to screen
+        output: DataDestination,
+
+        #[command(subcommand)]
+        /// Routing mode to generate a route between start and finish coordinates or a round trip
+        /// mode to generate a route with the same start and finish coordinates
+        routing_mode: RoutingMode,
+
+        #[arg(long, value_name = "NAME")]
+        /// Socket name in advanced cases where several servers are required to be running at the same time
+        socket_name: Option<String>,
+
+        #[arg(long, value_name = "FILE")]
+        /// JSON file with specified rules for route generation. Default values used if file not
+        /// specified
+        rule_file: Option<PathBuf>,
+    },
+    /// Create an input data cache
+    PrepCache {
+        #[arg(long, value_name = "FILE")]
+        /// Input file name for json or osm.pbf file
+        input: DataSource,
+
+        #[arg(long, value_name = "DIR")]
+        /// Directory to store the generated cache
+        cache_dir: PathBuf,
     },
     #[cfg(feature = "debug-viewer")]
     DebugViewer {
         #[arg(long, value_name = "DIR")]
+        /// Load a directory with debug files generated when generating a route
         debug_dir: PathBuf,
     },
 }
@@ -251,9 +287,12 @@ impl RouterRunner {
             RoutingMode::StartFinish { start, finish } => {
                 (start.lat, start.lon, finish.lat, finish.lon)
             }
-            RoutingMode::RoundTrip { center, .. } => {
-                (center.lat, center.lon, center.lat, center.lon)
-            }
+            RoutingMode::RoundTrip { start_finish, .. } => (
+                start_finish.lat,
+                start_finish.lon,
+                start_finish.lat,
+                start_finish.lon,
+            ),
         };
         let start = MapDataGraph::get()
             .get_closest_to_coords(start_lat, start_lon)
@@ -456,7 +495,7 @@ impl RouterRunner {
     pub fn run() -> Result<(), RouterRunnerError> {
         let cli = Cli::parse();
         match &cli.mode {
-            CliMode::Dual {
+            CliMode::GenerateRoute {
                 routing_mode,
                 cache_dir,
                 rule_file,
@@ -471,15 +510,15 @@ impl RouterRunner {
                 rule_file.clone(),
                 debug_dir.clone(),
             ),
-            CliMode::Cache { input, cache_dir } => {
+            CliMode::PrepCache { input, cache_dir } => {
                 RouterRunner::run_cache(input, cache_dir.clone())
             }
-            CliMode::Server {
+            CliMode::StartServer {
                 input,
                 cache_dir,
                 socket_name,
             } => RouterRunner::run_server(&input, cache_dir.clone(), socket_name.clone()),
-            CliMode::Client {
+            CliMode::StartClient {
                 routing_mode,
                 output,
                 socket_name,
