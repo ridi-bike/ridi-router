@@ -131,6 +131,9 @@ impl FromStr for DataDestination {
     type Err = RouterRunnerError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "DataDestination::Stdout" {
+            return Ok(DataDestination::Stdout);
+        }
         let file = PathBuf::from_str(s).map_err(|_error| RouterRunnerError::OutputFileInvalid {
             filename: s.to_string(),
         })?;
