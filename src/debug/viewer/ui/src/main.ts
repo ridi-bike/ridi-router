@@ -672,7 +672,7 @@ const MapContainer = () => {
       markers: new Map(),
       points: [],
       setView: (bbox) => {
-        map.fitBounds(bbox);
+        map.fitBounds(bbox as [number, number, number, number]);
       },
     };
   });

@@ -72,6 +72,11 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Cache cargo and build files
         uses: actions/cache@v4
         with:
@@ -80,9 +85,29 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: ubuntu-x86_64-cargo-debug-viewer-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-debug-viewer
           restore-keys: |
-            ubuntu-x86_64-cargo-debug-viewer-
+            ${{ runner.os }}-cargo-debug-viewer
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/pnpm/store
+            src/debug/viewer/ui/node_modules
+          key: ${{ runner.os }}-pnpm
+          restore-keys: |
+            ${{ runner.os }}-pnpm
+
+      - name: Install node_modules
+        run: |
+          cd src/debug/viewer/ui/
+          pnpm install
+
+      - name: Build UI
+        run: |
+          cd src/debug/viewer/ui/
+          pnpm build
 
       - name: Build with debug-viewer
         run: cargo build --release --target x86_64-unknown-linux-gnu --features debug-viewer
@@ -162,7 +187,6 @@ jobs:
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             # Skip as binary is already prepared in the build step
             echo "macOS universal binary already prepared"
-            chmod 755 "dist/ridi-router-${{ matrix.name }}"
           else
             cp "target/${{ matrix.target }}/release/ridi-router" "dist/ridi-router-${{ matrix.name }}"
             chmod +x "dist/ridi-router-${{ matrix.name }}"
