@@ -193,7 +193,7 @@ jobs:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp "target/${{ matrix.target }}/release/ridi-router.exe" "dist/ridi-router-${{ matrix.name }}.exe"
             cd dist
-            tar -a -c -f "ridi-router-${{ matrix.name }}.zip" "ridi-router-${{ matrix.name }}.exe"
+             powershell Compress-Archive "ridi-router-${{ matrix.name }}.exe" "ridi-router-${{ matrix.name }}.zip"
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             # Binary already in dist from build step
             cd dist
