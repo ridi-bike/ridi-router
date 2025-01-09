@@ -210,7 +210,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: binary-${{ matrix.name }}
-          path: dist/*
+          path: dist/*.zip
 
   create-release:
     needs: [prepare-version, build, build-debug-viewer]
