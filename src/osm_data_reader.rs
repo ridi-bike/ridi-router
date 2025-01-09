@@ -38,14 +38,27 @@ pub const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
     "road",
 ];
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OsmDataReaderError {
+    #[error("Standard IO error: {error}")]
     StdioError { error: io::Error },
+
+    #[error("OSM JSON parser error: {error}")]
     ParserError { error: OsmJsonParserError },
+
+    #[error("Map data error: {error}")]
     MapDataError { error: MapDataError },
+
+    #[error("File error: {error}")]
     FileError { error: io::Error },
+
+    #[error("Failed to open PBF file: {error}")]
     PbfFileOpenError { error: io::Error },
+
+    #[error("Failed to read PBF file: {error}")]
     PbfFileReadError { error: osmpbfreader::Error },
+
+    #[error("PBF file error: {error}")]
     PbfFileError { error: String },
 }
 

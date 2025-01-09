@@ -10,21 +10,48 @@ use crate::map_data::osm::{
     OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
 };
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, thiserror::Error)]
 pub enum OsmJsonParserError {
+    #[error("Unexpected token {token:?} in context: {context}")]
     UnexpectedToken { token: TokenType, context: String },
+
+    #[error("Failed to parse UTF-8: {error}")]
     Utf8ParseError { error: Utf8Error },
+
+    #[error("Unexpected buffer type")]
     UnexpectedBuffer,
+
+    #[error("Array found in root context")]
     ArrayFoundInRoot,
+
+    #[error("Failed to parse node ID: {error}")]
     FailedToParseNodeId { error: ParseIntError },
+
+    #[error("Failed to parse latitude: {error}")]
     FailedToParseLat { error: ParseFloatError },
+
+    #[error("Failed to parse longitude: {error}")]
     FailedToParseLon { error: ParseFloatError },
+
+    #[error("Unknown node type: {node_type}")]
     UnknownNodeType { node_type: String },
+
+    #[error("Unknown member type: {member_type}")]
     UnknownMemberType { member_type: String },
+
+    #[error("Missing element type for element: {element:?}")]
     MissingElementType { element: OsmElement },
+
+    #[error("Missing value '{value}' for element type '{element_type}'")]
     MissingValueForElement { element_type: String, value: String },
+
+    #[error("Parser in error state: {error}")]
     ParserInErrorState { error: Box<OsmJsonParserError> },
+
+    #[error("Element is not a node")]
     ElementIsNotNode,
+
+    #[error("Element is not a way")]
     ElementIsNotWay,
 }
 
