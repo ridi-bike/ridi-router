@@ -130,7 +130,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: binary-debug-viewer-linux-amd64
-          path: dist/*
+          path: dist/*.zip
 
   build:
     needs: prepare-version
