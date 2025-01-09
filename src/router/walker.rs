@@ -7,8 +7,9 @@ use crate::map_data::{
 
 use super::route::{segment::Segment, segment_list::SegmentList, Route};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum WalkerError {
+    #[error("Invalid fork choice {id}. Available choices are: {available_fork_ids:?}")]
     WrongForkChoice {
         id: u64,
         available_fork_ids: Vec<u64>,

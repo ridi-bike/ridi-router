@@ -3,11 +3,18 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, IsTerminal};
 use std::{path::PathBuf, str::Utf8Error};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum RulesError {
+    #[error("Failed to read rules file: {error}")]
     FileRead { error: io::Error },
+
+    #[error("Failed to parse file as UTF-8: {error}")]
     FileParse { error: Utf8Error },
+
+    #[error("Failed to parse JSON: {error}")]
     JsonParse { error: serde_json::Error },
+
+    #[error("Failed to read from stdin: {error}")]
     StdinRead { error: io::Error },
 }
 
