@@ -1,5 +1,6 @@
 use derive_name::Name;
 use duckdb::{params, Connection, Result, Row};
+use include_directory::{include_directory, Dir};
 use qstring::QString;
 use serde::Serialize;
 use sql_builder::{bind::Bind, SqlBuilder};
@@ -21,6 +22,8 @@ use crate::debug::writer::{
 };
 
 const DATA_PREFIX: &str = "/data/";
+
+static DIST_DIR: Dir = include_directory!("$CARGO_MANIFEST_DIR/src/debug/viewer/ui/dist");
 
 fn url_for_debug_stream_name(name: &str) -> String {
     format!("{DATA_PREFIX}{name}")
@@ -74,6 +77,9 @@ pub enum DebugViewerError {
 
     #[error("Serde deserialize error on route chunks: {error}")]
     SerdeDesRouteChunks { error: serde_json::Error },
+
+    #[error("File not found: {file_name}")]
+    FileNotFound { file_name: String },
 }
 pub struct DebugViewer;
 
@@ -308,7 +314,7 @@ impl DebugViewer {
             .sql()
             .map_err(|error| DebugViewerError::SqlBuilder { error })?;
 
-        eprintln!("{}", sql);
+        info!(sql = sql, "Executing sql");
         let mut statement = db_con
             .prepare(&sql)
             .map_err(|error| DebugViewerError::DbStatementError { error })?;
@@ -332,10 +338,10 @@ impl DebugViewer {
         request: &Request,
         db_con: &Connection,
     ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError> {
-        println!(
-            "received CALC request! method: {:?}, url: {:?}",
-            request.method(),
-            request.url(),
+        info!(
+            method = ?request.method(),
+            url = ?request.url(),
+            "received FILE request",
         );
         let query = request.url().split("?").collect::<Vec<_>>();
         let query = query
@@ -385,10 +391,10 @@ impl DebugViewer {
         request: &Request,
         db_con: &Connection,
     ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError> {
-        println!(
-            "received DATA request! method: {:?}, url: {:?}",
-            request.method(),
-            request.url(),
+        info!(
+            method = ?request.method(),
+            url = ?request.url(),
+            "received FILE request",
         );
         let query = request.url().split("?").collect::<Vec<_>>();
         let query = query
@@ -567,11 +573,13 @@ impl DebugViewer {
         }
     }
 
-    fn handle_file_request(request: &Request) -> Result<Response<File>, DebugViewerError> {
-        println!(
-            "received FILE request! method: {:?}, url: {:?}",
-            request.method(),
-            request.url(),
+    fn handle_file_request(
+        request: &Request,
+    ) -> Result<Response<Cursor<Vec<u8>>>, DebugViewerError> {
+        info!(
+            method = ?request.method(),
+            url = ?request.url(),
+            "received FILE request",
         );
 
         let mut file_name = request.url().to_string();
@@ -583,27 +591,20 @@ impl DebugViewer {
                 break;
             }
         }
-        let file_name = if file_name == "/" {
-            "/index.html".to_string()
+        let file_name = file_name[1..].to_string();
+        let file_name = if file_name == "" {
+            "index.html".to_string()
         } else {
             file_name
         };
-        let file_name = format!("./src/debug/viewer/ui/dist{file_name}");
 
-        let file = File::open(&file_name).map_err(|error| DebugViewerError::FileOpen { error })?;
+        let file = DIST_DIR
+            .get_file(&file_name)
+            .map_or(Err(DebugViewerError::FileNotFound { file_name }), |v| Ok(v))?;
+        let mime_type = file.mimetype().to_string();
+        let file_contents = file.contents_utf8().unwrap();
 
-        let mime_type = match PathBuf::from(file_name).extension() {
-            None => "",
-            Some(extension) => match extension.to_str() {
-                Some("js") => "text/javascript",
-                Some("css") => "text/css",
-                Some("html") => "text/html",
-                Some("svg") => "image/svg+xml",
-                _ => "",
-            },
-        };
-
-        Ok(Response::from_file(file).with_header(
+        Ok(Response::from_string(file_contents).with_header(
             Header::from_bytes(&b"Content-Type"[..], &mime_type.as_bytes()[..])
                 .map_err(|_| DebugViewerError::HeaderCreate)?,
         ))

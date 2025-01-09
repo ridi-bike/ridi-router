@@ -3,7 +3,7 @@ import {
   DebugStreamItineraries,
   DebugStreamSteps,
 } from "./api-types.js";
-import type turf from "@turf/turf";
+import type * as turf from "@turf/turf";
 import * as maplibregl from "maplibre-gl";
 
 export type MapActions = {
