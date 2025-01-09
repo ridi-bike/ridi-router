@@ -118,11 +118,13 @@ jobs:
       - name: Build with debug-viewer
         run: cargo build --release --target x86_64-unknown-linux-gnu --features debug-viewer
 
-      - name: Prepare debug-viewer binary
+      - name: Prepare debug-viewer binary and create zip
         run: |
           mkdir dist
           cp "target/x86_64-unknown-linux-gnu/release/ridi-router" "dist/ridi-router-debug-viewer-linux-amd64"
           chmod +x "dist/ridi-router-debug-viewer-linux-amd64"
+          cd dist
+          zip "ridi-router-debug-viewer-linux-amd64.zip" "ridi-router-debug-viewer-linux-amd64"
 
       - name: Upload debug-viewer binary
         uses: actions/upload-artifact@v3
@@ -184,18 +186,24 @@ jobs:
             cargo build --release --target ${{ matrix.target }}
           fi
 
-      - name: Prepare binary
+      - name: Prepare binary and create zip
         shell: bash
         run: |
           mkdir -p dist
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp "target/${{ matrix.target }}/release/ridi-router.exe" "dist/ridi-router-${{ matrix.name }}.exe"
+            cd dist
+            zip "ridi-router-${{ matrix.name }}.zip" "ridi-router-${{ matrix.name }}.exe"
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # Skip as binary is already prepared in the build step
-            echo "macOS universal binary already prepared"
+            # Binary already in dist from build step
+            cd dist
+            chmod +x "ridi-router-${{ matrix.name }}"
+            zip "ridi-router-${{ matrix.name }}.zip" "ridi-router-${{ matrix.name }}"
           else
             cp "target/${{ matrix.target }}/release/ridi-router" "dist/ridi-router-${{ matrix.name }}"
             chmod +x "dist/ridi-router-${{ matrix.name }}"
+            cd dist
+            zip "ridi-router-${{ matrix.name }}.zip" "ridi-router-${{ matrix.name }}"
           fi
 
       - name: Upload binary
