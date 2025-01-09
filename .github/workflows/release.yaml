@@ -162,7 +162,7 @@ jobs:
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
             # Skip as binary is already prepared in the build step
             echo "macOS universal binary already prepared"
-            chmod +x "dist/ridi-router-${{ matrix.name }}"
+            chmod 755 "dist/ridi-router-${{ matrix.name }}"
           else
             cp "target/${{ matrix.target }}/release/ridi-router" "dist/ridi-router-${{ matrix.name }}"
             chmod +x "dist/ridi-router-${{ matrix.name }}"
