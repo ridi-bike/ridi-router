@@ -125,9 +125,6 @@ mod test {
             ];
             for (idx, test) in tests.iter().enumerate() {
                 let hash = PointGrid::get_cell_id(test.0, test.1);
-                info!("test {idx}, hash, expected");
-                info!("{hash:?}");
-                info!("{:?}", test.2);
                 assert_eq!(hash, test.2);
             }
         }
