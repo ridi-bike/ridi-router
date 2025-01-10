@@ -1,6 +1,7 @@
 use super::route::Route;
 use hdbscan::{Hdbscan, HdbscanHyperParams};
 use serde::{Deserialize, Serialize};
+use tracing::error;
 
 const APPROXIMATION_POINTS: usize = 10;
 
@@ -54,7 +55,13 @@ impl Clustering {
             .min_cluster_size(2)
             .build();
         let alg = Hdbscan::new(&points, params);
-        let labels = alg.cluster().unwrap();
+        let labels = match alg.cluster() {
+            Ok(l) => l,
+            Err(e) => {
+                error!("Failed to cluster routes: {e}");
+                return None;
+            }
+        };
 
         Some(Self {
             approximated_routes,

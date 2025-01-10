@@ -8,6 +8,8 @@ use std::{
     time::Instant,
 };
 
+use anyhow::Context;
+use bincode::Options;
 use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -272,7 +274,7 @@ impl MapDataGraph {
         }
     }
 
-    pub fn pack(&self) -> MapDataGraphPacked {
+    pub fn pack(&self) -> anyhow::Result<MapDataGraphPacked> {
         let pack_start = Instant::now();
 
         let mut packed = MapDataGraphPacked::default();
@@ -282,22 +284,32 @@ impl MapDataGraph {
         info!("lines len {}", self.lines.len());
         info!("tags len {:?}", self.tags.len());
 
+        let mut points: Option<anyhow::Result<Vec<u8>>> = None;
+        let mut point_grid: Option<anyhow::Result<Vec<u8>>> = None;
+        let mut lines: Option<anyhow::Result<Vec<u8>>> = None;
+        let mut tags: Option<anyhow::Result<Vec<u8>>> = None;
+
         rayon::scope(|scope| {
             scope.spawn(|_| {
-                packed.points =
-                    bincode::serialize(&self.points).expect("could not serialize points");
+                points =
+                    Some(bincode::serialize(&self.points).context("Failed to serialize points"));
             });
             scope.spawn(|_| {
-                packed.point_grid =
-                    bincode::serialize(&self.point_grid).expect("could not serialize");
+                point_grid = Some(
+                    bincode::serialize(&self.point_grid).context("Failed to serialize point grid"),
+                );
             });
             scope.spawn(|_| {
-                packed.lines = bincode::serialize(&self.lines).expect("could not serialize lines");
+                lines = Some(bincode::serialize(&self.lines).context("Failed to serialize lines"));
             });
             scope.spawn(|_| {
-                packed.tags = bincode::serialize(&self.tags).expect("could not serialize tags");
+                tags = Some(bincode::serialize(&self.tags).context("could not serialize tags"));
             });
         });
+        packed.points = points.context("Points missing")??;
+        packed.point_grid = point_grid.context("Points grid missing")??;
+        packed.lines = lines.context("Lines missing")??;
+        packed.tags = tags.context("Tags missing")??;
 
         info!("points len {}, {}", self.points.len(), packed.points.len());
         info!(
@@ -311,7 +323,7 @@ impl MapDataGraph {
         let pack_end = pack_start.elapsed();
         info!("pack took {}s", pack_end.as_secs());
 
-        packed
+        Ok(packed)
     }
 
     #[cfg(test)]
@@ -617,59 +629,67 @@ impl MapDataGraph {
         distances.get(0).map_or(None, |v| Some(v.0.clone()))
     }
     #[tracing::instrument(skip(packed))]
-    pub fn unpack(packed: MapDataGraphPacked) -> &'static MapDataGraph {
-        let mut points = Vec::new();
+    pub fn unpack(packed: MapDataGraphPacked) -> anyhow::Result<&'static MapDataGraph> {
+        let mut points: Option<anyhow::Result<Vec<MapDataPoint>>> = None;
         let points_map = HashMap::new();
-        let mut point_grid = PointGrid::new();
+        let mut point_grid: Option<anyhow::Result<PointGrid>> = None;
         let ways_lines = HashMap::new();
-        let mut lines = Vec::new();
-        let mut tags = ElementTags::new();
+        let mut lines: Option<anyhow::Result<Vec<MapDataLine>>> = None;
+        let mut tags: Option<anyhow::Result<ElementTags>> = None;
 
         let unpack_start = Instant::now();
         rayon::scope(|scope| {
             scope.spawn(|_| {
                 let start = Instant::now();
-                points =
-                    bincode::deserialize(&packed.points[..]).expect("could not deserialize points");
+                points = Some(
+                    bincode::deserialize(&packed.points[..])
+                        .context("could not deserialize points"),
+                );
                 let dur = start.elapsed();
                 info!("points {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
-                point_grid = bincode::deserialize(&packed.point_grid[..])
-                    .expect("could not deserialize points");
+                point_grid = Some(
+                    bincode::deserialize(&packed.point_grid[..])
+                        .context("could not deserialize points"),
+                );
                 let dur = start.elapsed();
                 info!("point_grid {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
-                lines =
-                    bincode::deserialize(&packed.lines[..]).expect("could not deserialize lines");
+                lines = Some(
+                    bincode::deserialize(&packed.lines[..]).context("could not deserialize lines"),
+                );
                 let dur = start.elapsed();
                 info!("lines {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
-                tags = bincode::deserialize(&packed.tags[..]).expect("could not deserialize tags");
+                tags = Some(
+                    bincode::deserialize(&packed.tags[..]).context("could not deserialize tags"),
+                );
                 let dur = start.elapsed();
                 info!("tags {}s", dur.as_secs());
             });
         });
         let unpack_duration = unpack_start.elapsed();
-        info!("unpack took {}s", unpack_duration.as_secs());
-        info!("points {}", points.len());
-        info!("point_grid {}", point_grid.len());
-        info!("lines {}", lines.len());
-        info!("tags {:?}", tags.len());
+        info!(time = ?unpack_duration, "Unpack finished");
 
-        MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
+        let points = points.context("Points missing")??;
+        let point_grid = point_grid.context("Point grid missing")??;
+        let lines = lines.context("Lines missing")??;
+        let tags = tags.context("Tags missing")??;
+
+        Ok(MAP_DATA_GRAPH.get_or_init(|| MapDataGraph {
             points,
             points_map,
             point_grid,
             lines,
             ways_lines,
             tags,
-        })
+        }))
     }
 
     fn get_or_init(data_source: Option<&DataSource>) -> &'static MapDataGraph {
