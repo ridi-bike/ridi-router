@@ -1,9 +1,9 @@
 use derive_name::Name;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::File,
-    io,
+    io::{self, Write},
     path::PathBuf,
     sync::{OnceLock, RwLock},
 };
@@ -103,12 +103,12 @@ pub enum DebugWriterError {
     DirCheck { error: io::Error },
     #[error("Could not remove existing debug dir: {error}")]
     DirRemove { error: io::Error },
+    #[error("Could not create metadata file: {error}")]
+    MetadataCreate { error: io::Error },
     #[error("Could not create debug dir: {error}")]
     DirCreate { error: io::Error },
     #[error("Could not read global debug_writer")]
     StaticRead { error: String },
-    #[error("Could not get write lock on debug_writer")]
-    StaticWrite { error: String },
     #[error("Could not create file")]
     FileCreate {
         file_name: PathBuf,
@@ -118,14 +118,23 @@ pub enum DebugWriterError {
     Write { error: csv::Error },
     #[error("Could not flush file")]
     Flush { error: io::Error },
-    #[error("COuld not serialize route")]
+    #[error("Could not serialize route")]
     SerializeRoute { error: serde_json::Error },
+    #[error("Could not serialize metadata {error}")]
+    SerializeMetadata { error: serde_json::Error },
+    #[error("Could not write metadata {error}")]
+    MetadataWrite { error: io::Error },
 }
 
 static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 thread_local! {
     static DEBUG_WRITER: OnceLock<RwLock<DebugWriter>> = OnceLock::new();
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugMetadata {
+    pub router_version: String,
 }
 
 pub struct DebugWriter {
@@ -185,11 +194,30 @@ impl DebugWriter {
                     .map_err(|error| DebugWriterError::DirRemove { error })?;
             }
             std::fs::create_dir_all(&dir_name)
-                .map_err(|error| DebugWriterError::DirRemove { error })?;
+                .map_err(|error| DebugWriterError::DirCreate { error })?;
+
+            let metadata_file = Self::get_metadata_file_path(&dir_name);
+            let mut file = File::create(metadata_file)
+                .map_err(|error| DebugWriterError::MetadataCreate { error })?;
+            let metadata = DebugMetadata {
+                router_version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            file.write_all(
+                serde_json::to_string(&metadata)
+                    .map_err(|error| DebugWriterError::SerializeMetadata { error })?
+                    .as_bytes(),
+            )
+            .map_err(|error| DebugWriterError::MetadataWrite { error })?;
             DEBUG_DIR.get_or_init(|| dir_name);
         }
 
         Ok(())
+    }
+
+    pub fn get_metadata_file_path(dir_name: &PathBuf) -> PathBuf {
+        let mut metadata_file = dir_name.clone();
+        metadata_file.push("metadata.json");
+        metadata_file
     }
 
     pub fn write_step_result(

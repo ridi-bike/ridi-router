@@ -8,7 +8,7 @@ use std::{
     error::Error,
     ffi::OsString,
     fs::{self, File},
-    io::{self, Cursor},
+    io::{self, Cursor, Read},
     num::ParseIntError,
     path::PathBuf,
 };
@@ -20,6 +20,8 @@ use crate::debug::writer::{
     DebugStreamForkChoiceWeights, DebugStreamForkChoices, DebugStreamItineraries,
     DebugStreamItineraryWaypoints, DebugStreamStepResults, DebugStreamSteps,
 };
+
+use super::writer::DebugMetadata;
 
 const DATA_PREFIX: &str = "/data/";
 
@@ -80,6 +82,17 @@ pub enum DebugViewerError {
 
     #[error("File not found: {file_name}")]
     FileNotFound { file_name: String },
+    #[error("Metadata read fail: {error}")]
+    MetadataRead { error: io::Error },
+    #[error("Metadata deserialize fail: {error}")]
+    Deserialize { error: serde_json::Error },
+    #[error(
+        "Debug data version {debug_data_version} does not match current version {current_version}"
+    )]
+    WringDebugVIewerVersion {
+        debug_data_version: String,
+        current_version: &'static str,
+    },
 }
 pub struct DebugViewer;
 
@@ -188,6 +201,18 @@ impl DebugViewer {
     }
 
     fn prep_data(debug_dir: PathBuf, db_con: &Connection) -> Result<(), DebugViewerError> {
+        let metadata_file_path =
+            crate::debug::writer::DebugWriter::get_metadata_file_path(&debug_dir);
+        let mut metadata_file = File::open(metadata_file_path)
+            .map_err(|error| DebugViewerError::MetadataRead { error })?;
+        let metadata: DebugMetadata = serde_json::from_reader(metadata_file)
+            .map_err(|error| DebugViewerError::Deserialize { error })?;
+        if metadata.router_version != env!("CARGO_PKG_VERSION") {
+            return Err(DebugViewerError::WringDebugVIewerVersion {
+                debug_data_version: metadata.router_version,
+                current_version: env!("CARGO_PKG_VERSION"),
+            });
+        }
         let dir_contents =
             fs::read_dir(debug_dir).map_err(|error| DebugViewerError::ReadDebugDir { error })?;
         let mut created_streams: Vec<String> = Vec::new();

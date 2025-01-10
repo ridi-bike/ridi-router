@@ -126,15 +126,10 @@ impl MapDataCache {
             return Ok(None);
         };
 
-        let mut metadata_file = File::open(metadata_file_path)
+        let metadata_file = File::open(metadata_file_path)
             .map_err(|error| MapDataCacheError::FileError { error })?;
 
-        let mut metadata_file_contents = String::new();
-        metadata_file
-            .read_to_string(&mut metadata_file_contents)
-            .map_err(|error| MapDataCacheError::FileError { error })?;
-
-        let old_metadata: CacheMetadata = serde_json::from_str(&metadata_file_contents)
+        let old_metadata: CacheMetadata = serde_json::from_reader(metadata_file)
             .map_err(|error| MapDataCacheError::MetadataSerde { error })?;
 
         if new_metadata.router_version != old_metadata.router_version
@@ -199,15 +194,11 @@ impl MapDataCache {
                 return Err(MapDataCacheError::MissingValue);
             };
 
-            let mut metadata_file = File::create(metadata_file_path)
+            let metadata_file = File::create(metadata_file_path)
                 .map_err(|error| MapDataCacheError::FileError { error })?;
 
-            let metadata_contents = serde_json::to_string(&new_metadata)
+            serde_json::to_writer(metadata_file, &new_metadata)
                 .map_err(|error| MapDataCacheError::MetadataSerde { error })?;
-
-            metadata_file
-                .write_all(&metadata_contents.as_bytes()[..])
-                .map_err(|error| MapDataCacheError::FileError { error })?;
 
             let tasks = [0u8; 4];
             tasks
