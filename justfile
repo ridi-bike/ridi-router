@@ -94,4 +94,4 @@ cache-spain:
 	cargo run --release -- prep-cache --input ./map-data/spain-latest.osm.pbf --cache-dir ./map-data/cache/spain
 
 debug-viewer:
-	cargo run --release -- debug-viewer --debug-dir ./map-data/debug
+	cargo run --features=debug-viewer --release -- debug-viewer --debug-dir ./map-data/debug
