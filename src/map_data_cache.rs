@@ -1,9 +1,16 @@
-use std::{io, path::PathBuf, time::Instant};
+use std::{
+    fs::File,
+    io::{self, Read, Write},
+    path::PathBuf,
+    time::Instant,
+};
 
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::info;
 
-use crate::map_data::graph::MapDataGraphPacked;
+use crate::{map_data::graph::MapDataGraphPacked, osm_data_reader::DataSource};
 
 fn read_cache_file(file_folder: &PathBuf, file_name: &str) -> Result<Vec<u8>, MapDataCacheError> {
     let mut file = file_folder.clone();
@@ -30,29 +37,82 @@ pub enum MapDataCacheError {
     #[error("File error cause {error}")]
     FileError { error: io::Error },
 
+    #[error("IO writer error {error}")]
+    IoWriter { error: io::Error },
+
     #[error("Required cache value is missing")]
     MissingValue,
 
     #[error("Unexpected value encountered during cache operation")]
     UnexpectedValue,
+
+    #[error("Metadata serialize/deserialize error {error}")]
+    MetadataSerde { error: serde_json::Error },
 }
+
+#[derive(Debug, Clone)]
+enum WriteToCache {
+    No,
+    WithData(CacheMetadata),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheMetadata {
+    pub data_source_hash: String,
+    pub router_version: String,
+}
+
 pub struct MapDataCache {
+    data_source: DataSource,
     cache_dir: Option<PathBuf>,
-    write_to_cache: bool,
+    write_to_cache: WriteToCache,
 }
 
 impl MapDataCache {
-    pub fn init(cache_dir: Option<PathBuf>) -> Self {
+    pub fn init(cache_dir: Option<PathBuf>, data_source: &DataSource) -> Self {
         Self {
-            write_to_cache: cache_dir.is_some(),
+            data_source: data_source.clone(),
+            write_to_cache: WriteToCache::No,
             cache_dir,
         }
     }
 
     #[tracing::instrument(skip(self))]
+    pub fn read_input_metadata(&mut self) -> Result<CacheMetadata, MapDataCacheError> {
+        let mut file = match &self.data_source {
+            DataSource::JsonFile { file } => File::open(file),
+            DataSource::PbfFile { file } => File::open(file),
+        }
+        .map_err(|error| MapDataCacheError::FileError { error })?;
+
+        let mut sha256 = Sha256::new();
+        io::copy(&mut file, &mut sha256).map_err(|error| MapDataCacheError::IoWriter { error })?;
+        let hash = sha256.finalize();
+
+        let new_metadata = CacheMetadata {
+            data_source_hash: format!("{hash:x}"),
+            router_version: env!("CARGO_PKG_VERSION").to_string(),
+        };
+
+        self.write_to_cache = WriteToCache::WithData(new_metadata.clone());
+
+        info!(
+            hash = new_metadata.data_source_hash,
+            version = new_metadata.router_version,
+            "Cache metadata"
+        );
+
+        Ok(new_metadata)
+    }
+    #[tracing::instrument(skip(self))]
     pub fn read_cache(&mut self) -> Result<Option<MapDataGraphPacked>, MapDataCacheError> {
+        let new_metadata = self.read_input_metadata()?;
+
         let cache_dir = match &self.cache_dir {
-            None => return Ok(None),
+            None => {
+                self.write_to_cache = WriteToCache::No;
+                return Ok(None);
+            }
             Some(cd) => cd,
         };
 
@@ -62,7 +122,28 @@ impl MapDataCache {
             return Ok(None);
         }
 
-        self.write_to_cache = false;
+        let Some(metadata_file_path) = self.get_metadata_file_path() else {
+            return Ok(None);
+        };
+
+        let mut metadata_file = File::open(metadata_file_path)
+            .map_err(|error| MapDataCacheError::FileError { error })?;
+
+        let mut metadata_file_contents = String::new();
+        metadata_file
+            .read_to_string(&mut metadata_file_contents)
+            .map_err(|error| MapDataCacheError::FileError { error })?;
+
+        let old_metadata: CacheMetadata = serde_json::from_str(&metadata_file_contents)
+            .map_err(|error| MapDataCacheError::MetadataSerde { error })?;
+
+        if new_metadata.router_version != old_metadata.router_version
+            || new_metadata.data_source_hash != old_metadata.data_source_hash
+        {
+            return Ok(None);
+        }
+
+        self.write_to_cache = WriteToCache::No;
 
         let mut points: Option<Result<Vec<u8>, MapDataCacheError>> = None;
         let mut point_grid: Option<Result<Vec<u8>, MapDataCacheError>> = None;
@@ -98,9 +179,9 @@ impl MapDataCache {
 
     #[tracing::instrument(skip(self, packed_data))]
     pub fn write_cache(&self, packed_data: MapDataGraphPacked) -> Result<(), MapDataCacheError> {
-        if !self.write_to_cache {
+        let WriteToCache::WithData(ref new_metadata) = self.write_to_cache else {
             return Ok(());
-        }
+        };
 
         let write_start = Instant::now();
 
@@ -112,6 +193,20 @@ impl MapDataCache {
                     .map_err(|error| MapDataCacheError::FileError { error })?;
             }
             std::fs::create_dir_all(&cache_dir)
+                .map_err(|error| MapDataCacheError::FileError { error })?;
+
+            let Some(metadata_file_path) = self.get_metadata_file_path() else {
+                return Err(MapDataCacheError::MissingValue);
+            };
+
+            let mut metadata_file = File::create(metadata_file_path)
+                .map_err(|error| MapDataCacheError::FileError { error })?;
+
+            let metadata_contents = serde_json::to_string(&new_metadata)
+                .map_err(|error| MapDataCacheError::MetadataSerde { error })?;
+
+            metadata_file
+                .write_all(&metadata_contents.as_bytes()[..])
                 .map_err(|error| MapDataCacheError::FileError { error })?;
 
             let tasks = [0u8; 4];
@@ -130,5 +225,13 @@ impl MapDataCache {
         let write_end = write_start.elapsed();
         info!("cache write {}s", write_end.as_secs());
         Ok(())
+    }
+
+    fn get_metadata_file_path(&self) -> Option<PathBuf> {
+        let Some(mut metadata_file_path) = self.cache_dir.clone() else {
+            return None;
+        };
+        metadata_file_path.push("metadata.json");
+        Some(metadata_file_path)
     }
 }

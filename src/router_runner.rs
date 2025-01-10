@@ -334,7 +334,7 @@ impl RouterRunner {
     ) -> Result<(), RouterRunnerError> {
         DebugWriter::init(debug_dir).expect("Failed to set up debugging");
         let rules = RouterRules::read(rule_file).expect("Failed to read rules");
-        let mut data_cache = MapDataCache::init(cache_dir);
+        let mut data_cache = MapDataCache::init(cache_dir, data_source);
         let cached_map_data = data_cache.read_cache();
         let cached_map_data = match cached_map_data {
             Ok(d) => d,
@@ -391,7 +391,10 @@ impl RouterRunner {
     fn run_cache(data_source: &DataSource, cache_dir: PathBuf) -> Result<(), RouterRunnerError> {
         let startup_start = Instant::now();
 
-        let data_cache = MapDataCache::init(Some(cache_dir));
+        let mut data_cache = MapDataCache::init(Some(cache_dir), data_source);
+        data_cache
+            .read_input_metadata()
+            .map_err(|error| RouterRunnerError::CacheWrite { error })?;
         MapDataGraph::init(data_source);
         let packed_data = MapDataGraph::get().pack();
         data_cache
@@ -412,7 +415,7 @@ impl RouterRunner {
     ) -> Result<(), RouterRunnerError> {
         let startup_start = Instant::now();
 
-        let mut data_cache = MapDataCache::init(cache_dir);
+        let mut data_cache = MapDataCache::init(cache_dir, data_source);
         let cached_map_data = data_cache.read_cache();
         let cached_map_data = match cached_map_data {
             Ok(d) => d,
