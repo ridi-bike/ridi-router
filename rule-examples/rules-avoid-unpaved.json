@@ -1,0 +1,56 @@
+{
+	"highway": {
+		"track": {
+			"action": "avoid"
+		},
+		"path": {
+			"action": "avoid"
+		},
+		"unclassified": {
+			"action": "priority",
+			"value": 255
+		},
+		"tertiary ": {
+			"action": "priority",
+			"value": 255
+		}
+	},
+	"surface": {
+		"unpaved": {
+			"action": "avoid"
+		},
+		"compacted": {
+			"action": "avoid"
+		},
+		"fine_gravel": {
+			"action": "avoid"
+		},
+		"gravel": {
+			"action": "avoid"
+		},
+		"rock": {
+			"action": "avoid"
+		},
+		"pebblestone": {
+			"action": "avoid"
+		},
+		"ground": {
+			"action": "avoid"
+		},
+		"dirt": {
+			"action": "avoid"
+		},
+		"earth": {
+			"action": "avoid"
+		},
+		"grass": {
+			"action": "avoid"
+		},
+		"mud": {
+			"action": "avoid"
+		},
+		"sand": {
+			"action": "avoid"
+		}
+	}
+}

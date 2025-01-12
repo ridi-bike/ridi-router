@@ -25,6 +25,7 @@
 		"maplibre",
 		"vanjs",
 		"qstring",
-		"bbox"
+		"bbox",
+		"schemars"
 	]
 }

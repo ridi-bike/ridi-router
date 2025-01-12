@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = []
 debug-viewer = ["dep:duckdb", "dep:qstring", "dep:sql-builder", "dep:tiny_http"]
+rule-schema-writer = []
 
 [dependencies]
 anyhow = "1.0.95"
@@ -23,6 +24,7 @@ json-tools = "1.1.3"
 osmpbfreader = "0.16.1"
 qstring = { version = "0.7.2", optional = true }
 rayon = "1.10.0"
+schemars = "0.8.21"
 serde = { version = "1.0.201", features = ["derive"] }
 serde_derive = "1.0.201"
 serde_json = "1.0.117"

@@ -268,11 +268,19 @@ enum CliMode {
         /// Directory to store the generated cache
         cache_dir: PathBuf,
     },
+    /// Run Debug viewer
     #[cfg(feature = "debug-viewer")]
     DebugViewer {
         #[arg(long, value_name = "DIR")]
         /// Load a directory with debug files generated when generating a route
         debug_dir: PathBuf,
+    },
+    /// Generate JSON schema file for rule files
+    #[cfg(feature = "rule-schema-writer")]
+    RuleSchemaWrite {
+        #[arg(long, value_name = "FILE")]
+        /// Destination location of the JSON schema file for the rule file
+        destination: PathBuf,
     },
 }
 
@@ -543,6 +551,10 @@ impl RouterRunner {
             #[cfg(feature = "debug-viewer")]
             CliMode::DebugViewer { debug_dir } => {
                 Ok(crate::debug::viewer::DebugViewer::run(debug_dir.clone())?)
+            }
+            #[cfg(feature = "rule-schema-writer")]
+            CliMode::RuleSchemaWrite { destination } => {
+                Ok(crate::router::rules::generate_json_schema(destination)?)
             }
         }
     }

@@ -47,11 +47,13 @@ The binary can be built from source by cloning the repo and running `cargo build
 
 #### PBF format
 
-Data files for regions can be downloaded at https://download.geofabrik.de/ - there are individual files available for all countries, US states and other special regions. Depending on the region size, these files can be fairly large in their packed state as pbf files and even larger when ridi-router loads them in memory (unpacked state in memory is roughly 5-8x the file size).
+Data files for regions can be downloaded at https://download.geofabrik.de/ - there are individual files available for all countries, US states and other special regions. Depending on the region size, these files can be fairly large in their packed state (for example Spain is 1.2 GB, Germany is 4.1 GB, USA is 10.1 GB)
+
+When the files are loaded into ridi-router, they are unpacked and stored in memory in a way that's convenient for route generation, but takes up more memory than the original file by roughly 8-10x, for example Spain would require 9 GB of memory to process.
 
 #### JSON format
 
-Map data json can be downloaded from a web interface at https://overpass-turbo.eu/ by querying the data based on specific GPS coordinates. This is preferred as it will reduce the file sizes and memory consumption when generating routes.
+Map data json can be downloaded from a web interface at https://overpass-turbo.eu/ by querying the map data based on specific GPS coordinates and distances. This is preferred as it will reduce the file sizes and memory consumption when generating routes.
 
 An example query might look like this. It queries all relevant data in a 100km zone around a line between two gps points 56.951861,24.113821 and 57.313103,25.281460
 
@@ -111,6 +113,8 @@ out;" "https://overpass-api.de/api/interpreter" > map-data.json
 
 ```
 
+THe above query will produce a json file with the size around 150 MB.
+
 ### CLI usage
 
 #### Start-finish route generation
@@ -123,8 +127,7 @@ Args:
 - output - a file to write the generated routes to. Can be a gpx file or a json file. Can be omitted for the result to be printed to terminal
 - rule-file - a rule file to define route generation options. See below for the format and rule description
 - start - GPS coordinates in the format of LAT,LON
-- finish - GPS coordinates in the format of LAT,LONhttps://overpass-turbo.eu/<t_��>ýrequire"cmp.utilshttps://overpass-turbo.eu/.feedkeys".run(603)
--
+- finish - GPS coordinates in the format of LAT,LON
 
 #### Round-trip route generation
 
@@ -145,3 +148,34 @@ If the input map file is large and the startup time takes too long, the input ma
 
 Example with data caching
 `ridi-router generate-route --input map.json --output routes.gpx --cache-dir ./map-data/cache --rule-file avoid-pavement.json round-trip --start-finish 56.951861,24.113821 --bearing 35 --distance 100000`
+
+### Rule file
+
+A rule file is a json file that is read and used when evaluating which road to take at a given junction. Every junction is evaluated against all basic rules and specified advanced rules.
+
+- basic rules that control the basic navigation like making sure we are going in the right general direction. These rules have built in default values and should only be changed in rare circumstances
+- advanced rules that add additional checks based on road surface, type and smoothness. These rules should be created based on preferences
+
+Basic rules provide rule criteria and a priority value to use when applying the rule.
+
+Advanced rules can either provide a priority value or specify "avoid" action to prevent the router form picking a road.
+
+Priority values must be between 0 (meaning no priority change) and 255 (highest priority). When a possible road is evaluated, all priority values are summed up from all rules and the one with the highest total priority is picked. If a single "avoid" action is encountered, the road is excluded regardless of the priority values.
+
+An example rule file can be found in `./rule-examples/rules-prefer-unpaved.json` that prefers smaller unpaved roads.
+
+An example rule file that will not pick unpaved roads or paths and trails can be seen here `./rule-examples/rules-avoid-unpaved.json`
+
+Road types, smoothness and surfaces are based on OpenStreetMap.org tag values. Road type is specified as "highway" (https://wiki.openstreetmap.org/wiki/Key:highway), while smoothness (https://wiki.openstreetmap.org/wiki/Key:smoothness) and surface (https://wiki.openstreetmap.org/wiki/Key:surface) are specified as such.
+
+Rule file can be validated against a schema file located in `./rule-examples/schema.json`
+
+#### Basic rules
+
+These rules dictate basic navigation and route finding. Altering these values can lead to interesting (unreasonable) results but can also help in certain scenarios where geographic obstacles need to be overcome
+
+- prefer_same_road - used to stay on the same road for a longer period
+- progression_direction - controls how long of a detour can happen before a direction is considered wrong. This can be increased in cases where large obstacles need to be overcome like lakes, rivers without bridges, mountain ranges, etc
+- progression_speed - disabled by default. Checks how much progress is made and decides when to stop. Useful in scenarios where geographic obstacles in combination with city streets produce many twists and turns without any significant progress towards the finish
+- no_short_detours - avoids jumping off roads at a junction with a more favourable surface or road type just to get back on the same road shortly after for example doing a short detour on a forst track coming off of a primary road just to join back in several hundred meters
+- no_sharp_turns - avoids scenarios where missing traffic rules in the OpenStreetMap data cause illegal U turns on highways or off/on ramps

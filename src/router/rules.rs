@@ -1,6 +1,7 @@
+use schemars::{schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{self, BufRead, IsTerminal};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::{path::PathBuf, str::Utf8Error};
 
 #[derive(Debug, thiserror::Error)]
@@ -18,14 +19,15 @@ pub enum RulesError {
     StdinRead { error: io::Error },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "lowercase")]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
 pub enum RulesTagValueAction {
     Avoid,
     Priority { value: u8 },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BasicRulePreferSameRoad {
     pub enabled: bool,
     pub priority: u8,
@@ -40,7 +42,8 @@ impl Default for BasicRulePreferSameRoad {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BasicRuleProgressDirection {
     pub enabled: bool,
     pub check_junctions_back: usize,
@@ -55,7 +58,8 @@ impl Default for BasicRuleProgressDirection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BasicRuleProgressSpeed {
     pub enabled: bool,
     pub check_steps_back: usize,
@@ -72,7 +76,8 @@ impl Default for BasicRuleProgressSpeed {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BasicRuleNoShortDetour {
     pub enabled: bool,
     pub min_detour_len_m: f32,
@@ -86,7 +91,8 @@ impl Default for BasicRuleNoShortDetour {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BasicRuleNoSharpTurns {
     pub enabled: bool,
     pub under_deg: f32,
@@ -103,7 +109,8 @@ impl Default for BasicRuleNoSharpTurns {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BasicRules {
     #[serde(default)]
     pub prefer_same_road: BasicRulePreferSameRoad,
@@ -121,7 +128,8 @@ pub struct BasicRules {
     pub no_sharp_turns: BasicRuleNoSharpTurns,
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RouterRules {
     #[serde(default)]
     pub basic: BasicRules,
@@ -139,6 +147,7 @@ impl RouterRules {
         let rules: RouterRules =
             serde_json::from_str(text).map_err(|error| RulesError::JsonParse { error })?;
 
+        println!("{}", serde_json::to_string_pretty(&rules).unwrap());
         Ok(rules)
     }
 
@@ -166,4 +175,12 @@ impl RouterRules {
             Some(file) => Self::read_from_file(file),
         }
     }
+}
+
+#[cfg(feature = "rule-schema-writer")]
+pub fn generate_json_schema(dest: &PathBuf) -> anyhow::Result<()> {
+    let schema = schema_for!(RouterRules);
+    let file = std::fs::File::create(dest)?;
+    serde_json::to_writer_pretty(file, &schema)?;
+    Ok(())
 }
