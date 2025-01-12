@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use std::{num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
 
 use clap::Parser;
@@ -331,9 +332,9 @@ impl RouterRunner {
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
         debug_dir: Option<PathBuf>,
-    ) -> Result<(), RouterRunnerError> {
-        DebugWriter::init(debug_dir).expect("Failed to set up debugging");
-        let rules = RouterRules::read(rule_file).expect("Failed to read rules");
+    ) -> Result<()> {
+        DebugWriter::init(debug_dir).context("Failed to init debug writer")?;
+        let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
         let mut data_cache = MapDataCache::init(cache_dir, data_source);
         let cached_map_data = data_cache.read_cache();
         let cached_map_data = match cached_map_data {
@@ -344,10 +345,12 @@ impl RouterRunner {
             }
         };
         if let Some(packed_data) = cached_map_data {
-            MapDataGraph::unpack(packed_data);
+            MapDataGraph::unpack(packed_data).context("Failed to unpack map data")?;
         } else {
             MapDataGraph::init(data_source);
-            let packed_data = MapDataGraph::get().pack();
+            let packed_data = MapDataGraph::get()
+                .pack()
+                .context("Failed to pack map data")?;
             if let Err(error) = data_cache.write_cache(packed_data) {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
@@ -388,7 +391,7 @@ impl RouterRunner {
     }
 
     #[tracing::instrument]
-    fn run_cache(data_source: &DataSource, cache_dir: PathBuf) -> Result<(), RouterRunnerError> {
+    fn run_cache(data_source: &DataSource, cache_dir: PathBuf) -> anyhow::Result<()> {
         let startup_start = Instant::now();
 
         let mut data_cache = MapDataCache::init(Some(cache_dir), data_source);
@@ -396,7 +399,9 @@ impl RouterRunner {
             .read_input_metadata()
             .map_err(|error| RouterRunnerError::CacheWrite { error })?;
         MapDataGraph::init(data_source);
-        let packed_data = MapDataGraph::get().pack();
+        let packed_data = MapDataGraph::get()
+            .pack()
+            .context("Failed to pack map data")?;
         data_cache
             .write_cache(packed_data)
             .map_err(|error| RouterRunnerError::CacheWrite { error })?;
@@ -412,7 +417,7 @@ impl RouterRunner {
         data_source: &DataSource,
         cache_dir: Option<PathBuf>,
         socket_name: Option<String>,
-    ) -> Result<(), RouterRunnerError> {
+    ) -> anyhow::Result<()> {
         let startup_start = Instant::now();
 
         let mut data_cache = MapDataCache::init(cache_dir, data_source);
@@ -425,10 +430,12 @@ impl RouterRunner {
             }
         };
         if let Some(packed_data) = cached_map_data {
-            MapDataGraph::unpack(packed_data);
+            MapDataGraph::unpack(packed_data).context("Failed to unpack map data")?;
         } else {
             MapDataGraph::init(data_source);
-            let packed_data = MapDataGraph::get().pack();
+            let packed_data = MapDataGraph::get()
+                .pack()
+                .context("Failed to pack map data")?;
             if let Err(error) = data_cache.write_cache(packed_data) {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
@@ -482,8 +489,8 @@ impl RouterRunner {
         data_destination: &DataDestination,
         socket_name: Option<String>,
         rule_file: Option<PathBuf>,
-    ) -> Result<(), RouterRunnerError> {
-        let rules = RouterRules::read(rule_file).expect("could not read rules");
+    ) -> Result<()> {
+        let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
@@ -495,7 +502,7 @@ impl RouterRunner {
     }
 
     #[tracing::instrument]
-    pub fn run() -> Result<(), RouterRunnerError> {
+    pub fn run() -> Result<()> {
         let cli = Cli::parse();
         match &cli.mode {
             CliMode::GenerateRoute {
@@ -514,13 +521,14 @@ impl RouterRunner {
                 debug_dir.clone(),
             ),
             CliMode::PrepCache { input, cache_dir } => {
-                RouterRunner::run_cache(input, cache_dir.clone())
+                RouterRunner::run_cache(input, cache_dir.clone()).context("Failed to run cache")
             }
             CliMode::StartServer {
                 input,
                 cache_dir,
                 socket_name,
-            } => RouterRunner::run_server(&input, cache_dir.clone(), socket_name.clone()),
+            } => RouterRunner::run_server(&input, cache_dir.clone(), socket_name.clone())
+                .context("Failed to run server"),
             CliMode::StartClient {
                 routing_mode,
                 output,
@@ -534,8 +542,7 @@ impl RouterRunner {
             ),
             #[cfg(feature = "debug-viewer")]
             CliMode::DebugViewer { debug_dir } => {
-                Ok(crate::debug::viewer::DebugViewer::run(debug_dir.clone())
-                    .map_err(|error| RouterRunnerError::DebugViewer { error })?)
+                Ok(crate::debug::viewer::DebugViewer::run(debug_dir.clone())?)
             }
         }
     }
