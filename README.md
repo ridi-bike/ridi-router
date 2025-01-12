@@ -154,7 +154,7 @@ Example with data caching
 A rule file is a json file that is read and used when evaluating which road to take at a given junction. Every junction is evaluated against all basic rules and specified advanced rules.
 
 - basic rules that control the basic navigation like making sure we are going in the right general direction. These rules have built in default values and should only be changed in rare circumstances
-- advanced rules that add additional checks based on road surface, type and smoothness. These rules should be created based on preferences
+- advanced rules add additional checks based on road surface, type and smoothness. These rules should be created based on preferences
 
 Basic rules provide rule criteria and a priority value to use when applying the rule.
 
@@ -172,7 +172,9 @@ Rule file can be validated against a schema file located in `./rule-examples/sch
 
 #### Basic rules
 
-These rules dictate basic navigation and route finding. Altering these values can lead to interesting (unreasonable) results but can also help in certain scenarios where geographic obstacles need to be overcome
+These rules dictate basic navigation and route finding. Altering these values can lead to broken results but can also help in certain scenarios where geographic obstacles need to be overcome
+
+A rule file with default basic rule settings can be found here `./rule-examples/rules-default.json`
 
 - prefer_same_road - used to stay on the same road for a longer period
 - progression_direction - controls how long of a detour can happen before a direction is considered wrong. This can be increased in cases where large obstacles need to be overcome like lakes, rivers without bridges, mountain ranges, etc
