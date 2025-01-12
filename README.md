@@ -47,11 +47,11 @@ The binary can be built from source by cloning the repo and running `cargo build
 
 #### PBF format
 
-Data files for regions can be downloaded at [https://download.geofabrik.de/] - there are individual files available for all countries, US states and other special regions. Depending on the region size, these files can be fairly large in their packed state as pbf files and even larger when ridi-router loads them in memory (unpacked state in memory is roughly 5-8x the file size).
+Data files for regions can be downloaded at https://download.geofabrik.de/ - there are individual files available for all countries, US states and other special regions. Depending on the region size, these files can be fairly large in their packed state as pbf files and even larger when ridi-router loads them in memory (unpacked state in memory is roughly 5-8x the file size).
 
 #### JSON format
 
-Map data json can be downloaded from a web interface at [https://overpass-turbo.eu/] by querying the data based on specific GPS coordinates. This is preferred as it will reduce the file sizes and memory consumption when generating routes.
+Map data json can be downloaded from a web interface at https://overpass-turbo.eu/ by querying the data based on specific GPS coordinates. This is preferred as it will reduce the file sizes and memory consumption when generating routes.
 
 An example query might look like this. It queries all relevant data in a 100km zone around a line between two gps points 56.951861,24.113821 and 57.313103,25.281460
 
@@ -82,7 +82,7 @@ out;
 
 ```
 
-The same service is also available as an API endpoint at [https://overpass-api.de/api/interpreter] that can be queries with `curl` and saved as a json file
+The same service is also available as an API endpoint at https://overpass-api.de/api/interpreter that can be queries with `curl` and saved as a json file
 
 ```bash
 curl --data "[out:json];
