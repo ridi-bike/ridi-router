@@ -40,9 +40,6 @@ pub const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
 
 #[derive(Debug, thiserror::Error)]
 pub enum OsmDataReaderError {
-    #[error("Standard IO error: {error}")]
-    StdioError { error: io::Error },
-
     #[error("OSM JSON parser error: {error}")]
     ParserError { error: OsmJsonParserError },
 

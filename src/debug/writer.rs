@@ -145,7 +145,7 @@ impl DebugWriter {
     fn exec<T: Fn(&mut csv::Writer<File>) -> Result<(), DebugWriterError>>(
         file_type_id: &str,
         cb: T,
-    ) -> () {
+    ) {
         if let Some(debug_dir) = DEBUG_DIR.get() {
             let file_id = format!("{file_type_id}-{:?}", std::thread::current().id());
             let res = DEBUG_WRITER.with(|debug_writer| -> Result<(), DebugWriterError> {
@@ -336,7 +336,7 @@ impl DebugWriter {
         });
     }
 
-    pub fn write_itineraries(itineraries: &Vec<Itinerary>) -> () {
+    pub fn write_itineraries(itineraries: &Vec<Itinerary>) {
         for itinerary in itineraries {
             DebugWriter::exec(DebugStreamItineraries::name(), |writer| {
                 writer

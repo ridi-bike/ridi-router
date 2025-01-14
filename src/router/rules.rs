@@ -1,7 +1,7 @@
-use schemars::{schema_for, JsonSchema};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, BufRead, IsTerminal};
 use std::{path::PathBuf, str::Utf8Error};
 
 #[derive(Debug, thiserror::Error)]

@@ -158,7 +158,7 @@ impl Walker {
             .collect()
     }
 
-    pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) -> () {
+    pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) {
         self.next_fork_choice_point = Some(point);
     }
 
@@ -204,7 +204,7 @@ impl Walker {
         SegmentList::from(segments.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) -> () {
+    fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) {
         let last_segment = match self.route_walked.get_segment_last() {
             Some(seg) => {
                 if !seg.get_line().borrow().is_roundabout() {
@@ -726,7 +726,7 @@ mod tests {
         }
     }
 
-    fn rule_test(test_data: OsmTestData, can_go_ids: Vec<u64>, cannot_go_ids: Vec<u64>) -> () {
+    fn rule_test(test_data: OsmTestData, can_go_ids: Vec<u64>, cannot_go_ids: Vec<u64>) {
         set_graph_static(graph_from_test_dataset(test_data));
 
         let start = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();

@@ -60,7 +60,7 @@ impl Route {
     pub fn remove_last_segment(&mut self) -> Option<Segment> {
         self.route_segments.pop()
     }
-    pub fn add_segment(&mut self, segment: Segment) -> () {
+    pub fn add_segment(&mut self, segment: Segment) {
         self.route_segments.push(segment)
     }
 
@@ -205,7 +205,7 @@ impl Route {
             tag_val: &Option<&smartstring::alias::String>,
             line_len: f64,
             map: &mut HashMap<String, f64>,
-        ) -> () {
+        ) {
             if let Some(tag_val) = tag_val {
                 if let Some(len) = map.get(tag_val.as_str()) {
                     map.insert(tag_val.to_string(), len + line_len);

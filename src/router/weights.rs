@@ -8,14 +8,13 @@ use crate::router::rules::{RouterRules, RulesTagValueAction};
 use super::{
     itinerary::Itinerary,
     navigator::WeightCalcResult,
-    route::{segment::Segment, segment_list::SegmentList, Route},
+    route::{segment::Segment, Route},
     walker::{Walker, WalkerMoveResult},
 };
 
 pub struct WeightCalcInput<'a> {
     pub current_fork_segment: &'a Segment,
     pub route: &'a Route,
-    pub all_fork_segments: &'a SegmentList,
     pub itinerary: &'a Itinerary,
     pub walker_from_fork: Walker,
     pub rules: &'a RouterRules,
@@ -349,11 +348,8 @@ mod test {
     use crate::{
         map_data::graph::{MapDataGraph, MapDataPointRef},
         router::{
-            itinerary::Itinerary,
-            navigator::WeightCalcResult,
-            route::{segment::Segment, segment_list::SegmentList},
-            rules::RouterRules,
-            walker::Walker,
+            itinerary::Itinerary, navigator::WeightCalcResult, route::segment::Segment,
+            rules::RouterRules, walker::Walker,
         },
         test_utils::{graph_from_test_file, set_graph_static},
     };
@@ -431,7 +427,6 @@ mod test {
             let fork_weight = weight_heading(WeightCalcInput {
                 route: walker.get_route(),
                 itinerary: &itinerary,
-                all_fork_segments: &SegmentList::from(vec![]),
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),
@@ -451,7 +446,6 @@ mod test {
             let fork_weight = weight_heading(WeightCalcInput {
                 route: walker.get_route(),
                 itinerary: &itinerary,
-                all_fork_segments: &SegmentList::from(vec![]),
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),

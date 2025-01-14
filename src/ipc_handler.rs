@@ -121,7 +121,7 @@ impl<'a> IpcHandler<'a> {
                     let req = match IpcHandler::process_request(&conn) {
                         Err(err) => {
                             warn!("error from connection {:?}", err);
-                            return ();
+                            return;
                         }
                         Ok(req) => req,
                     };

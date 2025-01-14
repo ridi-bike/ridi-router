@@ -37,7 +37,7 @@ impl DiscardedForkChoices {
         &mut self,
         point_ref: &MapDataPointRef,
         choice_point_ref: &MapDataPointRef,
-    ) -> () {
+    ) {
         let existing_choices = self.choices.get(point_ref);
         if let Some(mut existing_choices) = existing_choices.cloned() {
             existing_choices.insert(choice_point_ref.clone());
@@ -75,7 +75,7 @@ impl ForkWeights {
         &mut self,
         choice_point_ref: &MapDataPointRef,
         weights: &Vec<WeightCalcResult>,
-    ) -> () {
+    ) {
         if weights
             .iter()
             .all(|weight| *weight != WeightCalcResult::DoNotUse)
@@ -201,7 +201,6 @@ impl Navigator {
                                     route: self.walker.get_route(),
                                     itinerary: &self.itinerary,
                                     current_fork_segment: &fork_route_segment,
-                                    all_fork_segments: &fork_choices,
                                     walker_from_fork: Walker::new(
                                         fork_route_segment.get_end_point().clone(),
                                     ),
@@ -314,7 +313,7 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(
+            let navigator = Navigator::new(
                 itinerary.clone(),
                 RouterRules::default(),
                 vec![WeightCalc{calc: weight, name:"weight".to_string()}]

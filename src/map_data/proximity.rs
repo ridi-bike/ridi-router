@@ -26,7 +26,7 @@ impl PointGrid {
         self.grid.len()
     }
 
-    pub fn insert(&mut self, lat: f32, lon: f32, point_ref: MapDataPointRef) -> () {
+    pub fn insert(&mut self, lat: f32, lon: f32, point_ref: MapDataPointRef) {
         let cell_id = PointGrid::get_cell_id(lat, lon);
         let maybe_points = self.grid.get_mut(&cell_id);
         if let Some(points) = maybe_points {
@@ -123,7 +123,7 @@ mod test {
                 (-90.0, -180.0, (-9000, -18000)),
                 (90.0, 180.0, (9000, 18000)),
             ];
-            for (idx, test) in tests.iter().enumerate() {
+            for (_idx, test) in tests.iter().enumerate() {
                 let hash = PointGrid::get_cell_id(test.0, test.1);
                 assert_eq!(hash, test.2);
             }

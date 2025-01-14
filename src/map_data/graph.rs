@@ -9,7 +9,6 @@ use std::{
 };
 
 use anyhow::Context;
-use bincode::Options;
 use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -112,7 +111,7 @@ impl ElementTags {
     pub fn len(&self) -> (usize, usize) {
         (self.tag_values.len(), self.tag_sets.len())
     }
-    pub fn clear_maps(&mut self) -> () {
+    pub fn clear_maps(&mut self) {
         self.tag_set_map = HashMap::new();
         self.tag_map = HashMap::new();
     }
@@ -173,7 +172,7 @@ impl ElementTags {
     }
 }
 
-trait MapDataElement: Debug + Display {
+pub trait MapDataElement: Debug + Display {
     fn get(idx: usize) -> &'static Self;
 }
 impl MapDataElement for MapDataPoint {
@@ -338,7 +337,7 @@ impl MapDataGraph {
         }
     }
 
-    pub fn insert_node(&mut self, value: OsmNode) -> () {
+    pub fn insert_node(&mut self, value: OsmNode) {
         let point = MapDataPoint {
             id: value.id,
             lat: value.lat as f32,
@@ -349,7 +348,7 @@ impl MapDataGraph {
         self.add_point(point.clone());
     }
 
-    pub fn generate_point_hashes(&mut self) -> () {
+    pub fn generate_point_hashes(&mut self) {
         for point in self.points.iter().filter(|p| !p.lines.is_empty()) {
             let point_idx = self
                 .points_map
@@ -702,7 +701,7 @@ impl MapDataGraph {
         })
     }
     #[tracing::instrument]
-    pub fn init(data_source: &DataSource) -> () {
+    pub fn init(data_source: &DataSource) {
         MapDataGraph::get_or_init(Some(data_source));
     }
     pub fn get() -> &'static MapDataGraph {
@@ -1282,7 +1281,7 @@ mod tests {
             1,
         ),
     ];
-    fn run_closest_test(test: ClosestTest) -> () {
+    fn run_closest_test(test: ClosestTest) {
         let (points, check_point, closest_id) = test;
         let mut map_data = MapDataGraph::new();
         for point in &points {
