@@ -57,17 +57,15 @@ impl Generator {
         let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
         START_FINISH_VARIATION_DEGREES
             .iter()
-            .map(|bearing| {
+            .flat_map(|bearing| {
                 START_FINISH_VARIATION_DISTANCES
                     .iter()
-                    .map(|distance| {
+                    .filter_map(|distance| {
                         let wp_geo = Haversine::destination(point_geo, *bearing, *distance);
-                        let wp = MapDataGraph::get().get_closest_to_coords(wp_geo.y(), wp_geo.x());
-                        wp
+                        
+                        MapDataGraph::get().get_closest_to_coords(wp_geo.y(), wp_geo.x())
                     })
-                    .filter_map(|maybe_wp| maybe_wp)
             })
-            .flatten()
             .collect()
     }
 
@@ -78,20 +76,20 @@ impl Generator {
 
             return ROUND_TRIP_DISTANCE_RATIOS
                 .iter()
-                .map(|side_left_ratio| {
+                .flat_map(|side_left_ratio| {
                     let bearing = round_trip.0;
                     ROUND_TRIP_DISTANCE_RATIOS
                         .iter()
-                        .map(|tip_ratio| {
+                        .flat_map(|tip_ratio| {
                             ROUND_TRIP_DISTANCE_RATIOS
                                 .iter()
-                                .map(|side_right_ratio| {
+                                .flat_map(|side_right_ratio| {
                                     ROUND_TRIP_BEARING_VARIATION
                                         .iter()
                                         .filter_map(|bearing_variation| {
                                             let dist = round_trip.1 as f32 / 5.;
                                             let tip_geo = Haversine::destination(
-                                                start_geo.clone(),
+                                                start_geo,
                                                 bearing + bearing_variation,
                                                 dist * tip_ratio,
                                             );
@@ -104,7 +102,7 @@ impl Generator {
                                             };
 
                                             let side_left_geo = Haversine::destination(
-                                                start_geo.clone(),
+                                                start_geo,
                                                 bearing + bearing_variation - 45.,
                                                 dist * side_left_ratio,
                                             );
@@ -119,7 +117,7 @@ impl Generator {
                                             };
 
                                             let side_right_geo = Haversine::destination(
-                                                start_geo.clone(),
+                                                start_geo,
                                                 bearing + bearing_variation + 45.,
                                                 dist * side_right_ratio,
                                             );
@@ -142,13 +140,10 @@ impl Generator {
                                         })
                                         .collect::<Vec<_>>()
                                 })
-                                .flatten()
                                 .collect::<Vec<_>>()
                         })
-                        .flatten()
                         .collect::<Vec<_>>()
                 })
-                .flatten()
                 .collect();
         }
         let from_waypoints = self.create_waypoints_around(&self.start);

@@ -39,11 +39,10 @@ impl PointGrid {
     fn get_points_in_cells(&self, cell_ids: Vec<GpsCellId>) -> Vec<MapDataPointRef> {
         cell_ids
             .iter()
-            .map(|cell_id| match self.grid.get(&cell_id) {
+            .flat_map(|cell_id| match self.grid.get(cell_id) {
                 Some(points) => points.clone(),
                 None => Vec::new(),
             })
-            .flatten()
             .collect()
     }
 
@@ -51,10 +50,10 @@ impl PointGrid {
         let lat_rounded = center.0;
         let lon_rounded = center.1;
         let result = (-(offset as i16)..=(offset as i16))
-            .map(|lat_offset| {
+            .flat_map(|lat_offset| {
                 (-(offset as i16)..=(offset as i16))
                     .map(|lon_offset| {
-                        if lat_offset.abs() as u16 == offset || lon_offset.abs() as u16 == offset {
+                        if lat_offset.unsigned_abs() == offset || lon_offset.unsigned_abs() == offset {
                             let lat_new = lat_rounded - lat_offset;
                             let lat_new = if lat_new > 9000 {
                                 lat_new - 9000
@@ -79,7 +78,6 @@ impl PointGrid {
                     .collect::<Vec<Option<GpsCellId>>>()
             })
             .flatten()
-            .filter_map(|hash| hash)
             .collect();
 
         Some(result)
@@ -117,13 +115,13 @@ mod test {
         fn cell_id() {
             let tests = [
                 (21.211, 54.1113, (2121, 5411)),
-                (21.21123, 54.111343524, (2121, 5411)),
+                (21.21123, 54.111_343, (2121, 5411)),
                 (21.21, 54.11, (2121, 5411)),
                 (0.0, 0.0, (0, 0)),
                 (-90.0, -180.0, (-9000, -18000)),
                 (90.0, 180.0, (9000, 18000)),
             ];
-            for (_idx, test) in tests.iter().enumerate() {
+            for test in tests.iter() {
                 let hash = PointGrid::get_cell_id(test.0, test.1);
                 assert_eq!(hash, test.2);
             }
@@ -170,7 +168,7 @@ mod test {
                     assert!(test
                         .3
                         .iter()
-                        .all(|test_id| ids.iter().find(|id| *id == test_id).is_some()));
+                        .all(|test_id| ids.iter().any(|id| id == test_id)));
                 }
             }
         }

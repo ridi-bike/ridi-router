@@ -150,7 +150,7 @@ impl Route {
                 len_tot_m += prev_segment
                     .get_end_point()
                     .borrow()
-                    .distance_between(&segment.get_end_point());
+                    .distance_between(segment.get_end_point());
                 if (segment.get_line().borrow().tags.borrow().hw_ref().is_some()
                     && segment.get_line().borrow().tags.borrow().hw_ref() == hw_ref.as_ref())
                     || (segment.get_line().borrow().tags.borrow().name().is_some()
@@ -212,12 +212,10 @@ impl Route {
                 } else {
                     map.insert(tag_val.to_string(), line_len);
                 }
+            } else if let Some(len) = map.get("unknown") {
+                map.insert("unknown".to_string(), len + line_len);
             } else {
-                if let Some(len) = map.get("unknown") {
-                    map.insert("unknown".to_string(), len + line_len);
-                } else {
-                    map.insert("unknown".to_string(), line_len);
-                }
+                map.insert("unknown".to_string(), line_len);
             }
         }
         fn calc_stat_map(
@@ -229,7 +227,7 @@ impl Route {
                 stat_map.insert(
                     key.clone(),
                     RouteStatElement {
-                        len_m: line_len.clone(),
+                        len_m: *line_len,
                         percentage: line_len / len_m * 100.,
                     },
                 );
@@ -264,7 +262,7 @@ impl Route {
             highway: calc_stat_map(len_m, &highway),
             smoothness: calc_stat_map(len_m, &smoothness),
             surface: calc_stat_map(len_m, &surface),
-            score: Score::calc_score(&self),
+            score: Score::calc_score(self),
             cluster: None,
             approximated_route: Vec::new(),
         }

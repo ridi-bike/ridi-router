@@ -145,7 +145,7 @@ impl FromStr for DataDestination {
                 return Ok(DataDestination::Gpx { file });
             }
         }
-        return Err(RouterRunnerError::OutputFileFormatIncorrect { filename: file });
+        Err(RouterRunnerError::OutputFileFormatIncorrect { filename: file })
     }
 }
 
@@ -521,10 +521,10 @@ impl RouterRunner {
                 output,
                 debug_dir,
             } => RouterRunner::run_dual(
-                &input,
+                input,
                 cache_dir.clone(),
                 routing_mode,
-                &output,
+                output,
                 rule_file.clone(),
                 debug_dir.clone(),
             ),
@@ -535,7 +535,7 @@ impl RouterRunner {
                 input,
                 cache_dir,
                 socket_name,
-            } => RouterRunner::run_server(&input, cache_dir.clone(), socket_name.clone())
+            } => RouterRunner::run_server(input, cache_dir.clone(), socket_name.clone())
                 .context("Failed to run server"),
             CliMode::StartClient {
                 routing_mode,
@@ -543,8 +543,8 @@ impl RouterRunner {
                 socket_name,
                 rule_file,
             } => RouterRunner::run_client(
-                &routing_mode,
-                &output,
+                routing_mode,
+                output,
                 socket_name.clone(),
                 rule_file.clone(),
             ),

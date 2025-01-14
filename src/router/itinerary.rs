@@ -45,7 +45,7 @@ impl Itinerary {
         Self {
             start,
             waypoint_radius,
-            next: waypoints.get(0).map_or(finish.clone(), |w| w.clone()),
+            next: waypoints.first().map_or(finish.clone(), |w| w.clone()),
             waypoints,
             finish,
             visit_all_waypoints: false,
@@ -61,7 +61,7 @@ impl Itinerary {
         Self {
             start,
             waypoint_radius,
-            next: waypoints.get(0).map_or(finish.clone(), |w| w.clone()),
+            next: waypoints.first().map_or(finish.clone(), |w| w.clone()),
             waypoints,
             finish,
             visit_all_waypoints: true,

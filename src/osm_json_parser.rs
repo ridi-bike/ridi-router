@@ -107,12 +107,12 @@ impl OsmElement {
         }
     }
     pub fn get_element_type(&self) -> Result<OsmElementType, OsmJsonParserError> {
-        Ok(self
+        self
             .element_type
             .to_owned()
             .ok_or(OsmJsonParserError::MissingElementType {
                 element: self.clone(),
-            })?)
+            })
     }
 
     pub fn get_node_element(&self) -> Result<OsmNode, OsmJsonParserError> {
@@ -143,13 +143,10 @@ impl OsmElement {
                     element_type: String::from("way"),
                     value: String::from("id"),
                 })?,
-                point_ids: self.nodes.clone().map_or(
-                    Err(OsmJsonParserError::MissingValueForElement {
+                point_ids: self.nodes.clone().ok_or(OsmJsonParserError::MissingValueForElement {
                         element_type: String::from("way"),
                         value: String::from("node_ids"),
-                    }),
-                    |node_ids| Ok(node_ids),
-                )?,
+                    })?,
                 tags: self.tags.clone(),
             });
         }
@@ -291,12 +288,11 @@ impl OsmJsonParser {
             }
             if token.kind == TokenType::String || token.kind == TokenType::Number {
                 if let Buffer::MultiByte(buf) = token.buf {
-                    let val = std::str::from_utf8(&buf.to_owned())
-                        .or_else(|error| Err(OsmJsonParserError::Utf8ParseError { error }))?
+                    let val = std::str::from_utf8(&buf.to_owned()).map_err(|error| OsmJsonParserError::Utf8ParseError { error })?
                         .to_string()
                         .replace("\"", "");
 
-                    if self.prev_key != None {
+                    if self.prev_key.is_some() {
                         self.check_update_current_element(&val)?;
                         if !self.is_in_nodes_list() {
                             self.prev_key = None;
@@ -313,7 +309,7 @@ impl OsmJsonParser {
     }
 
     fn check_update_current_element(&mut self, val: &String) -> Result<(), OsmJsonParserError> {
-        if let None = self.prev_string {
+        if self.prev_string.is_none() {
             if let Some(key) = self.prev_key.clone() {
                 if self.is_in_elements_obj() {
                     if let Some(ref mut current_element) = self.current_element {
@@ -331,21 +327,15 @@ impl OsmJsonParser {
                                 }
                             },
                             "id" => {
-                                let node_id = val.parse::<u64>().or_else(|error| {
-                                    Err(OsmJsonParserError::FailedToParseNodeId { error })
-                                })?;
+                                let node_id = val.parse::<u64>().map_err(|error| OsmJsonParserError::FailedToParseNodeId { error })?;
                                 current_element.id = Some(node_id)
                             }
                             "lat" => {
-                                let lat = val.parse::<f64>().or_else(|error| {
-                                    Err(OsmJsonParserError::FailedToParseLat { error })
-                                })?;
+                                let lat = val.parse::<f64>().map_err(|error| OsmJsonParserError::FailedToParseLat { error })?;
                                 current_element.lat = Some(lat)
                             }
                             "lon" => {
-                                let lon = val.parse::<f64>().or_else(|error| {
-                                    Err(OsmJsonParserError::FailedToParseLon { error })
-                                })?;
+                                let lon = val.parse::<f64>().map_err(|error| OsmJsonParserError::FailedToParseLon { error })?;
 
                                 current_element.lon = Some(lon)
                             }
@@ -367,9 +357,7 @@ impl OsmJsonParser {
                             current_element.nodes = Some(Vec::new());
                         }
                         if let Some(ref mut nodes) = current_element.nodes {
-                            let node_id = val.parse::<u64>().or_else(|error| {
-                                Err(OsmJsonParserError::FailedToParseNodeId { error })
-                            })?;
+                            let node_id = val.parse::<u64>().map_err(|error| OsmJsonParserError::FailedToParseNodeId { error })?;
                             nodes.push(node_id);
                         }
                     }
@@ -388,9 +376,7 @@ impl OsmJsonParser {
                                         }
                                     },
                                     "ref" => {
-                                        let ref_id = val.parse::<u64>().or_else(|error| {
-                                            Err(OsmJsonParserError::FailedToParseNodeId { error })
-                                        })?;
+                                        let ref_id = val.parse::<u64>().map_err(|error| OsmJsonParserError::FailedToParseNodeId { error })?;
                                         member.member_ref = Some(ref_id);
                                     }
                                     "role" => match val.as_str() {
@@ -445,19 +431,17 @@ impl OsmJsonParser {
             if self.is_in_elements_obj() {
                 self.current_element = Some(OsmElement::new());
             }
-        } else {
-            if self.is_in_members_obj() {
-                if let Some(ref mut current_element) = self.current_element {
-                    if current_element.members.is_none() {
-                        current_element.members = Some(Vec::new());
-                    }
-                    if let Some(ref mut members) = current_element.members {
-                        members.push(OsmRelMember {
-                            member_type: None,
-                            member_ref: None,
-                            role: None,
-                        })
-                    }
+        } else if self.is_in_members_obj() {
+            if let Some(ref mut current_element) = self.current_element {
+                if current_element.members.is_none() {
+                    current_element.members = Some(Vec::new());
+                }
+                if let Some(ref mut members) = current_element.members {
+                    members.push(OsmRelMember {
+                        member_type: None,
+                        member_ref: None,
+                        role: None,
+                    })
                 }
             }
         }
@@ -629,13 +613,11 @@ mod test {
             id: Some(id),
             lat: Some(lat),
             lon: Some(lon),
-            tags: tags.map_or(None, |tags_vec| {
-                Some(tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+            tags: tags.map(|tags_vec| tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
                     let mut map = map;
                     map.insert(key.to_string(), val.to_string());
                     map
-                }))
-            }),
+                })),
             nodes: None,
             members: None,
         }
@@ -651,13 +633,11 @@ mod test {
             lat: None,
             lon: None,
             nodes: Some(nodes),
-            tags: tags.map_or(None, |tags_vec| {
-                Some(tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+            tags: tags.map(|tags_vec| tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
                     let mut map = map;
                     map.insert(key.to_string(), val.to_string());
                     map
-                }))
-            }),
+                })),
             members: None,
         }
     }
@@ -675,19 +655,17 @@ mod test {
                     .map(|(t, r, i)| OsmRelMember {
                         member_type: Some(t.clone()),
                         role: Some(r.clone()),
-                        member_ref: Some(i.clone()),
+                        member_ref: Some(*i),
                     })
                     .collect(),
             ),
             lat: None,
             lon: None,
-            tags: tags.map_or(None, |tags_vec| {
-                Some(tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+            tags: tags.map(|tags_vec| tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
                     let mut map = map;
                     map.insert(key.to_string(), val.to_string());
                     map
-                }))
-            }),
+                })),
             nodes: None,
         }
     }
@@ -709,7 +687,7 @@ mod test {
         assert_eq!(all_elements.len(), 7);
 
         let el = get_osm_element_node(18483373, 57.1995635, 25.0419124, None);
-        assert_eq!(all_elements.get(0), Some(&el));
+        assert_eq!(all_elements.first(), Some(&el));
 
         let el = get_osm_element_node(
             18483475,
@@ -810,7 +788,7 @@ mod test {
             25.0419124,
             Some(vec![("highway", "traffic_signals")]),
         );
-        assert_eq!(all_elements.get(0), Some(&el));
+        assert_eq!(all_elements.first(), Some(&el));
     }
     #[test]
     fn return_err_on_wrong_values() {

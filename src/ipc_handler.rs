@@ -77,9 +77,9 @@ impl<'a> IpcHandler<'a> {
                 .collect::<String>()
         });
         let socket_print_name = if GenericNamespaced::is_supported() {
-            String::from(format!("ridi-router-{}.socket", socket_name))
+            format!("ridi-router-{}.socket", socket_name)
         } else {
-            String::from(format!("/tmp/ridi-router-{}.socket", socket_name))
+            format!("/tmp/ridi-router-{}.socket", socket_name)
         };
 
         let socket_name = socket_print_name

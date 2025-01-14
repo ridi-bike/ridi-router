@@ -91,12 +91,10 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
     }
     let current_ref = input
         .route
-        .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags.borrow().hw_ref());
+        .get_segment_last().and_then(|s| s.get_line().borrow().tags.borrow().hw_ref());
     let current_name = input
         .route
-        .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags.borrow().name());
+        .get_segment_last().and_then(|s| s.get_line().borrow().tags.borrow().name());
     let fork_ref = input
         .current_fork_segment
         .get_line()
@@ -243,7 +241,7 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
     let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f32);
 
-    let distance_last_points = point_steps_back.borrow().distance_between(&current_point);
+    let distance_last_points = point_steps_back.borrow().distance_between(current_point);
     let average_distance_last_points = distance_last_points / (check_steps_back as f32);
 
     if average_distance_last_points

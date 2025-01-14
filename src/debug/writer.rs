@@ -129,7 +129,7 @@ pub enum DebugWriterError {
 static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 thread_local! {
-    static DEBUG_WRITER: OnceLock<RwLock<DebugWriter>> = OnceLock::new();
+    static DEBUG_WRITER: OnceLock<RwLock<DebugWriter>> = const { OnceLock::new() };
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,8 +290,7 @@ impl DebugWriter {
                         } as i64,
                         discarded: discarded_choices
                             .iter()
-                            .find(|c| c == &segment.get_end_point())
-                            .is_some(),
+                            .any(|c| c == segment.get_end_point()),
                     })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())
