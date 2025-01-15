@@ -4,7 +4,7 @@ Ridi-router is a CLI tool for generating motorcycle routes based on your own pre
 
 ## Why
 
-I live in a somewhat rural but densly populated area whith lots of nice forest tracks and paths and unpaved roads, many of which lead to private properties, farms but also many which are for public use.
+I live in a somewhat rural but densely populated area whith lots of nice forest tracks and paths and unpaved roads, many of which lead to private properties, farms but also many which are for public use.
 
 So if I've got a free hour, I want to spend it riding nice tracks and paths instead of looking at maps trying to find paths and tracks that I can ride.
 
@@ -122,7 +122,7 @@ out;" "https://overpass-api.de/api/interpreter" > map-data.json
 
 ```
 
-THe above query will produce a json file with the size around 150 MB.
+The above query will produce a json file with the size around 150 MB.
 
 ### CLI usage
 
@@ -208,9 +208,9 @@ To understand how routes are generated and fine-tune rules, debug information ca
 
 The debug mode can be enabled by spcifying `--debug-dir`. This directory will be cleared and populated with new debug files each time `generate-routes` command is run.
 
-The debug files can be viewed with the `debug-viewer` build of the `ridi-router` - the debug build can be downloaded from the Github releases or can be build from source by spcifying `--features=debug-viewer`.
+The debug files can be viewed with the `debug-viewer` build of the `ridi-router` - the debug build can be downloaded from the Github releases or can be built from source by spcifying `--features=debug-viewer`.
 
-Run the debug viewer by doing `ridi-router debug-viewer --debug-dir /path/to/debug/dir`, this will start a local web server on http://0.0.0.0:1337/ which will load the debug files and and show a map on the route generation steps.
+Run the debug viewer by doing `ridi-router debug-viewer --debug-dir /path/to/debug/dir`, this will start a local web server on http://0.0.0.0:1337/ which will load the debug files and show a map on the route generation steps.
 
 > [!WARNING]
 > The debug viewer is still very much Work In Progress so the functionality is limited and there may still be bugs lurking around.

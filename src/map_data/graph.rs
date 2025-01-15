@@ -416,8 +416,7 @@ impl MapDataGraph {
                     let tag_name = osm_way.tags.as_ref().and_then(|t| t.get("name"));
                     let tag_ref = osm_way.tags.as_ref().and_then(|t| t.get("ref"));
                     let tag_surface = osm_way.tags.as_ref().and_then(|t| t.get("surface"));
-                    let tag_smoothness =
-                        osm_way.tags.as_ref().and_then(|t| t.get("smoothness"));
+                    let tag_smoothness = osm_way.tags.as_ref().and_then(|t| t.get("smoothness"));
                     let tag_highway = osm_way.tags.as_ref().and_then(|t| t.get("highway"));
                     let line = MapDataLine {
                         points: (prev_point_ref.clone(), point_ref.clone()),
@@ -530,7 +529,8 @@ impl MapDataGraph {
                         None
                     })
                     .filter_map(|w_id| graph.ways_lines.get(&w_id))
-                    .flatten().cloned()
+                    .flatten()
+                    .cloned()
                     .collect::<Vec<_>>()
             }
             let from_lines =
@@ -691,8 +691,9 @@ impl MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| {
             let data_source = data_source.expect("data source must passed in when calling init");
             let data_reader = OsmDataReader::new(data_source.clone());
-            
 
+            // will panic on purpose as it means it's been incorrectly called
+            // it is a fatal error can't be recovered from
             data_reader.read_data().unwrap()
         })
     }

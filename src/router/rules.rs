@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, BufRead, IsTerminal};
 use std::{path::PathBuf, str::Utf8Error};
+use tracing::trace;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RulesError {
@@ -160,7 +161,7 @@ impl RouterRules {
         let rules: RouterRules =
             serde_json::from_str(text).map_err(|error| RulesError::JsonParse { error })?;
 
-        println!("{}", serde_json::to_string_pretty(&rules).unwrap());
+        trace!("{}", serde_json::to_string_pretty(&rules).unwrap());
         Ok(rules)
     }
 
