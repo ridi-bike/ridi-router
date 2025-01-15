@@ -28,6 +28,16 @@ pub enum RulesTagValueAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct BasicRuleStepLimit(pub u32);
+
+impl Default for BasicRuleStepLimit {
+    fn default() -> Self {
+        Self(1000000)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BasicRulePreferSameRoad {
     pub enabled: bool,
     pub priority: u8,
@@ -113,6 +123,9 @@ impl Default for BasicRuleNoSharpTurns {
 #[serde(deny_unknown_fields)]
 pub struct BasicRules {
     #[serde(default)]
+    pub step_limit: BasicRuleStepLimit,
+
+    #[serde(default)]
     pub prefer_same_road: BasicRulePreferSameRoad,
 
     #[serde(default)]
@@ -179,7 +192,7 @@ impl RouterRules {
 
 #[cfg(feature = "rule-schema-writer")]
 pub fn generate_json_schema(dest: &PathBuf) -> anyhow::Result<()> {
-    let schema = schema_for!(RouterRules);
+    let schema = schemars::schema_for!(RouterRules);
     let file = std::fs::File::create(dest)?;
     serde_json::to_writer_pretty(file, &schema)?;
     Ok(())

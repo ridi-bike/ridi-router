@@ -1,11 +1,16 @@
 # Ridi-router - CLI for motorcycle route generation
 
-Ridi-router is a CLI tool for generating motorcycle routes based on your own rules. Define the type of roads and surfaces you prefer and save that as a rule-file, then use it when generating routes for trips.
+Ridi-router is a CLI tool for generating motorcycle routes based on your own preferences. Define the type of roads and surfaces you prefer and save that as a rule-file, then use it when generating routes for trips.
 
 ## Why
 
-- If I've got a free hour, I want to spend it riding nice tracks and paths instead of looking at maps
-- I've not found an existing tool/app that allows me to define the type of roads I prefer
+I live in a somewhat rural but densly populated area whith lots of nice forest tracks and paths and unpaved roads, many of which lead to private properties, farms but also many which are for public use.
+
+So if I've got a free hour, I want to spend it riding nice tracks and paths instead of looking at maps trying to find paths and tracks that I can ride.
+
+And so far I've not found an existing tool/app that allows me to define the type of roads I prefer.
+
+So I decided to build a tool that does what I need, offers flexiblity in findind the exact roads/paths/tracks that I like.
 
 ## Features
 
@@ -14,6 +19,10 @@ Ridi-router is a CLI tool for generating motorcycle routes based on your own rul
 - Route statistics - total distance on different road types and surface types, calculates a score for how interesting the route might be (twisty bits vs straight bits)
 - Supports input map data from OpenStreetMap.org in either osm.pbf format or json format
 - Output route data in gpx or json format
+
+## Output
+
+Generated routes can be saved as json or GPX files. GPX files are a standard that can be used with a lot of different programs and physical GPS devices. For easy viewing https://www.gpxsee.org/ can be used on the desktop or the GPX files can be imported into https://www.gaiagps.com/ for easy sync to mobile devices.
 
 ## How
 
@@ -55,7 +64,7 @@ When the files are loaded into ridi-router, they are unpacked and stored in memo
 
 Map data json can be downloaded from a web interface at https://overpass-turbo.eu/ by querying the map data based on specific GPS coordinates and distances. This is preferred as it will reduce the file sizes and memory consumption when generating routes.
 
-An example query might look like this. It queries all relevant data in a 100km zone around a line between two gps points 56.951861,24.113821 and 57.313103,25.281460
+An example query might look like this. 
 
 ```
 [out:json];
@@ -84,7 +93,7 @@ out;
 
 ```
 
-The same service is also available as an API endpoint at https://overpass-api.de/api/interpreter that can be queries with `curl` and saved as a json file
+It queries all relevant data in a 100km zone around a line between two gps points 56.951861,24.113821 and 57.313103,25.281460. The same service is also available as an API endpoint at https://overpass-api.de/api/interpreter that can be queried with `curl` and saved as a json file
 
 ```bash
 curl --data "[out:json];
@@ -176,8 +185,32 @@ These rules dictate basic navigation and route finding. Altering these values ca
 
 A rule file with default basic rule settings can be found here `./rule-examples/rules-default.json`
 
+- step_limit - limits the number of steps, defaults to 1'000'000 steps. If this limit is reached, the route variation will be marked abandoned but other variations will continue to be processed
 - prefer_same_road - used to stay on the same road for a longer period
 - progression_direction - controls how long of a detour can happen before a direction is considered wrong. This can be increased in cases where large obstacles need to be overcome like lakes, rivers without bridges, mountain ranges, etc
 - progression_speed - disabled by default. Checks how much progress is made and decides when to stop. Useful in scenarios where geographic obstacles in combination with city streets produce many twists and turns without any significant progress towards the finish
 - no_short_detours - avoids jumping off roads at a junction with a more favourable surface or road type just to get back on the same road shortly after for example doing a short detour on a forst track coming off of a primary road just to join back in several hundred meters
 - no_sharp_turns - avoids scenarios where missing traffic rules in the OpenStreetMap data cause illegal U turns on highways or off/on ramps
+
+### Advanced usage
+
+#### Server-client setup
+
+Advanced use cases can include a long running server that processes the routes and a client that connects to the server to send and receive route requests. This can be done by running `ridi-router start-server <...args>` and `ridi-router start-client <...args>`. Details on usage are available in the cli help docs.
+
+#### Cache preperation
+
+Cache data files can be prepared for later usage without starting a server or generating routes. This can be done by running `ridi-router prep-cache <...args>`. More info in the cli help docs.
+
+#### Result Debugging
+
+To understand how routes are generated and fine-tune rules, debug information can be enabled and writted to disk. This process slows down route generation and will produce large files with information on each of the steps, junctions and weights that were calcualted on rules.
+
+The debug mode can be enabled by spcifying `--debug-dir`. This directory will be cleared and populated with new debug files each time `generate-routes` command is run.
+
+The debug files can be viewed with the `debug-viewer` build of the `ridi-router` - the debug build can be downloaded from the Github releases or can be build from source by spcifying `--features=debug-viewer`.
+
+Run the debug viewer by doing `ridi-router debug-viewer --debug-dir /path/to/debug/dir`, this will start a local web server on http://0.0.0.0:1337/ which will load the debug files and and show a map on the route generation steps.
+
+> [!WARNING]
+> The debug viewer is still very much Work In Progress so the functionality is limited and there may still be bugs lurking around.

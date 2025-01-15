@@ -53,7 +53,9 @@ impl DiscardedForkChoices {
         &self,
         point_ref: &MapDataPointRef,
     ) -> Option<Vec<MapDataPointRef>> {
-        self.choices.get(point_ref).map(|ids| ids.clone().into_iter().collect())
+        self.choices
+            .get(point_ref)
+            .map(|ids| ids.clone().into_iter().collect())
     }
 }
 
@@ -245,7 +247,12 @@ impl Navigator {
                         "MoveBack",
                         None,
                     );
-                    if self.walker.get_route().get_junction_before_last_segment().is_none() {
+                    if self
+                        .walker
+                        .get_route()
+                        .get_junction_before_last_segment()
+                        .is_none()
+                    {
                         info!("Stuck");
                         DebugWriter::write_step_result(
                             self.itinerary.id(),
@@ -263,7 +270,7 @@ impl Navigator {
                     .check_set_back(self.walker.get_last_point().clone());
             }
 
-            if loop_counter >= 1000000 {
+            if loop_counter >= self.rules.basic.step_limit.0 {
                 info!("Reached loop {loop_counter}, stopping");
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
                 return NavigationResult::Stopped(self.walker.get_route().clone());
