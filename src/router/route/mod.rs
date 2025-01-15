@@ -172,24 +172,17 @@ impl Route {
             return None;
         }
 
-        let mut junction_num = 0;
         let mut segment_num = 0;
-        let mut segment: Option<Segment> = None;
-        while junction_num < num_of_junctions {
-            segment = self
-                .route_segments
-                .get(self.route_segments.len() - segment_num - 1)
-                .cloned();
-            if let Some(ref segment) = segment {
-                if segment.get_end_point().borrow().is_junction() {
-                    junction_num += 1;
-                }
+        for segment in self.route_segments.iter().rev() {
+            if segment.get_end_point().borrow().is_junction() {
                 segment_num += 1;
-            } else {
-                return None;
+            }
+            if segment_num == num_of_junctions {
+                return Some(segment.clone());
             }
         }
-        segment
+
+        None
     }
     pub fn get_segments_from_end(&self, num_of_segments: usize) -> Option<Segment> {
         if self.route_segments.len() < num_of_segments + 1 {

@@ -3,6 +3,13 @@ name = "ridi-router"
 version = "0.6.8"
 edition = "2021"
 
+[profile.release]
+codegen-units = 1
+lto = true
+
+[profile.dev]
+opt-level = 3
+
 [features]
 default = []
 debug-viewer = ["dep:duckdb", "dep:qstring", "dep:sql-builder", "dep:tiny_http"]
