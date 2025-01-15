@@ -62,10 +62,10 @@ impl Walker {
                 if l.borrow().is_one_way() && &l.borrow().points.1 == center_point {
                     return None;
                 }
-                if not_allow_rules.len() > 0 {
+                if !not_allow_rules.is_empty() {
                     let not_allow_rules_for_segment = not_allow_rules
                         .iter()
-                        .filter(|rule| rule.to_lines.contains(&l))
+                        .filter(|rule| rule.to_lines.contains(l))
                         .collect::<Vec<_>>();
                     let other_segments = segments.iter().filter(|s| &s.0 != l).collect::<Vec<_>>();
 
@@ -104,7 +104,7 @@ impl Walker {
             .iter()
             .filter(|rule| {
                 rule.rule_type == MapDataRuleType::OnlyAllowed
-                    && rule.from_lines.contains(&center_line)
+                    && rule.from_lines.contains(center_line)
             })
             .collect::<Vec<_>>();
 
@@ -113,7 +113,7 @@ impl Walker {
             .iter()
             .filter(|rule| {
                 rule.rule_type == MapDataRuleType::NotAllowed
-                    && rule.from_lines.contains(&center_line)
+                    && rule.from_lines.contains(center_line)
             })
             .collect::<Vec<_>>();
 
@@ -132,7 +132,7 @@ impl Walker {
                 }
 
                 // if no rules exist, don't check anything further
-                if center_point.borrow().rules.len() == 0 {
+                if center_point.borrow().rules.is_empty() {
                     return true;
                 }
 
@@ -145,7 +145,7 @@ impl Walker {
                 }
 
                 // if only allow rules exist, only check those
-                if only_allow_rules.len() > 0 {
+                if !only_allow_rules.is_empty() {
                     return only_allow_rules
                         .iter()
                         .any(|rule| rule.to_lines.contains(line_next));
@@ -158,7 +158,7 @@ impl Walker {
             .collect()
     }
 
-    pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) -> () {
+    pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) {
         self.next_fork_choice_point = Some(point);
     }
 
@@ -204,15 +204,15 @@ impl Walker {
         SegmentList::from(segments.into_iter().flatten().collect::<Vec<_>>())
     }
 
-    fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) -> () {
+    fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) {
         let last_segment = match self.route_walked.get_segment_last() {
             Some(seg) => {
                 if !seg.get_line().borrow().is_roundabout() {
-                    return ();
+                    return ;
                 }
                 seg.clone()
             }
-            None => return (),
+            None => return ,
         };
 
         // let mut segments = Vec::new();
@@ -253,7 +253,7 @@ impl Walker {
     ) -> Result<WalkerMoveResult, WalkerError> {
         loop {
             let point = match self.route_walked.get_segment_last() {
-                Some(route_segment) => &route_segment.get_end_point(),
+                Some(route_segment) => route_segment.get_end_point(),
                 None => &self.start,
             };
             if is_finished(point.clone()) {
@@ -264,9 +264,9 @@ impl Walker {
                 None => self.get_fork_segments_for_point(&self.start),
                 Some(segment) => {
                     if segment.get_line().borrow().is_roundabout() {
-                        self.get_roundabout_exits(&segment)
+                        self.get_roundabout_exits(segment)
                     } else {
-                        self.get_fork_segments_for_segment(&segment)
+                        self.get_fork_segments_for_segment(segment)
                     }
                 }
             };
@@ -308,15 +308,13 @@ impl Walker {
     pub fn move_backwards_to_prev_fork(&mut self) -> Option<SegmentList> {
         self.next_fork_choice_point = None;
         let current_fork = self.route_walked.remove_last_segment();
-        if current_fork.is_none() {
-            return None;
-        }
+        current_fork.as_ref()?;
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
                 if last_segment.get_end_point().borrow().is_junction()
                     && self
-                        .get_fork_segments_for_segment(&last_segment)
+                        .get_fork_segments_for_segment(last_segment)
                         .get_segment_count()
                         > 1
                 {
@@ -329,7 +327,7 @@ impl Walker {
         }
 
         if let Some(last_segment) = self.route_walked.get_segment_last() {
-            return Some(self.get_fork_segments_for_segment(&last_segment));
+            return Some(self.get_fork_segments_for_segment(last_segment));
         }
 
         None
@@ -434,7 +432,7 @@ mod tests {
             let el = route.get_segment_by_index(0);
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(
-                    &route_segment.get_line(),
+                    route_segment.get_line(),
                     from_id,
                     to_id
                 ));
@@ -473,9 +471,9 @@ mod tests {
                         || route_segment.get_end_point().borrow().id == 6
                 );
                 assert!(
-                    line_is_between_point_ids(&route_segment.get_line(), 5, 3)
-                        || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
-                        || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
+                    line_is_between_point_ids(route_segment.get_line(), 5, 3)
+                        || line_is_between_point_ids(route_segment.get_line(), 4, 3)
+                        || line_is_between_point_ids(route_segment.get_line(), 6, 3)
                 )
             });
 
@@ -494,8 +492,8 @@ mod tests {
                         || route_segment.get_end_point().borrow().id == 7
                 );
                 assert!(
-                    line_is_between_point_ids(&route_segment.get_line(), 8, 6)
-                        || line_is_between_point_ids(&route_segment.get_line(), 7, 6)
+                    line_is_between_point_ids(route_segment.get_line(), 8, 6)
+                        || line_is_between_point_ids(route_segment.get_line(), 7, 6)
                 )
             });
             let choice = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
@@ -509,27 +507,27 @@ mod tests {
             let el = route.get_segment_by_index(0);
             assert!(el.is_some());
             if let Some(route_segment) = el {
-                assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
+                assert!(line_is_between_point_ids(route_segment.get_line(), 2, 1));
                 assert_eq!(route_segment.get_end_point().borrow().id, 2);
             }
 
             let el = route.get_segment_by_index(1);
             assert!(el.is_some());
             if let Some(route_segment) = el {
-                assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
+                assert!(line_is_between_point_ids(route_segment.get_line(), 3, 2));
                 assert_eq!(route_segment.get_end_point().borrow().id, 3);
             }
 
             let el = route.get_segment_by_index(2);
             assert!(el.is_some());
             if let Some(route_segment) = el {
-                assert!(line_is_between_point_ids(&route_segment.get_line(), 6, 3));
+                assert!(line_is_between_point_ids(route_segment.get_line(), 6, 3));
                 assert_eq!(route_segment.get_end_point().borrow().id, 6);
             }
             let el = route.get_segment_by_index(3);
             assert!(el.is_some());
             if let Some(route_segment) = el {
-                assert!(line_is_between_point_ids(&route_segment.get_line(), 7, 6));
+                assert!(line_is_between_point_ids(route_segment.get_line(), 7, 6));
                 assert_eq!(route_segment.get_end_point().borrow().id, 7);
             }
         }
@@ -562,9 +560,9 @@ mod tests {
                         || route_segment.get_end_point().borrow().id == 6
                 );
                 assert!(
-                    line_is_between_point_ids(&route_segment.get_line(), 5, 3)
-                        || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
-                        || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
+                    line_is_between_point_ids(route_segment.get_line(), 5, 3)
+                        || line_is_between_point_ids(route_segment.get_line(), 4, 3)
+                        || line_is_between_point_ids(route_segment.get_line(), 6, 3)
                 )
             });
 
@@ -586,9 +584,9 @@ mod tests {
                         || route_segment.get_end_point().borrow().id == 6
                 );
                 assert!(
-                    line_is_between_point_ids(&route_segment.get_line(), 5, 3)
-                        || line_is_between_point_ids(&route_segment.get_line(), 4, 3)
-                        || line_is_between_point_ids(&route_segment.get_line(), 6, 3)
+                    line_is_between_point_ids(route_segment.get_line(), 5, 3)
+                        || line_is_between_point_ids(route_segment.get_line(), 4, 3)
+                        || line_is_between_point_ids(route_segment.get_line(), 6, 3)
                 )
             });
 
@@ -603,21 +601,21 @@ mod tests {
             let el = route.get_segment_by_index(0);
             assert!(el.is_some());
             if let Some(route_segment) = el {
-                assert!(line_is_between_point_ids(&route_segment.get_line(), 2, 1));
+                assert!(line_is_between_point_ids(route_segment.get_line(), 2, 1));
                 assert_eq!(route_segment.get_end_point().borrow().id, 2);
             }
 
             let el = route.get_segment_by_index(1);
             assert!(el.is_some());
             if let Some(route_segment) = el {
-                assert!(line_is_between_point_ids(&route_segment.get_line(), 3, 2));
+                assert!(line_is_between_point_ids(route_segment.get_line(), 3, 2));
                 assert_eq!(route_segment.get_end_point().borrow().id, 3);
             }
 
             let el = route.get_segment_by_index(2);
             assert!(el.is_some());
             if let Some(route_segment) = el {
-                assert!(line_is_between_point_ids(&route_segment.get_line(), 4, 3));
+                assert!(line_is_between_point_ids(route_segment.get_line(), 4, 3));
                 assert_eq!(route_segment.get_end_point().borrow().id, 4);
             }
         }
@@ -653,8 +651,8 @@ mod tests {
                         || route_segment.get_end_point().borrow().id == 11
                 );
                 assert!(
-                    line_is_between_point_ids(&route_segment.get_line(), 7, 2)
-                        || line_is_between_point_ids(&route_segment.get_line(), 7, 11)
+                    line_is_between_point_ids(route_segment.get_line(), 7, 2)
+                        || line_is_between_point_ids(route_segment.get_line(), 7, 11)
                 )
             });
 
@@ -676,9 +674,9 @@ mod tests {
                         || route_segment.get_end_point().borrow().id == 131
                 );
                 assert!(
-                    line_is_between_point_ids(&route_segment.get_line(), 11, 111)
-                        || line_is_between_point_ids(&route_segment.get_line(), 12, 121)
-                        || line_is_between_point_ids(&route_segment.get_line(), 13, 131)
+                    line_is_between_point_ids(route_segment.get_line(), 11, 111)
+                        || line_is_between_point_ids(route_segment.get_line(), 12, 121)
+                        || line_is_between_point_ids(route_segment.get_line(), 13, 131)
                 )
             });
 
@@ -726,7 +724,7 @@ mod tests {
         }
     }
 
-    fn rule_test(test_data: OsmTestData, can_go_ids: Vec<u64>, cannot_go_ids: Vec<u64>) -> () {
+    fn rule_test(test_data: OsmTestData, can_go_ids: Vec<u64>, cannot_go_ids: Vec<u64>) {
         set_graph_static(graph_from_test_dataset(test_data));
 
         let start = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -739,7 +737,7 @@ mod tests {
             Ok(WalkerMoveResult::Fork(c)) => c,
             Ok(v) => {
                 if can_go_ids.is_empty() {
-                    return ();
+                    return ;
                 }
                 panic!("did not get choices: {:#?}", v)
             }

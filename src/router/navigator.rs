@@ -37,7 +37,7 @@ impl DiscardedForkChoices {
         &mut self,
         point_ref: &MapDataPointRef,
         choice_point_ref: &MapDataPointRef,
-    ) -> () {
+    ) {
         let existing_choices = self.choices.get(point_ref);
         if let Some(mut existing_choices) = existing_choices.cloned() {
             existing_choices.insert(choice_point_ref.clone());
@@ -53,10 +53,9 @@ impl DiscardedForkChoices {
         &self,
         point_ref: &MapDataPointRef,
     ) -> Option<Vec<MapDataPointRef>> {
-        match self.choices.get(point_ref) {
-            None => None,
-            Some(ids) => Some(ids.clone().into_iter().collect()),
-        }
+        self.choices
+            .get(point_ref)
+            .map(|ids| ids.clone().into_iter().collect())
     }
 }
 
@@ -75,23 +74,23 @@ impl ForkWeights {
         &mut self,
         choice_point_ref: &MapDataPointRef,
         weights: &Vec<WeightCalcResult>,
-    ) -> () {
+    ) {
         if weights
             .iter()
             .all(|weight| *weight != WeightCalcResult::DoNotUse)
         {
             let existing_weight = match self.weight_list.get(choice_point_ref) {
                 None => 0u32,
-                Some(w) => w.clone(),
+                Some(w) => *w,
             };
             self.weight_list.insert(
                 choice_point_ref.clone(),
                 existing_weight
                     + weights
-                        .into_iter()
+                        .iter()
                         .map(|r| match r {
                             WeightCalcResult::DoNotUse => 0u32,
-                            WeightCalcResult::UseWithWeight(w) => w.clone() as u32,
+                            WeightCalcResult::UseWithWeight(w) => *w as u32,
                         })
                         .sum::<u32>(),
             );
@@ -178,13 +177,13 @@ impl Navigator {
                 let last_point = self.walker.get_last_point();
                 let discarded_choices = &self
                     .discarded_fork_choices
-                    .get_discarded_choices_for_point(&last_point)
+                    .get_discarded_choices_for_point(last_point)
                     .map_or(Vec::new(), |d| d);
                 DebugWriter::write_fork_choices(
                     self.itinerary.id(),
                     loop_counter,
                     &fork_choices,
-                    &discarded_choices,
+                    discarded_choices,
                 );
                 let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
 
@@ -201,7 +200,6 @@ impl Navigator {
                                     route: self.walker.get_route(),
                                     itinerary: &self.itinerary,
                                     current_fork_segment: &fork_route_segment,
-                                    all_fork_segments: &fork_choices,
                                     walker_from_fork: Walker::new(
                                         fork_route_segment.get_end_point().clone(),
                                     ),
@@ -219,7 +217,7 @@ impl Navigator {
                             .collect::<Vec<_>>();
 
                         fork_weights.add_calc_result(
-                            &fork_route_segment.get_end_point(),
+                            fork_route_segment.get_end_point(),
                             &fork_weight_calc_results,
                         );
 
@@ -231,7 +229,7 @@ impl Navigator {
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
                     self.discarded_fork_choices
-                        .add_discarded_choice(&last_point, &chosen_fork_point);
+                        .add_discarded_choice(last_point, &chosen_fork_point);
                     DebugWriter::write_step_result(
                         self.itinerary.id(),
                         loop_counter,
@@ -249,7 +247,12 @@ impl Navigator {
                         "MoveBack",
                         None,
                     );
-                    if self.walker.get_route().get_junction_before_last_segment() == None {
+                    if self
+                        .walker
+                        .get_route()
+                        .get_junction_before_last_segment()
+                        .is_none()
+                    {
                         info!("Stuck");
                         DebugWriter::write_step_result(
                             self.itinerary.id(),
@@ -267,7 +270,7 @@ impl Navigator {
                     .check_set_back(self.walker.get_last_point().clone());
             }
 
-            if loop_counter >= 1000000 {
+            if loop_counter >= self.rules.basic.step_limit.0 {
                 info!("Reached loop {loop_counter}, stopping");
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
                 return NavigationResult::Stopped(self.walker.get_route().clone());
@@ -314,7 +317,7 @@ mod test {
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
-            let mut navigator = Navigator::new(
+            let navigator = Navigator::new(
                 itinerary.clone(),
                 RouterRules::default(),
                 vec![WeightCalc{calc: weight, name:"weight".to_string()}]
@@ -323,7 +326,7 @@ mod test {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
-                    return ();
+                    return ;
                 }
             };
 
@@ -351,7 +354,7 @@ mod test {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
-                    return ();
+                    return ;
                 }
             };
 
@@ -397,7 +400,7 @@ mod test {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
-                    return ();
+                    return ;
                 }
             };
 
@@ -495,7 +498,7 @@ mod test {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
-                    return ();
+                    return ;
                 }
             };
             assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));

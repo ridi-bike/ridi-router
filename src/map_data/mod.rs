@@ -30,13 +30,6 @@ pub enum MapDataError {
     #[error("Missing 'via' point {point_id} in relation {relation_id}")]
     MissingViaPoint { relation_id: u64, point_id: u64 },
 
-    #[error("Way {way_id} is not linked with 'via' point {point_id} in relation {relation_id}")]
-    WayIdNotLinkedWithViaPoint {
-        relation_id: u64,
-        point_id: u64,
-        way_id: u64,
-    },
-
     #[error("{message} - Relation: {relation:?}")]
     NotYetImplemented {
         message: String,

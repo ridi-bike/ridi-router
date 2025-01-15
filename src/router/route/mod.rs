@@ -60,7 +60,7 @@ impl Route {
     pub fn remove_last_segment(&mut self) -> Option<Segment> {
         self.route_segments.pop()
     }
-    pub fn add_segment(&mut self, segment: Segment) -> () {
+    pub fn add_segment(&mut self, segment: Segment) {
         self.route_segments.push(segment)
     }
 
@@ -150,7 +150,7 @@ impl Route {
                 len_tot_m += prev_segment
                     .get_end_point()
                     .borrow()
-                    .distance_between(&segment.get_end_point());
+                    .distance_between(segment.get_end_point());
                 if (segment.get_line().borrow().tags.borrow().hw_ref().is_some()
                     && segment.get_line().borrow().tags.borrow().hw_ref() == hw_ref.as_ref())
                     || (segment.get_line().borrow().tags.borrow().name().is_some()
@@ -205,19 +205,17 @@ impl Route {
             tag_val: &Option<&smartstring::alias::String>,
             line_len: f64,
             map: &mut HashMap<String, f64>,
-        ) -> () {
+        ) {
             if let Some(tag_val) = tag_val {
                 if let Some(len) = map.get(tag_val.as_str()) {
                     map.insert(tag_val.to_string(), len + line_len);
                 } else {
                     map.insert(tag_val.to_string(), line_len);
                 }
+            } else if let Some(len) = map.get("unknown") {
+                map.insert("unknown".to_string(), len + line_len);
             } else {
-                if let Some(len) = map.get("unknown") {
-                    map.insert("unknown".to_string(), len + line_len);
-                } else {
-                    map.insert("unknown".to_string(), line_len);
-                }
+                map.insert("unknown".to_string(), line_len);
             }
         }
         fn calc_stat_map(
@@ -229,7 +227,7 @@ impl Route {
                 stat_map.insert(
                     key.clone(),
                     RouteStatElement {
-                        len_m: line_len.clone(),
+                        len_m: *line_len,
                         percentage: line_len / len_m * 100.,
                     },
                 );

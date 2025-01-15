@@ -9,7 +9,6 @@ use std::{
 };
 
 use anyhow::Context;
-use bincode::Options;
 use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -112,7 +111,7 @@ impl ElementTags {
     pub fn len(&self) -> (usize, usize) {
         (self.tag_values.len(), self.tag_sets.len())
     }
-    pub fn clear_maps(&mut self) -> () {
+    pub fn clear_maps(&mut self) {
         self.tag_set_map = HashMap::new();
         self.tag_map = HashMap::new();
     }
@@ -173,7 +172,7 @@ impl ElementTags {
     }
 }
 
-trait MapDataElement: Debug + Display {
+pub trait MapDataElement: Debug + Display {
     fn get(idx: usize) -> &'static Self;
 }
 impl MapDataElement for MapDataPoint {
@@ -332,13 +331,10 @@ impl MapDataGraph {
     }
 
     fn get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
-        match self.points_map.get(id) {
-            None => return None,
-            Some(i) => Some(MapDataElementRef::new(i.clone())),
-        }
+        self.points_map.get(id).map(|i| MapDataElementRef::new(*i))
     }
 
-    pub fn insert_node(&mut self, value: OsmNode) -> () {
+    pub fn insert_node(&mut self, value: OsmNode) {
         let point = MapDataPoint {
             id: value.id,
             lat: value.lat as f32,
@@ -349,7 +345,7 @@ impl MapDataGraph {
         self.add_point(point.clone());
     }
 
-    pub fn generate_point_hashes(&mut self) -> () {
+    pub fn generate_point_hashes(&mut self) {
         for point in self.points.iter().filter(|p| !p.lines.is_empty()) {
             let point_idx = self
                 .points_map
@@ -415,14 +411,13 @@ impl MapDataGraph {
 
         let mut way_line_refs = Vec::new();
         for point_id in &osm_way.point_ids {
-            if let Some(point_ref) = self.get_point_ref_by_id(&point_id) {
+            if let Some(point_ref) = self.get_point_ref_by_id(point_id) {
                 if let Some(prev_point_ref) = prev_point_ref {
-                    let tag_name = osm_way.tags.as_ref().map_or(None, |t| t.get("name"));
-                    let tag_ref = osm_way.tags.as_ref().map_or(None, |t| t.get("ref"));
-                    let tag_surface = osm_way.tags.as_ref().map_or(None, |t| t.get("surface"));
-                    let tag_smoothness =
-                        osm_way.tags.as_ref().map_or(None, |t| t.get("smoothness"));
-                    let tag_highway = osm_way.tags.as_ref().map_or(None, |t| t.get("highway"));
+                    let tag_name = osm_way.tags.as_ref().and_then(|t| t.get("name"));
+                    let tag_ref = osm_way.tags.as_ref().and_then(|t| t.get("ref"));
+                    let tag_surface = osm_way.tags.as_ref().and_then(|t| t.get("surface"));
+                    let tag_smoothness = osm_way.tags.as_ref().and_then(|t| t.get("smoothness"));
+                    let tag_highway = osm_way.tags.as_ref().and_then(|t| t.get("highway"));
                     let line = MapDataLine {
                         points: (prev_point_ref.clone(), point_ref.clone()),
                         direction: if osm_way.is_roundabout() {
@@ -453,7 +448,7 @@ impl MapDataGraph {
                 prev_point_ref = Some(point_ref);
             } else {
                 return Err(MapDataError::MissingPoint {
-                    point_id: point_id.clone(),
+                    point_id: *point_id,
                 });
             }
         }
@@ -495,7 +490,7 @@ impl MapDataGraph {
                 osm_relation: relation.clone(),
                 relation_id: relation.id,
             })?;
-        let rule_type = match restriction.split(" ").collect::<Vec<_>>().get(0) {
+        let rule_type = match restriction.split(" ").collect::<Vec<_>>().first() {
             Some(&"no_right_turn") => MapDataRuleType::NotAllowed,
             Some(&"no_left_turn") => MapDataRuleType::NotAllowed,
             Some(&"no_u_turn") => MapDataRuleType::NotAllowed,
@@ -535,7 +530,7 @@ impl MapDataGraph {
                     })
                     .filter_map(|w_id| graph.ways_lines.get(&w_id))
                     .flatten()
-                    .map(|l| l.clone())
+                    .cloned()
                     .collect::<Vec<_>>()
             }
             let from_lines =
@@ -626,7 +621,7 @@ impl MapDataGraph {
             }
         });
 
-        distances.get(0).map_or(None, |v| Some(v.0.clone()))
+        distances.first().map(|v| v.0.clone())
     }
     #[tracing::instrument(skip(packed))]
     pub fn unpack(packed: MapDataGraphPacked) -> anyhow::Result<&'static MapDataGraph> {
@@ -696,13 +691,14 @@ impl MapDataGraph {
         MAP_DATA_GRAPH.get_or_init(|| {
             let data_source = data_source.expect("data source must passed in when calling init");
             let data_reader = OsmDataReader::new(data_source.clone());
-            let map_data = data_reader.read_data().unwrap();
 
-            map_data
+            // will panic on purpose as it means it's been incorrectly called
+            // it is a fatal error can't be recovered from
+            data_reader.read_data().unwrap()
         })
     }
     #[tracing::instrument]
-    pub fn init(data_source: &DataSource) -> () {
+    pub fn init(data_source: &DataSource) {
         MapDataGraph::get_or_init(Some(data_source));
     }
     pub fn get() -> &'static MapDataGraph {
@@ -733,7 +729,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), true);
+        assert!(map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -744,7 +740,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -755,7 +751,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -766,7 +762,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -777,7 +773,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -788,7 +784,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -796,7 +792,7 @@ mod tests {
             tags: Some(HashMap::from([("highway".to_string(), "path".to_string())])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -807,7 +803,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -818,7 +814,7 @@ mod tests {
             )])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -826,7 +822,7 @@ mod tests {
             tags: Some(HashMap::from([("highway".to_string(), "omg".to_string())])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -837,7 +833,7 @@ mod tests {
             ])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), true);
+        assert!(map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -848,7 +844,7 @@ mod tests {
             ])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -859,7 +855,7 @@ mod tests {
             ])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -871,7 +867,7 @@ mod tests {
             ])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -883,7 +879,7 @@ mod tests {
             ])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), true);
+        assert!(map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -895,7 +891,7 @@ mod tests {
             ])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
 
         let osm_way = OsmWay {
             id: 1,
@@ -907,7 +903,7 @@ mod tests {
             ])),
         };
 
-        assert_eq!(map_data.way_is_ok(&osm_way), false);
+        assert!(!map_data.way_is_ok(&osm_way));
     }
 
     #[derive(Debug)]
@@ -925,7 +921,7 @@ mod tests {
             fn point_is_ok(map_data: &MapDataGraph, id: &u64, test: PointTest) -> bool {
                 let point = map_data
                     .get_point_ref_by_id(id)
-                    .expect(format!("point {} must exist", id).as_str());
+                    .unwrap_or_else(|| panic!("point {} must exist", id));
                 let point = point.borrow();
                 info!("point {:#?}", point);
                 info!("test {:#?}", test);
@@ -936,14 +932,14 @@ mod tests {
                         let test_line_id = test
                             .lines
                             .get(idx)
-                            .expect(format!("{}: line at idx {} must exist", id, idx).as_str());
+                            .unwrap_or_else(|| panic!("{}: line at idx {} must exist", id, idx));
                         l.borrow().line_id() == *test_line_id
                     })
                     && point.is_junction() == test.junction
             }
             let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &1,
                 PointTest {
                     lat: 1.0,
@@ -953,7 +949,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &2,
                 PointTest {
                     lat: 2.0,
@@ -963,7 +959,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &3,
                 PointTest {
                     lat: 3.0,
@@ -973,7 +969,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &4,
                 PointTest {
                     lat: 4.0,
@@ -983,7 +979,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &5,
                 PointTest {
                     lat: 5.0,
@@ -993,7 +989,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &6,
                 PointTest {
                     lat: 6.0,
@@ -1003,7 +999,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &7,
                 PointTest {
                     lat: 7.0,
@@ -1013,7 +1009,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &8,
                 PointTest {
                     lat: 8.0,
@@ -1023,7 +1019,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &9,
                 PointTest {
                     lat: 9.0,
@@ -1033,7 +1029,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &11,
                 PointTest {
                     lat: 11.0,
@@ -1043,7 +1039,7 @@ mod tests {
                 }
             ));
             assert!(point_is_ok(
-                &map_data,
+                map_data,
                 &12,
                 PointTest {
                     lat: 12.0,
@@ -1068,23 +1064,23 @@ mod tests {
                     .lines
                     .iter()
                     .find(|l| l.line_id() == *id)
-                    .expect(format!("line {} must exist", id).as_str());
+                    .unwrap_or_else(|| panic!("line {} must exist", id));
                 info!("line {:#?}", line);
                 info!("test {:#?}", test_points);
                      line.points.0.borrow().id == test_points.0
                     && line.points.1.borrow().id == test_points.1
             }
             let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            assert!(line_is_ok(&map_data, "1-2", (1, 2)));
-            assert!(line_is_ok(&map_data, "2-3", (2, 3)));
-            assert!(line_is_ok(&map_data, "3-4", (3, 4)));
-            assert!(line_is_ok(&map_data, "5-3", (5, 3)));
-            assert!(line_is_ok(&map_data, "3-6", (3, 6)));
-            assert!(line_is_ok(&map_data, "6-7", (6, 7)));
-            assert!(line_is_ok(&map_data, "4-8", (4, 8)));
-            assert!(line_is_ok(&map_data, "8-9", (8, 9)));
-            assert!(line_is_ok(&map_data, "6-8", (6, 8)));
-            assert!(line_is_ok(&map_data, "11-12", (11, 12)));
+            assert!(line_is_ok(map_data, "1-2", (1, 2)));
+            assert!(line_is_ok(map_data, "2-3", (2, 3)));
+            assert!(line_is_ok(map_data, "3-4", (3, 4)));
+            assert!(line_is_ok(map_data, "5-3", (5, 3)));
+            assert!(line_is_ok(map_data, "3-6", (3, 6)));
+            assert!(line_is_ok(map_data, "6-7", (6, 7)));
+            assert!(line_is_ok(map_data, "4-8", (4, 8)));
+            assert!(line_is_ok(map_data, "8-9", (8, 9)));
+            assert!(line_is_ok(map_data, "6-8", (6, 8)));
+            assert!(line_is_ok(map_data, "11-12", (11, 12)));
         }
     }
 
@@ -1098,7 +1094,7 @@ mod tests {
                 point_ids: vec![1],
                 tags:Some(HashMap::from([("highway".to_string(), "primary".to_string())]))
             });
-            if let Ok(_) = res {
+            if res.is_ok() {
                 assert!(false);
             } else if let Err(e) = res {
                 if let MapDataError::MissingPoint { point_id: p } = e {
@@ -1118,20 +1114,20 @@ mod tests {
             let point = map_data.get_point_ref_by_id(&5).unwrap();
             let points = map_data.get_adjacent(point);
             points.iter().for_each(|p| {
-                assert!((p.1.borrow().id == 3 && p.1.borrow().is_junction() == true) || p.1.borrow().id != 3)
+                assert!((p.1.borrow().id == 3 && p.1.borrow().is_junction()) || p.1.borrow().id != 3)
             });
 
             let point = map_data.get_point_ref_by_id(&3).unwrap();
             let points = map_data.get_adjacent(point);
-            let non_junctions = vec![2, 5, 4];
+            let non_junctions = [2, 5, 4];
             points.iter().for_each(|p| {
                 assert!(
-                    ((non_junctions.contains(&p.1.borrow().id) && p.1.borrow().is_junction() == false)
+                    ((non_junctions.contains(&p.1.borrow().id) && !p.1.borrow().is_junction())
                         || !non_junctions.contains(&p.1.borrow().id))
                 )
             });
             points.iter().for_each(|p| {
-                assert!((p.1.borrow().id == 6 && p.1.borrow().is_junction() == true) || p.1.borrow().id != 6)
+                assert!((p.1.borrow().id == 6 && p.1.borrow().is_junction()) || p.1.borrow().id != 6)
             });
         }
     }
@@ -1175,7 +1171,7 @@ mod tests {
                             == adj_line.borrow().line_id().split("-").collect::<HashSet<_>>()
                             && point_id == &adj_point.borrow().id
                     });
-                    assert_eq!(adj_match.is_some(), true);
+                    assert!(adj_match.is_some());
                 }
             }
         }
@@ -1282,7 +1278,7 @@ mod tests {
             1,
         ),
     ];
-    fn run_closest_test(test: ClosestTest) -> () {
+    fn run_closest_test(test: ClosestTest) {
         let (points, check_point, closest_id) = test;
         let mut map_data = MapDataGraph::new();
         for point in &points {

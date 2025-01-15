@@ -9,6 +9,12 @@ pub struct SegmentList {
     segment_list: Vec<Segment>,
 }
 
+impl Default for SegmentList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SegmentList {
     pub fn new() -> Self {
         Self {
@@ -21,8 +27,7 @@ impl SegmentList {
     pub fn has_segment_with_point(&self, point: &MapDataPointRef) -> bool {
         self.segment_list
             .iter()
-            .position(|route_segment| route_segment.get_end_point() == point)
-            != None
+            .any(|route_segment| route_segment.get_end_point() == point)
     }
     pub fn get_all_segment_points(&self) -> Vec<MapDataPointRef> {
         self.segment_list
@@ -38,17 +43,17 @@ impl SegmentList {
     pub fn exclude_segments_where_points_in(&self, points: &Vec<MapDataPointRef>) -> SegmentList {
         self.segment_list
             .iter()
-            .filter(|segment| !points.contains(&&segment.get_end_point()))
+            .filter(|segment| !points.contains(segment.get_end_point()))
             .collect()
     }
     pub fn get_first_segment(&self) -> Option<&Segment> {
-        self.segment_list.get(0)
+        self.segment_list.first()
     }
 }
 
-impl Into<Vec<Segment>> for SegmentList {
-    fn into(self) -> Vec<Segment> {
-        self.segment_list
+impl From<SegmentList> for Vec<Segment> {
+    fn from(val: SegmentList) -> Self {
+        val.segment_list
     }
 }
 

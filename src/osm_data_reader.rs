@@ -40,9 +40,6 @@ pub const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
 
 #[derive(Debug, thiserror::Error)]
 pub enum OsmDataReaderError {
-    #[error("Standard IO error: {error}")]
-    StdioError { error: io::Error },
-
     #[error("OSM JSON parser error: {error}")]
     ParserError { error: OsmJsonParserError },
 
@@ -138,7 +135,7 @@ impl OsmDataReader {
         let read_start = Instant::now();
 
         let path = std::path::Path::new(&file);
-        let r = std::fs::File::open(&path)
+        let r = std::fs::File::open(path)
             .map_err(|error| OsmDataReaderError::PbfFileOpenError { error })?;
         let mut pbf = osmpbfreader::OsmPbfReader::new(r);
 
@@ -152,32 +149,25 @@ impl OsmDataReader {
                                     && obj
                                         .tags()
                                         .iter()
-                                        .find(|t2| t2.0 == "motorcycle" && t2.1 == "yes")
-                                        .is_some()))
+                                        .any(|t2| t2.0 == "motorcycle" && t2.1 == "yes")))
                     })
             })
             .map_err(|error| OsmDataReaderError::PbfFileReadError { error })?;
 
         for (_id, element) in elements {
             if element.is_node() {
-                let node = element.node().map_or(
-                    Err(OsmDataReaderError::PbfFileError {
+                let node = element.node().ok_or(OsmDataReaderError::PbfFileError {
                         error: String::from("expected node, did not get it"),
-                    }),
-                    |v| Ok(v),
-                )?;
+                    })?;
                 self.map_data.insert_node(OsmNode {
                     id: node.id.0 as u64,
                     lat: node.lat(),
                     lon: node.lon(),
                 });
             } else if element.is_way() {
-                let way = element.way().map_or(
-                    Err(OsmDataReaderError::PbfFileError {
+                let way = element.way().ok_or(OsmDataReaderError::PbfFileError {
                         error: String::from("expected way, did not get it"),
-                    }),
-                    |v| Ok(v),
-                )?;
+                    })?;
                 self.map_data
                     .insert_way(OsmWay {
                         id: way.id.0 as u64,
@@ -191,12 +181,9 @@ impl OsmDataReader {
                     })
                     .map_err(|error| OsmDataReaderError::MapDataError { error })?;
             } else if element.is_relation() {
-                let relation = element.relation().map_or(
-                    Err(OsmDataReaderError::PbfFileError {
+                let relation = element.relation().ok_or(OsmDataReaderError::PbfFileError {
                         error: String::from("expected relation, did not get it"),
-                    }),
-                    |v| Ok(v),
-                )?;
+                    })?;
                 self.map_data
                     .insert_relation(OsmRelation {
                         id: relation.id.0 as u64,

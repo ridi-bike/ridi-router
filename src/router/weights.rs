@@ -8,14 +8,13 @@ use crate::router::rules::{RouterRules, RulesTagValueAction};
 use super::{
     itinerary::Itinerary,
     navigator::WeightCalcResult,
-    route::{segment::Segment, segment_list::SegmentList, Route},
+    route::{segment::Segment, Route},
     walker::{Walker, WalkerMoveResult},
 };
 
 pub struct WeightCalcInput<'a> {
     pub current_fork_segment: &'a Segment,
     pub route: &'a Route,
-    pub all_fork_segments: &'a SegmentList,
     pub itinerary: &'a Itinerary,
     pub walker_from_fork: Walker,
     pub rules: &'a RouterRules,
@@ -92,12 +91,10 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
     }
     let current_ref = input
         .route
-        .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags.borrow().hw_ref());
+        .get_segment_last().and_then(|s| s.get_line().borrow().tags.borrow().hw_ref());
     let current_name = input
         .route
-        .get_segment_last()
-        .map_or(None, |s| s.get_line().borrow().tags.borrow().name());
+        .get_segment_last().and_then(|s| s.get_line().borrow().tags.borrow().name());
     let fork_ref = input
         .current_fork_segment
         .get_line()
@@ -244,7 +241,7 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
     let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f32);
 
-    let distance_last_points = point_steps_back.borrow().distance_between(&current_point);
+    let distance_last_points = point_steps_back.borrow().distance_between(current_point);
     let average_distance_last_points = distance_last_points / (check_steps_back as f32);
 
     if average_distance_last_points
@@ -349,11 +346,8 @@ mod test {
     use crate::{
         map_data::graph::{MapDataGraph, MapDataPointRef},
         router::{
-            itinerary::Itinerary,
-            navigator::WeightCalcResult,
-            route::{segment::Segment, segment_list::SegmentList},
-            rules::RouterRules,
-            walker::Walker,
+            itinerary::Itinerary, navigator::WeightCalcResult, route::segment::Segment,
+            rules::RouterRules, walker::Walker,
         },
         test_utils::{graph_from_test_file, set_graph_static},
     };
@@ -431,7 +425,6 @@ mod test {
             let fork_weight = weight_heading(WeightCalcInput {
                 route: walker.get_route(),
                 itinerary: &itinerary,
-                all_fork_segments: &SegmentList::from(vec![]),
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),
@@ -451,7 +444,6 @@ mod test {
             let fork_weight = weight_heading(WeightCalcInput {
                 route: walker.get_route(),
                 itinerary: &itinerary,
-                all_fork_segments: &SegmentList::from(vec![]),
                 current_fork_segment: &segment,
                 walker_from_fork: Walker::new(
                     from.clone(),

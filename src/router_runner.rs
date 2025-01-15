@@ -145,7 +145,7 @@ impl FromStr for DataDestination {
                 return Ok(DataDestination::Gpx { file });
             }
         }
-        return Err(RouterRunnerError::OutputFileFormatIncorrect { filename: file });
+        Err(RouterRunnerError::OutputFileFormatIncorrect { filename: file })
     }
 }
 
@@ -268,11 +268,19 @@ enum CliMode {
         /// Directory to store the generated cache
         cache_dir: PathBuf,
     },
+    /// Run Debug viewer
     #[cfg(feature = "debug-viewer")]
     DebugViewer {
         #[arg(long, value_name = "DIR")]
         /// Load a directory with debug files generated when generating a route
         debug_dir: PathBuf,
+    },
+    /// Generate JSON schema file for rule files
+    #[cfg(feature = "rule-schema-writer")]
+    RuleSchemaWrite {
+        #[arg(long, value_name = "FILE")]
+        /// Destination location of the JSON schema file for the rule file
+        destination: PathBuf,
     },
 }
 
@@ -513,10 +521,10 @@ impl RouterRunner {
                 output,
                 debug_dir,
             } => RouterRunner::run_dual(
-                &input,
+                input,
                 cache_dir.clone(),
                 routing_mode,
-                &output,
+                output,
                 rule_file.clone(),
                 debug_dir.clone(),
             ),
@@ -527,7 +535,7 @@ impl RouterRunner {
                 input,
                 cache_dir,
                 socket_name,
-            } => RouterRunner::run_server(&input, cache_dir.clone(), socket_name.clone())
+            } => RouterRunner::run_server(input, cache_dir.clone(), socket_name.clone())
                 .context("Failed to run server"),
             CliMode::StartClient {
                 routing_mode,
@@ -535,14 +543,18 @@ impl RouterRunner {
                 socket_name,
                 rule_file,
             } => RouterRunner::run_client(
-                &routing_mode,
-                &output,
+                routing_mode,
+                output,
                 socket_name.clone(),
                 rule_file.clone(),
             ),
             #[cfg(feature = "debug-viewer")]
             CliMode::DebugViewer { debug_dir } => {
                 Ok(crate::debug::viewer::DebugViewer::run(debug_dir.clone())?)
+            }
+            #[cfg(feature = "rule-schema-writer")]
+            CliMode::RuleSchemaWrite { destination } => {
+                Ok(crate::router::rules::generate_json_schema(destination)?)
             }
         }
     }

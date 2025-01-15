@@ -19,7 +19,7 @@ pub struct GpxWriter {
 }
 
 fn sort_by_longest(map: HashMap<String, RouteStatElement>) -> Vec<(String, RouteStatElement)> {
-    let mut vec = Vec::from_iter(map.into_iter());
+    let mut vec = Vec::from_iter(map);
     vec.sort_by(|a, b| b.1.len_m.total_cmp(&a.1.len_m));
     vec
 }
@@ -50,7 +50,7 @@ impl GpxWriter {
                 route.stats.cluster.map_or(-1, |c| c as isize)
             ));
             description.push_str(&format!("Score: {:.2}\n", route.stats.score));
-            description.push_str(&format!("Road types:\n"));
+            description.push_str("Road types:\n");
             for (road_type, stat) in sort_by_longest(route.stats.highway).iter() {
                 description.push_str(&format!(
                     " - {road_type}: {:.2}km, {:.2}%\n",
@@ -58,7 +58,7 @@ impl GpxWriter {
                     stat.percentage,
                 ));
             }
-            description.push_str(&format!("Road surface:\n"));
+            description.push_str("Road surface:\n");
             for (surface_type, stat) in sort_by_longest(route.stats.surface).iter() {
                 description.push_str(&format!(
                     " - {surface_type}: {:.2}km, {:.2}%\n",
@@ -66,7 +66,7 @@ impl GpxWriter {
                     stat.percentage,
                 ));
             }
-            description.push_str(&format!("Road smoothness:\n"));
+            description.push_str("Road smoothness:\n");
             for (smoothness_type, stat) in sort_by_longest(route.stats.smoothness).iter() {
                 description.push_str(&format!(
                     " - {smoothness_type}: {:.2}km, {:.2}%\n",
@@ -85,8 +85,7 @@ impl GpxWriter {
             gpx.routes.push(gpx_route);
         }
 
-        let file = File::create(&self.file_name)
-            .or_else(|error| Err(GpxWriterError::FileCreateError { error }))?;
+        let file = File::create(&self.file_name).map_err(|error| GpxWriterError::FileCreateError { error })?;
 
         write(&gpx, file).map_err(|error| GpxWriterError::GpxWrite { error })?;
 

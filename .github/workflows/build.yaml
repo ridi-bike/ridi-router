@@ -59,4 +59,10 @@ jobs:
         pnpm build
 
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test
+
+    - name: Run check
+      run: cargo check
+
+    - name: Run clippy
+      run: cargo clippy

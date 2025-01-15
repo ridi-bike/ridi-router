@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{self, Read, Write},
+    io::{self},
     path::PathBuf,
     time::Instant,
 };
@@ -118,7 +118,7 @@ impl MapDataCache {
 
         let read_start = Instant::now();
 
-        if !std::fs::exists(&cache_dir).map_err(|error| MapDataCacheError::FileError { error })? {
+        if !std::fs::exists(cache_dir).map_err(|error| MapDataCacheError::FileError { error })? {
             return Ok(None);
         }
 
@@ -146,16 +146,16 @@ impl MapDataCache {
         let mut tags: Option<Result<Vec<u8>, MapDataCacheError>> = None;
         rayon::scope(|scope| {
             scope.spawn(|_| {
-                points = Some(read_cache_file(&cache_dir, "points"));
+                points = Some(read_cache_file(cache_dir, "points"));
             });
             scope.spawn(|_| {
-                point_grid = Some(read_cache_file(&cache_dir, "point_grid"));
+                point_grid = Some(read_cache_file(cache_dir, "point_grid"));
             });
             scope.spawn(|_| {
-                lines = Some(read_cache_file(&cache_dir, "lines"));
+                lines = Some(read_cache_file(cache_dir, "lines"));
             });
             scope.spawn(|_| {
-                tags = Some(read_cache_file(&cache_dir, "tags"));
+                tags = Some(read_cache_file(cache_dir, "tags"));
             });
         });
 
@@ -181,13 +181,13 @@ impl MapDataCache {
         let write_start = Instant::now();
 
         if let Some(cache_dir) = &self.cache_dir {
-            if std::fs::exists(&cache_dir)
+            if std::fs::exists(cache_dir)
                 .map_err(|error| MapDataCacheError::FileError { error })?
             {
-                std::fs::remove_dir_all(&cache_dir)
+                std::fs::remove_dir_all(cache_dir)
                     .map_err(|error| MapDataCacheError::FileError { error })?;
             }
-            std::fs::create_dir_all(&cache_dir)
+            std::fs::create_dir_all(cache_dir)
                 .map_err(|error| MapDataCacheError::FileError { error })?;
 
             let Some(metadata_file_path) = self.get_metadata_file_path() else {
@@ -205,10 +205,10 @@ impl MapDataCache {
                 .par_iter()
                 .enumerate()
                 .map(|(i, _)| match i {
-                    0 => write_cache_file(&cache_dir, "points", &packed_data.points),
-                    1 => write_cache_file(&cache_dir, "point_grid", &packed_data.point_grid),
-                    2 => write_cache_file(&cache_dir, "lines", &packed_data.lines),
-                    3 => write_cache_file(&cache_dir, "tags", &packed_data.tags),
+                    0 => write_cache_file(cache_dir, "points", &packed_data.points),
+                    1 => write_cache_file(cache_dir, "point_grid", &packed_data.point_grid),
+                    2 => write_cache_file(cache_dir, "lines", &packed_data.lines),
+                    3 => write_cache_file(cache_dir, "tags", &packed_data.tags),
                     _ => Err(MapDataCacheError::UnexpectedValue),
                 })
                 .collect::<Result<Vec<_>, MapDataCacheError>>()?;

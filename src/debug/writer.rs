@@ -129,7 +129,7 @@ pub enum DebugWriterError {
 static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 thread_local! {
-    static DEBUG_WRITER: OnceLock<RwLock<DebugWriter>> = OnceLock::new();
+    static DEBUG_WRITER: OnceLock<RwLock<DebugWriter>> = const { OnceLock::new() };
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -145,7 +145,7 @@ impl DebugWriter {
     fn exec<T: Fn(&mut csv::Writer<File>) -> Result<(), DebugWriterError>>(
         file_type_id: &str,
         cb: T,
-    ) -> () {
+    ) {
         if let Some(debug_dir) = DEBUG_DIR.get() {
             let file_id = format!("{file_type_id}-{:?}", std::thread::current().id());
             let res = DEBUG_WRITER.with(|debug_writer| -> Result<(), DebugWriterError> {
@@ -290,8 +290,7 @@ impl DebugWriter {
                         } as i64,
                         discarded: discarded_choices
                             .iter()
-                            .find(|c| c == &segment.get_end_point())
-                            .is_some(),
+                            .any(|c| c == segment.get_end_point()),
                     })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())
@@ -336,7 +335,7 @@ impl DebugWriter {
         });
     }
 
-    pub fn write_itineraries(itineraries: &Vec<Itinerary>) -> () {
+    pub fn write_itineraries(itineraries: &Vec<Itinerary>) {
         for itinerary in itineraries {
             DebugWriter::exec(DebugStreamItineraries::name(), |writer| {
                 writer
