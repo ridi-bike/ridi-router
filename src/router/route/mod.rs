@@ -274,7 +274,7 @@ impl Route {
             highway: calc_stat_map(len_m, &highway),
             smoothness: calc_stat_map(len_m, &smoothness),
             surface: calc_stat_map(len_m, &surface),
-            score: Score::calc_score(&self),
+            score: Score::calc_score(self),
             cluster: None,
             approximated_route: Vec::new(),
         }

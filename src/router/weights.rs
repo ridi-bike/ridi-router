@@ -208,7 +208,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
         .map_or(&input.itinerary.start, |v| &v.on_point);
     let distance_to_next_junctions_back = match input
         .route
-        .split_at_point(&check_from)
+        .split_at_point(check_from)
         .get_junctions_from_end(check_junctions_back)
     {
         None => return WeightCalcResult::UseWithWeight(0),
