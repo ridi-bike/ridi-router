@@ -62,7 +62,7 @@ impl Generator {
                     .iter()
                     .filter_map(|distance| {
                         let wp_geo = Haversine::destination(point_geo, *bearing, *distance);
-                        
+
                         MapDataGraph::get().get_closest_to_coords(wp_geo.y(), wp_geo.x())
                     })
             })
@@ -223,13 +223,14 @@ impl Generator {
                             calc: weight_rules_smoothness,
                         },
                     ],
+                    self.round_trip.is_some(),
                 )
                 .generate_routes()
             })
             .filter_map(|nav_route| match nav_route {
                 NavigationResult::Stuck => None,
                 NavigationResult::Finished(route) => Some(route),
-                NavigationResult::Stopped(route) => Some(route),
+                NavigationResult::Stopped => None,
             })
             .collect::<Vec<_>>();
 

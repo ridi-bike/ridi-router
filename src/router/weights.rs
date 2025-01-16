@@ -91,10 +91,12 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
     }
     let current_ref = input
         .route
-        .get_segment_last().and_then(|s| s.get_line().borrow().tags.borrow().hw_ref());
+        .get_segment_last()
+        .and_then(|s| s.get_line().borrow().tags.borrow().hw_ref());
     let current_name = input
         .route
-        .get_segment_last().and_then(|s| s.get_line().borrow().tags.borrow().name());
+        .get_segment_last()
+        .and_then(|s| s.get_line().borrow().tags.borrow().name());
     let fork_ref = input
         .current_fork_segment
         .get_line()
@@ -121,7 +123,10 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
 
 pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_no_loops");
-    if input.route.has_looped() {
+    if input
+        .route
+        .has_looped(input.itinerary.switched_wps_on.last().map(|v| &v.on_point))
+    {
         return WeightCalcResult::DoNotUse;
     }
 
@@ -196,14 +201,22 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
             .distance_between(&input.itinerary.next),
     };
 
-    let distance_to_next_junctions_back =
-        match input.route.get_junctions_from_end(check_junctions_back) {
-            None => return WeightCalcResult::UseWithWeight(0),
-            Some(segment) => segment
-                .get_end_point()
-                .borrow()
-                .distance_between(&input.itinerary.next),
-        };
+    let check_from = input
+        .itinerary
+        .switched_wps_on
+        .last()
+        .map_or(&input.itinerary.start, |v| &v.on_point);
+    let distance_to_next_junctions_back = match input
+        .route
+        .split_at_point(check_from)
+        .get_junctions_from_end(check_junctions_back)
+    {
+        None => return WeightCalcResult::UseWithWeight(0),
+        Some(segment) => segment
+            .get_end_point()
+            .borrow()
+            .distance_between(&input.itinerary.next),
+    };
     trace!(
         distance = distance_to_next_junctions_back,
         "distance to next"

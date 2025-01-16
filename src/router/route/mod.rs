@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use score::Score;
 use serde::{Deserialize, Serialize};
 
-use crate::map_data::{line::MapDataLine, point::MapDataPoint};
+use crate::map_data::{graph::MapDataPointRef, line::MapDataLine, point::MapDataPoint};
 
 use self::segment::Segment;
 
@@ -64,6 +64,17 @@ impl Route {
         self.route_segments.push(segment)
     }
 
+    pub fn split_at_point(&self, point: &MapDataPointRef) -> Self {
+        let point_pos = self
+            .route_segments
+            .iter()
+            .position(|seg| seg.get_end_point() == point)
+            .map_or(0, |v| v);
+
+        let route_segments = self.route_segments[point_pos..].to_vec();
+        Self { route_segments }
+    }
+
     pub fn get_route_chunk_since_junction_before_last(&self) -> Vec<Segment> {
         let idx_from = match self.get_segment_last() {
             None => 0,
@@ -91,14 +102,22 @@ impl Route {
             }),
         }
     }
-    pub fn has_looped(&self) -> bool {
+    pub fn has_looped(&self, since_point: Option<&MapDataPointRef>) -> bool {
+        let since_point_pos = if let Some(since_point) = since_point {
+            self.route_segments
+                .iter()
+                .position(|segment| segment.get_end_point() == since_point)
+                .map_or(0, |p| p)
+        } else {
+            0
+        };
         let last_segment = self.route_segments.last();
         if let Some(last_segment) = last_segment {
             let end_index = self.route_segments.len().checked_sub(1);
             if let Some(end_index) = end_index {
-                return self.route_segments[..end_index].iter().any(|segment| {
-                    segment.get_end_point().borrow().id == last_segment.get_end_point().borrow().id
-                });
+                return self.route_segments[since_point_pos..end_index]
+                    .iter()
+                    .any(|segment| segment.get_end_point() == last_segment.get_end_point());
             }
         }
         false
@@ -255,7 +274,7 @@ impl Route {
             highway: calc_stat_map(len_m, &highway),
             smoothness: calc_stat_map(len_m, &smoothness),
             surface: calc_stat_map(len_m, &surface),
-            score: Score::calc_score(&self),
+            score: Score::calc_score(self),
             cluster: None,
             approximated_route: Vec::new(),
         }

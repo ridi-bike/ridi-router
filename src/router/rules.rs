@@ -33,7 +33,7 @@ pub struct BasicRuleStepLimit(pub u32);
 
 impl Default for BasicRuleStepLimit {
     fn default() -> Self {
-        Self(1000000)
+        Self(30000)
     }
 }
 

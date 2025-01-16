@@ -66,33 +66,33 @@ gps-test-to-lon := '24.253038'		# doles sala
 # gps-test-to-lon := '-2.541200'		# gergal, spain
 
 run-load-json-show:
-	cargo run --release -- generate-route --input map-data/{{map-data-json-name}} --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
+	cargo run -- generate-route --input map-data/{{map-data-json-name}} --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
 	gpxsee map-data/output.gpx &
 
 run-load-pbf-show:
-	cargo run --release -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
+	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
 	gpxsee map-data/output.gpx &
 
 run-load-cache-show:
-	cargo run --release -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --cache-dir map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
+	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --cache-dir map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
 	gpxsee map-data/output.gpx &
 
 run-gr:
-	cargo run --release -- generate-route --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece start-finish --start 37.0458401,22.1265497 --finish 37.0744365,22.4263953
+	cargo run -- generate-route --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece start-finish --start 37.0458401,22.1265497 --finish 37.0744365,22.4263953
 
 run-gr-short:
-	cargo run --release -- generate-route --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece start-finish --start 37.0331605,22.1573558 --finish 37.041196,22.182086 
+	cargo run -- generate-route --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece start-finish --start 37.0331605,22.1573558 --finish 37.041196,22.182086 
 
 run-lv-round-debug:
-	cargo run --release -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json round-trip --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
+	cargo run -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json round-trip --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
 
 run-lv-round:
-	cargo run --release -- generate-route --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json round-trip --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
+	cargo run -- generate-route --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json round-trip --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
 cache-lv:
-	cargo run --release -- prep-cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia
+	cargo run -- prep-cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia
 
 cache-spain:
-	cargo run --release -- prep-cache --input ./map-data/spain-latest.osm.pbf --cache-dir ./map-data/cache/spain
+	cargo run -- prep-cache --input ./map-data/spain-latest.osm.pbf --cache-dir ./map-data/cache/spain
 
 debug-viewer:
-	cargo run --release -- debug-viewer --debug-dir ./map-data/debug
+	cargo run -- debug-viewer --debug-dir ./map-data/debug
