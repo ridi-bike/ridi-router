@@ -52,21 +52,22 @@ impl DiscardedForkChoices {
         point_ref: &MapDataPointRef,
         choice_point_ref: &MapDataPointRef,
     ) {
-        // unwrap because if last entry is missing, someting's very wrong
-        let existing_choices = self.choices.last().unwrap().get(point_ref);
+        let existing_choices = self.choices.last()
+            .expect("There should always be an entry. set_new_next and set_prev_next incorrectly called")
+            .get(point_ref);
         if let Some(existing_choices) = existing_choices {
             let mut existing_choices = existing_choices.clone();
             existing_choices.insert(choice_point_ref.clone());
             self.choices
                 .last_mut()
-                .unwrap()
+                .expect("There should always be an entry. set_new_next and set_prev_next incorrectly called")
                 .insert(point_ref.clone(), existing_choices);
         } else {
             let mut ids = HashSet::new();
             ids.insert(choice_point_ref.clone());
             self.choices
                 .last_mut()
-                .unwrap()
+                .expect("There should always be an entry. set_new_next and set_prev_next incorrectly called")
                 .insert(point_ref.clone(), ids);
         }
     }
@@ -75,10 +76,9 @@ impl DiscardedForkChoices {
         &self,
         point_ref: &MapDataPointRef,
     ) -> Option<Vec<MapDataPointRef>> {
-        // unwrap because if last entry is missing, someting's very wrong
         self.choices
             .last()
-            .unwrap()
+            .expect("There should always be an entry. set_new_next and set_prev_next incorrectly called")
             .get(point_ref)
             .map(|ids| ids.clone().into_iter().collect())
     }
