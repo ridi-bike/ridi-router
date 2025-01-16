@@ -1,6 +1,6 @@
 {
 	"basic": {
-		"step_limit": 1000000,
+		"step_limit": 30000,
 		"prefer_same_road": {
 			"enabled": true,
 			"priority": 30
