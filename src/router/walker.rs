@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{borrow::Borrow, fmt::Debug};
 
 use crate::map_data::{
     graph::{MapDataGraph, MapDataPointRef},
@@ -208,11 +208,11 @@ impl Walker {
         let last_segment = match self.route_walked.get_segment_last() {
             Some(seg) => {
                 if !seg.get_line().borrow().is_roundabout() {
-                    return ;
+                    return;
                 }
                 seg.clone()
             }
-            None => return ,
+            None => return,
         };
 
         // let mut segments = Vec::new();
@@ -307,16 +307,17 @@ impl Walker {
 
     pub fn move_backwards_to_prev_fork(&mut self) -> Option<SegmentList> {
         self.next_fork_choice_point = None;
-        let current_fork = self.route_walked.remove_last_segment();
-        current_fork.as_ref()?;
+        self.route_walked.remove_last_segment();
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
-                if last_segment.get_end_point().borrow().is_junction()
+                if (last_segment.get_end_point().borrow().is_junction()
                     && self
                         .get_fork_segments_for_segment(last_segment)
                         .get_segment_count()
-                        > 1
+                        > 1)
+                    || (last_segment.get_line().borrow().is_roundabout()
+                        && self.get_roundabout_exits(last_segment).get_segment_count() > 1)
                 {
                     break;
                 }
@@ -737,7 +738,7 @@ mod tests {
             Ok(WalkerMoveResult::Fork(c)) => c,
             Ok(v) => {
                 if can_go_ids.is_empty() {
-                    return ;
+                    return;
                 }
                 panic!("did not get choices: {:#?}", v)
             }

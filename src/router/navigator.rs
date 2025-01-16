@@ -24,13 +24,21 @@ pub enum WeightCalcResult {
 
 #[derive(Debug)]
 pub struct DiscardedForkChoices {
-    choices: HashMap<MapDataPointRef, HashSet<MapDataPointRef>>,
+    choices: Vec<HashMap<MapDataPointRef, HashSet<MapDataPointRef>>>,
 }
 impl DiscardedForkChoices {
     pub fn new() -> Self {
         Self {
-            choices: HashMap::new(),
+            choices: vec![HashMap::new()],
         }
+    }
+
+    pub fn set_new_next(&mut self) {
+        self.choices.push(HashMap::new());
+    }
+
+    pub fn set_prev_next(&mut self) {
+        self.choices.pop();
     }
 
     pub fn add_discarded_choice(
@@ -38,14 +46,22 @@ impl DiscardedForkChoices {
         point_ref: &MapDataPointRef,
         choice_point_ref: &MapDataPointRef,
     ) {
-        let existing_choices = self.choices.get(point_ref);
-        if let Some(mut existing_choices) = existing_choices.cloned() {
+        // unwrap because if last entry is missing, someting's very wrong
+        let existing_choices = self.choices.last().unwrap().get(point_ref);
+        if let Some(existing_choices) = existing_choices {
+            let mut existing_choices = existing_choices.clone();
             existing_choices.insert(choice_point_ref.clone());
-            self.choices.insert(point_ref.clone(), existing_choices);
-        } else if existing_choices.is_none() {
+            self.choices
+                .last_mut()
+                .unwrap()
+                .insert(point_ref.clone(), existing_choices);
+        } else {
             let mut ids = HashSet::new();
             ids.insert(choice_point_ref.clone());
-            self.choices.insert(point_ref.clone(), ids);
+            self.choices
+                .last_mut()
+                .unwrap()
+                .insert(point_ref.clone(), ids);
         }
     }
 
@@ -53,7 +69,10 @@ impl DiscardedForkChoices {
         &self,
         point_ref: &MapDataPointRef,
     ) -> Option<Vec<MapDataPointRef>> {
+        // unwrap because if last entry is missing, someting's very wrong
         self.choices
+            .last()
+            .unwrap()
             .get(point_ref)
             .map(|ids| ids.clone().into_iter().collect())
     }
@@ -187,7 +206,9 @@ impl Navigator {
                 );
                 let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
 
-                self.itinerary.check_set_next(last_point.clone());
+                if self.itinerary.check_set_next(last_point.clone()) {
+                    self.discarded_fork_choices.set_new_next();
+                }
 
                 let fork_weights = fork_choices.clone().into_iter().fold(
                     ForkWeights::new(),
@@ -238,9 +259,13 @@ impl Navigator {
                     );
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
+                    if self
+                        .itinerary
+                        .check_set_back(self.walker.get_last_point().clone())
+                    {
+                        self.discarded_fork_choices.set_prev_next();
+                    }
                     self.walker.move_backwards_to_prev_fork();
-                    self.itinerary
-                        .check_set_back(self.walker.get_last_point().clone());
                     DebugWriter::write_step_result(
                         self.itinerary.id(),
                         loop_counter,
@@ -265,9 +290,13 @@ impl Navigator {
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "MoveBack", None);
+                if self
+                    .itinerary
+                    .check_set_back(self.walker.get_last_point().clone())
+                {
+                    self.discarded_fork_choices.set_prev_next();
+                }
                 self.walker.move_backwards_to_prev_fork();
-                self.itinerary
-                    .check_set_back(self.walker.get_last_point().clone());
             }
 
             if loop_counter >= self.rules.basic.step_limit.0 {

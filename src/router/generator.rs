@@ -62,7 +62,7 @@ impl Generator {
                     .iter()
                     .filter_map(|distance| {
                         let wp_geo = Haversine::destination(point_geo, *bearing, *distance);
-                        
+
                         MapDataGraph::get().get_closest_to_coords(wp_geo.y(), wp_geo.x())
                     })
             })
@@ -170,7 +170,7 @@ impl Generator {
 
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
-        let itineraries = self.generate_itineraries();
+        let itineraries = self.generate_itineraries()[0..1].to_vec();
 
         DebugWriter::write_itineraries(&itineraries);
 

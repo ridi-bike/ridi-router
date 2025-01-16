@@ -2,12 +2,12 @@ pub mod score;
 pub mod segment;
 pub mod segment_list;
 
-use std::collections::HashMap;
+use std::{backtrace::Backtrace, borrow::Borrow, collections::HashMap};
 
 use score::Score;
 use serde::{Deserialize, Serialize};
 
-use crate::map_data::{line::MapDataLine, point::MapDataPoint};
+use crate::map_data::{graph::MapDataPointRef, line::MapDataLine, point::MapDataPoint};
 
 use self::segment::Segment;
 
@@ -91,14 +91,22 @@ impl Route {
             }),
         }
     }
-    pub fn has_looped(&self) -> bool {
+    pub fn has_looped(&self, since_point: Option<&MapDataPointRef>) -> bool {
+        let since_point_pos = if let Some(since_point) = since_point {
+            self.route_segments
+                .iter()
+                .position(|segment| segment.get_end_point() == since_point)
+                .map_or(0, |p| p)
+        } else {
+            0
+        };
         let last_segment = self.route_segments.last();
         if let Some(last_segment) = last_segment {
             let end_index = self.route_segments.len().checked_sub(1);
             if let Some(end_index) = end_index {
-                return self.route_segments[..end_index].iter().any(|segment| {
-                    segment.get_end_point().borrow().id == last_segment.get_end_point().borrow().id
-                });
+                return self.route_segments[since_point_pos..end_index]
+                    .iter()
+                    .any(|segment| segment.get_end_point() == last_segment.get_end_point());
             }
         }
         false
