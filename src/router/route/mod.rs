@@ -2,7 +2,7 @@ pub mod score;
 pub mod segment;
 pub mod segment_list;
 
-use std::{backtrace::Backtrace, borrow::Borrow, collections::HashMap};
+use std::collections::HashMap;
 
 use score::Score;
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,17 @@ impl Route {
     }
     pub fn add_segment(&mut self, segment: Segment) {
         self.route_segments.push(segment)
+    }
+
+    pub fn split_at_point(&self, point: &MapDataPointRef) -> Self {
+        let point_pos = self
+            .route_segments
+            .iter()
+            .position(|seg| seg.get_end_point() == point)
+            .map_or(0, |v| v);
+
+        let route_segments = self.route_segments[point_pos..].to_vec();
+        Self { route_segments }
     }
 
     pub fn get_route_chunk_since_junction_before_last(&self) -> Vec<Segment> {

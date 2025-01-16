@@ -185,7 +185,7 @@ These rules dictate basic navigation and route finding. Altering these values ca
 
 A rule file with default basic rule settings can be found here `./rule-examples/rules-default.json`
 
-- step_limit - limits the number of steps, defaults to 1'000'000 steps. If this limit is reached, the route variation will be marked abandoned but other variations will continue to be processed
+- step_limit - limits the number of steps, defaults to 30'000 steps. If this limit is reached, the route variation will be marked abandoned but other variations will continue to be processed
 - prefer_same_road - used to stay on the same road for a longer period
 - progression_direction - controls how long of a detour can happen before a direction is considered wrong. This can be increased in cases where large obstacles need to be overcome like lakes, rivers without bridges, mountain ranges, etc
 - progression_speed - disabled by default. Checks how much progress is made and decides when to stop. Useful in scenarios where geographic obstacles in combination with city streets produce many twists and turns without any significant progress towards the finish

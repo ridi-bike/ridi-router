@@ -25,20 +25,26 @@ pub enum WeightCalcResult {
 #[derive(Debug)]
 pub struct DiscardedForkChoices {
     choices: Vec<HashMap<MapDataPointRef, HashSet<MapDataPointRef>>>,
+    reset_at_new_next: bool,
 }
 impl DiscardedForkChoices {
-    pub fn new() -> Self {
+    pub fn new(reset_at_new_next: bool) -> Self {
         Self {
             choices: vec![HashMap::new()],
+            reset_at_new_next,
         }
     }
 
     pub fn set_new_next(&mut self) {
-        self.choices.push(HashMap::new());
+        if self.reset_at_new_next {
+            self.choices.push(HashMap::new());
+        }
     }
 
     pub fn set_prev_next(&mut self) {
-        self.choices.pop();
+        if self.reset_at_new_next {
+            self.choices.pop();
+        }
     }
 
     pub fn add_discarded_choice(
@@ -147,7 +153,7 @@ impl Debug for ForkWeights {
 
 pub enum NavigationResult {
     Stuck,
-    Stopped(Route),
+    Stopped,
     Finished(Route),
 }
 
@@ -160,13 +166,18 @@ pub struct Navigator {
 }
 
 impl Navigator {
-    pub fn new(itinerary: Itinerary, rules: RouterRules, weight_calcs: Vec<WeightCalc>) -> Self {
+    pub fn new(
+        itinerary: Itinerary,
+        rules: RouterRules,
+        weight_calcs: Vec<WeightCalc>,
+        reset_at_new_next: bool,
+    ) -> Self {
         Self {
             walker: Walker::new(itinerary.start.clone()),
             itinerary,
             rules,
             weight_calcs,
-            discarded_fork_choices: DiscardedForkChoices::new(),
+            discarded_fork_choices: DiscardedForkChoices::new(reset_at_new_next),
         }
     }
 
@@ -302,7 +313,7 @@ impl Navigator {
             if loop_counter >= self.rules.basic.step_limit.0 {
                 info!("Reached loop {loop_counter}, stopping");
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
-                return NavigationResult::Stopped(self.walker.get_route().clone());
+                return NavigationResult::Stopped;
             }
         }
     }
@@ -349,7 +360,8 @@ mod test {
             let navigator = Navigator::new(
                 itinerary.clone(),
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight, name:"weight".to_string()}]
+                vec![WeightCalc{calc: weight, name:"weight".to_string()}],
+                false
             );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
@@ -377,7 +389,8 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc:weight2, name:"weight2".to_string() }]
+                vec![WeightCalc{ calc:weight2, name:"weight2".to_string() }],
+                false
             );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
@@ -423,7 +436,8 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc: weight, name:"weight".to_string() }]
+                vec![WeightCalc{ calc: weight, name:"weight".to_string() }],
+                false,
             );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
@@ -451,7 +465,8 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight, name:"weight".to_string()}]
+                vec![WeightCalc{calc: weight, name:"weight".to_string()}],
+                false,
             );
 
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
@@ -477,7 +492,8 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc: weight, name:"weight".to_string()}]
+                vec![WeightCalc{ calc: weight, name:"weight".to_string()}],
+                false
             );
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
                 assert!(false);
@@ -521,7 +537,8 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight1, name:"weight1".to_string()}, WeightCalc{ calc: weight2, name:"weight2".to_string()}]
+                vec![WeightCalc{calc: weight1, name:"weight1".to_string()}, WeightCalc{ calc: weight2, name:"weight2".to_string()}],
+                false,
             );
             let route = match navigator.generate_routes() {
                 crate::router::navigator::NavigationResult::Finished(r) => r,

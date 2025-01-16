@@ -170,7 +170,7 @@ impl Generator {
 
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
-        let itineraries = self.generate_itineraries()[0..1].to_vec();
+        let itineraries = self.generate_itineraries();
 
         DebugWriter::write_itineraries(&itineraries);
 
@@ -223,13 +223,14 @@ impl Generator {
                             calc: weight_rules_smoothness,
                         },
                     ],
+                    self.round_trip.is_some(),
                 )
                 .generate_routes()
             })
             .filter_map(|nav_route| match nav_route {
                 NavigationResult::Stuck => None,
                 NavigationResult::Finished(route) => Some(route),
-                NavigationResult::Stopped(route) => Some(route),
+                NavigationResult::Stopped => None,
             })
             .collect::<Vec<_>>();
 

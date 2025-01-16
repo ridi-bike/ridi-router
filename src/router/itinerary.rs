@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, fmt::Display};
+use std::fmt::Display;
 
 use crate::map_data::graph::MapDataPointRef;
 
@@ -103,19 +103,7 @@ impl Itinerary {
                     on_point: current.clone(),
                     from_point: prev_point.clone(),
                 });
-                eprintln!(
-                    "on point {:?} next {:?} prev next {:?}",
-                    current.borrow().id,
-                    self.next.borrow().id,
-                    prev_point.borrow().id
-                );
             } else {
-                eprintln!(
-                    "on point {:?} next {:?} prev next {:?}",
-                    current.borrow().id,
-                    self.finish.borrow().id,
-                    self.next.borrow().id
-                );
                 self.switched_wps_on.push(WaypointHistoryElement {
                     on_point: current.clone(),
                     from_point: self.next.clone(),
@@ -129,12 +117,6 @@ impl Itinerary {
     pub fn check_set_back(&mut self, current: MapDataPointRef) -> bool {
         if let Some(history) = self.switched_wps_on.last() {
             if history.on_point == current {
-                eprintln!(
-                    "check set back on {:?} next {:?} prev_next {:?}",
-                    current.borrow().id,
-                    history.from_point.borrow().id,
-                    self.next.borrow().id
-                );
                 self.next = history.from_point.clone();
                 self.switched_wps_on.pop();
                 return true;

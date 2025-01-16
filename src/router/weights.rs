@@ -201,14 +201,22 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
             .distance_between(&input.itinerary.next),
     };
 
-    let distance_to_next_junctions_back =
-        match input.route.get_junctions_from_end(check_junctions_back) {
-            None => return WeightCalcResult::UseWithWeight(0),
-            Some(segment) => segment
-                .get_end_point()
-                .borrow()
-                .distance_between(&input.itinerary.next),
-        };
+    let check_from = input
+        .itinerary
+        .switched_wps_on
+        .last()
+        .map_or(&input.itinerary.start, |v| &v.on_point);
+    let distance_to_next_junctions_back = match input
+        .route
+        .split_at_point(&check_from)
+        .get_junctions_from_end(check_junctions_back)
+    {
+        None => return WeightCalcResult::UseWithWeight(0),
+        Some(segment) => segment
+            .get_end_point()
+            .borrow()
+            .distance_between(&input.itinerary.next),
+    };
     trace!(
         distance = distance_to_next_junctions_back,
         "distance to next"
