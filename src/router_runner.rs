@@ -454,7 +454,7 @@ impl RouterRunner {
 
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
-        dbg!("ipc init done");
+
         ipc.listen(|request_message| {
             let route_res =
                 RouterRunner::generate_route(&request_message.routing_mode, request_message.rules);

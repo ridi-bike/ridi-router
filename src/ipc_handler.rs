@@ -97,9 +97,7 @@ impl<'a> IpcHandler<'a> {
     where
         T: Fn(RequestMessage) -> ResponseMessage + Sync + Send + Copy + 'static,
     {
-        dbg!("listen");
         let opts = ListenerOptions::new().name(self.socket_name.clone());
-        dbg!("opts {opts:?}");
 
         let listener = match opts.create_sync() {
             Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
@@ -107,9 +105,10 @@ impl<'a> IpcHandler<'a> {
             }
             x => x.map_err(|error| IpcHandlerError::CreateListener { error })?,
         };
-        dbg!("listener {listener:?}");
 
         info!("Server running at {}", self.socket_print_name);
+
+        println!(";RIDI_ROUTER SERVER READY;"); // this is in stdout so calling processes know the server is ready to accept connections
 
         for conn in listener.incoming() {
             rayon::spawn(move || match conn {
@@ -125,7 +124,6 @@ impl<'a> IpcHandler<'a> {
                         }
                         Ok(req) => req,
                     };
-                    dbg!("calling msg handler");
                     let resp = message_handler(req);
                     if let Err(error) = IpcHandler::process_response(&conn, &resp) {
                         warn!("error from connection {:?}", error);
