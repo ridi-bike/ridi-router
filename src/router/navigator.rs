@@ -271,19 +271,6 @@ impl Navigator {
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     if self
-                        .itinerary
-                        .check_set_back(self.walker.get_last_point().clone())
-                    {
-                        self.discarded_fork_choices.set_prev_next();
-                    }
-                    self.walker.move_backwards_to_prev_fork();
-                    DebugWriter::write_step_result(
-                        self.itinerary.id(),
-                        loop_counter,
-                        "MoveBack",
-                        None,
-                    );
-                    if self
                         .walker
                         .get_route()
                         .get_junction_before_last_segment()
@@ -298,6 +285,19 @@ impl Navigator {
                         );
                         return NavigationResult::Stuck;
                     }
+                    if self
+                        .itinerary
+                        .check_set_back(self.walker.get_last_point().clone())
+                    {
+                        self.discarded_fork_choices.set_prev_next();
+                    }
+                    self.walker.move_backwards_to_prev_fork();
+                    DebugWriter::write_step_result(
+                        self.itinerary.id(),
+                        loop_counter,
+                        "MoveBack",
+                        None,
+                    );
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "MoveBack", None);
