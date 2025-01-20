@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "ridi-router"
-version = "0.6.12"
+version = "0.6.13"
 dependencies = [
  "anyhow",
  "bincode",
