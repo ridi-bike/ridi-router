@@ -66,6 +66,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Get Latest
+        run: git checkout HEAD
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -149,6 +152,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Get Latest
+        run: git checkout HEAD
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
