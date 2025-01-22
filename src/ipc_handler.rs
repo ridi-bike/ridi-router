@@ -53,7 +53,7 @@ pub struct RouteMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
 pub enum RouterResult {
     Error { message: String },
     Ok { routes: Vec<RouteMessage> },
@@ -151,7 +151,7 @@ impl<'a> IpcHandler<'a> {
 
         info!("message received {}", buffer.len());
 
-        let request_message = bincode::deserialize(&buffer[..])
+        let request_message: RequestMessage = bincode::deserialize(&buffer[..])
             .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
 
         info!("deserialized {request_message:?}");
