@@ -12,6 +12,7 @@ jobs:
       contents: write
     outputs:
       next_version: ${{ steps.semver.outputs.next }}
+      bump-commit-sha: ${{ steps.commit.outputs.commit-sha }}
 
     steps:
     - name: Generate token
@@ -61,15 +62,18 @@ jobs:
         name: RELEASE_NOTES
         path: RELEASE_NOTES.md
 
+    - name: Get commit SHA
+      id: commit
+      run: echo "commit-sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
   build-debug-viewer:
     needs: prepare-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-version.outputs.bump-commit-sha }}
 
-      - name: Get Latest
-        run: git checkout HEAD^
-      
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -152,9 +156,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Get Latest
-        run: git checkout HEAD^
+        with:
+          ref: ${{ needs.prepare-version.outputs.bump-commit-sha }}
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
