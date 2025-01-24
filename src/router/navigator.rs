@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
 };
 
-use tracing::info;
+use tracing::trace;
 
 use crate::{
     debug::writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
@@ -183,7 +183,7 @@ impl Navigator {
 
     #[tracing::instrument(skip(self), fields(id = self.itinerary.id()))]
     pub fn generate_routes(mut self) -> NavigationResult {
-        info!("Route gen for itinerary {}", self.itinerary);
+        trace!("Route gen for itinerary {}", self.itinerary);
 
         let mut loop_counter = 0;
         loop {
@@ -276,7 +276,7 @@ impl Navigator {
                         .get_junction_before_last_segment()
                         .is_none()
                     {
-                        info!("Stuck");
+                        trace!("Stuck");
                         DebugWriter::write_step_result(
                             self.itinerary.id(),
                             loop_counter,
@@ -311,7 +311,7 @@ impl Navigator {
             }
 
             if loop_counter >= self.rules.basic.step_limit.0 {
-                info!("Reached loop {loop_counter}, stopping");
+                trace!("Reached loop {loop_counter}, stopping");
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
                 return NavigationResult::Stopped;
             }

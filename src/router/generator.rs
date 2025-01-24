@@ -7,7 +7,7 @@ use crate::{
 };
 use geo::{Destination, Haversine, Point};
 use rayon::prelude::*;
-use tracing::info;
+use tracing::trace;
 
 use super::{
     itinerary::Itinerary,
@@ -174,7 +174,7 @@ impl Generator {
 
         DebugWriter::write_itineraries(&itineraries);
 
-        info!("Created {} itineraries", itineraries.len());
+        trace!("Created {} itineraries", itineraries.len());
         let routes = itineraries
             .into_par_iter()
             .map(|itinerary| {
@@ -270,8 +270,8 @@ impl Generator {
             })
             .collect();
 
-        info!(route_count = routes.len(), "routes");
-        info!(noise_count = noise.len(), "noise");
+        trace!(route_count = routes.len(), "routes");
+        trace!(noise_count = noise.len(), "noise");
 
         let mut best_routes = cluster_best.into_iter().map(|el| el.1).collect::<Vec<_>>();
         noise.sort_by(|a, b| b.stats.score.total_cmp(&a.stats.score));

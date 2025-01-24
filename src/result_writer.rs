@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
 };
 
-use tracing::info;
+use tracing::{info, trace};
 
 use crate::{
     gpx_writer::{GpxWriter, GpxWriterError},
@@ -47,7 +47,7 @@ impl ResultWriter {
                 let json = serde_json::to_string(&response)
                     .map_err(|error| ResultWriterError::SerializeJson { error })?;
 
-                info!("Writing {} bytes of json to stdout", json.as_bytes().len());
+                trace!(bytes_len = json.as_bytes().len(), "Writing json to stdout");
 
                 std::io::stdout()
                     .write_all(json.as_bytes())
@@ -59,7 +59,7 @@ impl ResultWriter {
                     Err(ResultWriterError::RoutesGenerationFailed { error: message })
                 }
                 crate::ipc_handler::RouterResult::Ok { routes } => {
-                    info!("Writing gpx {:?}", file);
+                    info!(file = ?file, "Writing gpx");
 
                     GpxWriter::new(routes, file.clone())
                         .write_gpx()
@@ -72,11 +72,12 @@ impl ResultWriter {
                 let json = serde_json::to_string(&response)
                     .map_err(|error| ResultWriterError::SerializeJson { error })?;
 
-                info!(
-                    "Writing {} bytes of json to {:?}",
-                    json.as_bytes().len(),
-                    file
+                trace!(
+                    bytes_len = json.as_bytes().len(),
+                    destination = ?file,
+                    "Writing json"
                 );
+
                 std::fs::write(file, json)
                     .map_err(|error| ResultWriterError::FileWrite { error })?;
 

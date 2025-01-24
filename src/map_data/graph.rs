@@ -11,7 +11,7 @@ use std::{
 use anyhow::Context;
 use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::trace;
 
 use crate::{
     map_data::{
@@ -278,10 +278,10 @@ impl MapDataGraph {
 
         let mut packed = MapDataGraphPacked::default();
 
-        info!("points len {}", self.points.len());
-        info!("proximity_lookup len {}", self.point_grid.len(),);
-        info!("lines len {}", self.lines.len());
-        info!("tags len {:?}", self.tags.len());
+        trace!("points len {}", self.points.len());
+        trace!("proximity_lookup len {}", self.point_grid.len(),);
+        trace!("lines len {}", self.lines.len());
+        trace!("tags len {:?}", self.tags.len());
 
         let mut points: Option<anyhow::Result<Vec<u8>>> = None;
         let mut point_grid: Option<anyhow::Result<Vec<u8>>> = None;
@@ -310,17 +310,17 @@ impl MapDataGraph {
         packed.lines = lines.context("Lines missing")??;
         packed.tags = tags.context("Tags missing")??;
 
-        info!("points len {}, {}", self.points.len(), packed.points.len());
-        info!(
+        trace!("points len {}, {}", self.points.len(), packed.points.len());
+        trace!(
             "point_grid len {}, {}",
             self.point_grid.len(),
             packed.point_grid.len()
         );
-        info!("lines len {} {}", self.lines.len(), packed.lines.len());
-        info!("tags len {:?} {}", self.tags.len(), packed.tags.len());
+        trace!("lines len {} {}", self.lines.len(), packed.lines.len());
+        trace!("tags len {:?} {}", self.tags.len(), packed.tags.len());
 
         let pack_end = pack_start.elapsed();
-        info!("pack took {}s", pack_end.as_secs());
+        trace!("pack took {}s", pack_end.as_secs());
 
         Ok(packed)
     }
@@ -641,7 +641,7 @@ impl MapDataGraph {
                         .context("could not deserialize points"),
                 );
                 let dur = start.elapsed();
-                info!("points {}s", dur.as_secs());
+                trace!("points {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
@@ -650,7 +650,7 @@ impl MapDataGraph {
                         .context("could not deserialize points"),
                 );
                 let dur = start.elapsed();
-                info!("point_grid {}s", dur.as_secs());
+                trace!("point_grid {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
@@ -658,7 +658,7 @@ impl MapDataGraph {
                     bincode::deserialize(&packed.lines[..]).context("could not deserialize lines"),
                 );
                 let dur = start.elapsed();
-                info!("lines {}s", dur.as_secs());
+                trace!("lines {}s", dur.as_secs());
             });
             scope.spawn(|_| {
                 let start = Instant::now();
@@ -666,11 +666,11 @@ impl MapDataGraph {
                     bincode::deserialize(&packed.tags[..]).context("could not deserialize tags"),
                 );
                 let dur = start.elapsed();
-                info!("tags {}s", dur.as_secs());
+                trace!("tags {}s", dur.as_secs());
             });
         });
         let unpack_duration = unpack_start.elapsed();
-        info!(time = ?unpack_duration, "Unpack finished");
+        trace!(time = ?unpack_duration, "Unpack finished");
 
         let points = points.context("Points missing")??;
         let point_grid = point_grid.context("Point grid missing")??;
@@ -712,6 +712,7 @@ mod tests {
     use std::{collections::HashSet, u8};
 
     use rusty_fork::rusty_fork_test;
+    use tracing::info;
 
     use crate::test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1};
 
