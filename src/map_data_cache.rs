@@ -116,8 +116,6 @@ impl MapDataCache {
             Some(cd) => cd,
         };
 
-        let read_start = Instant::now();
-
         if !std::fs::exists(cache_dir).map_err(|error| MapDataCacheError::FileError { error })? {
             return Ok(None);
         }
@@ -166,9 +164,6 @@ impl MapDataCache {
             tags: tags.ok_or(MapDataCacheError::MissingValue)??,
         };
 
-        let read_duration = read_start.elapsed();
-        info!("cache read took {} seconds", read_duration.as_secs());
-
         Ok(Some(packed_data))
     }
 
@@ -181,9 +176,7 @@ impl MapDataCache {
         let write_start = Instant::now();
 
         if let Some(cache_dir) = &self.cache_dir {
-            if std::fs::exists(cache_dir)
-                .map_err(|error| MapDataCacheError::FileError { error })?
-            {
+            if std::fs::exists(cache_dir).map_err(|error| MapDataCacheError::FileError { error })? {
                 std::fs::remove_dir_all(cache_dir)
                     .map_err(|error| MapDataCacheError::FileError { error })?;
             }
@@ -214,7 +207,7 @@ impl MapDataCache {
                 .collect::<Result<Vec<_>, MapDataCacheError>>()?;
         }
         let write_end = write_start.elapsed();
-        info!("cache write {}s", write_end.as_secs());
+        info!(write_duration_secs = write_end.as_secs(), "Cache write");
         Ok(())
     }
 

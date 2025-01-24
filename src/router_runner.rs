@@ -3,7 +3,7 @@ use std::{num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, trace};
 
 use crate::{
     debug::writer::DebugWriter,
@@ -309,7 +309,7 @@ impl RouterRunner {
                 point: "Start point".to_string(),
             })?;
 
-        info!("Start point {start}");
+        trace!("Start point {start}");
 
         let finish = MapDataGraph::get()
             .get_closest_to_coords(finish_lat, finish_lon)
@@ -317,7 +317,7 @@ impl RouterRunner {
                 point: "Finish point".to_string(),
             })?;
 
-        info!("Finish point {finish}");
+        trace!("Finish point {finish}");
 
         let round_trip = if let RoutingMode::RoundTrip {
             bearing, distance, ..
@@ -363,6 +363,9 @@ impl RouterRunner {
                 tracing::error!("Failed to write cache: {:?}", error);
             }
         }
+
+        info!("Route generation started");
+
         let route_result = RouterRunner::generate_route(routing_mode, rules);
         ResultWriter::write(
             data_destination.clone(),
@@ -415,7 +418,7 @@ impl RouterRunner {
             .map_err(|error| RouterRunnerError::CacheWrite { error })?;
 
         let startup_end = startup_start.elapsed();
-        info!("cache gen took {}s", startup_end.as_secs());
+        info!(cache_gen_secs = startup_end.as_secs(), "Cache gen");
 
         Ok(())
     }
@@ -450,7 +453,7 @@ impl RouterRunner {
         }
 
         let startup_end = startup_start.elapsed();
-        info!("startup took {}s", startup_end.as_secs());
+        info!(startup_time_secs = startup_end.as_secs(), "Startup");
 
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
@@ -498,6 +501,7 @@ impl RouterRunner {
         socket_name: Option<String>,
         rule_file: Option<PathBuf>,
     ) -> Result<()> {
+        let client_start = Instant::now();
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
@@ -506,6 +510,9 @@ impl RouterRunner {
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
+
+        let client_run = client_start.elapsed();
+        info!(client_run_secs = client_run.as_secs(), "Client done");
         Ok(())
     }
 

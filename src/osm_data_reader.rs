@@ -1,4 +1,4 @@
-use tracing::{error, info};
+use tracing::{error, trace};
 
 use crate::{
     map_data::{
@@ -157,8 +157,8 @@ impl OsmDataReader {
         for (_id, element) in elements {
             if element.is_node() {
                 let node = element.node().ok_or(OsmDataReaderError::PbfFileError {
-                        error: String::from("expected node, did not get it"),
-                    })?;
+                    error: String::from("expected node, did not get it"),
+                })?;
                 self.map_data.insert_node(OsmNode {
                     id: node.id.0 as u64,
                     lat: node.lat(),
@@ -166,8 +166,8 @@ impl OsmDataReader {
                 });
             } else if element.is_way() {
                 let way = element.way().ok_or(OsmDataReaderError::PbfFileError {
-                        error: String::from("expected way, did not get it"),
-                    })?;
+                    error: String::from("expected way, did not get it"),
+                })?;
                 self.map_data
                     .insert_way(OsmWay {
                         id: way.id.0 as u64,
@@ -182,8 +182,8 @@ impl OsmDataReader {
                     .map_err(|error| OsmDataReaderError::MapDataError { error })?;
             } else if element.is_relation() {
                 let relation = element.relation().ok_or(OsmDataReaderError::PbfFileError {
-                        error: String::from("expected relation, did not get it"),
-                    })?;
+                    error: String::from("expected relation, did not get it"),
+                })?;
                 self.map_data
                     .insert_relation(OsmRelation {
                         id: relation.id.0 as u64,
@@ -228,7 +228,7 @@ impl OsmDataReader {
         self.map_data.generate_point_hashes();
 
         let read_duration = read_start.elapsed();
-        info!("file read took {} seconds", read_duration.as_secs());
+        trace!("file read took {} seconds", read_duration.as_secs());
 
         Ok(())
     }
@@ -257,7 +257,10 @@ impl OsmDataReader {
         self.map_data.generate_point_hashes();
 
         let read_duration = read_start.elapsed();
-        info!("file read took {} seconds", read_duration.as_secs());
+        trace!(
+            read_duration_secs = read_duration.as_secs(),
+            "File read done"
+        );
 
         Ok(())
     }
