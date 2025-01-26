@@ -125,7 +125,7 @@ pub fn weight_no_loops(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_no_loops");
     if input
         .route
-        .has_looped(input.itinerary.switched_wps_on.last().map(|v| &v.on_point))
+        .has_looped(input.itinerary.get_point_loop_check_since())
     {
         return WeightCalcResult::DoNotUse;
     }

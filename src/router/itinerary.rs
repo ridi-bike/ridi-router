@@ -15,8 +15,8 @@ pub struct Itinerary {
     pub waypoints: Vec<MapDataPointRef>,
     pub next: MapDataPointRef,
     pub waypoint_radius: f32,
-    pub visit_all_waypoints: bool,
     pub switched_wps_on: Vec<WaypointHistoryElement>,
+    pub check_loop_since_last_wp: bool,
 }
 
 impl Display for Itinerary {
@@ -48,8 +48,8 @@ impl Itinerary {
             next: waypoints.first().map_or(finish.clone(), |w| w.clone()),
             waypoints,
             finish,
-            visit_all_waypoints: false,
             switched_wps_on: Vec::new(),
+            check_loop_since_last_wp: false,
         }
     }
     pub fn new_round_trip(
@@ -64,8 +64,8 @@ impl Itinerary {
             next: waypoints.first().map_or(finish.clone(), |w| w.clone()),
             waypoints,
             finish,
-            visit_all_waypoints: true,
             switched_wps_on: Vec::new(),
+            check_loop_since_last_wp: true,
         }
     }
 
@@ -80,6 +80,13 @@ impl Itinerary {
                 .join("-"),
             self.finish.borrow().id
         )
+    }
+
+    pub fn get_point_loop_check_since(&self) -> Option<&MapDataPointRef> {
+        if self.check_loop_since_last_wp {
+            return self.switched_wps_on.last().map(|v| &v.on_point);
+        }
+        Some(&self.start)
     }
 
     pub fn is_finished(&self, current: MapDataPointRef) -> bool {
