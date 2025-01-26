@@ -80,7 +80,6 @@ pub struct DebugStreamItineraries {
     pub waypoints_count: i64,
     #[typeshare(serialized_as = "number")]
     pub radius: i64,
-    pub visit_all: bool,
     pub start_lat: f32,
     pub start_lon: f32,
     pub finish_lat: f32,
@@ -343,7 +342,6 @@ impl DebugWriter {
                         itinerary_id: itinerary.id(),
                         waypoints_count: itinerary.waypoints.len() as i64,
                         radius: itinerary.waypoint_radius as i64,
-                        visit_all: itinerary.visit_all_waypoints,
                         start_lat: itinerary.start.borrow().lat,
                         start_lon: itinerary.start.borrow().lon,
                         finish_lat: itinerary.finish.borrow().lat,
