@@ -57,7 +57,7 @@ jobs:
         git push origin main
 
     - name: Upload Release Notes
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: RELEASE_NOTES
         path: RELEASE_NOTES.md
@@ -134,7 +134,7 @@ jobs:
           zip "ridi-router-debug-viewer-linux-amd64.zip" "ridi-router-debug-viewer-linux-amd64"
 
       - name: Upload debug-viewer binary
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: binary-debug-viewer-linux-amd64
           path: dist/*.zip
@@ -216,7 +216,7 @@ jobs:
           fi
 
       - name: Upload binary
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.name }}
           path: dist/*.zip
@@ -235,7 +235,7 @@ jobs:
           private_key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
