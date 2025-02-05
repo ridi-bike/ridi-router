@@ -62,7 +62,6 @@ const Itineraries = () => {
             th({ class: thClass() }, "id"),
             th({ class: thClass() }, "wps"),
             th({ class: thClass() }, "radius"),
-            th({ class: thClass() }, "visit_all"),
             th({ class: thClass() }, "start"),
             th({ class: thClass() }, "finish"),
           ]),
@@ -101,7 +100,6 @@ const Itineraries = () => {
                 ),
                 td({ class: tdClass() }, it.waypoints_count),
                 td({ class: tdClass() }, it.radius),
-                td({ class: tdClass() }, it.visit_all),
                 td({ class: tdClass() }, `${it.start_lat},${it.start_lon}`),
                 td({ class: tdClass() }, `${it.finish_lat},${it.finish_lon}`),
               ],
@@ -120,7 +118,7 @@ const ItineraryWaypoints = () => {
     () =>
       !!selection.val.itinerary &&
       selection.val.itinerary.itinerary_id !=
-        selection.oldVal.itinerary?.itinerary_id &&
+      selection.oldVal.itinerary?.itinerary_id &&
       fetch(
         `http://0.0.0.0:1337/data/DebugStreamItineraryWaypoints?itinerary_id=${selection.val.itinerary.itinerary_id}&limit=${pageSize}&offset=${page.val * pageSize}`,
       )
@@ -132,7 +130,7 @@ const ItineraryWaypoints = () => {
   van.derive(() => {
     if (
       selection.val.itinerary?.itinerary_id ===
-        selection.oldVal.itinerary?.itinerary_id &&
+      selection.oldVal.itinerary?.itinerary_id &&
       itineraryWaypoints.val == itineraryWaypoints.oldVal
     ) {
       return;
@@ -320,24 +318,24 @@ const Steps = () => {
             () =>
               selection.val.step?.step_num === step.step_num
                 ? tr(
-                    { class: trClass() },
-                    td({ class: tdClass() }, "Choices:"),
-                    td(
-                      { class: tdClass() },
-                      ForkChoices(step.itinerary_id, step.step_num),
-                    ),
-                  )
+                  { class: trClass() },
+                  td({ class: tdClass() }, "Choices:"),
+                  td(
+                    { class: tdClass() },
+                    ForkChoices(step.itinerary_id, step.step_num),
+                  ),
+                )
                 : tr(),
             () =>
               selection.val.step?.step_num === step.step_num
                 ? tr(
-                    { class: trClass() },
-                    td({ class: tdClass() }, "Step Result:"),
-                    td(
-                      { class: tdClass() },
-                      StepResult(step.itinerary_id, step.step_num),
-                    ),
-                  )
+                  { class: trClass() },
+                  td({ class: tdClass() }, "Step Result:"),
+                  td(
+                    { class: tdClass() },
+                    StepResult(step.itinerary_id, step.step_num),
+                  ),
+                )
                 : tr(),
           ]),
         ),
@@ -469,9 +467,9 @@ const ForkChoices = (itineraryId: string, stepNum: number) => {
           () =>
             selection.val.forkChoice?.end_point_id === forkCh.end_point_id
               ? tr(
-                  { class: tdClass() },
-                  ForkChoiceWeights(itineraryId, stepNum, forkCh.end_point_id),
-                )
+                { class: tdClass() },
+                ForkChoiceWeights(itineraryId, stepNum, forkCh.end_point_id),
+              )
               : tr(),
         ]),
       ),

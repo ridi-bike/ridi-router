@@ -3,55 +3,54 @@
 */
 
 export interface DebugStreamForkChoiceWeights {
-	itinerary_id: string;
-	step_num: number;
-	end_point_id: number;
-	weight_name: string;
-	weight_type: string;
-	weight_value: number;
+  itinerary_id: string;
+  step_num: number;
+  end_point_id: number;
+  weight_name: string;
+  weight_type: string;
+  weight_value: number;
 }
 
 export interface DebugStreamForkChoices {
-	itinerary_id: string;
-	step_num: number;
-	end_point_id: number;
-	line_point_0_lat: number;
-	line_point_0_lon: number;
-	line_point_1_lat: number;
-	line_point_1_lon: number;
-	segment_end_point: number;
-	discarded: boolean;
+  itinerary_id: string;
+  step_num: number;
+  end_point_id: number;
+  line_point_0_lat: number;
+  line_point_0_lon: number;
+  line_point_1_lat: number;
+  line_point_1_lon: number;
+  segment_end_point: number;
+  discarded: boolean;
 }
 
 export interface DebugStreamItineraries {
-	itinerary_id: string;
-	waypoints_count: number;
-	radius: number;
-	visit_all: boolean;
-	start_lat: number;
-	start_lon: number;
-	finish_lat: number;
-	finish_lon: number;
+  itinerary_id: string;
+  waypoints_count: number;
+  radius: number;
+  start_lat: number;
+  start_lon: number;
+  finish_lat: number;
+  finish_lon: number;
 }
 
 export interface DebugStreamItineraryWaypoints {
-	itinerary_id: string;
-	idx: number;
-	lat: number;
-	lon: number;
+  itinerary_id: string;
+  idx: number;
+  lat: number;
+  lon: number;
 }
 
 export interface DebugStreamStepResults {
-	itinerary_id: string;
-	step_num: number;
-	result: string;
-	chosen_fork_point_id: number;
+  itinerary_id: string;
+  step_num: number;
+  result: string;
+  chosen_fork_point_id: number;
 }
 
 export interface DebugStreamSteps {
-	itinerary_id: string;
-	step_num: number;
-	move_result: string;
-	route: string;
+  itinerary_id: string;
+  step_num: number;
+  move_result: string;
+  route: string;
 }
 
