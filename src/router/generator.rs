@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Sub};
 
 use crate::{
     debug::writer::DebugWriter,
@@ -53,10 +53,15 @@ impl Generator {
         }
     }
 
-    fn create_waypoints_around(&self, point: &MapDataPointRef) -> Vec<MapDataPointRef> {
+    fn create_waypoints_around(
+        &self,
+        point: &MapDataPointRef,
+        bearing: &f32,
+    ) -> Vec<MapDataPointRef> {
         let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
         START_FINISH_VARIATION_DEGREES
             .iter()
+            .filter(|deg| deg.sub(bearing).abs() > 20.)
             .flat_map(|bearing| {
                 START_FINISH_VARIATION_DISTANCES
                     .iter()
@@ -146,8 +151,10 @@ impl Generator {
                 })
                 .collect();
         }
-        let from_waypoints = self.create_waypoints_around(&self.start);
-        let to_waypoints = self.create_waypoints_around(&self.finish);
+        let from_waypoints =
+            self.create_waypoints_around(&self.start, &self.finish.borrow().bearing(&self.start));
+        let to_waypoints =
+            self.create_waypoints_around(&self.finish, &self.start.borrow().bearing(&self.finish));
         let mut itineraries = vec![Itinerary::new_start_finish(
             self.start.clone(),
             self.finish.clone(),

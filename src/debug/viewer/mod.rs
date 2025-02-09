@@ -565,10 +565,10 @@ impl DebugViewer {
                         itinerary_id: row.get(0)?,
                         waypoints_count: row.get(1)?,
                         radius: row.get(2)?,
-                        start_lat: row.get(4)?,
-                        start_lon: row.get(5)?,
-                        finish_lat: row.get(6)?,
-                        finish_lon: row.get(7)?,
+                        start_lat: row.get(3)?,
+                        start_lon: row.get(4)?,
+                        finish_lat: row.get(5)?,
+                        finish_lon: row.get(6)?,
                     })
                 },
             )?)

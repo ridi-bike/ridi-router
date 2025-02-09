@@ -188,6 +188,7 @@ impl<'a> IpcHandler<'a> {
         &self,
         routing_mode: &RoutingMode,
         rules: RouterRules,
+        route_req_id: Option<String>,
     ) -> Result<ResponseMessage, IpcHandlerError> {
         let conn = Stream::connect(self.socket_name.clone())
             .map_err(|error| IpcHandlerError::Connect { error })?;
@@ -195,7 +196,7 @@ impl<'a> IpcHandler<'a> {
         let mut conn = BufReader::new(conn);
 
         let req_msg = RequestMessage {
-            id: "ooo".to_string(),
+            id: route_req_id.map_or(String::from("default-request-id"), |v| v.to_string()),
             routing_mode: routing_mode.clone(),
             rules,
         };

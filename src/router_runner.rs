@@ -257,6 +257,10 @@ enum CliMode {
         /// JSON file with specified rules for route generation. Default values used if file not
         /// specified
         rule_file: Option<PathBuf>,
+
+        #[arg(long, value_name = "IDENTIFIER")]
+        /// Route request id to track individual requests in flight
+        route_req_id: Option<String>,
     },
     /// Create an input data cache
     PrepCache {
@@ -500,13 +504,14 @@ impl RouterRunner {
         data_destination: &DataDestination,
         socket_name: Option<String>,
         rule_file: Option<PathBuf>,
+        route_req_id: Option<String>,
     ) -> Result<()> {
         let client_start = Instant::now();
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
-            .connect(routing_mode, rules)
+            .connect(routing_mode, rules, route_req_id)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
@@ -549,11 +554,13 @@ impl RouterRunner {
                 output,
                 socket_name,
                 rule_file,
+                route_req_id,
             } => RouterRunner::run_client(
                 routing_mode,
                 output,
                 socket_name.clone(),
                 rule_file.clone(),
+                route_req_id.clone(),
             ),
             #[cfg(feature = "debug-viewer")]
             CliMode::DebugViewer { debug_dir } => {
