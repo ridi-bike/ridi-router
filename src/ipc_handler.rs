@@ -1,4 +1,3 @@
-use bincode::ErrorKind;
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Name, Stream};
 use serde::{Deserialize, Serialize};
 use std::io::{self, prelude::*, BufReader};
@@ -32,11 +31,14 @@ pub enum IpcHandlerError {
     #[error("Failed to connect to IPC socket: {error}")]
     Connect { error: io::Error },
 
+    #[error("Failed to extract utf8 from message: {error}")]
+    Utf8Message { error: std::str::Utf8Error },
+
     #[error("Failed to deserialize message: {error}")]
-    DeserializeMessage { error: Box<ErrorKind> },
+    DeserializeMessage { error: serde_json::Error },
 
     #[error("Failed to serialize message: {error}")]
-    SerializeMessage { error: Box<ErrorKind> },
+    SerializeMessage { error: serde_json::Error },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -151,7 +153,10 @@ impl<'a> IpcHandler<'a> {
         conn.read_exact(&mut buffer[..])
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
-        let request_message: RequestMessage = bincode::deserialize(&buffer[..])
+        let string_message =
+            std::str::from_utf8(&buffer).map_err(|error| IpcHandlerError::Utf8Message { error })?;
+
+        let request_message: RequestMessage = serde_json::from_str(&string_message)
             .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
 
         Ok(request_message)
@@ -162,8 +167,10 @@ impl<'a> IpcHandler<'a> {
     ) -> Result<(), IpcHandlerError> {
         let mut conn = BufReader::new(conn);
 
-        let buffer = bincode::serialize(response_message)
+        let string_message = serde_json::to_string(response_message)
             .map_err(|error| IpcHandlerError::SerializeMessage { error })?;
+
+        let buffer = string_message.as_bytes();
 
         let mes_len_bytes: u64 = buffer.len() as u64;
         conn.get_mut()
@@ -171,7 +178,7 @@ impl<'a> IpcHandler<'a> {
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
 
         conn.get_mut()
-            .write_all(&buffer[..])
+            .write_all(buffer)
             .map_err(|error| IpcHandlerError::WriteLine { error })?;
 
         Ok(())
@@ -192,8 +199,10 @@ impl<'a> IpcHandler<'a> {
             routing_mode: routing_mode.clone(),
             rules,
         };
-        let req_buf = bincode::serialize(&req_msg)
+        let string_req = serde_json::to_string(&req_msg)
             .map_err(|error| IpcHandlerError::SerializeMessage { error })?;
+
+        let req_buf = string_req.as_bytes();
 
         let mes_len_bytes: u64 = req_buf.len() as u64;
         conn.get_mut()
@@ -201,7 +210,7 @@ impl<'a> IpcHandler<'a> {
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
 
         conn.get_mut()
-            .write_all(&req_buf[..])
+            .write_all(req_buf)
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
 
         let mut mes_len_buf = [0u8; 8];
@@ -212,7 +221,10 @@ impl<'a> IpcHandler<'a> {
         conn.read_exact(&mut resp_buf[..])
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
-        let resp_msg: ResponseMessage = bincode::deserialize(&resp_buf[..])
+        let string_resp = std::str::from_utf8(&resp_buf)
+            .map_err(|error| IpcHandlerError::Utf8Message { error })?;
+
+        let resp_msg: ResponseMessage = serde_json::from_str(string_resp)
             .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
 
         Ok(resp_msg)
