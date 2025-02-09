@@ -118,6 +118,15 @@ impl Itinerary {
                 self.next = self.finish.clone();
             }
             return true;
+        } else if self.next != self.finish
+            && current.borrow().distance_between(&self.finish) <= self.waypoint_radius
+        {
+            self.switched_wps_on.push(WaypointHistoryElement {
+                on_point: current.clone(),
+                from_point: self.next.clone(),
+            });
+            self.next = self.finish.clone();
+            return true;
         }
         false
     }
