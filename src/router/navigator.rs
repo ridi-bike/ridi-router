@@ -18,8 +18,9 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WeightCalcResult {
-    UseWithWeight(u8),
-    DoNotUse,
+    ForkChoiceUseWithWeight(u8),
+    ForkChoiceDoNotUse,
+    LastSegmentDoNotUse,
 }
 
 #[derive(Debug)]
@@ -86,12 +87,14 @@ impl DiscardedForkChoices {
 
 #[derive(Clone)]
 pub struct ForkWeights {
+    pub discard_fork: bool,
     weight_list: HashMap<MapDataPointRef, u32>,
 }
 
 impl ForkWeights {
     pub fn new() -> Self {
         Self {
+            discard_fork: false,
             weight_list: HashMap::new(),
         }
     }
@@ -102,7 +105,14 @@ impl ForkWeights {
     ) {
         if weights
             .iter()
-            .all(|weight| *weight != WeightCalcResult::DoNotUse)
+            .any(|weight| *weight == WeightCalcResult::LastSegmentDoNotUse)
+        {
+            self.discard_fork = true;
+            return;
+        }
+        if weights
+            .iter()
+            .all(|weight| *weight != WeightCalcResult::ForkChoiceDoNotUse)
         {
             let existing_weight = match self.weight_list.get(choice_point_ref) {
                 None => 0u32,
@@ -114,8 +124,9 @@ impl ForkWeights {
                     + weights
                         .iter()
                         .map(|r| match r {
-                            WeightCalcResult::DoNotUse => 0u32,
-                            WeightCalcResult::UseWithWeight(w) => *w as u32,
+                            WeightCalcResult::ForkChoiceDoNotUse => 0u32,
+                            WeightCalcResult::LastSegmentDoNotUse => 0u32,
+                            WeightCalcResult::ForkChoiceUseWithWeight(w) => *w as u32,
                         })
                         .sum::<u32>(),
             );
@@ -129,6 +140,9 @@ impl ForkWeights {
     }
 
     pub fn get_choice_id_by_index_from_heaviest(&self, idx: usize) -> Option<MapDataPointRef> {
+        if self.discard_fork {
+            return None;
+        }
         let vec = self.get_choices_sorted_by_weight();
         vec.get(idx).map(|w| w.0).cloned()
     }
@@ -224,34 +238,36 @@ impl Navigator {
                 let fork_weights = fork_choices.clone().into_iter().fold(
                     ForkWeights::new(),
                     |mut fork_weights, fork_route_segment| {
-                        let fork_weight_calc_results = self
-                            .weight_calcs
-                            .iter()
-                            .map(|weight_calc| {
-                                let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
-                                    route: self.walker.get_route(),
-                                    itinerary: &self.itinerary,
-                                    current_fork_segment: &fork_route_segment,
-                                    walker_from_fork: Walker::new(
-                                        fork_route_segment.get_end_point().clone(),
-                                    ),
-                                    rules: &self.rules,
-                                });
-                                DebugWriter::write_fork_choice_weight(
-                                    self.itinerary.id(),
-                                    loop_counter,
-                                    &fork_route_segment.get_end_point().borrow().id,
-                                    &weight_calc.name,
-                                    &weight_calc_result,
-                                );
-                                weight_calc_result
-                            })
-                            .collect::<Vec<_>>();
+                        if !fork_weights.discard_fork {
+                            let fork_weight_calc_results = self
+                                .weight_calcs
+                                .iter()
+                                .map(|weight_calc| {
+                                    let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
+                                        route: self.walker.get_route(),
+                                        itinerary: &self.itinerary,
+                                        current_fork_segment: &fork_route_segment,
+                                        walker_from_fork: Walker::new(
+                                            fork_route_segment.get_end_point().clone(),
+                                        ),
+                                        rules: &self.rules,
+                                    });
+                                    DebugWriter::write_fork_choice_weight(
+                                        self.itinerary.id(),
+                                        loop_counter,
+                                        &fork_route_segment.get_end_point().borrow().id,
+                                        &weight_calc.name,
+                                        &weight_calc_result,
+                                    );
+                                    weight_calc_result
+                                })
+                                .collect::<Vec<_>>();
 
-                        fork_weights.add_calc_result(
-                            fork_route_segment.get_end_point(),
-                            &fork_weight_calc_results,
-                        );
+                            fork_weights.add_calc_result(
+                                fork_route_segment.get_end_point(),
+                                &fork_weight_calc_results,
+                            );
+                        }
 
                         fork_weights
                     },
@@ -349,9 +365,9 @@ mod test {
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 6
                 {
-                    return WeightCalcResult::UseWithWeight(10);
+                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
-                WeightCalcResult::UseWithWeight(1)
+                WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -382,9 +398,9 @@ mod test {
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 4
                 {
-                    return WeightCalcResult::UseWithWeight(10);
+                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
-                WeightCalcResult::UseWithWeight(1)
+                WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
             let navigator = Navigator::new(
                 itinerary,
@@ -416,18 +432,18 @@ mod test {
 
                 if prev_point.borrow().id == 3 {
                     if input.current_fork_segment.get_end_point().borrow().id == 5 {
-                        return WeightCalcResult::UseWithWeight(10);
+                        return WeightCalcResult::ForkChoiceUseWithWeight(10);
                     }
                     if input.current_fork_segment.get_end_point().borrow().id == 6 {
-                        return WeightCalcResult::UseWithWeight(5);
+                        return WeightCalcResult::ForkChoiceUseWithWeight(5);
                     }
                 }
                 if prev_point.borrow().id == 6
                     && input.current_fork_segment.get_end_point().borrow().id == 7
                 {
-                    return WeightCalcResult::UseWithWeight(10);
+                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
-                WeightCalcResult::UseWithWeight(1)
+                WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -456,7 +472,7 @@ mod test {
         #[test]
         fn navigate_all_stuck_return_no_routes() {
             fn weight(_input: WeightCalcInput) -> WeightCalcResult {
-                WeightCalcResult::UseWithWeight(1)
+                WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -481,9 +497,9 @@ mod test {
         fn navigate_no_routes_with_do_not_use_weight() {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
                 if input.current_fork_segment.get_end_point().borrow().id == 7 {
-                    return WeightCalcResult::DoNotUse;
+                    return WeightCalcResult::ForkChoiceDoNotUse;
                 }
-                WeightCalcResult::UseWithWeight(1)
+                WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -513,9 +529,9 @@ mod test {
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 6
                 {
-                    return WeightCalcResult::UseWithWeight(10);
+                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
-                WeightCalcResult::UseWithWeight(6)
+                WeightCalcResult::ForkChoiceUseWithWeight(6)
             }
             fn weight2(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
@@ -526,9 +542,9 @@ mod test {
                 if prev_point.borrow().id == 3
                     && input.current_fork_segment.get_end_point().borrow().id == 6
                 {
-                    return WeightCalcResult::UseWithWeight(1);
+                    return WeightCalcResult::ForkChoiceUseWithWeight(1);
                 }
-                WeightCalcResult::UseWithWeight(6)
+                WeightCalcResult::ForkChoiceUseWithWeight(6)
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();

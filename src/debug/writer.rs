@@ -245,8 +245,9 @@ impl DebugWriter {
         weight_result: &WeightCalcResult,
     ) {
         let (weight_type, weight_value) = match weight_result {
-            WeightCalcResult::DoNotUse => ("DoNotUse", &0),
-            WeightCalcResult::UseWithWeight(v) => ("UseWithWeight", v),
+            WeightCalcResult::LastSegmentDoNotUse => ("LastSegmentDoNotUse", &0),
+            WeightCalcResult::ForkChoiceDoNotUse => ("ForkChoiceDoNotUse", &0),
+            WeightCalcResult::ForkChoiceUseWithWeight(v) => ("ForkChoiceUseWithWeight", v),
         };
         DebugWriter::exec(DebugStreamForkChoiceWeights::name(), |writer| {
             writer
