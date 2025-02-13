@@ -17,6 +17,7 @@ pub struct Itinerary {
     pub waypoint_radius: f32,
     pub switched_wps_on: Vec<WaypointHistoryElement>,
     pub check_loop_since_last_wp: bool,
+    pub visit_all_wps: bool,
 }
 
 impl Display for Itinerary {
@@ -50,6 +51,7 @@ impl Itinerary {
             finish,
             switched_wps_on: Vec::new(),
             check_loop_since_last_wp: false,
+            visit_all_wps: false,
         }
     }
     pub fn new_round_trip(
@@ -66,6 +68,7 @@ impl Itinerary {
             finish,
             switched_wps_on: Vec::new(),
             check_loop_since_last_wp: true,
+            visit_all_wps: true,
         }
     }
 
@@ -118,7 +121,8 @@ impl Itinerary {
                 self.next = self.finish.clone();
             }
             return true;
-        } else if self.next != self.finish
+        } else if !self.visit_all_wps
+            && self.next != self.finish
             && current.borrow().distance_between(&self.finish) <= self.waypoint_radius
         {
             self.switched_wps_on.push(WaypointHistoryElement {
