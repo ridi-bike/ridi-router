@@ -1,6 +1,9 @@
 use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions, Name, Stream};
 use serde::{Deserialize, Serialize};
-use std::io::{self, prelude::*, BufReader};
+use std::{
+    io::{self, prelude::*, BufReader},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tracing::{info, trace, warn};
 
 use crate::{
@@ -138,6 +141,12 @@ impl<'a> IpcHandler<'a> {
     }
 
     fn process_request(conn: &Stream) -> Result<RequestMessage, IpcHandlerError> {
+        let start = SystemTime::now();
+        let req_timestamp = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+
         let mut conn = BufReader::new(conn);
 
         let mut mes_len_buf = [0u8; 8];
@@ -145,6 +154,7 @@ impl<'a> IpcHandler<'a> {
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
         info!(
+            req_timestamp = req_timestamp,
             message_size = u64::from_ne_bytes(mes_len_buf),
             "Infomcing message"
         );
@@ -159,6 +169,12 @@ impl<'a> IpcHandler<'a> {
         let request_message: RequestMessage = serde_json::from_str(&string_message)
             .map_err(|error| IpcHandlerError::DeserializeMessage { error })?;
 
+        info!(
+            req_timestamp = req_timestamp,
+            req_id = request_message.id,
+            "Infomcing message received"
+        );
+
         Ok(request_message)
     }
     fn process_response(
@@ -172,14 +188,32 @@ impl<'a> IpcHandler<'a> {
 
         let buffer = string_message.as_bytes();
 
+        info!(
+            req_id = response_message.id,
+            message_size = buffer.len(),
+            "Outgoing message"
+        );
+
         let mes_len_bytes: u64 = buffer.len() as u64;
         conn.get_mut()
             .write_all(&mes_len_bytes.to_ne_bytes()[..])
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
 
+        info!(
+            req_id = response_message.id,
+            message_size = buffer.len(),
+            "Outgoing message size sent"
+        );
+
         conn.get_mut()
             .write_all(buffer)
             .map_err(|error| IpcHandlerError::WriteLine { error })?;
+
+        info!(
+            req_id = response_message.id,
+            message_size = buffer.len(),
+            "Outgoing message sent"
+        );
 
         Ok(())
     }
@@ -205,22 +239,52 @@ impl<'a> IpcHandler<'a> {
 
         let req_buf = string_req.as_bytes();
 
+        info!(
+            req_id = req_msg.id,
+            message_size = req_buf.len(),
+            "Request message"
+        );
+
         let mes_len_bytes: u64 = req_buf.len() as u64;
         conn.get_mut()
             .write_all(&mes_len_bytes.to_ne_bytes()[..])
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
 
+        info!(
+            req_id = req_msg.id,
+            message_size = req_buf.len(),
+            "Request message size sent"
+        );
+
         conn.get_mut()
             .write_all(req_buf)
             .map_err(|error| IpcHandlerError::WriteAll { error })?;
+
+        info!(
+            req_id = req_msg.id,
+            message_size = req_buf.len(),
+            "Request message sent"
+        );
 
         let mut mes_len_buf = [0u8; 8];
         conn.read_exact(&mut mes_len_buf)
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
 
+        info!(
+            req_id = req_msg.id,
+            message_size = u64::from_ne_bytes(mes_len_buf),
+            "Response message incoming"
+        );
+
         let mut resp_buf = vec![0; u64::from_ne_bytes(mes_len_buf) as usize];
         conn.read_exact(&mut resp_buf[..])
             .map_err(|error| IpcHandlerError::ReadLine { error })?;
+
+        info!(
+            req_id = req_msg.id,
+            message_size = u64::from_ne_bytes(mes_len_buf),
+            "Response message received"
+        );
 
         let string_resp = std::str::from_utf8(&resp_buf)
             .map_err(|error| IpcHandlerError::Utf8Message { error })?;
