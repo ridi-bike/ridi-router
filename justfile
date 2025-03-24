@@ -88,6 +88,17 @@ run-lv-round-debug:
 
 run-lv-round:
 	cargo run -- generate-route --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json round-trip --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
+
+run-lv-server:
+  # ./target/release/ridi-router start-server --input ./map-data/latvia-latest-apps.osm.pbf --cache-dir ./map-data/cache/latvia --socket-name lv 2> server.log
+  cargo run -- start-server --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia --socket-name lv
+
+run-lv-client:
+  echo '{"highway":{"motorway":{"action":"priority","value":0},"trunk":{"action":"priority","value":0},"primary":{"action":"priority","value":255},"secondary":{"action":"priority","value":255},"tertiary":{"action":"priority","value":255},"unclassified":{"action":"priority","value":255},"track":{"action":"avoid"},"path":{"action":"priority","value":255},"residential":{"action":"priority","value":0},"living_street":{"action":"priority","value":0}},"surface":{"paved":{"action":"priority","value":255},"asphalt":{"action":"priority","value":255},"chipseal":{"action":"priority","value":255},"concrete":{"action":"priority","value":255},"concrete:lanes":{"action":"priority","value":255},"concrete:plates":{"action":"priority","value":255},"paving_stones":{"action":"priority","value":255},"paving_stones:lanes":{"action":"priority","value":255},"grass_paver":{"action":"priority","value":255},"sett":{"action":"priority","value":255},"unhewn_cobblestone":{"action":"priority","value":255},"cobblestone":{"action":"priority","value":255},"bricks":{"action":"priority","value":255},"unpaved":{"action":"priority","value":255},"compacted":{"action":"priority","value":255},"fine_gravel":{"action":"priority","value":255},"gravel":{"action":"priority","value":255},"shells":{"action":"priority","value":255},"rock":{"action":"priority","value":255},"pebblestone":{"action":"priority","value":255},"ground":{"action":"priority","value":255},"dirt":{"action":"priority","value":255},"earth":{"action":"priority","value":255},"grass":{"action":"priority","value":255},"mud":{"action":"priority","value":255},"sand":{"action":"priority","value":255},"woodchips":{"action":"priority","value":255},"snow":{"action":"priority","value":255},"ice":{"action":"priority","value":255},"salt":{"action":"priority","value":255},"metal":{"action":"priority","value":255},"metal_grid":{"action":"priority","value":255},"wood":{"action":"priority","value":255},"stepping_stones":{"action":"priority","value":255},"rubber":{"action":"priority","value":255},"tiles":{"action":"priority","value":255}},"smoothness":{"excellent":{"action":"priority","value":255},"good":{"action":"priority","value":255},"intermediate":{"action":"priority","value":255},"bad":{"action":"priority","value":255},"very_bad":{"action":"priority","value":255},"horrible":{"action":"priority","value":255},"very_horrible":{"action":"priority","value":255},"impassable":{"action":"priority","value":255}}}' | cargo run -- start-client --socket-name lv --route-req-id 2uksfxTDrJs0LF1bhcMAcDHOkgg start-finish --start 57.170998,24.86442 --finish 56.64119,24.48387 2> client.log
+
+run-lv-gen:
+  cargo run -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest-apps.osm.pbf --cache-dir ./map-data/cache/latvia --rule-file ./rules.json start-finish --start 57.170998,24.86442 --finish 56.64119,24.48387
+
 cache-lv:
 	cargo run -- prep-cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia
 
@@ -95,4 +106,4 @@ cache-spain:
 	cargo run -- prep-cache --input ./map-data/spain-latest.osm.pbf --cache-dir ./map-data/cache/spain
 
 debug-viewer:
-	cargo run -- debug-viewer --debug-dir ./map-data/debug
+	cargo run --features debug-viewer -- debug-viewer --debug-dir ./map-data/debug
