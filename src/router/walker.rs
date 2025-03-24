@@ -299,8 +299,14 @@ impl Walker {
                 Some(segment) => segment,
             };
 
-            self.move_to_roundabout_exit(next_segment.get_end_point());
+            if self
+                .get_route()
+                .has_looped(Some(next_segment.get_end_point()))
+            {
+                return Ok(WalkerMoveResult::DeadEnd);
+            }
 
+            self.move_to_roundabout_exit(next_segment.get_end_point(), is_test);
             self.route_walked.add_segment(next_segment.clone());
         }
     }
