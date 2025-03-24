@@ -306,7 +306,7 @@ impl Walker {
                 return Ok(WalkerMoveResult::DeadEnd);
             }
 
-            self.move_to_roundabout_exit(next_segment.get_end_point(), is_test);
+            self.move_to_roundabout_exit(next_segment.get_end_point());
             self.route_walked.add_segment(next_segment.clone());
         }
     }
