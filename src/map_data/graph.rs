@@ -1,6 +1,6 @@
 use std::{
     cmp::{Eq, Ordering},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
@@ -19,6 +19,7 @@ use crate::{
         rule::MapDataRule,
     },
     osm_data_reader::{DataSource, OsmDataReader, ALLOWED_HIGHWAY_VALUES},
+    router::rules::{RouterRules, RulesTagValueAction},
 };
 
 use super::{
@@ -595,15 +596,84 @@ impl MapDataGraph {
             .collect()
     }
 
-    pub fn get_closest_to_coords(&self, lat: f32, lon: f32) -> Option<MapDataPointRef> {
+    fn get_avoid_rules(rules: &RouterRules) -> HashSet<String> {
+        let mut avoid_tags = HashSet::new();
+
+        if let Some(ref hw) = rules.highway {
+            hw.iter().for_each(|(tag_value, tag_action)| {
+                if tag_action == &RulesTagValueAction::Avoid {
+                    avoid_tags.insert(format!("highway:{tag_value}"));
+                }
+            });
+        }
+        if let Some(ref surface) = rules.surface {
+            surface.iter().for_each(|(tag_value, tag_action)| {
+                if tag_action == &RulesTagValueAction::Avoid {
+                    avoid_tags.insert(format!("surface:{tag_value}"));
+                }
+            });
+        }
+        if let Some(ref smoothness) = rules.smoothness {
+            smoothness.iter().for_each(|(tag_value, tag_action)| {
+                if tag_action == &RulesTagValueAction::Avoid {
+                    avoid_tags.insert(format!("smoothness:{tag_value}"));
+                }
+            });
+        }
+
+        avoid_tags
+    }
+
+    pub fn get_closest_to_coords(
+        &self,
+        lat: f32,
+        lon: f32,
+        rules: &RouterRules,
+    ) -> Option<MapDataPointRef> {
         let closest_points = self.point_grid.find_closest_point_refs(lat, lon);
         let closest_points = match closest_points {
             Some(p) => p,
             None => return None,
         };
 
+        let avoid_tags = Self::get_avoid_rules(rules);
+
         let mut distances = closest_points
             .iter()
+            .filter(|p| {
+                let lines = p
+                    .borrow()
+                    .lines
+                    .iter()
+                    .map(|line| line.borrow())
+                    .collect::<Vec<_>>();
+                let mut hws = lines.iter().filter_map(|line| {
+                    line.tags
+                        .borrow()
+                        .highway()
+                        .map(|hw| format!("highway:{hw}"))
+                });
+                let mut surfaces = lines.iter().filter_map(|line| {
+                    line.tags
+                        .borrow()
+                        .surface()
+                        .map(|surface| format!("surface:{surface}"))
+                });
+                let mut smoothnesses = lines.iter().filter_map(|line| {
+                    line.tags
+                        .borrow()
+                        .smoothness()
+                        .map(|sm| format!("smoothness:{sm}"))
+                });
+
+                if hws.any(|tag| avoid_tags.contains(&tag))
+                    || surfaces.any(|tag| avoid_tags.contains(&tag))
+                    || smoothnesses.any(|tag| avoid_tags.contains(&tag))
+                {
+                    return false;
+                }
+                true
+            })
             .map(|p| {
                 let point = &self.points[p.idx];
                 let geo_point = Point::new(point.lon, point.lat);
@@ -611,6 +681,7 @@ impl MapDataGraph {
                 (p, Haversine::distance(geo_point, geo_lookup_point))
             })
             .collect::<Vec<(&MapDataPointRef, f32)>>();
+
         distances.sort_by(|el1, el2| {
             if el1.1 > el2.1 {
                 Ordering::Greater
@@ -714,7 +785,10 @@ mod tests {
     use rusty_fork::rusty_fork_test;
     use tracing::info;
 
-    use crate::test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1};
+    use crate::{
+        router::rules::BasicRules,
+        test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1},
+    };
 
     use super::*;
 
@@ -1178,117 +1252,16 @@ mod tests {
         }
     }
 
-    type ClosestTest = ([Option<OsmNode>; 4], OsmNode, u64);
+    type ClosestTest = (Vec<OsmNode>, Vec<OsmWay>, Option<RouterRules>, OsmNode, u64);
 
-    const CLOSEST_TESTS: [ClosestTest; 4] = [
-        (
-            [
-                // 0
-                Some(OsmNode {
-                    id: 1,
-                    lat: 57.1640,
-                    lon: 24.8652,
-                }),
-                None,
-                None,
-                None,
-            ],
-            OsmNode {
-                id: 0,
-                lat: 57.1670,
-                lon: 24.8658,
-            },
-            1,
-        ),
-        (
-            [
-                // 1
-                Some(OsmNode {
-                    id: 1,
-                    lat: 57.1640,
-                    lon: 24.8652,
-                }),
-                Some(OsmNode {
-                    id: 2,
-                    lat: 57.1740,
-                    lon: 24.8630,
-                }),
-                None,
-                None,
-            ],
-            OsmNode {
-                id: 0,
-                lat: 57.1670,
-                lon: 24.8658,
-            },
-            1,
-        ),
-        (
-            [
-                // 2
-                Some(OsmNode {
-                    // 701.26 meters
-                    id: 1,
-                    lat: 57.16961885299059,
-                    lon: 24.875192642211914,
-                }),
-                Some(OsmNode {
-                    // 525.74 meters
-                    id: 1,
-                    lat: 57.168,
-                    lon: 24.875192642211914,
-                }),
-                Some(OsmNode {
-                    // 438.77 meters
-                    id: 2,
-                    lat: 57.159484808175435,
-                    lon: 24.877617359161377,
-                }),
-                None,
-            ],
-            OsmNode {
-                id: 0,
-                lat: 57.163429387682214,
-                lon: 24.87742424011231,
-            },
-            2,
-        ),
-        (
-            [
-                // 3
-                Some(OsmNode {
-                    // 2642.91 meters
-                    id: 1,
-                    lat: 57.16961885299059,
-                    lon: 24.875192642211914,
-                }),
-                Some(OsmNode {
-                    // 3777.35 meters
-                    id: 2,
-                    lat: 57.159484808175435,
-                    lon: 24.877617359161377,
-                }),
-                None,
-                None,
-            ],
-            OsmNode {
-                id: 0,
-                lat: 57.193343289610794,
-                lon: 24.872531890869144,
-            },
-            1,
-        ),
-    ];
     fn run_closest_test(test: ClosestTest) {
-        let (points, check_point, closest_id) = test;
+        let (points, ways, rules, check_point, closest_id) = test;
         let mut map_data = MapDataGraph::new();
         for point in &points {
-            if let Some(point) = point {
-                map_data.insert_node(point.clone());
-            }
+            map_data.insert_node(point.clone());
         }
         for point in points {
-            if let Some(point) = point {
+            if !ways.iter().any(|w| w.point_ids.contains(&point.id)) {
                 map_data
                     .insert_way(OsmWay {
                         id: point.id,
@@ -1301,38 +1274,248 @@ mod tests {
                     .expect("failed to insert dummy way");
             }
         }
+        for way in ways {
+            map_data.insert_way(way).expect("failed to insert way");
+        }
 
         map_data.generate_point_hashes();
 
         let map_data = set_graph_static(map_data);
 
-        let closest =
-            map_data.get_closest_to_coords(check_point.lat as f32, check_point.lon as f32);
+        let closest = map_data.get_closest_to_coords(
+            check_point.lat as f32,
+            check_point.lon as f32,
+            &rules.map_or(
+                RouterRules {
+                    ..Default::default()
+                },
+                |r| r,
+            ),
+        );
         if let Some(closest) = closest {
             assert_eq!(closest.borrow().id, closest_id);
         } else {
             panic!("No points found");
         }
     }
+    fn get_closest_tests() -> [ClosestTest; 6] {
+        [
+            (
+                vec![
+                    // 0
+                    OsmNode {
+                        id: 1,
+                        lat: 57.1640,
+                        lon: 24.8652,
+                    },
+                ],
+                vec![],
+                None,
+                OsmNode {
+                    id: 0,
+                    lat: 57.1670,
+                    lon: 24.8658,
+                },
+                1,
+            ),
+            (
+                vec![
+                    // 1
+                    OsmNode {
+                        id: 1,
+                        lat: 57.1740,
+                        lon: 24.8630,
+                    },
+                    OsmNode {
+                        id: 2,
+                        lat: 57.1640,
+                        lon: 24.8652,
+                    },
+                ],
+                vec![],
+                None,
+                OsmNode {
+                    id: 0,
+                    lat: 57.1670,
+                    lon: 24.8658,
+                },
+                2,
+            ),
+            (
+                vec![
+                    // 2
+                    OsmNode {
+                        // 701.26 meters
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    OsmNode {
+                        // 525.74 meters
+                        id: 2,
+                        lat: 57.168,
+                        lon: 24.875192642211914,
+                    },
+                    OsmNode {
+                        // 438.77 meters
+                        id: 3,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                ],
+                vec![],
+                None,
+                OsmNode {
+                    id: 0,
+                    lat: 57.163429387682214,
+                    lon: 24.87742424011231,
+                },
+                3,
+            ),
+            (
+                vec![
+                    // 3
+                    OsmNode {
+                        // 2642.91 meters
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    OsmNode {
+                        // 3777.35 meters
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                ],
+                vec![],
+                None,
+                OsmNode {
+                    id: 0,
+                    lat: 57.193343289610794,
+                    lon: 24.872531890869144,
+                },
+                1,
+            ),
+            (
+                vec![
+                    // 4
+                    OsmNode {
+                        // 2642.91 meters
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    OsmNode {
+                        // 3777.35 meters
+                        id: 2,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                ],
+                vec![],
+                None,
+                OsmNode {
+                    id: 0,
+                    lat: 57.193343289610794,
+                    lon: 24.872531890869144,
+                },
+                1,
+            ),
+            (
+                vec![
+                    // 5
+                    OsmNode {
+                        // 701.26 meters
+                        id: 1,
+                        lat: 57.16961885299059,
+                        lon: 24.875192642211914,
+                    },
+                    OsmNode {
+                        // 525.74 meters
+                        id: 2,
+                        lat: 57.168,
+                        lon: 24.875192642211914,
+                    },
+                    OsmNode {
+                        // 438.77 meters
+                        id: 3,
+                        lat: 57.159484808175435,
+                        lon: 24.877617359161377,
+                    },
+                ],
+                vec![OsmWay {
+                    id: 33,
+                    point_ids: vec![3],
+                    tags: Some(HashMap::from([(
+                        "highway".to_string(),
+                        "trunk".to_string(),
+                    )])),
+                }],
+                Some(RouterRules {
+                    basic: BasicRules::default(),
+                    highway: Some(HashMap::from([(
+                        "trunk".to_string(),
+                        RulesTagValueAction::Avoid,
+                    )])),
+                    surface: None,
+                    smoothness: None,
+                }),
+                OsmNode {
+                    id: 0,
+                    lat: 57.163429387682214,
+                    lon: 24.87742424011231,
+                },
+                2,
+            ),
+        ]
+    }
     rusty_fork_test! {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn closest_lookup_0() {
-            run_closest_test(CLOSEST_TESTS[0].clone());
+            let tests = get_closest_tests();
+            run_closest_test(tests[0].clone());
         }
     }
     rusty_fork_test! {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn closest_lookup_1() {
-            run_closest_test(CLOSEST_TESTS[1].clone());
+            let tests = get_closest_tests();
+            run_closest_test(tests[1].clone());
         }
     }
     rusty_fork_test! {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn closest_lookup_2() {
-            run_closest_test(CLOSEST_TESTS[2].clone());
+            let tests = get_closest_tests();
+            run_closest_test(tests[2].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_3() {
+            let tests = get_closest_tests();
+            run_closest_test(tests[3].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_4() {
+            let tests = get_closest_tests();
+            run_closest_test(tests[4].clone());
+        }
+    }
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn closest_lookup_5() {
+            let tests = get_closest_tests();
+            run_closest_test(tests[5].clone());
         }
     }
 }

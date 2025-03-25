@@ -68,7 +68,11 @@ impl Generator {
                     .filter_map(|distance| {
                         let wp_geo = Haversine::destination(point_geo, *bearing, *distance);
 
-                        MapDataGraph::get().get_closest_to_coords(wp_geo.y(), wp_geo.x())
+                        MapDataGraph::get().get_closest_to_coords(
+                            wp_geo.y(),
+                            wp_geo.x(),
+                            &self.rules,
+                        )
                     })
             })
             .collect()
@@ -100,8 +104,11 @@ impl Generator {
                                             );
 
                                             let tip_point = match MapDataGraph::get()
-                                                .get_closest_to_coords(tip_geo.y(), tip_geo.x())
-                                            {
+                                                .get_closest_to_coords(
+                                                    tip_geo.y(),
+                                                    tip_geo.x(),
+                                                    &self.rules,
+                                                ) {
                                                 None => return None,
                                                 Some(p) => p,
                                             };
@@ -116,6 +123,7 @@ impl Generator {
                                                 .get_closest_to_coords(
                                                     side_left_geo.y(),
                                                     side_left_geo.x(),
+                                                    &self.rules,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -131,6 +139,7 @@ impl Generator {
                                                 .get_closest_to_coords(
                                                     side_right_geo.y(),
                                                     side_right_geo.x(),
+                                                    &self.rules,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,

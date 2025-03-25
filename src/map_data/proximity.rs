@@ -6,6 +6,9 @@ use super::graph::MapDataPointRef;
 
 type GpsCellId = (i16, i16);
 
+// two decimal places 1.1km precision
+const GRID_CALC_PRECISION: i16 = 100;
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct PointGrid {
     grid: HashMap<GpsCellId, Vec<MapDataPointRef>>,
@@ -17,8 +20,8 @@ impl PointGrid {
     }
 
     pub fn get_cell_id(lat: f32, lon: f32) -> GpsCellId {
-        let lat_rounded = (lat * 100.0).round() as i16;
-        let lon_rounded = (lon * 100.0).round() as i16;
+        let lat_rounded = (lat * GRID_CALC_PRECISION as f32).round() as i16;
+        let lon_rounded = (lon * GRID_CALC_PRECISION as f32).round() as i16;
         (lat_rounded, lon_rounded)
     }
 
@@ -53,20 +56,22 @@ impl PointGrid {
             .flat_map(|lat_offset| {
                 (-(offset as i16)..=(offset as i16))
                     .map(|lon_offset| {
-                        if lat_offset.unsigned_abs() == offset || lon_offset.unsigned_abs() == offset {
+                        if lat_offset.unsigned_abs() == offset
+                            || lon_offset.unsigned_abs() == offset
+                        {
                             let lat_new = lat_rounded - lat_offset;
-                            let lat_new = if lat_new > 9000 {
-                                lat_new - 9000
-                            } else if lat_new < -9000 {
-                                lat_new + 9000
+                            let lat_new = if lat_new > 90 * GRID_CALC_PRECISION {
+                                lat_new - 90 * GRID_CALC_PRECISION
+                            } else if lat_new < -90 * GRID_CALC_PRECISION {
+                                lat_new + 90 * GRID_CALC_PRECISION
                             } else {
                                 lat_new
                             };
                             let lon_new = lon_rounded - lon_offset;
-                            let lon_new = if lon_new > 18000 {
-                                lon_new - 18000
-                            } else if lon_new < -18000 {
-                                lon_new + 18000
+                            let lon_new = if lon_new > 180 * GRID_CALC_PRECISION {
+                                lon_new - 180 * GRID_CALC_PRECISION
+                            } else if lon_new < -180 * GRID_CALC_PRECISION {
+                                lon_new + 180 * GRID_CALC_PRECISION
                             } else {
                                 lon_new
                             };
@@ -86,6 +91,7 @@ impl PointGrid {
     pub fn find_closest_point_refs(&self, lat: f32, lon: f32) -> Option<Vec<MapDataPointRef>> {
         let center_cell_id = PointGrid::get_cell_id(lat, lon);
 
+        // 10 steps mean ~ 11x11km square
         for step in 0..=10 {
             let cell_ids = PointGrid::get_outer_cell_ids(center_cell_id, step);
             let cell_ids = match cell_ids {
