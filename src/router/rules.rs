@@ -20,7 +20,7 @@ pub enum RulesError {
     StdinRead { error: io::Error },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
 pub enum RulesTagValueAction {
     Avoid,

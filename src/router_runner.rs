@@ -308,7 +308,7 @@ impl RouterRunner {
             ),
         };
         let start = MapDataGraph::get()
-            .get_closest_to_coords(start_lat, start_lon)
+            .get_closest_to_coords(start_lat, start_lon, &rules)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Start point".to_string(),
             })?;
@@ -316,7 +316,7 @@ impl RouterRunner {
         trace!("Start point {start}");
 
         let finish = MapDataGraph::get()
-            .get_closest_to_coords(finish_lat, finish_lon)
+            .get_closest_to_coords(finish_lat, finish_lon, &rules)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Finish point".to_string(),
             })?;

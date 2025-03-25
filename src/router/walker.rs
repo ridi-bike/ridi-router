@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{collections::HashSet, fmt::Debug};
 
 use crate::map_data::{
     graph::{MapDataGraph, MapDataPointRef},
@@ -205,6 +205,8 @@ impl Walker {
     }
 
     fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) {
+        let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
+
         let last_segment = match self.route_walked.get_segment_last() {
             Some(seg) => {
                 if !seg.get_line().borrow().is_roundabout() {
@@ -215,11 +217,19 @@ impl Walker {
             None => return,
         };
 
-        // let mut segments = Vec::new();
-
         let mut current_segment = last_segment.clone();
 
         loop {
+            let last_point = if let Some(last_segment) = self.route_walked.get_segment_last() {
+                last_segment.get_end_point().clone()
+            } else {
+                self.start.clone()
+            };
+            if visited_points.contains(&last_point) {
+                break;
+            }
+            visited_points.insert(last_point);
+
             let fork_segments = self.get_fork_segments_for_segment(&current_segment);
             let fork_segments: Vec<_> = fork_segments.into();
 
@@ -251,6 +261,7 @@ impl Walker {
         &mut self,
         is_finished: T,
     ) -> Result<WalkerMoveResult, WalkerError> {
+        let mut visited_junction: HashSet<MapDataPointRef> = HashSet::new();
         loop {
             let point = match self.route_walked.get_segment_last() {
                 Some(route_segment) => route_segment.get_end_point(),
@@ -299,11 +310,13 @@ impl Walker {
                 Some(segment) => segment,
             };
 
-            if self
-                .get_route()
-                .has_looped(Some(next_segment.get_end_point()))
-            {
-                return Ok(WalkerMoveResult::DeadEnd);
+            // due to problematic map data we can get into a scenario where we get into a loop
+            // where incoming road is one way and there are no leaving roads
+            if next_segment.get_end_point().borrow().is_junction() {
+                if visited_junction.contains(next_segment.get_end_point()) {
+                    return Ok(WalkerMoveResult::DeadEnd);
+                }
+                visited_junction.insert(next_segment.get_end_point().clone());
             }
 
             self.move_to_roundabout_exit(next_segment.get_end_point());
