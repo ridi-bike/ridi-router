@@ -163,6 +163,7 @@ impl Walker {
     }
 
     fn get_roundabout_exits(&self, segment: &Segment) -> SegmentList {
+        let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
         if !segment.get_line().borrow().is_roundabout() {
             return SegmentList::new();
         }
