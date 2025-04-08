@@ -1,4 +1,7 @@
-use std::io::{self, IsTerminal};
+use std::{
+    io::{self, IsTerminal},
+    process,
+};
 
 use router_runner::RouterRunner;
 use tracing::{error_span, Level};
@@ -17,7 +20,7 @@ mod router_runner;
 mod test_utils;
 
 fn main() {
-    if std::io::stdin().is_terminal() {
+    let subscriber = if std::io::stdin().is_terminal() {
         let subscriber = tracing_subscriber::fmt()
             .with_writer(io::stderr)
             .with_file(true)
@@ -27,7 +30,6 @@ fn main() {
             .finish();
 
         tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
     } else {
         let subscriber = tracing_subscriber::fmt()
             .json()
@@ -39,10 +41,18 @@ fn main() {
             .finish();
 
         tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
     };
+
+    if let Err(subscriber) = subscriber {
+        tracing::error!(error = ?subscriber, "Subscriber setup failed");
+        process::exit(1);
+    }
 
     let span = error_span!("Service started", service = "ridi-router");
     let _entered = span.enter();
-    RouterRunner::run().unwrap();
+    let runner = RouterRunner::run();
+    if let Err(runner) = runner {
+        tracing::error!(error = ?runner, "Router startup failed");
+        process::exit(1);
+    }
 }
