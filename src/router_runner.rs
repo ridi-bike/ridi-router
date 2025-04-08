@@ -352,19 +352,31 @@ impl RouterRunner {
         let cached_map_data = match cached_map_data {
             Ok(d) => d,
             Err(error) => {
-                tracing::error!("Failed to process cache: {:?}", error);
+                tracing::error!(error = ?error, "Failed to process cache");
                 None
             }
         };
-        if let Some(packed_data) = cached_map_data {
-            MapDataGraph::unpack(packed_data).context("Failed to unpack map data")?;
+        let unpack_ok = if let Some(packed_data) = cached_map_data {
+            let unpack_result = MapDataGraph::unpack(packed_data);
+            if let Err(ref error) = unpack_result {
+                tracing::error!(error = ?error, "Unpack unsuccessful");
+                let cache_metadata = data_cache.read_input_metadata();
+                if let Err(ref error) = cache_metadata {
+                    tracing::error!(error = ?error, "Cache metadata prep after unpack unsuccessful failed");
+                }
+            }
+            unpack_result.is_ok()
         } else {
+            false
+        };
+
+        if !unpack_ok {
             MapDataGraph::init(data_source);
             let packed_data = MapDataGraph::get()
                 .pack()
                 .context("Failed to pack map data")?;
             if let Err(error) = data_cache.write_cache(packed_data) {
-                tracing::error!("Failed to write cache: {:?}", error);
+                tracing::error!(error = ?error, "Failed to write cache");
             }
         }
 
@@ -440,19 +452,31 @@ impl RouterRunner {
         let cached_map_data = match cached_map_data {
             Ok(d) => d,
             Err(error) => {
-                tracing::error!("Failed to process cache: {:?}", error);
+                tracing::error!(error = ?error, "Failed to process cache");
                 None
             }
         };
-        if let Some(packed_data) = cached_map_data {
-            MapDataGraph::unpack(packed_data).context("Failed to unpack map data")?;
+        let unpack_ok = if let Some(packed_data) = cached_map_data {
+            let unpack_result = MapDataGraph::unpack(packed_data);
+            if let Err(ref error) = unpack_result {
+                tracing::error!(error = ?error, "Unpack unsuccessful");
+                let cache_metadata = data_cache.read_input_metadata();
+                if let Err(ref error) = cache_metadata {
+                    tracing::error!(error = ?error, "Cache metadata prep after unpack unsuccessful failed");
+                }
+            }
+            unpack_result.is_ok()
         } else {
+            false
+        };
+
+        if !unpack_ok {
             MapDataGraph::init(data_source);
             let packed_data = MapDataGraph::get()
                 .pack()
                 .context("Failed to pack map data")?;
             if let Err(error) = data_cache.write_cache(packed_data) {
-                tracing::error!("Failed to write cache: {:?}", error);
+                tracing::error!(error = ?error, "Failed to write cache");
             }
         }
 

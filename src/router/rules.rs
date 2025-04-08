@@ -161,7 +161,10 @@ impl RouterRules {
         let rules: RouterRules =
             serde_json::from_str(text).map_err(|error| RulesError::JsonParse { error })?;
 
-        trace!("{}", serde_json::to_string_pretty(&rules).unwrap());
+        trace!(
+            rules = serde_json::to_string_pretty(&rules).unwrap(),
+            "Rules from file"
+        );
         Ok(rules)
     }
 

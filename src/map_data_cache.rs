@@ -104,6 +104,7 @@ impl MapDataCache {
 
         Ok(new_metadata)
     }
+
     #[tracing::instrument(skip(self))]
     pub fn read_cache(&mut self) -> Result<Option<MapDataGraphPacked>, MapDataCacheError> {
         let new_metadata = self.read_input_metadata()?;
@@ -136,8 +137,6 @@ impl MapDataCache {
             return Ok(None);
         }
 
-        self.write_to_cache = WriteToCache::No;
-
         let mut points: Option<Result<Vec<u8>, MapDataCacheError>> = None;
         let mut point_grid: Option<Result<Vec<u8>, MapDataCacheError>> = None;
         let mut lines: Option<Result<Vec<u8>, MapDataCacheError>> = None;
@@ -164,6 +163,7 @@ impl MapDataCache {
             tags: tags.ok_or(MapDataCacheError::MissingValue)??,
         };
 
+        self.write_to_cache = WriteToCache::No;
         Ok(Some(packed_data))
     }
 
