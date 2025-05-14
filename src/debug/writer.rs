@@ -241,7 +241,7 @@ impl DebugWriter {
         itinerary_id: String,
         step: u32,
         end_point_id: &u64,
-        weight_name: &String,
+        weight_name: &str,
         weight_result: &WeightCalcResult,
     ) {
         let (weight_type, weight_value) = match weight_result {

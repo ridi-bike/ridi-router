@@ -175,7 +175,7 @@ pub struct Navigator {
     itinerary: Itinerary,
     rules: RouterRules,
     walker: Walker,
-    weight_calcs: Vec<WeightCalc>,
+    weight_calcs: Vec<Box<dyn WeightCalc>>,
     discarded_fork_choices: DiscardedForkChoices,
 }
 
@@ -183,7 +183,7 @@ impl Navigator {
     pub fn new(
         itinerary: Itinerary,
         rules: RouterRules,
-        weight_calcs: Vec<WeightCalc>,
+        weight_calcs: Vec<Box<dyn WeightCalc>>,
         reset_at_new_next: bool,
     ) -> Self {
         Self {
@@ -243,7 +243,7 @@ impl Navigator {
                                 .weight_calcs
                                 .iter()
                                 .map(|weight_calc| {
-                                    let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
+                                    let weight_calc_result = weight_calc.calc(WeightCalcInput {
                                         route: self.walker.get_route(),
                                         itinerary: &self.itinerary,
                                         current_fork_segment: &fork_route_segment,
@@ -256,7 +256,7 @@ impl Navigator {
                                         self.itinerary.id(),
                                         loop_counter,
                                         &fork_route_segment.get_end_point().borrow().id,
-                                        &weight_calc.name,
+                                        weight_calc.name(),
                                         &weight_calc_result,
                                     );
                                     weight_calc_result
@@ -343,7 +343,7 @@ mod test {
             itinerary::Itinerary,
             navigator::{NavigationResult, WeightCalcResult},
             rules::RouterRules,
-            weights::{WeightCalc, WeightCalcInput},
+            weights::{RuleType, WeightCalc, WeightCalcInput},
         },
         test_utils::{
             graph_from_test_dataset, route_matches_ids, set_graph_static, test_dataset_1,
@@ -357,26 +357,35 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn navigate_pick_best() {
-            fn weight(input: WeightCalcInput) -> WeightCalcResult {
-                let prev_point = match input.route.get_segment_last() {
-                    Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.start.clone(),
-                };
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 6
-                {
-                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
-                }
-                WeightCalcResult::ForkChoiceUseWithWeight(1)
-            }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
+            struct WeightCalcTest;
+            impl WeightCalc for WeightCalcTest {
+                fn name(&self) -> &'static str {
+                    "weight"
+                }
+                fn rule_type(&self) -> &'static RuleType {
+                    &RuleType::Tag
+                }
+                fn calc(&self,input: WeightCalcInput) -> WeightCalcResult {
+                    let prev_point = match input.route.get_segment_last() {
+                        Some(segment) => segment.get_end_point(),
+                        None => &input.itinerary.start.clone(),
+                    };
+                    if prev_point.borrow().id == 3
+                        && input.current_fork_segment.get_end_point().borrow().id == 6
+                    {
+                        return WeightCalcResult::ForkChoiceUseWithWeight(10);
+                    }
+                    WeightCalcResult::ForkChoiceUseWithWeight(1)
+                }
+            }
             let navigator = Navigator::new(
                 itinerary.clone(),
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight, name:"weight".to_string()}],
+                vec![Box::new(WeightCalcTest)],
                 false
             );
             let route = match navigator.generate_routes() {
@@ -388,24 +397,33 @@ mod test {
             };
 
             assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
-
-            fn weight2(input: WeightCalcInput) -> WeightCalcResult {
-                let prev_point = match input.route.get_segment_last() {
-                    Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.finish.clone(),
-                };
-
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 4
-                {
-                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
+            struct WeightCalcTest2;
+            impl WeightCalc for WeightCalcTest2 {
+                fn name(&self) -> &'static str {
+                    "weight"
                 }
-                WeightCalcResult::ForkChoiceUseWithWeight(1)
+                fn rule_type(&self) -> &'static RuleType {
+                    &RuleType::Tag
+                }
+                fn calc(&self,input: WeightCalcInput) -> WeightCalcResult {
+                    let prev_point = match input.route.get_segment_last() {
+                        Some(segment) => segment.get_end_point(),
+                        None => &input.itinerary.finish.clone(),
+                    };
+
+                    if prev_point.borrow().id == 3
+                        && input.current_fork_segment.get_end_point().borrow().id == 4
+                    {
+                        return WeightCalcResult::ForkChoiceUseWithWeight(10);
+                    }
+                    WeightCalcResult::ForkChoiceUseWithWeight(1)
+                }
             }
+
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc:weight2, name:"weight2".to_string() }],
+                vec![Box::new(WeightCalcTest2)],
                 false
             );
             let route = match navigator.generate_routes() {
@@ -424,26 +442,35 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn navigate_dead_end_pick_next_best() {
-            fn weight(input: WeightCalcInput) -> WeightCalcResult {
-                let prev_point = match input.route.get_segment_last() {
-                    Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.finish.clone(),
-                };
+            struct WeightCalcTest;
+            impl WeightCalc for WeightCalcTest {
+                fn name(&self) -> &'static str {
+                    "weight"
+                }
+                fn rule_type(&self) -> &'static RuleType {
+                    &RuleType::Tag
+                }
+                fn calc(&self, input: WeightCalcInput) -> WeightCalcResult {
+                    let prev_point = match input.route.get_segment_last() {
+                        Some(segment) => segment.get_end_point(),
+                        None => &input.itinerary.finish.clone(),
+                    };
 
-                if prev_point.borrow().id == 3 {
-                    if input.current_fork_segment.get_end_point().borrow().id == 5 {
+                    if prev_point.borrow().id == 3 {
+                        if input.current_fork_segment.get_end_point().borrow().id == 5 {
+                            return WeightCalcResult::ForkChoiceUseWithWeight(10);
+                        }
+                        if input.current_fork_segment.get_end_point().borrow().id == 6 {
+                            return WeightCalcResult::ForkChoiceUseWithWeight(5);
+                        }
+                    }
+                    if prev_point.borrow().id == 6
+                        && input.current_fork_segment.get_end_point().borrow().id == 7
+                    {
                         return WeightCalcResult::ForkChoiceUseWithWeight(10);
                     }
-                    if input.current_fork_segment.get_end_point().borrow().id == 6 {
-                        return WeightCalcResult::ForkChoiceUseWithWeight(5);
-                    }
+                    WeightCalcResult::ForkChoiceUseWithWeight(1)
                 }
-                if prev_point.borrow().id == 6
-                    && input.current_fork_segment.get_end_point().borrow().id == 7
-                {
-                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
-                }
-                WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -452,7 +479,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc: weight, name:"weight".to_string() }],
+                vec![Box::new(WeightCalcTest)],
                 false,
             );
             let route = match navigator.generate_routes() {
@@ -471,8 +498,17 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn navigate_all_stuck_return_no_routes() {
-            fn weight(_input: WeightCalcInput) -> WeightCalcResult {
-                WeightCalcResult::ForkChoiceUseWithWeight(1)
+            struct WeightCalcTest;
+            impl WeightCalc for WeightCalcTest {
+                fn name(&self) -> &'static str {
+                    "weight"
+                }
+                fn rule_type(&self) -> &'static RuleType {
+                    &RuleType::Tag
+                }
+                fn calc(&self, _input: WeightCalcInput) -> WeightCalcResult {
+                    WeightCalcResult::ForkChoiceUseWithWeight(1)
+                }
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -481,7 +517,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight, name:"weight".to_string()}],
+                vec![Box::new(WeightCalcTest)],
                 false,
             );
 
@@ -495,11 +531,20 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn navigate_no_routes_with_do_not_use_weight() {
-            fn weight(input: WeightCalcInput) -> WeightCalcResult {
-                if input.current_fork_segment.get_end_point().borrow().id == 7 {
-                    return WeightCalcResult::ForkChoiceDoNotUse;
+            struct WeightCalcTest;
+            impl WeightCalc for WeightCalcTest {
+                fn name(&self) -> &'static str {
+                    "weight"
                 }
-                WeightCalcResult::ForkChoiceUseWithWeight(1)
+                fn rule_type(&self) -> &'static RuleType {
+                    &RuleType::Tag
+                }
+                fn calc(&self, input: WeightCalcInput) -> WeightCalcResult {
+                    if input.current_fork_segment.get_end_point().borrow().id == 7 {
+                        return WeightCalcResult::ForkChoiceDoNotUse;
+                    }
+                    WeightCalcResult::ForkChoiceUseWithWeight(1)
+                }
             }
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
@@ -508,7 +553,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc: weight, name:"weight".to_string()}],
+                vec![Box::new(WeightCalcTest)],
                 false
             );
             if let NavigationResult::Finished(_) = navigator.generate_routes() {
@@ -521,31 +566,51 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn navigate_on_weight_sum() {
-            fn weight1(input: WeightCalcInput) -> WeightCalcResult {
-                let prev_point = match input.route.get_segment_last() {
-                    Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.finish.clone(),
-                };
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 6
-                {
-                    return WeightCalcResult::ForkChoiceUseWithWeight(10);
+            struct WeightCalcTest1;
+            impl WeightCalc for WeightCalcTest1 {
+                fn name(&self) -> &'static str {
+                    "weight1"
                 }
-                WeightCalcResult::ForkChoiceUseWithWeight(6)
+                fn rule_type(&self) -> &'static RuleType {
+                    &RuleType::Tag
+                }
+                fn calc(&self, input: WeightCalcInput) -> WeightCalcResult {
+                    let prev_point = match input.route.get_segment_last() {
+                        Some(segment) => segment.get_end_point(),
+                        None => &input.itinerary.finish.clone(),
+                    };
+                    if prev_point.borrow().id == 3
+                        && input.current_fork_segment.get_end_point().borrow().id == 6
+                    {
+                        return WeightCalcResult::ForkChoiceUseWithWeight(10);
+                    }
+                    WeightCalcResult::ForkChoiceUseWithWeight(6)
+                }
             }
-            fn weight2(input: WeightCalcInput) -> WeightCalcResult {
-                let prev_point = match input.route.get_segment_last() {
-                    Some(segment) => segment.get_end_point(),
-                    None => &input.itinerary.finish.clone(),
-                };
+            
+            struct WeightCalcTest2;
+            impl WeightCalc for WeightCalcTest2 {
+                fn name(&self) -> &'static str {
+                    "weight2"
+                }
+                fn rule_type(&self) -> &'static RuleType {
+                    &RuleType::Tag
+                }
+                fn calc(&self, input: WeightCalcInput) -> WeightCalcResult {
+                    let prev_point = match input.route.get_segment_last() {
+                        Some(segment) => segment.get_end_point(),
+                        None => &input.itinerary.finish.clone(),
+                    };
 
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 6
-                {
-                    return WeightCalcResult::ForkChoiceUseWithWeight(1);
+                    if prev_point.borrow().id == 3
+                        && input.current_fork_segment.get_end_point().borrow().id == 6
+                    {
+                        return WeightCalcResult::ForkChoiceUseWithWeight(1);
+                    }
+                    WeightCalcResult::ForkChoiceUseWithWeight(6)
                 }
-                WeightCalcResult::ForkChoiceUseWithWeight(6)
             }
+            
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
@@ -553,7 +618,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight1, name:"weight1".to_string()}, WeightCalc{ calc: weight2, name:"weight2".to_string()}],
+                vec![Box::new(WeightCalcTest1), Box::new(WeightCalcTest2)],
                 false,
             );
             let route = match navigator.generate_routes() {

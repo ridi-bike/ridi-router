@@ -3,7 +3,15 @@ use std::{collections::HashMap, ops::Sub};
 use crate::{
     debug::writer::DebugWriter,
     map_data::graph::{MapDataGraph, MapDataPointRef},
-    router::{clustering::Clustering, rules::RouterRules},
+    router::{
+        clustering::Clustering,
+        rules::RouterRules,
+        weights::{
+            WeightCalcDistanceToNext, WeightCalcHeading, WeightCalcNoLoops, WeightCalcNoSharpTurns,
+            WeightCalcNoShortDetour, WeightCalcPreferSameRoad, WeightCalcProgressSpeed,
+            WeightCalcRulesHighway, WeightCalcRulesSmoothness, WeightCalcRulesSurface,
+        },
+    },
 };
 use geo::{Destination, Haversine, Point};
 use rayon::prelude::*;
@@ -13,11 +21,6 @@ use super::{
     itinerary::Itinerary,
     navigator::{NavigationResult, Navigator},
     route::{Route, RouteStats},
-    weights::{
-        weight_check_distance_to_next, weight_heading, weight_no_loops, weight_no_sharp_turns,
-        weight_no_short_detours, weight_prefer_same_road, weight_progress_speed,
-        weight_rules_highway, weight_rules_smoothness, weight_rules_surface, WeightCalc,
-    },
 };
 
 const START_FINISH_VARIATION_DISTANCES: [f32; 3] = [10000., 20000., 30000.];
@@ -198,46 +201,16 @@ impl Generator {
                     itinerary,
                     self.rules.clone(),
                     vec![
-                        WeightCalc {
-                            name: "weight_no_sharp_turns".to_string(),
-                            calc: weight_no_sharp_turns,
-                        },
-                        WeightCalc {
-                            name: "weight_no_short_detours".to_string(),
-                            calc: weight_no_short_detours,
-                        },
-                        WeightCalc {
-                            name: "weight_progress_speed".to_string(),
-                            calc: weight_progress_speed,
-                        },
-                        WeightCalc {
-                            name: "weight_check_distance_to_next".to_string(),
-                            calc: weight_check_distance_to_next,
-                        },
-                        WeightCalc {
-                            name: "weight_prefer_same_road".to_string(),
-                            calc: weight_prefer_same_road,
-                        },
-                        WeightCalc {
-                            name: "weight_no_loops".to_string(),
-                            calc: weight_no_loops,
-                        },
-                        WeightCalc {
-                            name: "weight_heading".to_string(),
-                            calc: weight_heading,
-                        },
-                        WeightCalc {
-                            name: "weight_rules_highway".to_string(),
-                            calc: weight_rules_highway,
-                        },
-                        WeightCalc {
-                            name: "weight_rules_surface".to_string(),
-                            calc: weight_rules_surface,
-                        },
-                        WeightCalc {
-                            name: "weight_rules_smoothness".to_string(),
-                            calc: weight_rules_smoothness,
-                        },
+                        Box::new(WeightCalcNoSharpTurns),
+                        Box::new(WeightCalcNoShortDetour),
+                        Box::new(WeightCalcProgressSpeed),
+                        Box::new(WeightCalcDistanceToNext),
+                        Box::new(WeightCalcPreferSameRoad),
+                        Box::new(WeightCalcNoLoops),
+                        Box::new(WeightCalcHeading),
+                        Box::new(WeightCalcRulesHighway),
+                        Box::new(WeightCalcRulesSurface),
+                        Box::new(WeightCalcRulesSmoothness),
                     ],
                     self.round_trip.is_some(),
                 )
