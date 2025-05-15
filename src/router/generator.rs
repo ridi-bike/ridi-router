@@ -2,6 +2,7 @@ use std::{collections::HashMap, ops::Sub};
 
 use crate::{
     debug::writer::DebugWriter,
+    ipc_handler::ResponseMessage,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{
         clustering::Clustering,
@@ -21,12 +22,19 @@ use super::{
     itinerary::Itinerary,
     navigator::{NavigationResult, Navigator},
     route::{Route, RouteStats},
+    walker::DeadEnd,
 };
 
 const START_FINISH_VARIATION_DISTANCES: [f32; 3] = [10000., 20000., 30000.];
 const START_FINISH_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., 225., 270., 315.];
 const ROUND_TRIP_DISTANCE_RATIOS: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
 const ROUND_TRIP_BEARING_VARIATION: [f32; 4] = [-25., -10., 10., 25.];
+
+#[derive(Debug, Clone)]
+pub struct RoutesAndDeadEnds {
+    pub routes: Vec<RouteWithStats>,
+    pub dead_ends: Vec<Vec<DeadEnd>>,
+}
 
 #[derive(Debug, Clone)]
 pub struct RouteWithStats {
@@ -188,13 +196,13 @@ impl Generator {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn generate_routes(self) -> Vec<RouteWithStats> {
+    pub fn generate_routes(self) -> RoutesAndDeadEnds {
         let itineraries = self.generate_itineraries();
 
         DebugWriter::write_itineraries(&itineraries);
 
         trace!("Created {} itineraries", itineraries.len());
-        let routes = itineraries
+        let routes_and_dead_ends = itineraries
             .into_par_iter()
             .map(|itinerary| {
                 Navigator::new(
@@ -216,15 +224,30 @@ impl Generator {
                 )
                 .generate_routes()
             })
-            .filter_map(|nav_route| match nav_route {
-                NavigationResult::Stuck => None,
-                NavigationResult::Finished(route) => Some(route),
-                NavigationResult::Stopped => None,
+            .map(|nav_route| match nav_route {
+                NavigationResult::Stuck(dead_ends) => (None, Some(dead_ends)),
+                NavigationResult::Finished(route) => (Some(route), None),
+                NavigationResult::Stopped(dead_ends) => (None, Some(dead_ends)),
             })
             .collect::<Vec<_>>();
 
-        let clustering = match Clustering::generate(&routes) {
-            None => return Vec::new(),
+        let routes = &routes_and_dead_ends
+            .iter()
+            .filter_map(|(maybe_route, _)| maybe_route.clone())
+            .collect();
+
+        let dead_ends = routes_and_dead_ends
+            .iter()
+            .filter_map(|(_, maybe_dead_ends)| maybe_dead_ends.clone())
+            .collect();
+
+        let clustering = match Clustering::generate(routes) {
+            None => {
+                return RoutesAndDeadEnds {
+                    routes: Vec::new(),
+                    dead_ends,
+                }
+            }
             Some(c) => c,
         };
 
@@ -267,6 +290,10 @@ impl Generator {
 
         let noise_count = if best_routes.len() > 10 { 3 } else { 10 };
         best_routes.append(&mut noise[..noise.len().min(noise_count)].to_vec());
-        best_routes
+
+        RoutesAndDeadEnds {
+            routes: best_routes,
+            dead_ends,
+        }
     }
 }

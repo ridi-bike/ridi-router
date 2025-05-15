@@ -7,8 +7,12 @@ use std::{
 use tracing::{info, trace, warn};
 
 use crate::{
-    router::{route::RouteStats, rules::RouterRules},
-    router_runner::RoutingMode,
+    router::{
+        route::RouteStats,
+        rules::RouterRules,
+        walker::{DeadEnd, DeadEndType},
+    },
+    router_runner::{OutputSelection, RoutingMode},
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -49,19 +53,39 @@ pub struct RequestMessage {
     pub id: String,
     pub routing_mode: RoutingMode,
     pub rules: RouterRules,
+    pub selected_outputs: OutputSelection,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RouteByTags {
+    pub coords: Vec<(f32, f32)>,
+    pub highway: Option<String>,
+    pub surface: Option<String>,
+    pub smoothness: Option<String>,
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RouteMessage {
     pub coords: Vec<(f32, f32)>,
+    pub coords_by_tags: Option<Vec<RouteByTags>>,
     pub stats: RouteStats,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DeadEndMessage {
+    pub coords: (f32, f32),
+    pub dead_end_type: DeadEndType,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum RouterResult {
-    Error { message: String },
-    Ok { routes: Vec<RouteMessage> },
+    Error {
+        message: String,
+    },
+    Ok {
+        routes: Vec<RouteMessage>,
+        dead_ends: Option<Vec<DeadEndMessage>>,
+    },
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseMessage {
@@ -223,6 +247,7 @@ impl<'a> IpcHandler<'a> {
         routing_mode: &RoutingMode,
         rules: RouterRules,
         route_req_id: Option<String>,
+        selected_outputs: OutputSelection,
     ) -> Result<ResponseMessage, IpcHandlerError> {
         let conn = Stream::connect(self.socket_name.clone())
             .map_err(|error| IpcHandlerError::Connect { error })?;
@@ -233,6 +258,7 @@ impl<'a> IpcHandler<'a> {
             id: route_req_id.map_or(String::from("default-request-id"), |v| v.to_string()),
             routing_mode: routing_mode.clone(),
             rules,
+            selected_outputs,
         };
         let string_req = serde_json::to_string(&req_msg)
             .map_err(|error| IpcHandlerError::SerializeMessage { error })?;

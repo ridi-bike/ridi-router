@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::{
+    collections::HashSet,
+    fmt::{Debug, Display},
+};
+
+use serde::{Deserialize, Serialize};
 
 use crate::map_data::{
     graph::{MapDataGraph, MapDataPointRef},
@@ -16,10 +21,42 @@ pub enum WalkerError {
     },
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub enum DeadEndType {
+    CustomRule,
+    BasicRule,
+    ExhaustedRoutes,
+    NoRoutes,
+}
+
+impl Display for DeadEndType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeadEndType::NoRoutes => f.write_str("No Routes"),
+            DeadEndType::BasicRule => f.write_str("Basic Rule"),
+            DeadEndType::ExhaustedRoutes => f.write_str("Exhausted Routes"),
+            DeadEndType::CustomRule => f.write_str("Custom Rule"),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, Hash)]
+pub struct DeadEnd {
+    pub point: MapDataPointRef,
+    pub dead_end_type: DeadEndType,
+}
+
+impl PartialEq for DeadEnd {
+    fn eq(&self, other: &Self) -> bool {
+        self.point == other.point
+    }
+}
+
 pub struct Walker {
     start: MapDataPointRef,
     route_walked: Route,
     next_fork_choice_point: Option<MapDataPointRef>,
+    dead_ends: Vec<DeadEnd>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -35,6 +72,7 @@ impl Walker {
             start: start.clone(),
             route_walked: Route::new(),
             next_fork_choice_point: None,
+            dead_ends: Vec::new(),
         }
     }
 
@@ -262,6 +300,19 @@ impl Walker {
         }
     }
 
+    #[tracing::instrument(skip(self))]
+    pub fn add_dead_end(&mut self, dead_end_type: DeadEndType) -> () {
+        let point = if let Some(last_segment) = self.route_walked.get_segment_last() {
+            last_segment.get_end_point().clone()
+        } else {
+            self.start.clone()
+        };
+        self.dead_ends.push(DeadEnd {
+            point,
+            dead_end_type,
+        });
+    }
+
     pub fn move_forward_to_next_fork<T: Fn(MapDataPointRef) -> bool>(
         &mut self,
         is_finished: T,
@@ -310,6 +361,7 @@ impl Walker {
 
             let next_segment = match next_segment {
                 None => {
+                    self.add_dead_end(DeadEndType::NoRoutes);
                     return Ok(WalkerMoveResult::DeadEnd);
                 }
                 Some(segment) => segment,
@@ -319,6 +371,7 @@ impl Walker {
             // where incoming road is one way and there are no leaving roads
             if next_segment.get_end_point().borrow().is_junction() {
                 if visited_junction.contains(next_segment.get_end_point()) {
+                    self.add_dead_end(DeadEndType::ExhaustedRoutes);
                     return Ok(WalkerMoveResult::DeadEnd);
                 }
                 visited_junction.insert(next_segment.get_end_point().clone());
@@ -360,6 +413,10 @@ impl Walker {
 
     pub fn get_route(&self) -> &Route {
         &self.route_walked
+    }
+
+    pub fn get_dead_ends(&self) -> &Vec<DeadEnd> {
+        &self.dead_ends
     }
 }
 

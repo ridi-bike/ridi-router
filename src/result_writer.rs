@@ -58,10 +58,10 @@ impl ResultWriter {
                 crate::ipc_handler::RouterResult::Error { message } => {
                     Err(ResultWriterError::RoutesGenerationFailed { error: message })
                 }
-                crate::ipc_handler::RouterResult::Ok { routes } => {
+                crate::ipc_handler::RouterResult::Ok { routes, dead_ends } => {
                     info!(file = ?file, "Writing gpx");
 
-                    GpxWriter::new(routes, file.clone())
+                    GpxWriter::new(routes, dead_ends, file.clone())
                         .write_gpx()
                         .map_err(|error| ResultWriterError::Gpx { error })?;
 

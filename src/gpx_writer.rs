@@ -1,8 +1,14 @@
 use geo::Point;
-use gpx::{errors::GpxError, write, Gpx, GpxVersion, Route as GpxRoute, Waypoint};
+use gpx::{
+    errors::GpxError, write, Gpx, GpxVersion, Route as GpxRoute, Track as GpxTrack,
+    TrackSegment as GpxTrackSegment, Waypoint,
+};
 use std::{collections::HashMap, fs::File, io::Error, isize, path::PathBuf};
 
-use crate::{ipc_handler::RouteMessage, router::route::RouteStatElement};
+use crate::{
+    ipc_handler::{DeadEndMessage, RouteMessage},
+    router::route::RouteStatElement,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GpxWriterError {
@@ -15,6 +21,7 @@ pub enum GpxWriterError {
 
 pub struct GpxWriter {
     routes: Vec<RouteMessage>,
+    dead_ends: Option<Vec<DeadEndMessage>>,
     file_name: PathBuf,
 }
 
@@ -25,16 +32,24 @@ fn sort_by_longest(map: HashMap<String, RouteStatElement>) -> Vec<(String, Route
 }
 
 impl GpxWriter {
-    pub fn new(routes: Vec<RouteMessage>, file_name: PathBuf) -> Self {
-        Self { routes, file_name }
+    pub fn new(
+        routes: Vec<RouteMessage>,
+        dead_ends: Option<Vec<DeadEndMessage>>,
+        file_name: PathBuf,
+    ) -> Self {
+        Self {
+            routes,
+            dead_ends,
+            file_name,
+        }
     }
     pub fn write_gpx(self) -> Result<(), GpxWriterError> {
         let mut gpx = Gpx::default();
         gpx.version = GpxVersion::Gpx11;
 
         for (idx, route) in self.routes.clone().into_iter().enumerate() {
-            let mut gpx_route = GpxRoute::new();
-            gpx_route.name = Some(format!(
+            let mut gpx_track = GpxTrack::new();
+            gpx_track.name = Some(format!(
                 "r_{idx}_c_{}",
                 route.stats.cluster.map_or(-1, |c| c as isize)
             ));
@@ -75,17 +90,42 @@ impl GpxWriter {
                 ));
             }
 
-            gpx_route.description = Some(description);
+            gpx_track.description = Some(description);
 
-            for (lat, lon) in &route.coords {
-                let waypoint = Waypoint::new(Point::new(*lon as f64, *lat as f64));
-                gpx_route.points.push(waypoint);
+            if let Some(coords_by_tags) = route.coords_by_tags {
+                for segment in coords_by_tags {
+                    let mut gpx_segment = GpxTrackSegment::new();
+                    for (lat, lon) in segment.coords {
+                        let waypoint = Waypoint::new(Point::new(lon as f64, lat as f64));
+                        gpx_segment.points.push(waypoint);
+                    }
+                    gpx_track.segments.push(gpx_segment);
+                }
+            } else {
+                let mut gpx_segment = GpxTrackSegment::new();
+                for (lat, lon) in &route.coords {
+                    let waypoint = Waypoint::new(Point::new(*lon as f64, *lat as f64));
+                    gpx_segment.points.push(waypoint);
+                }
+                gpx_track.segments.push(gpx_segment);
             }
 
-            gpx.routes.push(gpx_route);
+            gpx.tracks.push(gpx_track);
         }
 
-        let file = File::create(&self.file_name).map_err(|error| GpxWriterError::FileCreateError { error })?;
+        if let Some(dead_ends) = self.dead_ends {
+            dead_ends.iter().for_each(|dead_end| {
+                let mut waypoint = Waypoint::new(Point::new(
+                    dead_end.coords.1.into(),
+                    dead_end.coords.0.into(),
+                ));
+                waypoint.name = Some(format!("Dead end: {}", dead_end.dead_end_type));
+                gpx.waypoints.push(waypoint)
+            });
+        }
+
+        let file = File::create(&self.file_name)
+            .map_err(|error| GpxWriterError::FileCreateError { error })?;
 
         write(&gpx, file).map_err(|error| GpxWriterError::GpxWrite { error })?;
 

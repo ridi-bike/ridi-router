@@ -6,13 +6,15 @@ use std::{
 use tracing::trace;
 
 use crate::{
-    debug::writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
+    debug::writer::DebugWriter,
+    map_data::graph::MapDataPointRef,
+    router::{rules::RouterRules, walker::DeadEndType, weights::RuleType},
 };
 
 use super::{
     itinerary::Itinerary,
     route::Route,
-    walker::{Walker, WalkerMoveResult},
+    walker::{DeadEnd, Walker, WalkerMoveResult},
     weights::{WeightCalc, WeightCalcInput},
 };
 
@@ -112,25 +114,26 @@ impl ForkWeights {
         }
         if weights
             .iter()
-            .all(|weight| *weight != WeightCalcResult::ForkChoiceDoNotUse)
+            .any(|weight| *weight == WeightCalcResult::ForkChoiceDoNotUse)
         {
-            let existing_weight = match self.weight_list.get(choice_point_ref) {
-                None => 0u32,
-                Some(w) => *w,
-            };
-            self.weight_list.insert(
-                choice_point_ref.clone(),
-                existing_weight
-                    + weights
-                        .iter()
-                        .map(|r| match r {
-                            WeightCalcResult::ForkChoiceDoNotUse => 0u32,
-                            WeightCalcResult::LastSegmentDoNotUse => 0u32,
-                            WeightCalcResult::ForkChoiceUseWithWeight(w) => *w as u32,
-                        })
-                        .sum::<u32>(),
-            );
+            return;
         }
+        let existing_weight = match self.weight_list.get(choice_point_ref) {
+            None => 0u32,
+            Some(w) => *w,
+        };
+        self.weight_list.insert(
+            choice_point_ref.clone(),
+            existing_weight
+                + weights
+                    .iter()
+                    .map(|r| match r {
+                        WeightCalcResult::ForkChoiceDoNotUse => 0u32,
+                        WeightCalcResult::LastSegmentDoNotUse => 0u32,
+                        WeightCalcResult::ForkChoiceUseWithWeight(w) => *w as u32,
+                    })
+                    .sum::<u32>(),
+        );
     }
 
     fn get_choices_sorted_by_weight(&self) -> Vec<(&MapDataPointRef, &u32)> {
@@ -166,8 +169,8 @@ impl Debug for ForkWeights {
 }
 
 pub enum NavigationResult {
-    Stuck,
-    Stopped,
+    Stuck(Vec<DeadEnd>),
+    Stopped(Vec<DeadEnd>),
     Finished(Route),
 }
 
@@ -235,6 +238,8 @@ impl Navigator {
                     self.discarded_fork_choices.set_new_next();
                 }
 
+                let mut fork_discarded_by_custom_rule = false;
+
                 let fork_weights = fork_choices.clone().into_iter().fold(
                     ForkWeights::new(),
                     |mut fork_weights, fork_route_segment| {
@@ -259,6 +264,13 @@ impl Navigator {
                                         weight_calc.name(),
                                         &weight_calc_result,
                                     );
+                                    if (weight_calc_result == WeightCalcResult::ForkChoiceDoNotUse
+                                        || weight_calc_result
+                                            == WeightCalcResult::LastSegmentDoNotUse)
+                                        && weight_calc.rule_type() == &RuleType::Tag
+                                    {
+                                        fork_discarded_by_custom_rule = true;
+                                    }
                                     weight_calc_result
                                 })
                                 .collect::<Vec<_>>();
@@ -299,7 +311,7 @@ impl Navigator {
                             "Stuck",
                             None,
                         );
-                        return NavigationResult::Stuck;
+                        return NavigationResult::Stuck(self.walker.get_dead_ends().clone());
                     }
                     if self
                         .itinerary
@@ -307,6 +319,12 @@ impl Navigator {
                     {
                         self.discarded_fork_choices.set_prev_next();
                     }
+
+                    self.walker.add_dead_end(if fork_discarded_by_custom_rule {
+                        DeadEndType::CustomRule
+                    } else {
+                        DeadEndType::BasicRule
+                    });
                     self.walker.move_backwards_to_prev_fork();
                     DebugWriter::write_step_result(
                         self.itinerary.id(),
@@ -329,7 +347,7 @@ impl Navigator {
             if loop_counter >= self.rules.basic.step_limit.0 {
                 trace!("Reached loop {loop_counter}, stopping");
                 DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
-                return NavigationResult::Stopped;
+                return NavigationResult::Stopped(self.walker.get_dead_ends().clone());
             }
         }
     }
@@ -587,7 +605,7 @@ mod test {
                     WeightCalcResult::ForkChoiceUseWithWeight(6)
                 }
             }
-            
+
             struct WeightCalcTest2;
             impl WeightCalc for WeightCalcTest2 {
                 fn name(&self) -> &'static str {
@@ -610,7 +628,7 @@ mod test {
                     WeightCalcResult::ForkChoiceUseWithWeight(6)
                 }
             }
-            
+
             set_graph_static(graph_from_test_dataset(test_dataset_1()));
             let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
             let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();

@@ -20,6 +20,7 @@ pub struct WeightCalcInput<'a> {
     pub rules: &'a RouterRules,
 }
 
+#[derive(PartialEq, Eq, Debug)]
 pub enum RuleType {
     Basic,
     Tag,

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::{num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
+use std::{collections::HashSet, num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -7,13 +7,16 @@ use tracing::{info, trace};
 
 use crate::{
     debug::writer::DebugWriter,
-    ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
+    ipc_handler::{
+        DeadEndMessage, IpcHandler, IpcHandlerError, ResponseMessage, RouteByTags, RouteMessage,
+        RouterResult,
+    },
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
     osm_data_reader::DataSource,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{
-        generator::{Generator, RouteWithStats},
+        generator::{Generator, RouteWithStats, RoutesAndDeadEnds},
         rules::RouterRules,
     },
 };
@@ -52,6 +55,9 @@ pub enum RouterRunnerError {
 
     #[error("Failed to write cache: {error}")]
     CacheWrite { error: MapDataCacheError },
+
+    #[error("Unexpected value in output selection")]
+    InvalidValueOutputSelection { value: String },
 
     #[cfg(feature = "debug-viewer")]
     #[error("Failed run debug viewer: {error}")]
@@ -179,6 +185,51 @@ pub enum RoutingMode {
     },
 }
 
+const NONE: &str = "none";
+const ROUTE_SPLIT: &str = "route-split";
+const DEAD_ENDS: &str = "dead-ends";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputSelection {
+    pub route_split: bool,
+    pub dead_ends: bool,
+}
+impl FromStr for OutputSelection {
+    type Err = RouterRunnerError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut output_selection = OutputSelection {
+            route_split: false,
+            dead_ends: false,
+        };
+        if s == NONE {
+            return Ok(output_selection);
+        }
+        let output_selection_args = s
+            .split(",")
+            .into_iter()
+            .map(|v| v.trim())
+            .collect::<Vec<_>>();
+        if output_selection_args.contains(&ROUTE_SPLIT) {
+            output_selection.route_split = true;
+        }
+        if output_selection_args.contains(&DEAD_ENDS) {
+            output_selection.dead_ends = true;
+        }
+        if let Some(value) = output_selection_args.into_iter().find(|v| {
+            if v != &ROUTE_SPLIT && v != &DEAD_ENDS {
+                return true;
+            }
+            false
+        }) {
+            return Err(RouterRunnerError::InvalidValueOutputSelection {
+                value: value.to_string(),
+            });
+        }
+        Ok(output_selection)
+    }
+}
+
 #[derive(Subcommand)]
 enum CliMode {
     /// Load input data and generate a route
@@ -212,6 +263,11 @@ enum CliMode {
         /// examining route generation rules. Can be viewed with the 'debug-viewer' binary
         debug_dir: Option<PathBuf>,
 
+        #[arg(long, value_name = "EXTRA OUTPUTS", default_value = "none")]
+        /// Can be used to enable extra output in the results. Can be either 'route-split',
+        /// 'dead-ends' or a comma separated list like 'route-split,dead-ends'
+        selected_outputs: OutputSelection,
+
         #[command(subcommand)]
         /// Routing mode to generate a route between start and finish coordinates or a round trip
         /// mode to generate a route with the same start and finish coordinates
@@ -243,6 +299,11 @@ enum CliMode {
         )]
         /// Destination json or gpx file path and name. If not specified, results piped to screen
         output: DataDestination,
+
+        #[arg(long, value_name = "EXTRA OUTPUTS", default_value = "none")]
+        /// Can be used to enable extra output in the results. Can be either 'route-split',
+        /// 'dead-ends' or a comma separated list like 'route-split,dead-ends'
+        selected_outputs: OutputSelection,
 
         #[command(subcommand)]
         /// Routing mode to generate a route between start and finish coordinates or a round trip
@@ -288,6 +349,103 @@ enum CliMode {
     },
 }
 
+fn route_result_to_resp_message(
+    route_result: Result<RoutesAndDeadEnds, RouterRunnerError>,
+    include_dead_ends: bool,
+    split_by_tags: bool,
+) -> ResponseMessage {
+    ResponseMessage {
+        id: "oo".to_string(),
+        result: route_result.map_or_else(
+            |error| RouterResult::Error {
+                message: format!("Error generating route {:?}", error),
+            },
+            |routes_and_dead_ends| RouterResult::Ok {
+                routes: routes_and_dead_ends
+                    .routes
+                    .iter()
+                    .map(|route| RouteMessage {
+                        coords: route
+                            .route
+                            .clone()
+                            .into_iter()
+                            .map(|segment| {
+                                (
+                                    segment.get_end_point().borrow().lat,
+                                    segment.get_end_point().borrow().lon,
+                                )
+                            })
+                            .collect(),
+                        coords_by_tags: if split_by_tags {
+                            Some(route.route.clone().into_iter().fold(
+                                Vec::new() as Vec<RouteByTags>,
+                                |route_by_tags, segment| {
+                                    let line = segment.get_line().borrow();
+                                    let tags = line.tags.borrow();
+                                    let highway = tags.highway().map(|v| v.to_string());
+                                    let surface = tags.surface().map(|v| v.to_string());
+                                    let smoothness = tags.smoothness().map(|v| v.to_string());
+                                    let point = segment.get_end_point().borrow();
+                                    let last_route = match route_by_tags.last() {
+                                        None => {
+                                            return vec![RouteByTags {
+                                                coords: vec![(point.lat, point.lon)],
+                                                highway,
+                                                surface,
+                                                smoothness,
+                                            }]
+                                        }
+                                        Some(rbt) => rbt,
+                                    };
+
+                                    if last_route.highway != highway
+                                        || last_route.surface != surface
+                                        || last_route.smoothness != smoothness
+                                    {
+                                        let mut route_by_tags = route_by_tags;
+                                        route_by_tags.push(RouteByTags {
+                                            coords: vec![(point.lat, point.lon)],
+                                            highway,
+                                            surface,
+                                            smoothness,
+                                        });
+                                        return route_by_tags;
+                                    }
+                                    let mut route_by_tags = route_by_tags;
+                                    if let Some(last) = route_by_tags.last_mut() {
+                                        last.coords.push((point.lat, point.lon));
+                                    }
+                                    route_by_tags
+                                },
+                            ))
+                        } else {
+                            None
+                        },
+                        stats: route.stats.clone(),
+                    })
+                    .collect(),
+                dead_ends: if include_dead_ends {
+                    Some(
+                        routes_and_dead_ends
+                            .dead_ends
+                            .into_iter()
+                            .flatten()
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .map(|dead_end| DeadEndMessage {
+                                dead_end_type: dead_end.dead_end_type,
+                                coords: (dead_end.point.borrow().lat, dead_end.point.borrow().lon),
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    None
+                },
+            },
+        ),
+    }
+}
+
 pub struct RouterRunner;
 
 impl RouterRunner {
@@ -295,7 +453,7 @@ impl RouterRunner {
     fn generate_route(
         routing_mode: &RoutingMode,
         rules: RouterRules,
-    ) -> Result<Vec<RouteWithStats>, RouterRunnerError> {
+    ) -> Result<RoutesAndDeadEnds, RouterRunnerError> {
         let (start_lat, start_lon, finish_lat, finish_lon) = match routing_mode {
             RoutingMode::StartFinish { start, finish } => {
                 (start.lat, start.lon, finish.lat, finish.lon)
@@ -332,8 +490,8 @@ impl RouterRunner {
             None
         };
         let route_generator = Generator::new(start.clone(), finish.clone(), round_trip, rules);
-        let routes = route_generator.generate_routes();
-        Ok(routes)
+        let routes_and_dead_ends = route_generator.generate_routes();
+        Ok(routes_and_dead_ends)
     }
 
     #[tracing::instrument(skip_all)]
@@ -344,6 +502,7 @@ impl RouterRunner {
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
         debug_dir: Option<PathBuf>,
+        selected_outputs: OutputSelection,
     ) -> Result<()> {
         DebugWriter::init(debug_dir).context("Failed to init debug writer")?;
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
@@ -385,33 +544,11 @@ impl RouterRunner {
         let route_result = RouterRunner::generate_route(routing_mode, rules);
         ResultWriter::write(
             data_destination.clone(),
-            ResponseMessage {
-                id: "oo".to_string(),
-                result: route_result.map_or_else(
-                    |error| RouterResult::Error {
-                        message: format!("Error generating route {:?}", error),
-                    },
-                    |routes| RouterResult::Ok {
-                        routes: routes
-                            .iter()
-                            .map(|route| RouteMessage {
-                                coords: route
-                                    .route
-                                    .clone()
-                                    .into_iter()
-                                    .map(|segment| {
-                                        (
-                                            segment.get_end_point().borrow().lat,
-                                            segment.get_end_point().borrow().lon,
-                                        )
-                                    })
-                                    .collect(),
-                                stats: route.stats.clone(),
-                            })
-                            .collect(),
-                    },
-                ),
-            },
+            route_result_to_resp_message(
+                route_result,
+                selected_outputs.dead_ends,
+                selected_outputs.route_split,
+            ),
         )
         .map_err(|error| RouterRunnerError::ResultWrite { error })?;
         Ok(())
@@ -490,33 +627,11 @@ impl RouterRunner {
             let route_res =
                 RouterRunner::generate_route(&request_message.routing_mode, request_message.rules);
 
-            ResponseMessage {
-                id: request_message.id,
-                result: route_res.map_or_else(
-                    |error| RouterResult::Error {
-                        message: format!("Error generating route {:?}", error),
-                    },
-                    |routes| RouterResult::Ok {
-                        routes: routes
-                            .iter()
-                            .map(|route| RouteMessage {
-                                coords: route
-                                    .route
-                                    .clone()
-                                    .into_iter()
-                                    .map(|segment| {
-                                        (
-                                            segment.get_end_point().borrow().lat,
-                                            segment.get_end_point().borrow().lon,
-                                        )
-                                    })
-                                    .collect(),
-                                stats: route.stats.clone(),
-                            })
-                            .collect(),
-                    },
-                ),
-            }
+            route_result_to_resp_message(
+                route_res,
+                request_message.selected_outputs.dead_ends,
+                request_message.selected_outputs.route_split,
+            )
         })
         .map_err(|error| RouterRunnerError::Ipc { error })?;
         Ok(())
@@ -529,13 +644,14 @@ impl RouterRunner {
         socket_name: Option<String>,
         rule_file: Option<PathBuf>,
         route_req_id: Option<String>,
+        selected_outputs: OutputSelection,
     ) -> Result<()> {
         let client_start = Instant::now();
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
         let ipc =
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
         let response = ipc
-            .connect(routing_mode, rules, route_req_id)
+            .connect(routing_mode, rules, route_req_id, selected_outputs)
             .map_err(|error| RouterRunnerError::Ipc { error })?;
         ResultWriter::write(data_destination.clone(), response)
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
@@ -556,6 +672,7 @@ impl RouterRunner {
                 input,
                 output,
                 debug_dir,
+                selected_outputs,
             } => RouterRunner::run_dual(
                 input,
                 cache_dir.clone(),
@@ -563,6 +680,7 @@ impl RouterRunner {
                 output,
                 rule_file.clone(),
                 debug_dir.clone(),
+                selected_outputs.clone(),
             ),
             CliMode::PrepCache { input, cache_dir } => {
                 RouterRunner::run_cache(input, cache_dir.clone()).context("Failed to run cache")
@@ -579,12 +697,14 @@ impl RouterRunner {
                 socket_name,
                 rule_file,
                 route_req_id,
+                selected_outputs,
             } => RouterRunner::run_client(
                 routing_mode,
                 output,
                 socket_name.clone(),
                 rule_file.clone(),
                 route_req_id.clone(),
+                selected_outputs.clone(),
             ),
             #[cfg(feature = "debug-viewer")]
             CliMode::DebugViewer { debug_dir } => {
