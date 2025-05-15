@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
-use std::{collections::HashSet, num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
+use std::panic::catch_unwind;
+use std::{num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -624,8 +625,21 @@ impl RouterRunner {
             IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
 
         ipc.listen(|request_message| {
-            let route_res =
-                RouterRunner::generate_route(&request_message.routing_mode, request_message.rules);
+            let route_res = catch_unwind(|| {
+                RouterRunner::generate_route(&request_message.routing_mode, request_message.rules)
+            });
+
+            let route_res = match route_res {
+                Ok(r) => r,
+                Err(error) => {
+                    return ResponseMessage {
+                        id: request_message.id,
+                        result: RouterResult::Error {
+                            message: format!("Caught panic {:?}", error),
+                        },
+                    };
+                }
+            };
 
             route_result_to_resp_message(
                 route_res,

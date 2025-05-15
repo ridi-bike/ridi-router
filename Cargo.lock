@@ -945,9 +945,9 @@ dependencies = [
 
 [[package]]
 name = "hdbscan"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f780b68c332f0ddc933771cb6025e3433f16f9175f7eac64fc1b3753c916a4ca"
+checksum = "b9e2fc8e94ffcf50e73e35ca82d0f14e2233f033a7043b8a2106e9b98d55ca80"
 dependencies = [
  "kdtree",
  "num-traits",
@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "ridi-router"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "bincode",
