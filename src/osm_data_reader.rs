@@ -151,6 +151,7 @@ impl OsmDataReader {
                                         .iter()
                                         .any(|t2| t2.0 == "motorcycle" && t2.1 == "yes")))
                     })
+                    && !obj.tags().contains("motor_vehicle", "destination")
             })
             .map_err(|error| OsmDataReaderError::PbfFileReadError { error })?;
 
