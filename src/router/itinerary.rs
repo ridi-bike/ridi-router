@@ -67,7 +67,7 @@ impl Itinerary {
             waypoints,
             finish,
             switched_wps_on: Vec::new(),
-            check_loop_since_last_wp: true,
+            check_loop_since_last_wp: false,
             visit_all_wps: true,
         }
     }
