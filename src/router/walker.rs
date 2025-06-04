@@ -47,7 +47,7 @@ impl Walker {
         last_point
     }
 
-    fn get_fork_segments_for_point(&self, center_point: &MapDataPointRef) -> SegmentList {
+    fn get_segments_for_point(&self, center_point: &MapDataPointRef) -> SegmentList {
         let center_point_borrowed = center_point.borrow();
 
         let not_allow_rules = center_point_borrowed
@@ -277,7 +277,7 @@ impl Walker {
             }
 
             let available_segments = match self.route_walked.get_segment_last() {
-                None => self.get_fork_segments_for_point(&self.start),
+                None => self.get_segments_for_point(&self.start),
                 Some(segment) => {
                     if segment.get_line().borrow().is_roundabout() {
                         self.get_roundabout_exits(segment)
