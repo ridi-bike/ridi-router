@@ -1,3 +1,4 @@
+use geo::{Distance, Haversine, Point};
 use tracing::{error, trace};
 
 use crate::{
@@ -7,6 +8,7 @@ use crate::{
             OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
             OsmWay,
         },
+        proximity::PointGrid,
         MapDataError,
     },
     osm_json_parser::{OsmElement, OsmElementType, OsmJsonParser, OsmJsonParserError},
@@ -139,6 +141,21 @@ impl OsmDataReader {
             .map_err(|error| OsmDataReaderError::PbfFileOpenError { error })?;
         let mut pbf = osmpbfreader::OsmPbfReader::new(r);
 
+        let mut residential_point_map = PointGrid::<Point>::new();
+
+        pbf.get_objs_and_deps(|obj| obj.is_way() && obj.tags().contains("landuse", "residential"))
+            .map_err(|error| OsmDataReaderError::PbfFileReadError { error })?
+            .iter()
+            .for_each(|(_id, osm_element)| {
+                if let Some(node) = osm_element.node() {
+                    residential_point_map.insert(
+                        node.lat() as f32,
+                        node.lon() as f32,
+                        &Point::new(node.lon(), node.lat()),
+                    );
+                }
+            });
+
         let elements = pbf
             .get_objs_and_deps(|obj| {
                 obj.is_way()
@@ -160,10 +177,21 @@ impl OsmDataReader {
                 let node = element.node().ok_or(OsmDataReaderError::PbfFileError {
                     error: String::from("expected node, did not get it"),
                 })?;
+                let geo_point = Point::new(node.lon(), node.lat());
                 self.map_data.insert_node(OsmNode {
                     id: node.id.0 as u64,
                     lat: node.lat(),
                     lon: node.lon(),
+                    residential_in_proximity: match residential_point_map.find_closest_point_refs(
+                        node.lat() as f32,
+                        node.lon() as f32,
+                        1,
+                    ) {
+                        Some(points) => points
+                            .iter()
+                            .any(|point| Haversine::distance(geo_point.clone(), **point) <= 1000.),
+                        None => false,
+                    },
                 });
             } else if element.is_way() {
                 let way = element.way().ok_or(OsmDataReaderError::PbfFileError {

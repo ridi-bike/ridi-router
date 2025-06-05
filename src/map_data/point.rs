@@ -19,6 +19,7 @@ pub struct MapDataPoint {
     pub lon: f32,
     pub lines: Vec<MapDataLineRef>,
     pub rules: Vec<MapDataRule>,
+    pub residential_in_proximity: bool,
 }
 
 impl MapDataPoint {

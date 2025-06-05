@@ -4,7 +4,7 @@ pub mod graph;
 pub mod line;
 pub mod osm;
 pub mod point;
-mod proximity;
+pub mod proximity;
 pub mod rule;
 
 #[derive(Debug, PartialEq, Clone, thiserror::Error)]
