@@ -630,8 +630,9 @@ impl MapDataGraph {
         lat: f32,
         lon: f32,
         rules: &RouterRules,
+        avoid_proximity_to_residential: bool,
     ) -> Option<MapDataPointRef> {
-        let closest_points = self.point_grid.find_closest_point_refs(lat, lon, 10);
+        let closest_points = self.point_grid.find_closest_point_refs(lat, lon, 20);
         let closest_points = match closest_points {
             Some(p) => p,
             None => return None,
@@ -642,6 +643,9 @@ impl MapDataGraph {
         let mut distances = closest_points
             .iter()
             .filter(|p| {
+                if avoid_proximity_to_residential && p.borrow().residential_in_proximity {
+                    return false;
+                }
                 let lines = p
                     .borrow()
                     .lines
@@ -1292,6 +1296,7 @@ mod tests {
                 },
                 |r| r,
             ),
+            false,
         );
         if let Some(closest) = closest {
             assert_eq!(closest.borrow().id, closest_id);
