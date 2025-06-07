@@ -612,7 +612,7 @@ impl OsmJsonParser {
 mod test {
     use std::collections::HashMap;
 
-    use crate::{osm_json_parser::OsmJsonParserError, test_utils::get_test_data_osm_json};
+    use crate::{osm_data::json_parser::OsmJsonParserError, test_utils::get_test_data_osm_json};
 
     use super::{OsmElement, OsmJsonParser, OsmRelMember, OsmRelMemberRole, OsmRelMemberType};
     pub fn get_osm_element_node(

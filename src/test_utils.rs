@@ -5,7 +5,7 @@ use crate::{
         graph::{MapDataGraph, MapDataLineRef, MAP_DATA_GRAPH},
         osm::{OsmNode, OsmRelation, OsmWay},
     },
-    osm_data_reader::{DataSource, OsmDataReader},
+    osm_data::{data_reader::OsmDataReader, DataSource},
     router::route::Route,
 };
 

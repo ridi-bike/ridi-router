@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::info;
 
-use crate::{map_data::graph::MapDataGraphPacked, osm_data_reader::DataSource};
+use crate::{map_data::graph::MapDataGraphPacked, osm_data::DataSource};
 
 fn read_cache_file(file_folder: &PathBuf, file_name: &str) -> Result<Vec<u8>, MapDataCacheError> {
     let mut file = file_folder.clone();

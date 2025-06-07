@@ -18,7 +18,10 @@ use crate::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
-    osm_data_reader::{DataSource, OsmDataReader, ALLOWED_HIGHWAY_VALUES},
+    osm_data::{
+        data_reader::{OsmDataReader, ALLOWED_HIGHWAY_VALUES},
+        DataSource,
+    },
     router::rules::{RouterRules, RulesTagValueAction},
 };
 

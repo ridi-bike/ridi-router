@@ -1,143 +1,35 @@
+use crate::{map_data::graph::MapDataGraph, osm_data::data_reader::ALLOWED_HIGHWAY_VALUES};
 use geo::{Distance, Haversine, Point};
-use tracing::{error, trace};
+use tracing::trace;
 
-use crate::{
-    map_data::{
-        graph::MapDataGraph,
-        osm::{
-            OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
-            OsmWay,
-        },
-        proximity::PointGrid,
-        MapDataError,
+use crate::map_data::{
+    osm::{
+        OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
+        OsmWay,
     },
-    osm_json_parser::{OsmElement, OsmElementType, OsmJsonParser, OsmJsonParserError},
+    proximity::PointGrid,
 };
-use std::{
-    fs::File,
-    io::{self, BufRead, BufReader},
-    path::PathBuf,
-    time::Instant,
-};
+use std::{path::PathBuf, time::Instant};
 
-pub const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
-    "motorway",
-    "trunk",
-    "primary",
-    "secondary",
-    "tertiary",
-    "unclassified",
-    "residential",
-    "motorway_link",
-    "trunk_link",
-    "primary_link",
-    "secondary_link",
-    "tertiary_link",
-    "living_street",
-    "track",
-    "escape",
-    "raceway",
-    "road",
-];
+use super::OsmDataReaderError;
 
-#[derive(Debug, thiserror::Error)]
-pub enum OsmDataReaderError {
-    #[error("OSM JSON parser error: {error}")]
-    ParserError { error: OsmJsonParserError },
-
-    #[error("Map data error: {error}")]
-    MapDataError { error: MapDataError },
-
-    #[error("File error: {error}")]
-    FileError { error: io::Error },
-
-    #[error("Failed to open PBF file: {error}")]
-    PbfFileOpenError { error: io::Error },
-
-    #[error("Failed to read PBF file: {error}")]
-    PbfFileReadError { error: osmpbfreader::Error },
-
-    #[error("PBF file error: {error}")]
-    PbfFileError { error: String },
+pub struct PbfReader<'a> {
+    map_data: &'a mut MapDataGraph,
+    file_name: &'a PathBuf,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum DataSource {
-    JsonFile { file: PathBuf },
-    PbfFile { file: PathBuf },
-}
-
-pub struct OsmDataReader {
-    source: DataSource,
-    map_data: MapDataGraph,
-}
-
-impl OsmDataReader {
-    pub fn new(data_source: DataSource) -> Self {
+impl<'a> PbfReader<'a> {
+    pub fn new(map_data: &'a mut MapDataGraph, file_name: &'a PathBuf) -> Self {
         Self {
-            map_data: MapDataGraph::new(),
-            source: data_source,
+            map_data,
+            file_name,
         }
     }
 
-    pub fn read_data(mut self) -> Result<MapDataGraph, OsmDataReaderError> {
-        match self.source {
-            DataSource::JsonFile { ref file } => {
-                self.read_json(file.clone())?;
-            }
-            DataSource::PbfFile { ref file } => {
-                self.read_pbf(file.clone())?;
-            }
-        };
-        Ok(self.map_data)
-    }
-
-    fn process_elements(&mut self, elements: Vec<OsmElement>) -> Result<(), OsmDataReaderError> {
-        for element in elements {
-            match element
-                .get_element_type()
-                .map_err(|error| OsmDataReaderError::ParserError { error })?
-            {
-                OsmElementType::Node => {
-                    let node = element
-                        .get_node_element()
-                        .map_err(|error| OsmDataReaderError::ParserError { error })?;
-                    self.map_data.insert_node(node);
-                }
-                OsmElementType::Way => {
-                    let way = element
-                        .get_way_element()
-                        .map_err(|error| OsmDataReaderError::ParserError { error })?;
-                    let res = self
-                        .map_data
-                        .insert_way(way)
-                        .map_err(|error| OsmDataReaderError::MapDataError { error });
-                    if let Err(error) = res {
-                        error!(error=?error, "Error, skipping way");
-                    }
-                }
-                OsmElementType::Relation => {
-                    let rel = element
-                        .get_relation_element()
-                        .map_err(|error| OsmDataReaderError::ParserError { error })?;
-                    let res = self
-                        .map_data
-                        .insert_relation(rel)
-                        .map_err(|error| OsmDataReaderError::MapDataError { error });
-                    if let Err(error) = res {
-                        error!(error=?error, "Error, skipping relation");
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn read_pbf(&mut self, file: PathBuf) -> Result<(), OsmDataReaderError> {
+    pub fn read(self) -> Result<(), OsmDataReaderError> {
         let read_start = Instant::now();
 
-        let path = std::path::Path::new(&file);
-        let r = std::fs::File::open(path)
+        let r = std::fs::File::open(self.file_name)
             .map_err(|error| OsmDataReaderError::PbfFileOpenError { error })?;
         let mut pbf = osmpbfreader::OsmPbfReader::new(r);
 
@@ -258,38 +150,6 @@ impl OsmDataReader {
 
         let read_duration = read_start.elapsed();
         trace!("file read took {} seconds", read_duration.as_secs());
-
-        Ok(())
-    }
-
-    fn read_json(&mut self, file: PathBuf) -> Result<(), OsmDataReaderError> {
-        let read_start = Instant::now();
-        let mut parser_state = OsmJsonParser::new();
-
-        let f = File::open(file).map_err(|error| OsmDataReaderError::FileError { error })?;
-        let mut reader = BufReader::new(f);
-        loop {
-            let mut line = String::new();
-            let len = reader
-                .read_line(&mut line)
-                .map_err(|error| OsmDataReaderError::FileError { error })?;
-            if len == 0 {
-                break;
-            }
-            let line = line.as_bytes().to_owned();
-            let elements = parser_state
-                .parse_line(line)
-                .map_err(|error| OsmDataReaderError::ParserError { error })?;
-            self.process_elements(elements)?;
-        }
-
-        self.map_data.generate_point_hashes();
-
-        let read_duration = read_start.elapsed();
-        trace!(
-            read_duration_secs = read_duration.as_secs(),
-            "File read done"
-        );
 
         Ok(())
     }
