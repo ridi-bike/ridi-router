@@ -1,13 +1,13 @@
-use crate::{map_data::graph::MapDataGraph, osm_data::data_reader::ALLOWED_HIGHWAY_VALUES};
+use crate::{
+    map_data::graph::MapDataGraph,
+    osm_data::{data_reader::ALLOWED_HIGHWAY_VALUES, pbf_area_reader::PbfAreaReader},
+};
 use geo::{Distance, Haversine, Point};
+use rstar::PointDistance;
 use tracing::trace;
 
-use crate::map_data::{
-    osm::{
-        OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
-        OsmWay,
-    },
-    proximity::PointGrid,
+use crate::map_data::osm::{
+    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
 };
 use std::{path::PathBuf, time::Instant};
 
@@ -33,20 +33,8 @@ impl<'a> PbfReader<'a> {
             .map_err(|error| OsmDataReaderError::PbfFileOpenError { error })?;
         let mut pbf = osmpbfreader::OsmPbfReader::new(r);
 
-        let mut residential_point_map = PointGrid::<Point>::new();
-
-        pbf.get_objs_and_deps(|obj| obj.is_way() && obj.tags().contains("landuse", "residential"))
-            .map_err(|error| OsmDataReaderError::PbfFileReadError { error })?
-            .iter()
-            .for_each(|(_id, osm_element)| {
-                if let Some(node) = osm_element.node() {
-                    residential_point_map.insert(
-                        node.lat() as f32,
-                        node.lon() as f32,
-                        &Point::new(node.lon(), node.lat()),
-                    );
-                }
-            });
+        let mut boundary_reader = PbfAreaReader::new(&mut pbf);
+        boundary_reader.read(|obj| obj.is_way() && obj.tags().contains("landuse", "residential"));
 
         let elements = pbf
             .get_objs_and_deps(|obj| {
@@ -69,19 +57,15 @@ impl<'a> PbfReader<'a> {
                 let node = element.node().ok_or(OsmDataReaderError::PbfFileError {
                     error: String::from("expected node, did not get it"),
                 })?;
-                let geo_point = Point::new(node.lon(), node.lat());
                 self.map_data.insert_node(OsmNode {
                     id: node.id.0 as u64,
                     lat: node.lat(),
                     lon: node.lon(),
-                    residential_in_proximity: match residential_point_map.find_closest_point_refs(
-                        node.lat() as f32,
-                        node.lon() as f32,
-                        1,
-                    ) {
-                        Some(points) => points
-                            .iter()
-                            .any(|point| Haversine::distance(geo_point.clone(), **point) <= 1000.),
+                    residential_in_proximity: match boundary_reader
+                        .tree
+                        .nearest_neighbor(&[node.lat(), node.lon()])
+                    {
+                        Some(area) => area.distance_2(&[node.lon(), node.lat()]).sqrt() <= 1000.,
                         None => false,
                     },
                 });
