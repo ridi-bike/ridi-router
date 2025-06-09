@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, io, time::Instant};
+use std::{collections::HashMap, fs::File, time::Instant};
 
 use geo::{
     BoundingRect, Contains, Coord, Distance, Haversine, HaversineClosestPoint, LineString,
@@ -9,23 +9,10 @@ use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
 use rstar::{Point, PointDistance, RTree, RTreeObject, AABB};
 use tracing::{error, info, trace};
 
-#[derive(Debug, thiserror::Error)]
-pub enum PbfAreaReaderError {
-    #[error("File open error: {error}")]
-    PbfFileOpenError { error: io::Error },
-
-    #[error("File read error: {error}")]
-    PbfFileReadError { error: osmpbfreader::Error },
-
-    #[error("Name not found for relation {id}")]
-    NameNotFound { id: i64 },
-
-    #[error("Level not found for relation {id}")]
-    LevelNotFound { id: i64 },
-}
+use super::OsmDataReaderError;
 
 #[derive(Debug, PartialEq, Clone)]
-struct Area(MultiPolygon);
+pub struct Area(MultiPolygon);
 
 impl RTreeObject for Area {
     type Envelope = AABB<[f64; 2]>;
@@ -60,12 +47,17 @@ impl PointDistance for Area {
     }
 }
 
+enum Boundary {
+    Relation(Relation),
+    Way(Way),
+}
+
 pub struct PbfAreaReader<'a> {
     nodes: HashMap<i64, Node>,
     ways: HashMap<i64, Way>,
-    relations: Vec<Relation>,
+    boundaries: Vec<Boundary>,
     pbf: &'a mut OsmPbfReader<File>,
-    pub tree: RTree<Area>,
+    tree: RTree<Area>,
 }
 
 #[derive(Clone, Debug)]
@@ -78,46 +70,60 @@ impl<'a> PbfAreaReader<'a> {
         Self {
             nodes: HashMap::new(),
             ways: HashMap::new(),
-            relations: Vec::new(),
+            boundaries: Vec::new(),
             pbf,
             tree: RTree::new(),
         }
     }
-    fn get_boundary_from_relation(&self, relation: &Relation, role: &str) -> Vec<LineString> {
+    fn get_line_strings_from_boundary(&self, boundary: &Boundary, role: &str) -> Vec<LineString> {
         let mut boundaries: Vec<Vec<(f64, f64)>> = Vec::new();
         let mut current_boundary: Vec<(f64, f64)> = Vec::new();
 
         let mut ways_with_points: Vec<WayWithPoints> = Vec::new();
 
-        for relation_ref in relation
-            .refs
-            .iter()
-            .filter(|relation_ref| relation_ref.role == role)
-        {
-            let way_id = match relation_ref.member.way() {
-                None => {
-                    error!(relation_id = ?relation_ref, "Not a way");
-                    continue;
-                }
-                Some(w_id) => w_id,
-            };
-
-            let way = match self.ways.get(&way_id.0) {
-                None => {
-                    continue;
-                }
-                Some(w) => w,
-            };
-
-            ways_with_points.push(WayWithPoints {
-                points: way
-                    .nodes
+        match boundary {
+            Boundary::Relation(relation) => {
+                for relation_ref in relation
+                    .refs
                     .iter()
-                    .filter_map(|node_id| self.nodes.get(&node_id.0))
-                    .map(|node| (node.lat(), node.lon()))
-                    .collect(),
-            });
-        }
+                    .filter(|relation_ref| relation_ref.role == role)
+                {
+                    let way_id = match relation_ref.member.way() {
+                        None => {
+                            error!(relation_id = ?relation_ref, "Not a way");
+                            continue;
+                        }
+                        Some(w_id) => w_id,
+                    };
+
+                    let way = match self.ways.get(&way_id.0) {
+                        None => {
+                            continue;
+                        }
+                        Some(w) => w,
+                    };
+
+                    ways_with_points.push(WayWithPoints {
+                        points: way
+                            .nodes
+                            .iter()
+                            .filter_map(|node_id| self.nodes.get(&node_id.0))
+                            .map(|node| (node.lat(), node.lon()))
+                            .collect(),
+                    });
+                }
+            }
+            Boundary::Way(way) => {
+                ways_with_points.push(WayWithPoints {
+                    points: way
+                        .nodes
+                        .iter()
+                        .filter_map(|node_id| self.nodes.get(&node_id.0))
+                        .map(|node| (node.lat(), node.lon()))
+                        .collect(),
+                });
+            }
+        };
         trace!(
             ways_with_points = ?ways_with_points,
             "Prep done"
@@ -237,49 +243,51 @@ impl<'a> PbfAreaReader<'a> {
         Area(MultiPolygon::new(matched_polygons))
     }
 
-    pub fn read<T>(&mut self, selection: T) -> Result<(), PbfAreaReaderError>
+    pub fn read<T>(&mut self, selection: &T) -> Result<(), OsmDataReaderError>
     where
-        T: FnMut(&OsmObj) -> bool,
+        T: Fn(&OsmObj) -> bool,
     {
         info!("Reading boundaries");
 
         let read_start = Instant::now();
 
         self.pbf
-            .get_objs_and_deps(selection)
-            .map_err(|error| PbfAreaReaderError::PbfFileReadError { error })?
+            .get_objs_and_deps(|el| selection(el))
+            .map_err(|error| OsmDataReaderError::PbfFileReadError { error })?
             .into_iter()
-            .for_each(|(_id, element)| {
-                if element.is_relation()
-                    && element.tags().contains("type", "boundary")
-                    && element.tags().contains("boundary", "administrative")
-                    && element.tags().contains_key("admin_level")
-                    && element.tags().contains_key("name")
-                {
-                    let relation = element.relation().expect("Must be a way");
-                    self.relations.push(relation.clone());
-                } else if element.is_way() {
-                    let way = element.way().expect("Must be a way");
+            .map(|(_id, element)| {
+                if selection(&element) {
+                    if let Some(rel) = element.relation() {
+                        self.boundaries.push(Boundary::Relation(rel.clone()));
+                    } else if let Some(w) = element.way() {
+                        self.boundaries.push(Boundary::Way(w.clone()));
+                    } else {
+                        return Err(OsmDataReaderError::PbfFileError {
+                            error: String::from("Expected way or relation"),
+                        });
+                    }
+                } else if let Some(way) = element.way() {
                     self.ways.insert(element.id().inner_id(), way.clone());
-                } else if element.is_node() {
-                    let node = element.node().expect("Must be a node");
+                } else if let Some(node) = element.node() {
                     self.nodes.insert(element.id().inner_id(), node.clone());
                 }
-            });
+                Ok(())
+            })
+            .collect::<Result<(), OsmDataReaderError>>()?;
 
         let boundaries = self
-            .relations
+            .boundaries
             .iter()
-            .map(|relation| {
-                let border_outer_points = self.get_boundary_from_relation(relation, "outer");
-                let border_inner_points = self.get_boundary_from_relation(relation, "inner");
+            .map(|boundary| {
+                let border_outer_points = self.get_line_strings_from_boundary(boundary, "outer");
+                let border_inner_points = self.get_line_strings_from_boundary(boundary, "inner");
 
                 Ok(Self::match_holes_to_outer_polygons(
                     &border_outer_points,
                     &border_inner_points,
                 ))
             })
-            .collect::<Result<Vec<_>, PbfAreaReaderError>>()?;
+            .collect::<Result<Vec<_>, OsmDataReaderError>>()?;
 
         let read_duration = read_start.elapsed();
         info!(duration = ?read_duration, "Boundary read done");
@@ -294,5 +302,9 @@ impl<'a> PbfAreaReader<'a> {
         info!(duration = ?tree_started, "Boundary Tree insert done");
 
         Ok(())
+    }
+
+    pub fn get_tree(self) -> RTree<Area> {
+        self.tree
     }
 }

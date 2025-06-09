@@ -2,7 +2,6 @@ use crate::{
     map_data::graph::MapDataGraph,
     osm_data::{data_reader::ALLOWED_HIGHWAY_VALUES, pbf_area_reader::PbfAreaReader},
 };
-use geo::{Distance, Haversine, Point};
 use rstar::PointDistance;
 use tracing::trace;
 
@@ -34,7 +33,9 @@ impl<'a> PbfReader<'a> {
         let mut pbf = osmpbfreader::OsmPbfReader::new(r);
 
         let mut boundary_reader = PbfAreaReader::new(&mut pbf);
-        boundary_reader.read(|obj| obj.is_way() && obj.tags().contains("landuse", "residential"));
+        boundary_reader
+            .read(&|obj| obj.is_way() && obj.tags().contains("landuse", "residential"))?;
+        let residential_tree = boundary_reader.get_tree();
 
         let elements = pbf
             .get_objs_and_deps(|obj| {
@@ -61,8 +62,7 @@ impl<'a> PbfReader<'a> {
                     id: node.id.0 as u64,
                     lat: node.lat(),
                     lon: node.lon(),
-                    residential_in_proximity: match boundary_reader
-                        .tree
+                    residential_in_proximity: match residential_tree
                         .nearest_neighbor(&[node.lat(), node.lon()])
                     {
                         Some(area) => area.distance_2(&[node.lon(), node.lat()]).sqrt() <= 1000.,
