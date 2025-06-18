@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 type GpsCellId = (i16, i16);
 
 // two decimal places 1.1km precision
-const GRID_CALC_PRECISION: i16 = 100;
+pub const GRID_CALC_PRECISION: i16 = 100;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct PointGrid<T: Clone> {

@@ -2,6 +2,7 @@ use crate::{
     map_data::graph::MapDataGraph,
     osm_data::{data_reader::ALLOWED_HIGHWAY_VALUES, pbf_area_reader::PbfAreaReader},
 };
+use geo::{CoordsIter, Distance, Haversine, HaversineClosestPoint, Point};
 use rstar::PointDistance;
 use tracing::trace;
 
@@ -35,7 +36,7 @@ impl<'a> PbfReader<'a> {
         let mut boundary_reader = PbfAreaReader::new(&mut pbf);
         boundary_reader
             .read(&|obj| obj.is_way() && obj.tags().contains("landuse", "residential"))?;
-        let residential_tree = boundary_reader.get_tree();
+        let residential_point_grid = boundary_reader.get_point_grid();
 
         let elements = pbf
             .get_objs_and_deps(|obj| {
@@ -62,10 +63,30 @@ impl<'a> PbfReader<'a> {
                     id: node.id.0 as u64,
                     lat: node.lat(),
                     lon: node.lon(),
-                    residential_in_proximity: match residential_tree
-                        .nearest_neighbor(&[node.lat(), node.lon()])
-                    {
-                        Some(area) => area.distance_2(&[node.lon(), node.lat()]).sqrt() <= 1000.,
+                    residential_in_proximity: match residential_point_grid.find_closest_point_refs(
+                        node.lat() as f32,
+                        node.lon() as f32,
+                        2,
+                    ) {
+                        Some(areas) => areas.iter().any(|area| {
+                            let geo_point = Point::new(node.lon(), node.lat());
+                            let distance = match area.haversine_closest_point(&geo_point) {
+                                geo::Closest::Intersection(_) => 0.,
+                                geo::Closest::SinglePoint(p) => Haversine::distance(p, geo_point),
+                                geo::Closest::Indeterminate => {
+                                    area.coords_iter().fold(10000., |min, coords| {
+                                        let dist =
+                                            Haversine::distance(geo_point, Point::from(coords));
+                                        if dist < min {
+                                            dist
+                                        } else {
+                                            min
+                                        }
+                                    })
+                                }
+                            };
+                            distance <= 1000.
+                        }),
                         None => false,
                     },
                 });

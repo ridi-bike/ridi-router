@@ -2,50 +2,52 @@ use std::{collections::HashMap, fs::File, time::Instant};
 
 use geo::{
     BoundingRect, Contains, Coord, Distance, Haversine, HaversineClosestPoint, LineString,
-    MultiPolygon, Polygon,
+    LinesIter, MultiPolygon, Polygon,
 };
 use geo::{CoordsIter, Point as GeoPoint};
 use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
-use rstar::{Point, PointDistance, RTree, RTreeObject, AABB};
-use tracing::{error, info, trace};
+// use rstar::{Point, PointDistance, RTreeObject, AABB};
+use tracing::{error, info};
+
+use crate::map_data::proximity::{PointGrid, GRID_CALC_PRECISION};
 
 use super::OsmDataReaderError;
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct Area(MultiPolygon);
-
-impl RTreeObject for Area {
-    type Envelope = AABB<[f64; 2]>;
-
-    fn envelope(&self) -> Self::Envelope {
-        if let Some(bounding_rect) = self.0.bounding_rect() {
-            AABB::from_corners(
-                [bounding_rect.min().x, bounding_rect.min().y],
-                [bounding_rect.max().x, bounding_rect.max().y],
-            )
-        } else {
-            AABB::from_corners([0.0, 0.0], [0.0, 0.0])
-        }
-    }
-}
-
-impl PointDistance for Area {
-    fn distance_2(
-        &self,
-        point: &<Self::Envelope as rstar::Envelope>::Point,
-    ) -> <<Self::Envelope as rstar::Envelope>::Point as Point>::Scalar {
-        let geo_point = GeoPoint::new(point[0], point[1]);
-
-        match self.0.haversine_closest_point(&geo_point) {
-            geo::Closest::Intersection(_) => 0.,
-            geo::Closest::SinglePoint(p) => Haversine::distance(p, geo_point).powi(2),
-            geo::Closest::Indeterminate => self.0.coords_iter().fold(10000., |min, coords| {
-                let dist = Haversine::distance(geo_point, GeoPoint::from(coords));
-                if dist < min { dist } else { min }.powi(2)
-            }),
-        }
-    }
-}
+// #[derive(Debug, PartialEq, Clone)]
+// pub struct Area(MultiPolygon);
+//
+// impl RTreeObject for Area {
+//     type Envelope = AABB<[f64; 2]>;
+//
+//     fn envelope(&self) -> Self::Envelope {
+//         if let Some(bounding_rect) = self.0.bounding_rect() {
+//             AABB::from_corners(
+//                 [bounding_rect.min().x, bounding_rect.min().y],
+//                 [bounding_rect.max().x, bounding_rect.max().y],
+//             )
+//         } else {
+//             AABB::from_corners([0.0, 0.0], [0.0, 0.0])
+//         }
+//     }
+// }
+//
+// impl PointDistance for Area {
+//     fn distance_2(
+//         &self,
+//         point: &<Self::Envelope as rstar::Envelope>::Point,
+//     ) -> <<Self::Envelope as rstar::Envelope>::Point as Point>::Scalar {
+//         let geo_point = GeoPoint::new(point[0], point[1]);
+//
+//         match self.0.haversine_closest_point(&geo_point) {
+//             geo::Closest::Intersection(_) => 0.,
+//             geo::Closest::SinglePoint(p) => Haversine::distance(p, geo_point).powi(2),
+//             geo::Closest::Indeterminate => self.0.coords_iter().fold(10000., |min, coords| {
+//                 let dist = Haversine::distance(geo_point, GeoPoint::from(coords));
+//                 if dist < min { dist } else { min }.powi(2)
+//             }),
+//         }
+//     }
+// }
 
 enum Boundary {
     Relation(Relation),
@@ -57,7 +59,7 @@ pub struct PbfAreaReader<'a> {
     ways: HashMap<i64, Way>,
     boundaries: Vec<Boundary>,
     pbf: &'a mut OsmPbfReader<File>,
-    tree: RTree<Area>,
+    point_grid: PointGrid<MultiPolygon>,
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +74,8 @@ impl<'a> PbfAreaReader<'a> {
             ways: HashMap::new(),
             boundaries: Vec::new(),
             pbf,
-            tree: RTree::new(),
+            // tree: RTree::new(),
+            point_grid: PointGrid::new(),
         }
     }
     fn get_line_strings_from_boundary(&self, boundary: &Boundary, role: &str) -> Vec<LineString> {
@@ -124,17 +127,8 @@ impl<'a> PbfAreaReader<'a> {
                 });
             }
         };
-        trace!(
-            ways_with_points = ?ways_with_points,
-            "Prep done"
-        );
 
         while !ways_with_points.is_empty() {
-            trace!(
-                ways_with_points_len = ways_with_points.len(),
-                current_boundary_len = current_boundary.len(),
-                "Loop start"
-            );
             if current_boundary.len() == 0 {
                 if let Some(way) = ways_with_points.pop() {
                     way.points
@@ -142,7 +136,6 @@ impl<'a> PbfAreaReader<'a> {
                         .for_each(|p| current_boundary.push((p.0, p.1)));
                 }
             } else if let Some(last_point) = current_boundary.last() {
-                trace!(last_point = ?last_point, "Checking last point");
                 let next_way = ways_with_points
                     .iter()
                     .enumerate()
@@ -160,18 +153,15 @@ impl<'a> PbfAreaReader<'a> {
                         false
                     })
                     .map(|w| (w.0, w.1.clone()));
-                trace!(next_way = ?next_way, "Next way");
                 if let Some((idx, next_way)) = next_way {
                     ways_with_points.remove(idx);
                     if let Some(next_way_first_point) = next_way.points.first() {
-                        trace!(next_way_first_point = ?next_way_first_point, "First point match");
                         if next_way_first_point == last_point {
                             next_way
                                 .points
                                 .iter()
                                 .for_each(|p| current_boundary.push((p.0, p.1)));
                         } else {
-                            trace!("Last point match");
                             next_way
                                 .points
                                 .iter()
@@ -180,12 +170,10 @@ impl<'a> PbfAreaReader<'a> {
                         }
                     }
                 } else {
-                    trace!("Should be a full circle");
                     if current_boundary.len() > 1 {
                         if let Some(first_point) = current_boundary.first() {
                             if let Some(last_point) = current_boundary.last() {
                                 if first_point == last_point {
-                                    trace!("Adding boundary");
                                     boundaries.push(current_boundary);
                                 }
                                 current_boundary = Vec::new();
@@ -221,7 +209,7 @@ impl<'a> PbfAreaReader<'a> {
     fn match_holes_to_outer_polygons(
         outer_polygons: &[LineString<f64>],
         inner_polygons: &[LineString<f64>],
-    ) -> Area {
+    ) -> MultiPolygon {
         let mut matched_polygons = Vec::new();
 
         for outer in outer_polygons {
@@ -240,7 +228,7 @@ impl<'a> PbfAreaReader<'a> {
             matched_polygons.push(polygon);
         }
 
-        Area(MultiPolygon::new(matched_polygons))
+        MultiPolygon::new(matched_polygons)
     }
 
     pub fn read<T>(&mut self, selection: &T) -> Result<(), OsmDataReaderError>
@@ -289,22 +277,66 @@ impl<'a> PbfAreaReader<'a> {
             })
             .collect::<Result<Vec<_>, OsmDataReaderError>>()?;
 
-        let read_duration = read_start.elapsed();
-        info!(duration = ?read_duration, "Boundary read done");
+        let read_duration = read_start.elapsed().as_secs();
+        info!(duration = read_duration, "Boundary read done");
 
-        info!("Boundary Tree insert started");
-        let tree_started = Instant::now();
+        let point_grid_started = Instant::now();
 
-        boundaries
-            .into_iter()
-            .for_each(|multi_polygon| self.tree.insert(multi_polygon));
+        boundaries.into_iter().for_each(|multi_polygon| {
+            if let Some(bounding_rect) = multi_polygon.bounding_rect() {
+                let x_max = bounding_rect.max().x;
+                let mut x = bounding_rect.min().x;
+                let y_max = bounding_rect.max().y;
+                let mut y = bounding_rect.min().y;
+                eprintln!("x: {x}, y: {y}");
+                eprintln!("x_max: {x_max}, y_max: {y_max}");
+                while x <= x_max {
+                    while y <= y_max {
+                        let point = GeoPoint::new(x, y);
+                        let mut adjusted_multi_polygon = multi_polygon.clone();
+                        adjusted_multi_polygon.iter_mut().for_each(|p| {
+                            p.exterior_mut(|l| {
+                                l.coords_mut().for_each(|c| {
+                                    c.x = (c.x * GRID_CALC_PRECISION as f64).round()
+                                        / GRID_CALC_PRECISION as f64;
+                                    c.y = (c.y * GRID_CALC_PRECISION as f64).round()
+                                        / GRID_CALC_PRECISION as f64;
+                                });
+                            });
 
-        info!(duration = ?tree_started, "Boundary Tree insert done");
+                            // p.interiors_mut(|lines| {
+                            //     lines.iter_mut().for_each(|l| {
+                            //         l.coords_mut().for_each(|c| {
+                            //             c.x = (c.x * GRID_CALC_PRECISION as f64).round()
+                            //                 / GRID_CALC_PRECISION as f64;
+                            //             c.y = (c.y * GRID_CALC_PRECISION as f64).round()
+                            //                 / GRID_CALC_PRECISION as f64;
+                            //         });
+                            //     })
+                            // });
+                        });
+                        if adjusted_multi_polygon.contains(&point) {
+                            self.point_grid.insert(y as f32, x as f32, &multi_polygon);
+                        }
+                        y += 1. / GRID_CALC_PRECISION as f64;
+                    }
+                    x += 1. / GRID_CALC_PRECISION as f64;
+                }
+            }
+        });
+
+        let point_grid_duration = point_grid_started.elapsed().as_secs();
+        let point_grid_size = self.point_grid.len();
+        info!(
+            duration = point_grid_duration,
+            size = point_grid_size,
+            "PointGrid insert done"
+        );
 
         Ok(())
     }
 
-    pub fn get_tree(self) -> RTree<Area> {
-        self.tree
+    pub fn get_point_grid(self) -> PointGrid<MultiPolygon> {
+        self.point_grid
     }
 }

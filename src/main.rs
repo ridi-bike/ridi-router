@@ -47,7 +47,7 @@ fn main() {
         process::exit(1);
     }
 
-    let span = error_span!("Service started", service = "ridi-router");
+    let span = error_span!("Process", service = "ridi-router");
     let _entered = span.enter();
     let runner = RouterRunner::run();
     if let Err(runner) = runner {
