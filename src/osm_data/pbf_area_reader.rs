@@ -242,7 +242,7 @@ impl<'a> PbfAreaReader<'a> {
         let point_grid_started = Instant::now();
 
         boundaries.into_iter().for_each(|multi_polygon| {
-            self.area_grid.inser_multi_polygon(&multi_polygon);
+            self.area_grid.insert_multi_polygon(&multi_polygon);
         });
 
         let point_grid_duration = point_grid_started.elapsed().as_secs();
