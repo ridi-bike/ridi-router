@@ -23,7 +23,7 @@ impl AreaGrid {
             point_grid: PointGrid::new(),
         }
     }
-    pub fn inser_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> () {
+    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> () {
         if let Some(bounding_rect) = multi_polygon.bounding_rect() {
             let mut adjusted_multi_polygon = multi_polygon.clone();
             adjusted_multi_polygon.iter_mut().for_each(|p| {
