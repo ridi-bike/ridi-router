@@ -44,7 +44,7 @@ const Itineraries = () => {
 
   van.derive(() =>
     fetch(
-      `http://0.0.0.0:1337/data/DebugStreamItineraries?limit=${pageSize}&offset=${page.val * pageSize}`,
+      `http://127.0.0.1:1337/data/DebugStreamItineraries?limit=${pageSize}&offset=${page.val * pageSize}`,
     )
       .then((req) => req.json())
       .then((data) => (itineraries.val = data))
@@ -118,9 +118,9 @@ const ItineraryWaypoints = () => {
     () =>
       !!selection.val.itinerary &&
       selection.val.itinerary.itinerary_id !=
-      selection.oldVal.itinerary?.itinerary_id &&
+        selection.oldVal.itinerary?.itinerary_id &&
       fetch(
-        `http://0.0.0.0:1337/data/DebugStreamItineraryWaypoints?itinerary_id=${selection.val.itinerary.itinerary_id}&limit=${pageSize}&offset=${page.val * pageSize}`,
+        `http://127.0.0.1:1337/data/DebugStreamItineraryWaypoints?itinerary_id=${selection.val.itinerary.itinerary_id}&limit=${pageSize}&offset=${page.val * pageSize}`,
       )
         .then((req) => req.json())
         .then((data) => (itineraryWaypoints.val = data))
@@ -130,7 +130,7 @@ const ItineraryWaypoints = () => {
   van.derive(() => {
     if (
       selection.val.itinerary?.itinerary_id ===
-      selection.oldVal.itinerary?.itinerary_id &&
+        selection.oldVal.itinerary?.itinerary_id &&
       itineraryWaypoints.val == itineraryWaypoints.oldVal
     ) {
       return;
@@ -241,7 +241,7 @@ const Steps = () => {
         selection.oldVal.itinerary?.itinerary_id ||
         page.val !== page.oldVal) &&
       fetch(
-        `http://0.0.0.0:1337/data/DebugStreamSteps?itinerary_id=${selection.val.itinerary.itinerary_id}&limit=${pageSize}&offset=${page.val * pageSize}`,
+        `http://127.0.0.1:1337/data/DebugStreamSteps?itinerary_id=${selection.val.itinerary.itinerary_id}&limit=${pageSize}&offset=${page.val * pageSize}`,
       )
         .then((req) => req.json())
         .then((data) => (steps.val = data))
@@ -249,13 +249,12 @@ const Steps = () => {
   );
 
   van.derive(() => {
-    console.log("yes yes");
     mapActions.current?.removeRoutes();
     !!selection.val.step &&
       selection.val.step.step_num != selection.oldVal.step?.step_num;
     !!selection.val.itinerary &&
       fetch(
-        `http://0.0.0.0:1337/calc/route?itinerary_id=${selection.val.itinerary.itinerary_id}&step=${selection.val.step?.step_num}`,
+        `http://127.0.0.1:1337/calc/route?itinerary_id=${selection.val.itinerary.itinerary_id}&step=${selection.val.step?.step_num}`,
       )
         .then((resp) => resp.json())
         .then((data) => {
@@ -318,24 +317,24 @@ const Steps = () => {
             () =>
               selection.val.step?.step_num === step.step_num
                 ? tr(
-                  { class: trClass() },
-                  td({ class: tdClass() }, "Choices:"),
-                  td(
-                    { class: tdClass() },
-                    ForkChoices(step.itinerary_id, step.step_num),
-                  ),
-                )
+                    { class: trClass() },
+                    td({ class: tdClass() }, "Choices:"),
+                    td(
+                      { class: tdClass() },
+                      ForkChoices(step.itinerary_id, step.step_num),
+                    ),
+                  )
                 : tr(),
             () =>
               selection.val.step?.step_num === step.step_num
                 ? tr(
-                  { class: trClass() },
-                  td({ class: tdClass() }, "Step Result:"),
-                  td(
-                    { class: tdClass() },
-                    StepResult(step.itinerary_id, step.step_num),
-                  ),
-                )
+                    { class: trClass() },
+                    td({ class: tdClass() }, "Step Result:"),
+                    td(
+                      { class: tdClass() },
+                      StepResult(step.itinerary_id, step.step_num),
+                    ),
+                  )
                 : tr(),
           ]),
         ),
@@ -350,7 +349,7 @@ const ForkChoiceWeights = (
 ) => {
   const forkChoiceWeights = van.state<DebugStreamForkChoiceWeights[]>([]);
   fetch(
-    `http://0.0.0.0:1337/data/DebugStreamForkChoiceWeights?itinerary_id=${itineraryId}&step_num=${stepNum}`,
+    `http://127.0.0.1:1337/data/DebugStreamForkChoiceWeights?itinerary_id=${itineraryId}&step_num=${stepNum}`,
   )
     .then((resp) => resp.json())
     .then((data) => {
@@ -387,7 +386,7 @@ const ForkChoiceWeights = (
 const ForkChoices = (itineraryId: string, stepNum: number) => {
   const forkCHoices = van.state<DebugStreamForkChoices[]>([]);
   fetch(
-    `http://0.0.0.0:1337/data/DebugStreamForkChoices?itinerary_id=${itineraryId}&step_num=${stepNum}`,
+    `http://127.0.0.1:1337/data/DebugStreamForkChoices?itinerary_id=${itineraryId}&step_num=${stepNum}`,
   )
     .then((resp) => resp.json())
     .then((data) => (forkCHoices.val = data));
@@ -467,9 +466,9 @@ const ForkChoices = (itineraryId: string, stepNum: number) => {
           () =>
             selection.val.forkChoice?.end_point_id === forkCh.end_point_id
               ? tr(
-                { class: tdClass() },
-                ForkChoiceWeights(itineraryId, stepNum, forkCh.end_point_id),
-              )
+                  { class: tdClass() },
+                  ForkChoiceWeights(itineraryId, stepNum, forkCh.end_point_id),
+                )
               : tr(),
         ]),
       ),
@@ -479,7 +478,7 @@ const ForkChoices = (itineraryId: string, stepNum: number) => {
 const StepResult = (itineraryId: string, stepNum: number) => {
   const stepResults = van.state<DebugStreamStepResults[]>([]);
   fetch(
-    `http://0.0.0.0:1337/data/DebugStreamStepResults?itinerary_id=${itineraryId}&step_num=${stepNum}`,
+    `http://127.0.0.1:1337/data/DebugStreamStepResults?itinerary_id=${itineraryId}&step_num=${stepNum}`,
   )
     .then((resp) => resp.json())
     .then((data) => (stepResults.val = data));
