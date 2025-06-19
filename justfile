@@ -74,7 +74,7 @@ run-load-pbf-show:
 	gpxsee map-data/output.gpx &
 
 run-load-cache-show:
-	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --cache-dir map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
+	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --debug-dir ./map-data/debug --output map-data/output.gpx --cache-dir map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
 	gpxsee map-data/output.gpx &
 
 run-gr:

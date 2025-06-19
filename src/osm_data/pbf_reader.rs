@@ -3,7 +3,6 @@ use crate::{
     osm_data::{data_reader::ALLOWED_HIGHWAY_VALUES, pbf_area_reader::PbfAreaReader},
 };
 use geo::{CoordsIter, Distance, Haversine, HaversineClosestPoint, Point};
-use rstar::PointDistance;
 use tracing::trace;
 
 use crate::map_data::osm::{

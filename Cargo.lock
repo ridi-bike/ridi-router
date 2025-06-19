@@ -1703,7 +1703,6 @@ dependencies = [
  "osmpbfreader",
  "qstring",
  "rayon",
- "rstar",
  "rusty-fork",
  "schemars",
  "serde",

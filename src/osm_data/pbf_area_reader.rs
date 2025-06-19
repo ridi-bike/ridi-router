@@ -1,53 +1,13 @@
 use std::{collections::HashMap, fs::File, time::Instant};
 
-use geo::{
-    BoundingRect, Contains, Coord, Distance, Haversine, HaversineClosestPoint, LineString,
-    LinesIter, MultiPolygon, Polygon,
-};
+use geo::{BoundingRect, Contains, Coord, Intersects, LineString, MultiPolygon, Polygon};
 use geo::{CoordsIter, Point as GeoPoint};
 use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
-// use rstar::{Point, PointDistance, RTreeObject, AABB};
 use tracing::{error, info};
 
 use crate::map_data::proximity::{PointGrid, GRID_CALC_PRECISION};
 
 use super::OsmDataReaderError;
-
-// #[derive(Debug, PartialEq, Clone)]
-// pub struct Area(MultiPolygon);
-//
-// impl RTreeObject for Area {
-//     type Envelope = AABB<[f64; 2]>;
-//
-//     fn envelope(&self) -> Self::Envelope {
-//         if let Some(bounding_rect) = self.0.bounding_rect() {
-//             AABB::from_corners(
-//                 [bounding_rect.min().x, bounding_rect.min().y],
-//                 [bounding_rect.max().x, bounding_rect.max().y],
-//             )
-//         } else {
-//             AABB::from_corners([0.0, 0.0], [0.0, 0.0])
-//         }
-//     }
-// }
-//
-// impl PointDistance for Area {
-//     fn distance_2(
-//         &self,
-//         point: &<Self::Envelope as rstar::Envelope>::Point,
-//     ) -> <<Self::Envelope as rstar::Envelope>::Point as Point>::Scalar {
-//         let geo_point = GeoPoint::new(point[0], point[1]);
-//
-//         match self.0.haversine_closest_point(&geo_point) {
-//             geo::Closest::Intersection(_) => 0.,
-//             geo::Closest::SinglePoint(p) => Haversine::distance(p, geo_point).powi(2),
-//             geo::Closest::Indeterminate => self.0.coords_iter().fold(10000., |min, coords| {
-//                 let dist = Haversine::distance(geo_point, GeoPoint::from(coords));
-//                 if dist < min { dist } else { min }.powi(2)
-//             }),
-//         }
-//     }
-// }
 
 enum Boundary {
     Relation(Relation),
@@ -288,8 +248,7 @@ impl<'a> PbfAreaReader<'a> {
                 let mut x = bounding_rect.min().x;
                 let y_max = bounding_rect.max().y;
                 let mut y = bounding_rect.min().y;
-                eprintln!("x: {x}, y: {y}");
-                eprintln!("x_max: {x_max}, y_max: {y_max}");
+
                 while x <= x_max {
                     while y <= y_max {
                         let point = GeoPoint::new(x, y);
@@ -304,18 +263,22 @@ impl<'a> PbfAreaReader<'a> {
                                 });
                             });
 
-                            // p.interiors_mut(|lines| {
-                            //     lines.iter_mut().for_each(|l| {
-                            //         l.coords_mut().for_each(|c| {
-                            //             c.x = (c.x * GRID_CALC_PRECISION as f64).round()
-                            //                 / GRID_CALC_PRECISION as f64;
-                            //             c.y = (c.y * GRID_CALC_PRECISION as f64).round()
-                            //                 / GRID_CALC_PRECISION as f64;
-                            //         });
-                            //     })
-                            // });
+                            p.interiors_mut(|lines| {
+                                lines.iter_mut().for_each(|l| {
+                                    l.coords_mut().for_each(|c| {
+                                        c.x = (c.x * GRID_CALC_PRECISION as f64).round()
+                                            / GRID_CALC_PRECISION as f64;
+                                        c.y = (c.y * GRID_CALC_PRECISION as f64).round()
+                                            / GRID_CALC_PRECISION as f64;
+                                    });
+                                })
+                            });
                         });
-                        if adjusted_multi_polygon.contains(&point) {
+                        if adjusted_multi_polygon.contains(&point)
+                            || adjusted_multi_polygon
+                                .exterior_coords_iter()
+                                .any(|c| c.intersects(&point))
+                        {
                             self.point_grid.insert(y as f32, x as f32, &multi_polygon);
                         }
                         y += 1. / GRID_CALC_PRECISION as f64;
