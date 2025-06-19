@@ -11,8 +11,7 @@ mod gpx_writer;
 mod ipc_handler;
 mod map_data;
 mod map_data_cache;
-mod osm_data_reader;
-mod osm_json_parser;
+mod osm_data;
 mod result_writer;
 mod router;
 mod router_runner;
@@ -48,7 +47,7 @@ fn main() {
         process::exit(1);
     }
 
-    let span = error_span!("Service started", service = "ridi-router");
+    let span = error_span!("Process", service = "ridi-router");
     let _entered = span.enter();
     let runner = RouterRunner::run();
     if let Err(runner) = runner {

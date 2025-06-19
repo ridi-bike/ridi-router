@@ -103,7 +103,7 @@ impl DebugViewer {
 
         Self::prep_data(debug_dir, &db_conn)?;
 
-        let addr = "0.0.0.0:1337";
+        let addr = "127.0.0.1:1337";
         let server = Server::http(addr).map_err(|error| DebugViewerError::ServerStart { error })?;
         info!(addr, "Running Debug Viewer on http://{addr}");
 

@@ -5,7 +5,7 @@ use crate::{
         graph::{MapDataGraph, MapDataLineRef, MAP_DATA_GRAPH},
         osm::{OsmNode, OsmRelation, OsmWay},
     },
-    osm_data_reader::{DataSource, OsmDataReader},
+    osm_data::{data_reader::OsmDataReader, DataSource},
     router::route::Route,
 };
 
@@ -16,6 +16,7 @@ fn make_osm_point_with_id(id: u64) -> OsmNode {
         lat: id as f64,
         lon: id as f64,
         id,
+        residential_in_proximity: false,
     }
 }
 
@@ -149,56 +150,67 @@ pub fn test_dataset_1() -> OsmTestData {
                 id: 1,
                 lat: 1.0,
                 lon: 1.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 2,
                 lat: 2.0,
                 lon: 2.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 3,
                 lat: 3.0,
                 lon: 3.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 4,
                 lat: 4.0,
                 lon: 4.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 5,
                 lat: 5.0,
                 lon: 5.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 6,
                 lat: 6.0,
                 lon: 6.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 7,
                 lat: 7.0,
                 lon: 7.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 8,
                 lat: 8.0,
                 lon: 8.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 9,
                 lat: 9.0,
                 lon: 9.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 11,
                 lat: 11.0,
                 lon: 11.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 12,
                 lat: 12.0,
                 lon: 12.0,
+                residential_in_proximity: false,
             },
         ],
         vec![
@@ -251,31 +263,37 @@ pub fn test_dataset_3() -> OsmTestData {
                 id: 1,
                 lat: 1.0,
                 lon: 1.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 3,
                 lat: 3.0,
                 lon: 3.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 4,
                 lat: 4.0,
                 lon: 4.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 5,
                 lat: 5.0,
                 lon: 5.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 6,
                 lat: 6.0,
                 lon: 6.0,
+                residential_in_proximity: false,
             },
             OsmNode {
                 id: 7,
                 lat: 7.0,
                 lon: 7.0,
+                residential_in_proximity: false,
             },
         ],
         vec![

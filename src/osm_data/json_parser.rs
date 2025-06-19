@@ -107,8 +107,7 @@ impl OsmElement {
         }
     }
     pub fn get_element_type(&self) -> Result<OsmElementType, OsmJsonParserError> {
-        self
-            .element_type
+        self.element_type
             .to_owned()
             .ok_or(OsmJsonParserError::MissingElementType {
                 element: self.clone(),
@@ -130,6 +129,7 @@ impl OsmElement {
                     element_type: String::from("node"),
                     value: String::from("lon"),
                 })?,
+                residential_in_proximity: false,
             });
         }
 
@@ -143,10 +143,12 @@ impl OsmElement {
                     element_type: String::from("way"),
                     value: String::from("id"),
                 })?,
-                point_ids: self.nodes.clone().ok_or(OsmJsonParserError::MissingValueForElement {
+                point_ids: self.nodes.clone().ok_or(
+                    OsmJsonParserError::MissingValueForElement {
                         element_type: String::from("way"),
                         value: String::from("node_ids"),
-                    })?,
+                    },
+                )?,
                 tags: self.tags.clone(),
             });
         }
@@ -288,7 +290,8 @@ impl OsmJsonParser {
             }
             if token.kind == TokenType::String || token.kind == TokenType::Number {
                 if let Buffer::MultiByte(buf) = token.buf {
-                    let val = std::str::from_utf8(&buf.to_owned()).map_err(|error| OsmJsonParserError::Utf8ParseError { error })?
+                    let val = std::str::from_utf8(&buf.to_owned())
+                        .map_err(|error| OsmJsonParserError::Utf8ParseError { error })?
                         .to_string()
                         .replace("\"", "");
 
@@ -327,15 +330,21 @@ impl OsmJsonParser {
                                 }
                             },
                             "id" => {
-                                let node_id = val.parse::<u64>().map_err(|error| OsmJsonParserError::FailedToParseNodeId { error })?;
+                                let node_id = val.parse::<u64>().map_err(|error| {
+                                    OsmJsonParserError::FailedToParseNodeId { error }
+                                })?;
                                 current_element.id = Some(node_id)
                             }
                             "lat" => {
-                                let lat = val.parse::<f64>().map_err(|error| OsmJsonParserError::FailedToParseLat { error })?;
+                                let lat = val.parse::<f64>().map_err(|error| {
+                                    OsmJsonParserError::FailedToParseLat { error }
+                                })?;
                                 current_element.lat = Some(lat)
                             }
                             "lon" => {
-                                let lon = val.parse::<f64>().map_err(|error| OsmJsonParserError::FailedToParseLon { error })?;
+                                let lon = val.parse::<f64>().map_err(|error| {
+                                    OsmJsonParserError::FailedToParseLon { error }
+                                })?;
 
                                 current_element.lon = Some(lon)
                             }
@@ -357,7 +366,9 @@ impl OsmJsonParser {
                             current_element.nodes = Some(Vec::new());
                         }
                         if let Some(ref mut nodes) = current_element.nodes {
-                            let node_id = val.parse::<u64>().map_err(|error| OsmJsonParserError::FailedToParseNodeId { error })?;
+                            let node_id = val.parse::<u64>().map_err(|error| {
+                                OsmJsonParserError::FailedToParseNodeId { error }
+                            })?;
                             nodes.push(node_id);
                         }
                     }
@@ -376,7 +387,9 @@ impl OsmJsonParser {
                                         }
                                     },
                                     "ref" => {
-                                        let ref_id = val.parse::<u64>().map_err(|error| OsmJsonParserError::FailedToParseNodeId { error })?;
+                                        let ref_id = val.parse::<u64>().map_err(|error| {
+                                            OsmJsonParserError::FailedToParseNodeId { error }
+                                        })?;
                                         member.member_ref = Some(ref_id);
                                     }
                                     "role" => match val.as_str() {
@@ -599,7 +612,7 @@ impl OsmJsonParser {
 mod test {
     use std::collections::HashMap;
 
-    use crate::{osm_json_parser::OsmJsonParserError, test_utils::get_test_data_osm_json};
+    use crate::{osm_data::json_parser::OsmJsonParserError, test_utils::get_test_data_osm_json};
 
     use super::{OsmElement, OsmJsonParser, OsmRelMember, OsmRelMemberRole, OsmRelMemberType};
     pub fn get_osm_element_node(
@@ -613,11 +626,13 @@ mod test {
             id: Some(id),
             lat: Some(lat),
             lon: Some(lon),
-            tags: tags.map(|tags_vec| tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+            tags: tags.map(|tags_vec| {
+                tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
                     let mut map = map;
                     map.insert(key.to_string(), val.to_string());
                     map
-                })),
+                })
+            }),
             nodes: None,
             members: None,
         }
@@ -633,11 +648,13 @@ mod test {
             lat: None,
             lon: None,
             nodes: Some(nodes),
-            tags: tags.map(|tags_vec| tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+            tags: tags.map(|tags_vec| {
+                tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
                     let mut map = map;
                     map.insert(key.to_string(), val.to_string());
                     map
-                })),
+                })
+            }),
             members: None,
         }
     }
@@ -661,11 +678,13 @@ mod test {
             ),
             lat: None,
             lon: None,
-            tags: tags.map(|tags_vec| tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
+            tags: tags.map(|tags_vec| {
+                tags_vec.iter().fold(HashMap::new(), |map, (key, val)| {
                     let mut map = map;
                     map.insert(key.to_string(), val.to_string());
                     map
-                })),
+                })
+            }),
             nodes: None,
         }
     }

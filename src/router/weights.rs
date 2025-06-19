@@ -298,8 +298,19 @@ fn get_rule_for_tag(
     None
 }
 
+fn is_last_point_near_residential(input: &WeightCalcInput) -> bool {
+    match input.route.get_segment_last() {
+        None => input.itinerary.start.borrow().residential_in_proximity,
+        Some(s) => s.get_end_point().borrow().residential_in_proximity,
+    }
+}
+
 pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_rules_highway");
+
+    if is_last_point_near_residential(&input) {
+        return WeightCalcResult::ForkChoiceUseWithWeight(0);
+    }
 
     if input
         .route
@@ -339,6 +350,10 @@ pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
 pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_rules_surface");
 
+    if is_last_point_near_residential(&input) {
+        return WeightCalcResult::ForkChoiceUseWithWeight(0);
+    }
+
     if input
         .route
         .get_route_chunk_since_junction_before_last()
@@ -376,6 +391,10 @@ pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
 
 pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_rules_smoothness");
+
+    if is_last_point_near_residential(&input) {
+        return WeightCalcResult::ForkChoiceUseWithWeight(0);
+    }
 
     if input
         .route

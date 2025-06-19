@@ -52,12 +52,20 @@ data-fetch-pbf-greece:
 # gps-test-from-lon := '24.13688' # zaķusala
 # gps-test-from-lat := '57.55998' # zilaiskalns
 # gps-test-from-lon := '25.20804' # zilaiskalns
-gps-test-from-lat := '57.154260' # sigulda
-gps-test-from-lon := '24.853496' # sigulda
+gps-test-from-lat := '56.956384' # riga
+gps-test-from-lon := '24.121288' # riga
+# gps-test-from-lat := '57.154260' # sigulda
+# gps-test-from-lon := '24.853496' # sigulda
+# gps-test-to-lat := '56.92517' # zaķusala
+# gps-test-to-lon := '24.13688' # zaķusala
+gps-test-to-lat := '57.154260' # sigulda
+gps-test-to-lon := '24.853496' # sigulda
+# gps-test-to-lat := '56.956384' # riga
+# gps-test-to-lon := '24.121288' # riga
 # gps-test-from-lat := '36.618195' # malaga
 # gps-test-from-lon := '-4.500159' # malaga
-gps-test-to-lat := '56.856551'		# doles sala
-gps-test-to-lon := '24.253038'		# doles sala
+# gps-test-to-lat := '56.856551'		# doles sala
+# gps-test-to-lon := '24.253038'		# doles sala
 # gps-test-to-lat := '57.111708'		# garciems
 # gps-test-to-lon := '24.192656'		# garciems
 # gps-test-to-lat := '56.62557'		# garoza
@@ -70,11 +78,11 @@ run-load-json-show:
 	gpxsee map-data/output.gpx &
 
 run-load-pbf-show:
-	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
+	cargo run -- generate-route --debug-dir map-data/debug --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
 	gpxsee map-data/output.gpx &
 
 run-load-cache-show:
-	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --cache-dir map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
+	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --debug-dir ./map-data/debug --output map-data/output.gpx --cache-dir map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
 	gpxsee map-data/output.gpx &
 
 run-gr:

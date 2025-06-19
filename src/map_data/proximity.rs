@@ -1,22 +1,92 @@
 use std::{collections::HashMap, u16};
 
+use geo::{BoundingRect, Contains, CoordsIter, Intersects, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
-
-use super::graph::MapDataPointRef;
 
 type GpsCellId = (i16, i16);
 
 // two decimal places 1.1km precision
-const GRID_CALC_PRECISION: i16 = 100;
+pub const GRID_CALC_PRECISION: i16 = 100;
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct PointGrid {
-    grid: HashMap<GpsCellId, Vec<MapDataPointRef>>,
+fn round_to_precision(v: f64) -> f64 {
+    (v * GRID_CALC_PRECISION as f64).round() / GRID_CALC_PRECISION as f64
 }
 
-impl PointGrid {
+#[derive(Debug)]
+pub struct AreaGrid {
+    point_grid: PointGrid<MultiPolygon>,
+}
+
+impl AreaGrid {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            point_grid: PointGrid::new(),
+        }
+    }
+    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> () {
+        if let Some(bounding_rect) = multi_polygon.bounding_rect() {
+            let mut adjusted_multi_polygon = multi_polygon.clone();
+            adjusted_multi_polygon.iter_mut().for_each(|p| {
+                p.exterior_mut(|l| {
+                    l.coords_mut().for_each(|c| {
+                        c.x = round_to_precision(c.x);
+                        c.y = round_to_precision(c.y);
+                    });
+                });
+
+                p.interiors_mut(|lines| {
+                    lines.iter_mut().for_each(|l| {
+                        l.coords_mut().for_each(|c| {
+                            c.x = round_to_precision(c.x);
+                            c.y = round_to_precision(c.y);
+                        });
+                    })
+                });
+            });
+            let x_max = round_to_precision(bounding_rect.max().x);
+            let mut x = round_to_precision(bounding_rect.min().x);
+            let y_max = round_to_precision(bounding_rect.max().y);
+            let mut y = round_to_precision(bounding_rect.min().y);
+
+            while x <= x_max {
+                while y <= y_max {
+                    let point = Point::new(x, y);
+                    if adjusted_multi_polygon.contains(&point)
+                        || adjusted_multi_polygon
+                            .exterior_coords_iter()
+                            .any(|c| c.intersects(&point))
+                    {
+                        self.point_grid.insert(y as f32, x as f32, &multi_polygon);
+                    }
+                    y += 1. / GRID_CALC_PRECISION as f64;
+                }
+                x += 1. / GRID_CALC_PRECISION as f64;
+            }
+        }
+    }
+    pub fn find_closest_areas_refs(
+        &self,
+        lat: f32,
+        lon: f32,
+        steps: u16,
+    ) -> Option<Vec<&MultiPolygon>> {
+        self.point_grid.find_closest_point_refs(lat, lon, steps)
+    }
+    pub fn len(&self) -> usize {
+        self.point_grid.len()
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct PointGrid<T: Clone> {
+    grid: HashMap<GpsCellId, Vec<T>>,
+}
+
+impl<T: Clone> PointGrid<T> {
+    pub fn new() -> PointGrid<T> {
+        PointGrid {
+            grid: HashMap::new(),
+        }
     }
 
     pub fn get_cell_id(lat: f32, lon: f32) -> GpsCellId {
@@ -29,23 +99,21 @@ impl PointGrid {
         self.grid.len()
     }
 
-    pub fn insert(&mut self, lat: f32, lon: f32, point_ref: MapDataPointRef) {
-        let cell_id = PointGrid::get_cell_id(lat, lon);
+    pub fn insert(&mut self, lat: f32, lon: f32, point: &T) {
+        let cell_id = PointGrid::<T>::get_cell_id(lat, lon);
         let maybe_points = self.grid.get_mut(&cell_id);
         if let Some(points) = maybe_points {
-            points.push(point_ref.clone());
+            points.push(point.to_owned());
         } else {
-            self.grid.insert(cell_id, vec![point_ref.clone()]);
+            self.grid.insert(cell_id, vec![point.to_owned()]);
         }
     }
 
-    fn get_points_in_cells(&self, cell_ids: Vec<GpsCellId>) -> Vec<MapDataPointRef> {
+    fn get_points_in_cells(&self, cell_ids: Vec<GpsCellId>) -> Vec<&T> {
         cell_ids
             .iter()
-            .flat_map(|cell_id| match self.grid.get(cell_id) {
-                Some(points) => points.clone(),
-                None => Vec::new(),
-            })
+            .filter_map(|cell_id| self.grid.get(cell_id))
+            .flatten()
             .collect()
     }
 
@@ -88,12 +156,12 @@ impl PointGrid {
         Some(result)
     }
 
-    pub fn find_closest_point_refs(&self, lat: f32, lon: f32) -> Option<Vec<MapDataPointRef>> {
-        let center_cell_id = PointGrid::get_cell_id(lat, lon);
+    // one square is rougly 1.1 km, so 10 steps will be center 1.1 + 2*steps*x1.1
+    pub fn find_closest_point_refs(&self, lat: f32, lon: f32, steps: u16) -> Option<Vec<&T>> {
+        let center_cell_id = PointGrid::<T>::get_cell_id(lat, lon);
 
-        // 10 steps mean ~ 11x11km square
-        for step in 0..=10 {
-            let cell_ids = PointGrid::get_outer_cell_ids(center_cell_id, step);
+        for step in 0..=steps {
+            let cell_ids = PointGrid::<T>::get_outer_cell_ids(center_cell_id, step);
             let cell_ids = match cell_ids {
                 Some(ids) => ids,
                 None => return None,
@@ -113,6 +181,8 @@ mod test {
     use rusty_fork::rusty_fork_test;
     use tracing::info;
 
+    use crate::map_data::graph::MapDataPointRef;
+
     use super::PointGrid;
 
     rusty_fork_test! {
@@ -128,7 +198,7 @@ mod test {
                 (90.0, 180.0, (9000, 18000)),
             ];
             for test in tests.iter() {
-                let hash = PointGrid::get_cell_id(test.0, test.1);
+                let hash = PointGrid::<MapDataPointRef>::get_cell_id(test.0, test.1);
                 assert_eq!(hash, test.2);
             }
         }
@@ -163,7 +233,7 @@ mod test {
 
             for (idx, test) in tests.iter().enumerate() {
                 let adjacent_cell_ids =
-                    PointGrid::get_outer_cell_ids((test.0, test.1), test.2);
+                    PointGrid::<MapDataPointRef>::get_outer_cell_ids((test.0, test.1), test.2);
                 info!("test {idx}");
                 info!("adjacent {adjacent_cell_ids:?}");
                 if test.3.is_empty() {

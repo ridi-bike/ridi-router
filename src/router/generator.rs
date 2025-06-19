@@ -72,6 +72,7 @@ impl Generator {
                             wp_geo.y(),
                             wp_geo.x(),
                             &self.rules,
+                            true,
                         )
                     })
             })
@@ -108,6 +109,7 @@ impl Generator {
                                                     tip_geo.y(),
                                                     tip_geo.x(),
                                                     &self.rules,
+                                                    true,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -124,6 +126,7 @@ impl Generator {
                                                     side_left_geo.y(),
                                                     side_left_geo.x(),
                                                     &self.rules,
+                                                    true,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -140,6 +143,7 @@ impl Generator {
                                                     side_right_geo.y(),
                                                     side_right_geo.x(),
                                                     &self.rules,
+                                                    true,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,

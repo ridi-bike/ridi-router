@@ -5,6 +5,7 @@ pub struct OsmNode {
     pub id: u64,
     pub lat: f64,
     pub lon: f64,
+    pub residential_in_proximity: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]

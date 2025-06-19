@@ -6,12 +6,12 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::{info, trace};
 
+use crate::osm_data::DataSource;
 use crate::{
     debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     map_data_cache::{MapDataCache, MapDataCacheError},
-    osm_data_reader::DataSource,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{
         generator::{Generator, RouteWithStats},
@@ -309,7 +309,7 @@ impl RouterRunner {
             ),
         };
         let start = MapDataGraph::get()
-            .get_closest_to_coords(start_lat, start_lon, &rules)
+            .get_closest_to_coords(start_lat, start_lon, &rules, false)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Start point".to_string(),
             })?;
@@ -317,7 +317,7 @@ impl RouterRunner {
         trace!("Start point {start}");
 
         let finish = MapDataGraph::get()
-            .get_closest_to_coords(finish_lat, finish_lon, &rules)
+            .get_closest_to_coords(finish_lat, finish_lon, &rules, false)
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Finish point".to_string(),
             })?;

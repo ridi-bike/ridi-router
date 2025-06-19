@@ -18,7 +18,10 @@ use crate::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
-    osm_data_reader::{DataSource, OsmDataReader, ALLOWED_HIGHWAY_VALUES},
+    osm_data::{
+        data_reader::{OsmDataReader, ALLOWED_HIGHWAY_VALUES},
+        DataSource,
+    },
     router::rules::{RouterRules, RulesTagValueAction},
 };
 
@@ -248,7 +251,7 @@ pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
 pub struct MapDataGraph {
     points: Vec<MapDataPoint>,
     points_map: HashMap<u64, usize>,
-    point_grid: PointGrid,
+    point_grid: PointGrid<MapDataPointRef>,
     ways_lines: HashMap<u64, Vec<MapDataLineRef>>,
     lines: Vec<MapDataLine>,
     tags: ElementTags,
@@ -342,6 +345,7 @@ impl MapDataGraph {
             lon: value.lon as f32,
             lines: Vec::new(),
             rules: Vec::new(),
+            residential_in_proximity: value.residential_in_proximity,
         };
         self.add_point(point.clone());
     }
@@ -353,7 +357,7 @@ impl MapDataGraph {
                 .get(&point.id)
                 .expect("Point must exist in the points map, something went very wrong");
             let point_ref = MapDataElementRef::new(*point_idx);
-            self.point_grid.insert(point.lat, point.lon, point_ref);
+            self.point_grid.insert(point.lat, point.lon, &point_ref);
         }
         if !cfg!(test) {
             self.points_map = HashMap::new();
@@ -629,8 +633,9 @@ impl MapDataGraph {
         lat: f32,
         lon: f32,
         rules: &RouterRules,
+        avoid_proximity_to_residential: bool,
     ) -> Option<MapDataPointRef> {
-        let closest_points = self.point_grid.find_closest_point_refs(lat, lon);
+        let closest_points = self.point_grid.find_closest_point_refs(lat, lon, 20);
         let closest_points = match closest_points {
             Some(p) => p,
             None => return None,
@@ -641,6 +646,9 @@ impl MapDataGraph {
         let mut distances = closest_points
             .iter()
             .filter(|p| {
+                if avoid_proximity_to_residential && p.borrow().residential_in_proximity {
+                    return false;
+                }
                 let lines = p
                     .borrow()
                     .lines
@@ -678,7 +686,7 @@ impl MapDataGraph {
                 let point = &self.points[p.idx];
                 let geo_point = Point::new(point.lon, point.lat);
                 let geo_lookup_point = Point::new(lon, lat);
-                (p, Haversine::distance(geo_point, geo_lookup_point))
+                (*p, Haversine::distance(geo_point, geo_lookup_point))
             })
             .collect::<Vec<(&MapDataPointRef, f32)>>();
 
@@ -698,7 +706,7 @@ impl MapDataGraph {
     pub fn unpack(packed: MapDataGraphPacked) -> anyhow::Result<&'static MapDataGraph> {
         let mut points: Option<anyhow::Result<Vec<MapDataPoint>>> = None;
         let points_map = HashMap::new();
-        let mut point_grid: Option<anyhow::Result<PointGrid>> = None;
+        let mut point_grid: Option<anyhow::Result<PointGrid<MapDataPointRef>>> = None;
         let ways_lines = HashMap::new();
         let mut lines: Option<anyhow::Result<Vec<MapDataLine>>> = None;
         let mut tags: Option<anyhow::Result<ElementTags>> = None;
@@ -1291,6 +1299,7 @@ mod tests {
                 },
                 |r| r,
             ),
+            false,
         );
         if let Some(closest) = closest {
             assert_eq!(closest.borrow().id, closest_id);
@@ -1307,6 +1316,7 @@ mod tests {
                         id: 1,
                         lat: 57.1640,
                         lon: 24.8652,
+                        residential_in_proximity: false,
                     },
                 ],
                 vec![],
@@ -1315,6 +1325,7 @@ mod tests {
                     id: 0,
                     lat: 57.1670,
                     lon: 24.8658,
+                    residential_in_proximity: false,
                 },
                 1,
             ),
@@ -1325,11 +1336,13 @@ mod tests {
                         id: 1,
                         lat: 57.1740,
                         lon: 24.8630,
+                        residential_in_proximity: false,
                     },
                     OsmNode {
                         id: 2,
                         lat: 57.1640,
                         lon: 24.8652,
+                        residential_in_proximity: false,
                     },
                 ],
                 vec![],
@@ -1338,6 +1351,7 @@ mod tests {
                     id: 0,
                     lat: 57.1670,
                     lon: 24.8658,
+                    residential_in_proximity: false,
                 },
                 2,
             ),
@@ -1349,18 +1363,21 @@ mod tests {
                         id: 1,
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
+                        residential_in_proximity: false,
                     },
                     OsmNode {
                         // 525.74 meters
                         id: 2,
                         lat: 57.168,
                         lon: 24.875192642211914,
+                        residential_in_proximity: false,
                     },
                     OsmNode {
                         // 438.77 meters
                         id: 3,
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
+                        residential_in_proximity: false,
                     },
                 ],
                 vec![],
@@ -1369,6 +1386,7 @@ mod tests {
                     id: 0,
                     lat: 57.163429387682214,
                     lon: 24.87742424011231,
+                    residential_in_proximity: false,
                 },
                 3,
             ),
@@ -1380,12 +1398,14 @@ mod tests {
                         id: 1,
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
+                        residential_in_proximity: false,
                     },
                     OsmNode {
                         // 3777.35 meters
                         id: 2,
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
+                        residential_in_proximity: false,
                     },
                 ],
                 vec![],
@@ -1394,6 +1414,7 @@ mod tests {
                     id: 0,
                     lat: 57.193343289610794,
                     lon: 24.872531890869144,
+                    residential_in_proximity: false,
                 },
                 1,
             ),
@@ -1405,12 +1426,14 @@ mod tests {
                         id: 1,
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
+                        residential_in_proximity: false,
                     },
                     OsmNode {
                         // 3777.35 meters
                         id: 2,
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
+                        residential_in_proximity: false,
                     },
                 ],
                 vec![],
@@ -1419,6 +1442,7 @@ mod tests {
                     id: 0,
                     lat: 57.193343289610794,
                     lon: 24.872531890869144,
+                    residential_in_proximity: false,
                 },
                 1,
             ),
@@ -1430,18 +1454,21 @@ mod tests {
                         id: 1,
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
+                        residential_in_proximity: false,
                     },
                     OsmNode {
                         // 525.74 meters
                         id: 2,
                         lat: 57.168,
                         lon: 24.875192642211914,
+                        residential_in_proximity: false,
                     },
                     OsmNode {
                         // 438.77 meters
                         id: 3,
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
+                        residential_in_proximity: false,
                     },
                 ],
                 vec![OsmWay {
@@ -1465,6 +1492,7 @@ mod tests {
                     id: 0,
                     lat: 57.163429387682214,
                     lon: 24.87742424011231,
+                    residential_in_proximity: false,
                 },
                 2,
             ),
