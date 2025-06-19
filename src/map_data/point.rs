@@ -53,6 +53,7 @@ impl Debug for MapDataPoint {
     lon={}
     lines={:?}
     junction={}
+    residential_in_proximity={}
     rules={:#?}",
             self.id,
             self.lat,
@@ -62,6 +63,7 @@ impl Debug for MapDataPoint {
                 .map(|l| l.borrow().line_id())
                 .collect::<Vec<_>>(),
             self.is_junction(),
+            self.residential_in_proximity,
             self.rules
         )
     }

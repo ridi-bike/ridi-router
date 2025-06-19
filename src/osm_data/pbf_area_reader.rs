@@ -5,7 +5,7 @@ use geo::{CoordsIter, Point as GeoPoint};
 use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
 use tracing::{error, info};
 
-use crate::map_data::proximity::{PointGrid, GRID_CALC_PRECISION};
+use crate::map_data::proximity::{AreaGrid, PointGrid, GRID_CALC_PRECISION};
 
 use super::OsmDataReaderError;
 
@@ -19,7 +19,7 @@ pub struct PbfAreaReader<'a> {
     ways: HashMap<i64, Way>,
     boundaries: Vec<Boundary>,
     pbf: &'a mut OsmPbfReader<File>,
-    point_grid: PointGrid<MultiPolygon>,
+    area_grid: AreaGrid,
 }
 
 #[derive(Clone, Debug)]
@@ -34,8 +34,7 @@ impl<'a> PbfAreaReader<'a> {
             ways: HashMap::new(),
             boundaries: Vec::new(),
             pbf,
-            // tree: RTree::new(),
-            point_grid: PointGrid::new(),
+            area_grid: AreaGrid::new(),
         }
     }
     fn get_line_strings_from_boundary(&self, boundary: &Boundary, role: &str) -> Vec<LineString> {
@@ -243,53 +242,11 @@ impl<'a> PbfAreaReader<'a> {
         let point_grid_started = Instant::now();
 
         boundaries.into_iter().for_each(|multi_polygon| {
-            if let Some(bounding_rect) = multi_polygon.bounding_rect() {
-                let x_max = bounding_rect.max().x;
-                let mut x = bounding_rect.min().x;
-                let y_max = bounding_rect.max().y;
-                let mut y = bounding_rect.min().y;
-
-                while x <= x_max {
-                    while y <= y_max {
-                        let point = GeoPoint::new(x, y);
-                        let mut adjusted_multi_polygon = multi_polygon.clone();
-                        adjusted_multi_polygon.iter_mut().for_each(|p| {
-                            p.exterior_mut(|l| {
-                                l.coords_mut().for_each(|c| {
-                                    c.x = (c.x * GRID_CALC_PRECISION as f64).round()
-                                        / GRID_CALC_PRECISION as f64;
-                                    c.y = (c.y * GRID_CALC_PRECISION as f64).round()
-                                        / GRID_CALC_PRECISION as f64;
-                                });
-                            });
-
-                            p.interiors_mut(|lines| {
-                                lines.iter_mut().for_each(|l| {
-                                    l.coords_mut().for_each(|c| {
-                                        c.x = (c.x * GRID_CALC_PRECISION as f64).round()
-                                            / GRID_CALC_PRECISION as f64;
-                                        c.y = (c.y * GRID_CALC_PRECISION as f64).round()
-                                            / GRID_CALC_PRECISION as f64;
-                                    });
-                                })
-                            });
-                        });
-                        if adjusted_multi_polygon.contains(&point)
-                            || adjusted_multi_polygon
-                                .exterior_coords_iter()
-                                .any(|c| c.intersects(&point))
-                        {
-                            self.point_grid.insert(y as f32, x as f32, &multi_polygon);
-                        }
-                        y += 1. / GRID_CALC_PRECISION as f64;
-                    }
-                    x += 1. / GRID_CALC_PRECISION as f64;
-                }
-            }
+            self.area_grid.inser_multi_polygon(&multi_polygon);
         });
 
         let point_grid_duration = point_grid_started.elapsed().as_secs();
-        let point_grid_size = self.point_grid.len();
+        let point_grid_size = self.area_grid.len();
         info!(
             duration = point_grid_duration,
             size = point_grid_size,
@@ -299,7 +256,7 @@ impl<'a> PbfAreaReader<'a> {
         Ok(())
     }
 
-    pub fn get_point_grid(self) -> PointGrid<MultiPolygon> {
-        self.point_grid
+    pub fn get_area_grid(self) -> AreaGrid {
+        self.area_grid
     }
 }

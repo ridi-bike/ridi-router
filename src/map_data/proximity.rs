@@ -1,11 +1,81 @@
 use std::{collections::HashMap, u16};
 
+use geo::{BoundingRect, Contains, CoordsIter, Intersects, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
 
 type GpsCellId = (i16, i16);
 
 // two decimal places 1.1km precision
 pub const GRID_CALC_PRECISION: i16 = 100;
+
+fn round_to_precision(v: f64) -> f64 {
+    (v * GRID_CALC_PRECISION as f64).round() / GRID_CALC_PRECISION as f64
+}
+
+#[derive(Debug)]
+pub struct AreaGrid {
+    point_grid: PointGrid<MultiPolygon>,
+}
+
+impl AreaGrid {
+    pub fn new() -> Self {
+        Self {
+            point_grid: PointGrid::new(),
+        }
+    }
+    pub fn inser_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> () {
+        if let Some(bounding_rect) = multi_polygon.bounding_rect() {
+            let mut adjusted_multi_polygon = multi_polygon.clone();
+            adjusted_multi_polygon.iter_mut().for_each(|p| {
+                p.exterior_mut(|l| {
+                    l.coords_mut().for_each(|c| {
+                        c.x = round_to_precision(c.x);
+                        c.y = round_to_precision(c.y);
+                    });
+                });
+
+                p.interiors_mut(|lines| {
+                    lines.iter_mut().for_each(|l| {
+                        l.coords_mut().for_each(|c| {
+                            c.x = round_to_precision(c.x);
+                            c.y = round_to_precision(c.y);
+                        });
+                    })
+                });
+            });
+            let x_max = round_to_precision(bounding_rect.max().x);
+            let mut x = round_to_precision(bounding_rect.min().x);
+            let y_max = round_to_precision(bounding_rect.max().y);
+            let mut y = round_to_precision(bounding_rect.min().y);
+
+            while x <= x_max {
+                while y <= y_max {
+                    let point = Point::new(x, y);
+                    if adjusted_multi_polygon.contains(&point)
+                        || adjusted_multi_polygon
+                            .exterior_coords_iter()
+                            .any(|c| c.intersects(&point))
+                    {
+                        self.point_grid.insert(y as f32, x as f32, &multi_polygon);
+                    }
+                    y += 1. / GRID_CALC_PRECISION as f64;
+                }
+                x += 1. / GRID_CALC_PRECISION as f64;
+            }
+        }
+    }
+    pub fn find_closest_areas_refs(
+        &self,
+        lat: f32,
+        lon: f32,
+        steps: u16,
+    ) -> Option<Vec<&MultiPolygon>> {
+        self.point_grid.find_closest_point_refs(lat, lon, steps)
+    }
+    pub fn len(&self) -> usize {
+        self.point_grid.len()
+    }
+}
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct PointGrid<T: Clone> {

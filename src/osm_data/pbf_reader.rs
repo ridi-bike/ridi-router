@@ -35,7 +35,7 @@ impl<'a> PbfReader<'a> {
         let mut boundary_reader = PbfAreaReader::new(&mut pbf);
         boundary_reader
             .read(&|obj| obj.is_way() && obj.tags().contains("landuse", "residential"))?;
-        let residential_point_grid = boundary_reader.get_point_grid();
+        let residential_area_grid = boundary_reader.get_area_grid();
 
         let elements = pbf
             .get_objs_and_deps(|obj| {
@@ -62,7 +62,7 @@ impl<'a> PbfReader<'a> {
                     id: node.id.0 as u64,
                     lat: node.lat(),
                     lon: node.lon(),
-                    residential_in_proximity: match residential_point_grid.find_closest_point_refs(
+                    residential_in_proximity: match residential_area_grid.find_closest_areas_refs(
                         node.lat() as f32,
                         node.lon() as f32,
                         2,
@@ -84,7 +84,7 @@ impl<'a> PbfReader<'a> {
                                     })
                                 }
                             };
-                            distance <= 1000.
+                            distance <= 500.
                         }),
                         None => false,
                     },
