@@ -12,6 +12,8 @@ use std::{path::PathBuf, time::Instant};
 
 use super::OsmDataReaderError;
 
+const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
+
 pub struct PbfReader<'a> {
     map_data: &'a mut MapDataGraph,
     file_name: &'a PathBuf,
@@ -84,7 +86,7 @@ impl<'a> PbfReader<'a> {
                                     })
                                 }
                             };
-                            distance <= 500.
+                            distance <= RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
                         }),
                         None => false,
                     },
