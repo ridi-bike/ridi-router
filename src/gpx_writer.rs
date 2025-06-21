@@ -29,10 +29,9 @@ impl GpxWriter {
         Self { routes, file_name }
     }
     pub fn write_gpx(self) -> Result<(), GpxWriterError> {
-        let mut gpx = Gpx::default();
-        gpx.version = GpxVersion::Gpx11;
-
         for (idx, route) in self.routes.clone().into_iter().enumerate() {
+            let mut gpx = Gpx::default();
+            gpx.version = GpxVersion::Gpx11;
             let mut gpx_route = GpxRoute::new();
             gpx_route.name = Some(format!(
                 "r_{idx}_c_{}",
@@ -83,11 +82,17 @@ impl GpxWriter {
             }
 
             gpx.routes.push(gpx_route);
+            let mut filename = PathBuf::from(&self.file_name);
+            filename.set_file_name(format!(
+                "{}_{}.gpx",
+                filename.file_name().unwrap().to_string_lossy(),
+                idx
+            ));
+            let file = File::create(&filename)
+                .map_err(|error| GpxWriterError::FileCreateError { error })?;
+
+            write(&gpx, file).map_err(|error| GpxWriterError::GpxWrite { error })?;
         }
-
-        let file = File::create(&self.file_name).map_err(|error| GpxWriterError::FileCreateError { error })?;
-
-        write(&gpx, file).map_err(|error| GpxWriterError::GpxWrite { error })?;
 
         Ok(())
     }

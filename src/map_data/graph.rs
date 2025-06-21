@@ -3,6 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
     hash::Hash,
+    io::{self, LineWriter},
     marker::PhantomData,
     sync::OnceLock,
     time::Instant,
@@ -10,11 +11,13 @@ use std::{
 
 use anyhow::Context;
 use geo::{Distance, Haversine, Point};
+use postgres::{Client, NoTls};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
 use crate::{
     map_data::{
+        debug_writer::MapDebugWriter,
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
         rule::MapDataRule,
     },
@@ -351,6 +354,8 @@ impl MapDataGraph {
     }
 
     pub fn generate_point_hashes(&mut self) {
+        let mut close_writer = MapDebugWriter::new(true);
+        let mut not_close_writer = MapDebugWriter::new(false);
         for point in self.points.iter().filter(|p| !p.lines.is_empty()) {
             let point_idx = self
                 .points_map
@@ -359,6 +364,23 @@ impl MapDataGraph {
             let point_ref = MapDataElementRef::new(*point_idx);
             self.point_grid.insert(point.lat, point.lon, &point_ref);
         }
+        for line in &self.lines {
+            let point_1 = &self.points[line.points.0.idx];
+            let point_2 = &self.points[line.points.1.idx];
+            if point_1.residential_in_proximity || point_2.residential_in_proximity {
+                close_writer.write_line(&format!(
+                    "LINESTRING({} {}, {} {})",
+                    point_1.lon, point_1.lat, point_2.lon, point_2.lat
+                ));
+            } else {
+                not_close_writer.write_line(&format!(
+                    "LINESTRING({} {}, {} {})",
+                    point_1.lon, point_1.lat, point_2.lon, point_2.lat
+                ));
+            }
+        }
+        close_writer.flush();
+        not_close_writer.flush();
         if !cfg!(test) {
             self.points_map = HashMap::new();
             self.ways_lines = HashMap::new();

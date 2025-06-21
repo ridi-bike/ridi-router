@@ -1,5 +1,6 @@
 use self::osm::OsmRelation;
 
+pub mod debug_writer;
 pub mod graph;
 pub mod line;
 pub mod osm;

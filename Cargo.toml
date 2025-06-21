@@ -29,6 +29,7 @@ include_directory = "0.1.1"
 interprocess = "2.2.2"
 json-tools = "1.1.3"
 osmpbfreader = "0.16.1"
+postgres = "0.19.10"
 qstring = { version = "0.7.2", optional = true }
 rayon = "1.10.0"
 schemars = "0.8.21"
