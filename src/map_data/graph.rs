@@ -354,8 +354,7 @@ impl MapDataGraph {
     }
 
     pub fn generate_point_hashes(&mut self) {
-        let mut close_writer = MapDebugWriter::new(true);
-        let mut not_close_writer = MapDebugWriter::new(false);
+        let mut debug_writer = MapDebugWriter::new();
         for point in self.points.iter().filter(|p| !p.lines.is_empty()) {
             let point_idx = self
                 .points_map
@@ -368,19 +367,18 @@ impl MapDataGraph {
             let point_1 = &self.points[line.points.0.idx];
             let point_2 = &self.points[line.points.1.idx];
             if point_1.residential_in_proximity || point_2.residential_in_proximity {
-                close_writer.write_line(&format!(
-                    "LINESTRING({} {}, {} {})",
-                    point_1.lon, point_1.lat, point_2.lon, point_2.lat
+                debug_writer.write_line_residential_close((
+                    (point_1.lat, point_1.lon),
+                    (point_2.lat, point_2.lon),
                 ));
             } else {
-                not_close_writer.write_line(&format!(
-                    "LINESTRING({} {}, {} {})",
-                    point_1.lon, point_1.lat, point_2.lon, point_2.lat
+                debug_writer.write_line_residential_not_close((
+                    (point_1.lat, point_1.lon),
+                    (point_2.lat, point_2.lon),
                 ));
             }
         }
-        close_writer.flush();
-        not_close_writer.flush();
+        debug_writer.flush();
         if !cfg!(test) {
             self.points_map = HashMap::new();
             self.ways_lines = HashMap::new();
