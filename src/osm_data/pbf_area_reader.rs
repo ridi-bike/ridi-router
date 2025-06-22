@@ -5,6 +5,7 @@ use geo::{CoordsIter, Point as GeoPoint};
 use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
 use tracing::{error, info};
 
+use crate::map_data::debug_writer::MapDebugWriter;
 use crate::map_data::proximity::{AreaGrid, PointGrid, GRID_CALC_PRECISION};
 
 use super::OsmDataReaderError;
@@ -241,9 +242,16 @@ impl<'a> PbfAreaReader<'a> {
 
         let point_grid_started = Instant::now();
 
+        let mut debug_writer = MapDebugWriter::new();
         boundaries.into_iter().for_each(|multi_polygon| {
-            self.area_grid.insert_multi_polygon(&multi_polygon);
+            debug_writer.write_area_residential(&multi_polygon);
+            let maybe_adjusted = self.area_grid.insert_multi_polygon(&multi_polygon);
+            if let Some(adjusted) = maybe_adjusted {
+                debug_writer.write_area_residential_adjusted(&adjusted);
+            }
         });
+        debug_writer.write_line_grid();
+        debug_writer.flush();
 
         let point_grid_duration = point_grid_started.elapsed().as_secs();
         let point_grid_size = self.area_grid.len();

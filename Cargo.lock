@@ -936,6 +936,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "geo-traits"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e7c353d12a704ccfab1ba8bfb1a7fe6cb18b665bf89d37f4f7890edcd260206"
+dependencies = [
+ "geo-types",
+]
+
+[[package]]
 name = "geo-types"
 version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2002,6 +2011,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "typeshare",
+ "wkt",
 ]
 
 [[package]]
@@ -3044,6 +3054,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "wkt"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efb2b923ccc882312e559ffaa832a055ba9d1ac0cc8e86b3e25453247e4b81d7"
+dependencies = [
+ "geo-traits",
+ "geo-types",
+ "log",
+ "num-traits",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

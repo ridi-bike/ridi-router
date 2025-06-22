@@ -1,7 +1,9 @@
 use std::{collections::HashMap, u16};
 
-use geo::{BoundingRect, Contains, CoordsIter, Intersects, MultiPolygon, Point};
+use geo::{BoundingRect, Contains, Coord, CoordsIter, Intersects, LineString, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
+
+use crate::map_data::debug_writer::MapDebugWriter;
 
 type GpsCellId = (i16, i16);
 
@@ -23,7 +25,7 @@ impl AreaGrid {
             point_grid: PointGrid::new(),
         }
     }
-    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> () {
+    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> Option<MultiPolygon> {
         if let Some(bounding_rect) = multi_polygon.bounding_rect() {
             let mut adjusted_multi_polygon = multi_polygon.clone();
             adjusted_multi_polygon.iter_mut().for_each(|p| {
@@ -44,9 +46,11 @@ impl AreaGrid {
                 });
             });
             let x_max = round_to_precision(bounding_rect.max().x);
-            let mut x = round_to_precision(bounding_rect.min().x);
+            let x_min = round_to_precision(bounding_rect.min().x);
+            let mut x = x_min;
             let y_max = round_to_precision(bounding_rect.max().y);
-            let mut y = round_to_precision(bounding_rect.min().y);
+            let y_min = round_to_precision(bounding_rect.min().y);
+            let mut y = y_min;
 
             while x <= x_max {
                 while y <= y_max {
@@ -62,7 +66,10 @@ impl AreaGrid {
                 }
                 x += 1. / GRID_CALC_PRECISION as f64;
             }
+
+            return Some(adjusted_multi_polygon);
         }
+        None
     }
     pub fn find_closest_areas_refs(
         &self,

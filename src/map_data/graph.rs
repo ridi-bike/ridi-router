@@ -3,15 +3,13 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display},
     hash::Hash,
-    io::{self, LineWriter},
     marker::PhantomData,
     sync::OnceLock,
     time::Instant,
 };
 
 use anyhow::Context;
-use geo::{Distance, Haversine, Point};
-use postgres::{Client, NoTls};
+use geo::{Coord, Distance, Haversine, LineString, Point};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
@@ -354,7 +352,6 @@ impl MapDataGraph {
     }
 
     pub fn generate_point_hashes(&mut self) {
-        let mut debug_writer = MapDebugWriter::new();
         for point in self.points.iter().filter(|p| !p.lines.is_empty()) {
             let point_idx = self
                 .points_map
@@ -363,19 +360,33 @@ impl MapDataGraph {
             let point_ref = MapDataElementRef::new(*point_idx);
             self.point_grid.insert(point.lat, point.lon, &point_ref);
         }
+
+        let mut debug_writer = MapDebugWriter::new();
         for line in &self.lines {
             let point_1 = &self.points[line.points.0.idx];
             let point_2 = &self.points[line.points.1.idx];
             if point_1.residential_in_proximity || point_2.residential_in_proximity {
-                debug_writer.write_line_residential_close((
-                    (point_1.lat, point_1.lon),
-                    (point_2.lat, point_2.lon),
-                ));
+                debug_writer.write_line_residential_close(&LineString::new(vec![
+                    Coord {
+                        x: point_1.lon as f64,
+                        y: point_1.lat as f64,
+                    },
+                    Coord {
+                        x: point_2.lon as f64,
+                        y: point_2.lat as f64,
+                    },
+                ]));
             } else {
-                debug_writer.write_line_residential_not_close((
-                    (point_1.lat, point_1.lon),
-                    (point_2.lat, point_2.lon),
-                ));
+                debug_writer.write_line_residential_not_close(&LineString::new(vec![
+                    Coord {
+                        x: point_1.lon as f64,
+                        y: point_1.lat as f64,
+                    },
+                    Coord {
+                        x: point_2.lon as f64,
+                        y: point_2.lat as f64,
+                    },
+                ]));
             }
         }
         debug_writer.flush();
