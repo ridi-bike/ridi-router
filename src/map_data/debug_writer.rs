@@ -4,7 +4,7 @@ use wkt::ToWkt;
 use geo::{Coord, LineString, MultiPolygon};
 use postgres::{Client, NoTls};
 
-use crate::map_data::proximity::GRID_CALC_PRECISION;
+use crate::map_data::proximity::{round_to_precision, GRID_CALC_PRECISION};
 
 pub struct MapDebugWriter {
     residential_close_file: Option<csv::Writer<File>>,
@@ -101,22 +101,24 @@ impl MapDebugWriter {
         if let Some(ref mut file) = self.grid_file {
             let mut lat = -90.;
             while lat <= 90. {
+                eprintln!("lat: {lat}");
                 let line =
                     LineString::new(vec![Coord { x: -180., y: lat }, Coord { x: 180., y: lat }]);
 
                 file.write_record(&[line.to_wkt().to_string()])
                     .expect("could not write to csv");
-                lat += 1. / GRID_CALC_PRECISION as f32;
+                lat = round_to_precision(lat + 1. / GRID_CALC_PRECISION as f64);
             }
 
             let mut lon = -180.;
             while lon <= 180. {
+                eprintln!("lon: {lon}");
                 let line =
                     LineString::new(vec![Coord { x: lon, y: -90. }, Coord { x: lon, y: 90. }]);
 
                 file.write_record(&[line.to_wkt().to_string()])
                     .expect("could not write to csv");
-                lon += 1. / GRID_CALC_PRECISION as f32;
+                lon = round_to_precision(lon + 1. / GRID_CALC_PRECISION as f64);
             }
         }
     }

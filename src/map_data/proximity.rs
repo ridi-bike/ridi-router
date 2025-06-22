@@ -1,16 +1,14 @@
 use std::{collections::HashMap, u16};
 
-use geo::{BoundingRect, Contains, Coord, CoordsIter, Intersects, LineString, MultiPolygon, Point};
+use geo::{BoundingRect, Contains, CoordsIter, Intersects, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
-
-use crate::map_data::debug_writer::MapDebugWriter;
 
 type GpsCellId = (i16, i16);
 
 // two decimal places 1.1km precision
 pub const GRID_CALC_PRECISION: i16 = 100;
 
-fn round_to_precision(v: f64) -> f64 {
+pub fn round_to_precision(v: f64) -> f64 {
     (v * GRID_CALC_PRECISION as f64).round() / GRID_CALC_PRECISION as f64
 }
 
