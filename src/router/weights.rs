@@ -36,6 +36,8 @@ fn get_priority_from_headings(bearing_next: f32, bearing_fork: f32) -> u8 {
     255 - (degree_diff * ratio).round() as u8
 }
 
+// TODO create a weight to avoid coming back on the motorway on the opposite side
+
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_heading");
 

@@ -1,12 +1,11 @@
 use std::{collections::HashMap, fs::File, time::Instant};
 
-use geo::{BoundingRect, Contains, Coord, Intersects, LineString, MultiPolygon, Polygon};
-use geo::{CoordsIter, Point as GeoPoint};
+use geo::{Contains, Coord, Intersects, LineString, MultiPolygon, Polygon};
 use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
 use tracing::{error, info};
 
 use crate::map_data::debug_writer::MapDebugWriter;
-use crate::map_data::proximity::{AreaGrid, PointGrid, GRID_CALC_PRECISION};
+use crate::map_data::proximity::AreaGrid;
 
 use super::OsmDataReaderError;
 
@@ -245,10 +244,8 @@ impl<'a> PbfAreaReader<'a> {
         let mut debug_writer = MapDebugWriter::new();
         boundaries.into_iter().for_each(|multi_polygon| {
             debug_writer.write_area_residential(&multi_polygon);
-            let maybe_adjusted = self.area_grid.insert_multi_polygon(&multi_polygon);
-            if let Some(adjusted) = maybe_adjusted {
-                debug_writer.write_area_residential_adjusted(&adjusted);
-            }
+            let adjusted = self.area_grid.insert_multi_polygon(&multi_polygon);
+            debug_writer.write_area_residential_adjusted(&adjusted);
         });
         debug_writer.write_line_grid();
         debug_writer.flush();

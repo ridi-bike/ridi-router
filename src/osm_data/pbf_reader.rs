@@ -12,8 +12,12 @@ use std::{path::PathBuf, time::Instant};
 
 use super::OsmDataReaderError;
 
-const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 1000.0;
-const RESIDENTIAL_PART_COVERED: f64 = 0.05;
+const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
+const RESIDENTIAL_PART_COVERED: f64 = 0.25;
+const THRESHOLD_AREA: f64 = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
+    * RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
+    * std::f64::consts::PI)
+    * RESIDENTIAL_PART_COVERED;
 
 pub struct PbfReader<'a> {
     map_data: &'a mut MapDataGraph,
@@ -36,8 +40,9 @@ impl<'a> PbfReader<'a> {
         let mut pbf = osmpbfreader::OsmPbfReader::new(r);
 
         let mut boundary_reader = PbfAreaReader::new(&mut pbf);
-        boundary_reader
-            .read(&|obj| obj.is_way() && obj.tags().contains("landuse", "residential"))?;
+        boundary_reader.read(&|obj| {
+            (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "residential")
+        })?;
         let residential_area_grid = boundary_reader.get_area_grid();
 
         let elements = pbf
@@ -100,11 +105,8 @@ impl<'a> PbfReader<'a> {
                             }),
                             None => 0.,
                         };
-                        let threshold_area = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS.powi(2)
-                            * std::f64::consts::PI)
-                            * RESIDENTIAL_PART_COVERED;
 
-                        tot_area > threshold_area
+                        tot_area > THRESHOLD_AREA
                     },
                 });
             } else if element.is_way() {

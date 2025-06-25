@@ -4,7 +4,9 @@ use wkt::ToWkt;
 use geo::{Coord, LineString, MultiPolygon};
 use postgres::{Client, NoTls};
 
-use crate::map_data::proximity::{round_to_precision, GRID_CALC_PRECISION};
+use crate::map_data::proximity::{
+    round_to_precision, AdjustedCoord, RoundMethod, GRID_CALC_PRECISION,
+};
 
 pub struct MapDebugWriter {
     residential_close_file: Option<csv::Writer<File>>,
@@ -34,7 +36,6 @@ impl MapDebugWriter {
     pub fn write_line_residential_close(&mut self, line: &LineString) -> () {
         let geom = line.to_wkt().to_string();
         if self.residential_close_file.is_none() {
-            eprintln!("new new new close");
             self.residential_close_file = Some(
                 csv::WriterBuilder::new()
                     .quote_style(csv::QuoteStyle::Never)
@@ -49,7 +50,6 @@ impl MapDebugWriter {
     pub fn write_line_residential_not_close(&mut self, line: &LineString) -> () {
         let geom = line.to_wkt().to_string();
         if self.residential_not_close_file.is_none() {
-            eprintln!("new new new not close");
             self.residential_not_close_file = Some(
                 csv::WriterBuilder::new()
                     .quote_style(csv::QuoteStyle::Never)
@@ -61,8 +61,7 @@ impl MapDebugWriter {
             file.write_record(&[geom]).expect("could not write to csv");
         }
     }
-    pub fn write_area_residential_adjusted(&mut self, area: &MultiPolygon) -> () {
-        let geom = area.to_wkt().to_string();
+    pub fn write_area_residential_adjusted(&mut self, area: &Vec<AdjustedCoord>) -> () {
         if self.residential_area_adjusted_file.is_none() {
             self.residential_area_adjusted_file = Some(
                 csv::WriterBuilder::new()
@@ -72,7 +71,10 @@ impl MapDebugWriter {
             );
         }
         if let Some(ref mut file) = self.residential_area_adjusted_file {
-            file.write_record(&[geom]).expect("could not write to csv");
+            area.iter().for_each(|coord| {
+                let geom = coord.to_wkt().to_string();
+                file.write_record(&[geom]).expect("could not write to csv");
+            });
         }
     }
     pub fn write_area_residential(&mut self, area: &MultiPolygon) -> () {
@@ -101,24 +103,22 @@ impl MapDebugWriter {
         if let Some(ref mut file) = self.grid_file {
             let mut lat = -90.;
             while lat <= 90. {
-                eprintln!("lat: {lat}");
                 let line =
                     LineString::new(vec![Coord { x: -180., y: lat }, Coord { x: 180., y: lat }]);
 
                 file.write_record(&[line.to_wkt().to_string()])
                     .expect("could not write to csv");
-                lat = round_to_precision(lat + 1. / GRID_CALC_PRECISION as f64);
+                lat = round_to_precision(lat + 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round);
             }
 
             let mut lon = -180.;
             while lon <= 180. {
-                eprintln!("lon: {lon}");
                 let line =
                     LineString::new(vec![Coord { x: lon, y: -90. }, Coord { x: lon, y: 90. }]);
 
                 file.write_record(&[line.to_wkt().to_string()])
                     .expect("could not write to csv");
-                lon = round_to_precision(lon + 1. / GRID_CALC_PRECISION as f64);
+                lon = round_to_precision(lon + 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round);
             }
         }
     }
@@ -179,7 +179,7 @@ impl MapDebugWriter {
             client
                 .execute(
                     "create table public.residential_adjusted (
-                    geom GEOMETRY(MULTIPOLYGON, 4326)
+                    geom GEOMETRY(POINT, 4326)
                 )",
                     &[],
                 )

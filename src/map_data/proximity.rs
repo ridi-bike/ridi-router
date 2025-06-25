@@ -1,15 +1,59 @@
-use std::{collections::HashMap, u16};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    u16,
+};
 
-use geo::{BoundingRect, Contains, CoordsIter, Intersects, MultiPolygon, Point};
+use geo::{Coord, CoordsIter, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
+use wkt::ToWkt;
 
 type GpsCellId = (i16, i16);
 
 // two decimal places 1.1km precision
-pub const GRID_CALC_PRECISION: i16 = 100;
+pub const GRID_CALC_DECIMAL_PLACES: usize = 2;
+pub const GRID_CALC_PRECISION: i16 = 10u32.pow(GRID_CALC_DECIMAL_PLACES as u32) as i16;
 
-pub fn round_to_precision(v: f64) -> f64 {
-    (v * GRID_CALC_PRECISION as f64).round() / GRID_CALC_PRECISION as f64
+pub enum RoundMethod {
+    Ceil,
+    Floor,
+    Round,
+}
+
+#[derive(Debug)]
+pub struct AdjustedCoord(Coord);
+
+impl ToWkt<f64> for AdjustedCoord {
+    fn to_wkt(&self) -> wkt::Wkt<f64> {
+        Point::new(self.0.x, self.0.y).to_wkt()
+    }
+}
+
+impl Hash for AdjustedCoord {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        format!("{:.dec$}", self.0.x, dec = GRID_CALC_DECIMAL_PLACES).hash(state);
+        format!("{:.dec$}", self.0.y, dec = GRID_CALC_DECIMAL_PLACES).hash(state);
+    }
+}
+
+impl Eq for AdjustedCoord {}
+
+impl PartialEq for AdjustedCoord {
+    fn eq(&self, other: &Self) -> bool {
+        // doing the string format to make sure hashing and eq works the same
+        format!("{:.dec$}", self.0.x, dec = GRID_CALC_DECIMAL_PLACES)
+            == format!("{:.dec$}", other.0.x, dec = GRID_CALC_DECIMAL_PLACES)
+            && format!("{:.dec$}", self.0.y, dec = GRID_CALC_DECIMAL_PLACES)
+                == format!("{:.dec$}", other.0.y, dec = GRID_CALC_DECIMAL_PLACES)
+    }
+}
+
+pub fn round_to_precision(v: f64, direction: RoundMethod) -> f64 {
+    match direction {
+        RoundMethod::Ceil => (v * GRID_CALC_PRECISION as f64).ceil() / GRID_CALC_PRECISION as f64,
+        RoundMethod::Floor => (v * GRID_CALC_PRECISION as f64).floor() / GRID_CALC_PRECISION as f64,
+        RoundMethod::Round => (v * GRID_CALC_PRECISION as f64).round() / GRID_CALC_PRECISION as f64,
+    }
 }
 
 #[derive(Debug)]
@@ -23,51 +67,35 @@ impl AreaGrid {
             point_grid: PointGrid::new(),
         }
     }
-    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> Option<MultiPolygon> {
-        if let Some(bounding_rect) = multi_polygon.bounding_rect() {
-            let mut adjusted_multi_polygon = multi_polygon.clone();
-            adjusted_multi_polygon.iter_mut().for_each(|p| {
-                p.exterior_mut(|l| {
-                    l.coords_mut().for_each(|c| {
-                        c.x = round_to_precision(c.x);
-                        c.y = round_to_precision(c.y);
-                    });
-                });
-
-                p.interiors_mut(|lines| {
-                    lines.iter_mut().for_each(|l| {
-                        l.coords_mut().for_each(|c| {
-                            c.x = round_to_precision(c.x);
-                            c.y = round_to_precision(c.y);
-                        });
-                    })
-                });
-            });
-            let x_max = round_to_precision(bounding_rect.max().x);
-            let x_min = round_to_precision(bounding_rect.min().x);
-            let mut x = x_min;
-            let y_max = round_to_precision(bounding_rect.max().y);
-            let y_min = round_to_precision(bounding_rect.min().y);
-            let mut y = y_min;
-
-            while x <= x_max {
-                while y <= y_max {
-                    let point = Point::new(x, y);
-                    if adjusted_multi_polygon.contains(&point)
-                        || adjusted_multi_polygon
-                            .exterior_coords_iter()
-                            .any(|c| c.intersects(&point))
-                    {
-                        self.point_grid.insert(y as f32, x as f32, &multi_polygon);
-                    }
-                    y += 1. / GRID_CALC_PRECISION as f64;
-                }
-                x += 1. / GRID_CALC_PRECISION as f64;
-            }
-
-            return Some(adjusted_multi_polygon);
-        }
-        None
+    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> Vec<AdjustedCoord> {
+        let mut adjusted_coords = HashSet::new();
+        multi_polygon.coords_iter().for_each(|coords| {
+            adjusted_coords.insert(AdjustedCoord(Coord {
+                x: round_to_precision(coords.x, RoundMethod::Ceil),
+                y: round_to_precision(coords.y, RoundMethod::Ceil),
+            }));
+            adjusted_coords.insert(AdjustedCoord(Coord {
+                x: round_to_precision(coords.x, RoundMethod::Floor),
+                y: round_to_precision(coords.y, RoundMethod::Ceil),
+            }));
+            adjusted_coords.insert(AdjustedCoord(Coord {
+                x: round_to_precision(coords.x, RoundMethod::Ceil),
+                y: round_to_precision(coords.y, RoundMethod::Floor),
+            }));
+            adjusted_coords.insert(AdjustedCoord(Coord {
+                x: round_to_precision(coords.x, RoundMethod::Floor),
+                y: round_to_precision(coords.y, RoundMethod::Floor),
+            }));
+            // TODO missing inner points for large areas
+        });
+        adjusted_coords
+            .into_iter()
+            .map(|coords| {
+                self.point_grid
+                    .insert(coords.0.y as f32, coords.0.x as f32, multi_polygon);
+                coords
+            })
+            .collect()
     }
     pub fn find_closest_areas_refs(
         &self,
