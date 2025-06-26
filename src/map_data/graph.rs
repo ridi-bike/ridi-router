@@ -15,6 +15,8 @@ use tracing::trace;
 
 #[cfg(feature = "debug-with-postgres")]
 use crate::map_data::debug_writer::MapDebugWriter;
+#[cfg(feature = "debug-with-postgres")]
+use geo::{Coord, LineString};
 
 use crate::{
     map_data::{
