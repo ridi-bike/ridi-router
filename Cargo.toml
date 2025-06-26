@@ -14,6 +14,8 @@ opt-level = 3
 default = []
 debug-viewer = ["dep:duckdb", "dep:qstring", "dep:sql-builder", "dep:tiny_http"]
 rule-schema-writer = []
+debug-with-postgres = []
+debug-split-gpx = []
 
 [dependencies]
 anyhow = "1.0.95"

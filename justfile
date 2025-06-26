@@ -78,7 +78,7 @@ run-load-json-show:
 	gpxsee map-data/output.gpx &
 
 run-load-pbf-show:
-	cargo run -- generate-route --debug-dir map-data/debug --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
+	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
 	gpxsee map-data/output.gpx &
 
 run-load-cache-show:

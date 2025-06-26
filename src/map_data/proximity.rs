@@ -4,7 +4,7 @@ use std::{
     u16,
 };
 
-use geo::{Coord, CoordsIter, MultiPolygon, Point};
+use geo::{BoundingRect, Contains, Coord, CoordsIter, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
 use wkt::ToWkt;
 
@@ -69,25 +69,76 @@ impl AreaGrid {
     }
     pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> Vec<AdjustedCoord> {
         let mut adjusted_coords = HashSet::new();
+
+        enum Direction {
+            Up,
+            Down,
+            Left,
+            Right,
+        }
+        let expand_coords = |x: f64, y: f64, direction: Direction| -> Coord {
+            match direction {
+                Direction::Up => Coord {
+                    x,
+                    y: round_to_precision(y + 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                },
+
+                Direction::Down => Coord {
+                    x,
+                    y: round_to_precision(y - 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                },
+
+                Direction::Left => Coord {
+                    x: round_to_precision(x - 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                    y,
+                },
+
+                Direction::Right => Coord {
+                    x: round_to_precision(x + 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                    y,
+                },
+            }
+        };
+
         multi_polygon.coords_iter().for_each(|coords| {
-            adjusted_coords.insert(AdjustedCoord(Coord {
-                x: round_to_precision(coords.x, RoundMethod::Ceil),
-                y: round_to_precision(coords.y, RoundMethod::Ceil),
-            }));
-            adjusted_coords.insert(AdjustedCoord(Coord {
-                x: round_to_precision(coords.x, RoundMethod::Floor),
-                y: round_to_precision(coords.y, RoundMethod::Ceil),
-            }));
-            adjusted_coords.insert(AdjustedCoord(Coord {
-                x: round_to_precision(coords.x, RoundMethod::Ceil),
-                y: round_to_precision(coords.y, RoundMethod::Floor),
-            }));
-            adjusted_coords.insert(AdjustedCoord(Coord {
-                x: round_to_precision(coords.x, RoundMethod::Floor),
-                y: round_to_precision(coords.y, RoundMethod::Floor),
-            }));
-            // TODO missing inner points for large areas
+            let x = round_to_precision(coords.x, RoundMethod::Ceil);
+            let y = round_to_precision(coords.y, RoundMethod::Ceil);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let x = round_to_precision(coords.x, RoundMethod::Floor);
+            let y = round_to_precision(coords.y, RoundMethod::Ceil);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let x = round_to_precision(coords.x, RoundMethod::Ceil);
+            let y = round_to_precision(coords.y, RoundMethod::Floor);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let x = round_to_precision(coords.x, RoundMethod::Floor);
+            let y = round_to_precision(coords.y, RoundMethod::Floor);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Up);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Up);
+            }
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Down);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Down);
+            }
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Left);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Left);
+            }
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Right);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Right);
+            }
         });
+
         adjusted_coords
             .into_iter()
             .map(|coords| {

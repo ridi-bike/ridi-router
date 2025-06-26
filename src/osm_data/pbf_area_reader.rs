@@ -4,6 +4,7 @@ use geo::{Contains, Coord, Intersects, LineString, MultiPolygon, Polygon};
 use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
 use tracing::{error, info};
 
+#[cfg(feature = "debug-with-postgres")]
 use crate::map_data::debug_writer::MapDebugWriter;
 use crate::map_data::proximity::AreaGrid;
 
@@ -241,14 +242,22 @@ impl<'a> PbfAreaReader<'a> {
 
         let point_grid_started = Instant::now();
 
+        #[cfg(feature = "debug-with-postgres")]
         let mut debug_writer = MapDebugWriter::new();
         boundaries.into_iter().for_each(|multi_polygon| {
+            #[cfg(feature = "debug-with-postgres")]
             debug_writer.write_area_residential(&multi_polygon);
-            let adjusted = self.area_grid.insert_multi_polygon(&multi_polygon);
-            debug_writer.write_area_residential_adjusted(&adjusted);
+
+            let _adjusted = self.area_grid.insert_multi_polygon(&multi_polygon);
+
+            #[cfg(feature = "debug-with-postgres")]
+            debug_writer.write_area_residential_adjusted(&_adjusted);
         });
-        debug_writer.write_line_grid();
-        debug_writer.flush();
+        #[cfg(feature = "debug-with-postgres")]
+        {
+            debug_writer.write_line_grid();
+            debug_writer.flush();
+        }
 
         let point_grid_duration = point_grid_started.elapsed().as_secs();
         let point_grid_size = self.area_grid.len();
