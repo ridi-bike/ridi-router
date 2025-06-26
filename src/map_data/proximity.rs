@@ -31,8 +31,10 @@ impl ToWkt<f64> for AdjustedCoord {
 
 impl Hash for AdjustedCoord {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        format!("{:.dec$}", self.0.x, dec = GRID_CALC_DECIMAL_PLACES).hash(state);
-        format!("{:.dec$}", self.0.y, dec = GRID_CALC_DECIMAL_PLACES).hash(state);
+        let x_scaled = (self.0.x * GRID_CALC_PRECISION as f64).round() as i64;
+        let y_scaled = (self.0.y * GRID_CALC_PRECISION as f64).round() as i64;
+        x_scaled.hash(state);
+        y_scaled.hash(state);
     }
 }
 
@@ -40,11 +42,11 @@ impl Eq for AdjustedCoord {}
 
 impl PartialEq for AdjustedCoord {
     fn eq(&self, other: &Self) -> bool {
-        // doing the string format to make sure hashing and eq works the same
-        format!("{:.dec$}", self.0.x, dec = GRID_CALC_DECIMAL_PLACES)
-            == format!("{:.dec$}", other.0.x, dec = GRID_CALC_DECIMAL_PLACES)
-            && format!("{:.dec$}", self.0.y, dec = GRID_CALC_DECIMAL_PLACES)
-                == format!("{:.dec$}", other.0.y, dec = GRID_CALC_DECIMAL_PLACES)
+        let x_scaled_self = (self.0.x * GRID_CALC_PRECISION as f64).round() as i64;
+        let y_scaled_self = (self.0.y * GRID_CALC_PRECISION as f64).round() as i64;
+        let x_scaled_other = (other.0.x * GRID_CALC_PRECISION as f64).round() as i64;
+        let y_scaled_other = (other.0.y * GRID_CALC_PRECISION as f64).round() as i64;
+        x_scaled_self == x_scaled_other && y_scaled_self == y_scaled_other
     }
 }
 
