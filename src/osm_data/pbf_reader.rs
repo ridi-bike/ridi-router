@@ -2,7 +2,7 @@ use crate::{
     map_data::graph::MapDataGraph,
     osm_data::{data_reader::ALLOWED_HIGHWAY_VALUES, pbf_area_reader::PbfAreaReader},
 };
-use geo::{CoordsIter, Distance, Haversine, HaversineClosestPoint, Point};
+use geo::{CoordsIter, Distance, GeodesicArea, Haversine, HaversineClosestPoint, Point};
 use tracing::trace;
 
 use crate::map_data::osm::{
@@ -13,6 +13,11 @@ use std::{path::PathBuf, time::Instant};
 use super::OsmDataReaderError;
 
 const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
+const RESIDENTIAL_PART_COVERED: f64 = 0.10;
+const THRESHOLD_AREA: f64 = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
+    * RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
+    * std::f64::consts::PI)
+    * RESIDENTIAL_PART_COVERED;
 
 pub struct PbfReader<'a> {
     map_data: &'a mut MapDataGraph,
@@ -35,8 +40,9 @@ impl<'a> PbfReader<'a> {
         let mut pbf = osmpbfreader::OsmPbfReader::new(r);
 
         let mut boundary_reader = PbfAreaReader::new(&mut pbf);
-        boundary_reader
-            .read(&|obj| obj.is_way() && obj.tags().contains("landuse", "residential"))?;
+        boundary_reader.read(&|obj| {
+            (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "residential")
+        })?;
         let residential_area_grid = boundary_reader.get_area_grid();
 
         let elements = pbf
@@ -64,31 +70,43 @@ impl<'a> PbfReader<'a> {
                     id: node.id.0 as u64,
                     lat: node.lat(),
                     lon: node.lon(),
-                    residential_in_proximity: match residential_area_grid.find_closest_areas_refs(
-                        node.lat() as f32,
-                        node.lon() as f32,
-                        2,
-                    ) {
-                        Some(areas) => areas.iter().any(|area| {
-                            let geo_point = Point::new(node.lon(), node.lat());
-                            let distance = match area.haversine_closest_point(&geo_point) {
-                                geo::Closest::Intersection(_) => 0.,
-                                geo::Closest::SinglePoint(p) => Haversine::distance(p, geo_point),
-                                geo::Closest::Indeterminate => {
-                                    area.coords_iter().fold(10000., |min, coords| {
-                                        let dist =
-                                            Haversine::distance(geo_point, Point::from(coords));
-                                        if dist < min {
-                                            dist
-                                        } else {
-                                            min
-                                        }
-                                    })
+                    residential_in_proximity: {
+                        let tot_area = match residential_area_grid.find_closest_areas_refs(
+                            node.lat() as f32,
+                            node.lon() as f32,
+                            2,
+                        ) {
+                            Some(areas) => areas.iter().fold(0., |tot, multi_polygon| {
+                                let geo_point = Point::new(node.lon(), node.lat());
+                                let distance = match multi_polygon
+                                    .haversine_closest_point(&geo_point)
+                                {
+                                    geo::Closest::Intersection(_) => 0.,
+                                    geo::Closest::SinglePoint(p) => {
+                                        Haversine::distance(p, geo_point)
+                                    }
+                                    geo::Closest::Indeterminate => {
+                                        multi_polygon.coords_iter().fold(10000., |min, coords| {
+                                            let dist =
+                                                Haversine::distance(geo_point, Point::from(coords));
+                                            if dist < min {
+                                                dist
+                                            } else {
+                                                min
+                                            }
+                                        })
+                                    }
+                                };
+                                if distance <= RESIDENTIAL_PROXIMITY_THRESHOLD_METERS {
+                                    let area = multi_polygon.geodesic_area_signed().abs();
+                                    return tot + area;
                                 }
-                            };
-                            distance <= RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
-                        }),
-                        None => false,
+                                tot
+                            }),
+                            None => 0.,
+                        };
+
+                        tot_area > THRESHOLD_AREA
                     },
                 });
             } else if element.is_way() {

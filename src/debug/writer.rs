@@ -125,7 +125,7 @@ pub enum DebugWriterError {
     MetadataWrite { error: io::Error },
 }
 
-static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
+pub static DEBUG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 thread_local! {
     static DEBUG_WRITER: OnceLock<RwLock<DebugWriter>> = const { OnceLock::new() };

@@ -1,5 +1,7 @@
 use self::osm::OsmRelation;
 
+#[cfg(feature = "debug-with-postgres")]
+pub mod debug_writer;
 pub mod graph;
 pub mod line;
 pub mod osm;

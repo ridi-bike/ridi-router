@@ -13,6 +13,11 @@ use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
 
+#[cfg(feature = "debug-with-postgres")]
+use crate::map_data::debug_writer::MapDebugWriter;
+#[cfg(feature = "debug-with-postgres")]
+use geo::{Coord, LineString};
+
 use crate::{
     map_data::{
         osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
@@ -350,6 +355,39 @@ impl MapDataGraph {
         self.add_point(point.clone());
     }
 
+    #[cfg(feature = "debug-with-postgres")]
+    fn write_debug(&self) -> () {
+        let mut debug_writer = MapDebugWriter::new();
+        for line in &self.lines {
+            let point_1 = &self.points[line.points.0.idx];
+            let point_2 = &self.points[line.points.1.idx];
+            if point_1.residential_in_proximity || point_2.residential_in_proximity {
+                debug_writer.write_line_residential_close(&LineString::new(vec![
+                    Coord {
+                        x: point_1.lon as f64,
+                        y: point_1.lat as f64,
+                    },
+                    Coord {
+                        x: point_2.lon as f64,
+                        y: point_2.lat as f64,
+                    },
+                ]));
+            } else {
+                debug_writer.write_line_residential_not_close(&LineString::new(vec![
+                    Coord {
+                        x: point_1.lon as f64,
+                        y: point_1.lat as f64,
+                    },
+                    Coord {
+                        x: point_2.lon as f64,
+                        y: point_2.lat as f64,
+                    },
+                ]));
+            }
+        }
+        debug_writer.flush();
+    }
+
     pub fn generate_point_hashes(&mut self) {
         for point in self.points.iter().filter(|p| !p.lines.is_empty()) {
             let point_idx = self
@@ -359,6 +397,10 @@ impl MapDataGraph {
             let point_ref = MapDataElementRef::new(*point_idx);
             self.point_grid.insert(point.lat, point.lon, &point_ref);
         }
+
+        #[cfg(feature = "debug-with-postgres")]
+        self.write_debug();
+
         if !cfg!(test) {
             self.points_map = HashMap::new();
             self.ways_lines = HashMap::new();

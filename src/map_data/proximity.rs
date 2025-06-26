@@ -1,15 +1,61 @@
-use std::{collections::HashMap, u16};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    u16,
+};
 
-use geo::{BoundingRect, Contains, CoordsIter, Intersects, MultiPolygon, Point};
+use geo::{BoundingRect, Contains, Coord, CoordsIter, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
+use wkt::ToWkt;
 
 type GpsCellId = (i16, i16);
 
 // two decimal places 1.1km precision
-pub const GRID_CALC_PRECISION: i16 = 100;
+pub const GRID_CALC_DECIMAL_PLACES: usize = 2;
+pub const GRID_CALC_PRECISION: i16 = 10u32.pow(GRID_CALC_DECIMAL_PLACES as u32) as i16;
 
-fn round_to_precision(v: f64) -> f64 {
-    (v * GRID_CALC_PRECISION as f64).round() / GRID_CALC_PRECISION as f64
+pub enum RoundMethod {
+    Ceil,
+    Floor,
+    Round,
+}
+
+#[derive(Debug)]
+pub struct AdjustedCoord(Coord);
+
+impl ToWkt<f64> for AdjustedCoord {
+    fn to_wkt(&self) -> wkt::Wkt<f64> {
+        Point::new(self.0.x, self.0.y).to_wkt()
+    }
+}
+
+impl Hash for AdjustedCoord {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let x_scaled = (self.0.x * GRID_CALC_PRECISION as f64).round() as i64;
+        let y_scaled = (self.0.y * GRID_CALC_PRECISION as f64).round() as i64;
+        x_scaled.hash(state);
+        y_scaled.hash(state);
+    }
+}
+
+impl Eq for AdjustedCoord {}
+
+impl PartialEq for AdjustedCoord {
+    fn eq(&self, other: &Self) -> bool {
+        let x_scaled_self = (self.0.x * GRID_CALC_PRECISION as f64).round() as i64;
+        let y_scaled_self = (self.0.y * GRID_CALC_PRECISION as f64).round() as i64;
+        let x_scaled_other = (other.0.x * GRID_CALC_PRECISION as f64).round() as i64;
+        let y_scaled_other = (other.0.y * GRID_CALC_PRECISION as f64).round() as i64;
+        x_scaled_self == x_scaled_other && y_scaled_self == y_scaled_other
+    }
+}
+
+pub fn round_to_precision(v: f64, direction: RoundMethod) -> f64 {
+    match direction {
+        RoundMethod::Ceil => (v * GRID_CALC_PRECISION as f64).ceil() / GRID_CALC_PRECISION as f64,
+        RoundMethod::Floor => (v * GRID_CALC_PRECISION as f64).floor() / GRID_CALC_PRECISION as f64,
+        RoundMethod::Round => (v * GRID_CALC_PRECISION as f64).round() / GRID_CALC_PRECISION as f64,
+    }
 }
 
 #[derive(Debug)]
@@ -23,46 +69,86 @@ impl AreaGrid {
             point_grid: PointGrid::new(),
         }
     }
-    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> () {
-        if let Some(bounding_rect) = multi_polygon.bounding_rect() {
-            let mut adjusted_multi_polygon = multi_polygon.clone();
-            adjusted_multi_polygon.iter_mut().for_each(|p| {
-                p.exterior_mut(|l| {
-                    l.coords_mut().for_each(|c| {
-                        c.x = round_to_precision(c.x);
-                        c.y = round_to_precision(c.y);
-                    });
-                });
+    pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> Vec<AdjustedCoord> {
+        let mut adjusted_coords = HashSet::new();
 
-                p.interiors_mut(|lines| {
-                    lines.iter_mut().for_each(|l| {
-                        l.coords_mut().for_each(|c| {
-                            c.x = round_to_precision(c.x);
-                            c.y = round_to_precision(c.y);
-                        });
-                    })
-                });
-            });
-            let x_max = round_to_precision(bounding_rect.max().x);
-            let mut x = round_to_precision(bounding_rect.min().x);
-            let y_max = round_to_precision(bounding_rect.max().y);
-            let mut y = round_to_precision(bounding_rect.min().y);
-
-            while x <= x_max {
-                while y <= y_max {
-                    let point = Point::new(x, y);
-                    if adjusted_multi_polygon.contains(&point)
-                        || adjusted_multi_polygon
-                            .exterior_coords_iter()
-                            .any(|c| c.intersects(&point))
-                    {
-                        self.point_grid.insert(y as f32, x as f32, &multi_polygon);
-                    }
-                    y += 1. / GRID_CALC_PRECISION as f64;
-                }
-                x += 1. / GRID_CALC_PRECISION as f64;
-            }
+        enum Direction {
+            Up,
+            Down,
+            Left,
+            Right,
         }
+        let expand_coords = |x: f64, y: f64, direction: Direction| -> Coord {
+            match direction {
+                Direction::Up => Coord {
+                    x,
+                    y: round_to_precision(y + 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                },
+
+                Direction::Down => Coord {
+                    x,
+                    y: round_to_precision(y - 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                },
+
+                Direction::Left => Coord {
+                    x: round_to_precision(x - 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                    y,
+                },
+
+                Direction::Right => Coord {
+                    x: round_to_precision(x + 1. / GRID_CALC_PRECISION as f64, RoundMethod::Round),
+                    y,
+                },
+            }
+        };
+
+        multi_polygon.coords_iter().for_each(|coords| {
+            let x = round_to_precision(coords.x, RoundMethod::Ceil);
+            let y = round_to_precision(coords.y, RoundMethod::Ceil);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let x = round_to_precision(coords.x, RoundMethod::Floor);
+            let y = round_to_precision(coords.y, RoundMethod::Ceil);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let x = round_to_precision(coords.x, RoundMethod::Ceil);
+            let y = round_to_precision(coords.y, RoundMethod::Floor);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let x = round_to_precision(coords.x, RoundMethod::Floor);
+            let y = round_to_precision(coords.y, RoundMethod::Floor);
+            adjusted_coords.insert(AdjustedCoord(Coord { x, y }));
+
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Up);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Up);
+            }
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Down);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Down);
+            }
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Left);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Left);
+            }
+            let mut next_coord = expand_coords(coords.x, coords.y, Direction::Right);
+            while multi_polygon.contains(&next_coord) {
+                adjusted_coords.insert(AdjustedCoord(next_coord.clone()));
+                next_coord = expand_coords(next_coord.x, next_coord.y, Direction::Right);
+            }
+        });
+
+        adjusted_coords
+            .into_iter()
+            .map(|coords| {
+                self.point_grid
+                    .insert(coords.0.y as f32, coords.0.x as f32, multi_polygon);
+                coords
+            })
+            .collect()
     }
     pub fn find_closest_areas_refs(
         &self,
