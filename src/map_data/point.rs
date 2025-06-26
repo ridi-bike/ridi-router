@@ -55,6 +55,7 @@ impl Debug for MapDataPoint {
     lines={:?}
     junction={}
     residential_in_proximity={}
+    nogo_area={}
     rules={:#?}",
             self.id,
             self.lat,
@@ -65,6 +66,7 @@ impl Debug for MapDataPoint {
                 .collect::<Vec<_>>(),
             self.is_junction(),
             self.residential_in_proximity,
+            self.nogo_area,
             self.rules
         )
     }

@@ -125,6 +125,11 @@ impl<'a> PbfReader<'a> {
                             let geo_point = Point::new(node.lon(), node.lat());
                             match multi_polygon.haversine_closest_point(&geo_point) {
                                 geo::Closest::Intersection(p) => {
+                                    // only mark as nogo if inside a military area more than 100m
+                                    // this is to account for data oddities where a road may
+                                    // techcnally be in a military zone but on the outer edge and
+                                    // ok to be on. but this will prevent from choosing roads that
+                                    // go deeper into the area
                                     Haversine::distance(geo_point, p) > MILITARY_ENTRY_MAX_M
                                 }
                                 geo::Closest::SinglePoint(_) => false,
