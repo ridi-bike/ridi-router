@@ -351,6 +351,7 @@ impl MapDataGraph {
             lines: Vec::new(),
             rules: Vec::new(),
             residential_in_proximity: value.residential_in_proximity,
+            nogo_area: value.nogo_area,
         };
         self.add_point(point.clone());
     }
@@ -1359,6 +1360,7 @@ mod tests {
                         lat: 57.1640,
                         lon: 24.8652,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                 ],
                 vec![],
@@ -1368,6 +1370,7 @@ mod tests {
                     lat: 57.1670,
                     lon: 24.8658,
                     residential_in_proximity: false,
+                    nogo_area: false,
                 },
                 1,
             ),
@@ -1379,12 +1382,14 @@ mod tests {
                         lat: 57.1740,
                         lon: 24.8630,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                     OsmNode {
                         id: 2,
                         lat: 57.1640,
                         lon: 24.8652,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                 ],
                 vec![],
@@ -1394,6 +1399,7 @@ mod tests {
                     lat: 57.1670,
                     lon: 24.8658,
                     residential_in_proximity: false,
+                    nogo_area: false,
                 },
                 2,
             ),
@@ -1406,6 +1412,7 @@ mod tests {
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                     OsmNode {
                         // 525.74 meters
@@ -1413,6 +1420,7 @@ mod tests {
                         lat: 57.168,
                         lon: 24.875192642211914,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                     OsmNode {
                         // 438.77 meters
@@ -1420,6 +1428,7 @@ mod tests {
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                 ],
                 vec![],
@@ -1429,6 +1438,7 @@ mod tests {
                     lat: 57.163429387682214,
                     lon: 24.87742424011231,
                     residential_in_proximity: false,
+                    nogo_area: false,
                 },
                 3,
             ),
@@ -1441,6 +1451,7 @@ mod tests {
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                     OsmNode {
                         // 3777.35 meters
@@ -1448,6 +1459,7 @@ mod tests {
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                 ],
                 vec![],
@@ -1457,6 +1469,7 @@ mod tests {
                     lat: 57.193343289610794,
                     lon: 24.872531890869144,
                     residential_in_proximity: false,
+                    nogo_area: false,
                 },
                 1,
             ),
@@ -1469,6 +1482,7 @@ mod tests {
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                     OsmNode {
                         // 3777.35 meters
@@ -1476,6 +1490,7 @@ mod tests {
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                 ],
                 vec![],
@@ -1485,6 +1500,7 @@ mod tests {
                     lat: 57.193343289610794,
                     lon: 24.872531890869144,
                     residential_in_proximity: false,
+                    nogo_area: false,
                 },
                 1,
             ),
@@ -1497,6 +1513,7 @@ mod tests {
                         lat: 57.16961885299059,
                         lon: 24.875192642211914,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                     OsmNode {
                         // 525.74 meters
@@ -1504,6 +1521,7 @@ mod tests {
                         lat: 57.168,
                         lon: 24.875192642211914,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                     OsmNode {
                         // 438.77 meters
@@ -1511,6 +1529,7 @@ mod tests {
                         lat: 57.159484808175435,
                         lon: 24.877617359161377,
                         residential_in_proximity: false,
+                        nogo_area: false,
                     },
                 ],
                 vec![OsmWay {
@@ -1535,6 +1554,7 @@ mod tests {
                     lat: 57.163429387682214,
                     lon: 24.87742424011231,
                     residential_in_proximity: false,
+                    nogo_area: false,
                 },
                 2,
             ),

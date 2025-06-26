@@ -20,6 +20,7 @@ pub struct MapDataPoint {
     pub lines: Vec<MapDataLineRef>,
     pub rules: Vec<MapDataRule>,
     pub residential_in_proximity: bool,
+    pub nogo_area: bool,
 }
 
 impl MapDataPoint {

@@ -130,6 +130,7 @@ impl OsmElement {
                     value: String::from("lon"),
                 })?,
                 residential_in_proximity: false,
+                nogo_area: false,
             });
         }
 
