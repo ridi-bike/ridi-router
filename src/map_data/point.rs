@@ -20,6 +20,7 @@ pub struct MapDataPoint {
     pub lines: Vec<MapDataLineRef>,
     pub rules: Vec<MapDataRule>,
     pub residential_in_proximity: bool,
+    pub nogo_area: bool,
 }
 
 impl MapDataPoint {
@@ -54,6 +55,7 @@ impl Debug for MapDataPoint {
     lines={:?}
     junction={}
     residential_in_proximity={}
+    nogo_area={}
     rules={:#?}",
             self.id,
             self.lat,
@@ -64,6 +66,7 @@ impl Debug for MapDataPoint {
                 .collect::<Vec<_>>(),
             self.is_junction(),
             self.residential_in_proximity,
+            self.nogo_area,
             self.rules
         )
     }

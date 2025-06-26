@@ -66,3 +66,6 @@ jobs:
 
     - name: Run clippy
       run: cargo clippy
+
+    - name: Run cargo build
+      run: cargo build --all-features

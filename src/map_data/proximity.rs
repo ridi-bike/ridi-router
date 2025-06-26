@@ -4,7 +4,7 @@ use std::{
     u16,
 };
 
-use geo::{BoundingRect, Contains, Coord, CoordsIter, MultiPolygon, Point};
+use geo::{Contains, Coord, CoordsIter, MultiPolygon, Point};
 use serde::{Deserialize, Serialize};
 use wkt::ToWkt;
 

@@ -18,6 +18,7 @@ const THRESHOLD_AREA: f64 = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
     * RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
     * std::f64::consts::PI)
     * RESIDENTIAL_PART_COVERED;
+const MILITARY_ENTRY_MAX_M: f64 = 100.;
 
 pub struct PbfReader<'a> {
     map_data: &'a mut MapDataGraph,
@@ -44,6 +45,12 @@ impl<'a> PbfReader<'a> {
             (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "residential")
         })?;
         let residential_area_grid = boundary_reader.get_area_grid();
+
+        let mut boundary_reader = PbfAreaReader::new(&mut pbf);
+        boundary_reader.read(&|obj| {
+            (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "military")
+        })?;
+        let military_area_grid = boundary_reader.get_area_grid();
 
         let elements = pbf
             .get_objs_and_deps(|obj| {
@@ -74,7 +81,7 @@ impl<'a> PbfReader<'a> {
                         let tot_area = match residential_area_grid.find_closest_areas_refs(
                             node.lat() as f32,
                             node.lon() as f32,
-                            2,
+                            1,
                         ) {
                             Some(areas) => areas.iter().fold(0., |tot, multi_polygon| {
                                 let geo_point = Point::new(node.lon(), node.lat());
@@ -107,6 +114,28 @@ impl<'a> PbfReader<'a> {
                         };
 
                         tot_area > THRESHOLD_AREA
+                    },
+                    nogo_area: match military_area_grid.find_closest_areas_refs(
+                        node.lat() as f32,
+                        node.lon() as f32,
+                        1,
+                    ) {
+                        None => false,
+                        Some(areas) => areas.iter().any(|multi_polygon| {
+                            let geo_point = Point::new(node.lon(), node.lat());
+                            match multi_polygon.haversine_closest_point(&geo_point) {
+                                geo::Closest::Intersection(p) => {
+                                    // only mark as nogo if inside a military area more than 100m
+                                    // this is to account for data oddities where a road may
+                                    // techcnally be in a military zone but on the outer edge and
+                                    // ok to be on. but this will prevent from choosing roads that
+                                    // go deeper into the area
+                                    Haversine::distance(geo_point, p) > MILITARY_ENTRY_MAX_M
+                                }
+                                geo::Closest::SinglePoint(_) => false,
+                                geo::Closest::Indeterminate => false,
+                            }
+                        }),
                     },
                 });
             } else if element.is_way() {

@@ -36,8 +36,6 @@ fn get_priority_from_headings(bearing_next: f32, bearing_fork: f32) -> u8 {
     255 - (degree_diff * ratio).round() as u8
 }
 
-// TODO create a weight to avoid coming back on the motorway on the opposite side
-
 pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_heading");
 
@@ -430,6 +428,26 @@ pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
         return res;
     }
 
+    WeightCalcResult::ForkChoiceUseWithWeight(0)
+}
+
+pub fn weight_avoid_nogo_areas(input: WeightCalcInput) -> WeightCalcResult {
+    if input
+        .current_fork_segment
+        .get_end_point()
+        .borrow()
+        .nogo_area
+    {
+        return WeightCalcResult::ForkChoiceDoNotUse;
+    }
+
+    if let Some(seg) = input.route.get_segment_last() {
+        if seg.get_end_point().borrow().nogo_area {
+            return WeightCalcResult::LastSegmentDoNotUse;
+        }
+    } else if input.itinerary.start.borrow().nogo_area {
+        return WeightCalcResult::LastSegmentDoNotUse;
+    }
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 

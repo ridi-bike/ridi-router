@@ -106,6 +106,9 @@ run-lv-client:
 run-lv-gen:
   cargo run -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest-apps.osm.pbf --cache-dir ./map-data/cache/latvia --rule-file ./rules.json start-finish --start 57.170998,24.86442 --finish 56.64119,24.48387
 
+run-lv-gen-nogo:
+  cargo run --features=debug-split-gpx -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest.osm.pbf --rule-file ./rule-examples/rules-prefer-unpaved.json --output map-data/output.gpx start-finish --start 57.12364,24.34510 --finish 57.19295,24.58614
+
 cache-lv:
 	cargo run -- prep-cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia
 

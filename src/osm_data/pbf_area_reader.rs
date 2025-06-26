@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs::File, time::Instant};
 
-use geo::{Contains, Coord, Intersects, LineString, MultiPolygon, Polygon};
+use geo::{Contains, Coord, LineString, MultiPolygon, Polygon};
 use osmpbfreader::{Node, OsmObj, OsmPbfReader, Relation, Way};
 use tracing::{error, info};
 

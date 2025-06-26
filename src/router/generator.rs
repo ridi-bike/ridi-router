@@ -14,9 +14,10 @@ use super::{
     navigator::{NavigationResult, Navigator},
     route::{Route, RouteStats},
     weights::{
-        weight_check_distance_to_next, weight_heading, weight_no_loops, weight_no_sharp_turns,
-        weight_no_short_detours, weight_prefer_same_road, weight_progress_speed,
-        weight_rules_highway, weight_rules_smoothness, weight_rules_surface, WeightCalc,
+        weight_avoid_nogo_areas, weight_check_distance_to_next, weight_heading, weight_no_loops,
+        weight_no_sharp_turns, weight_no_short_detours, weight_prefer_same_road,
+        weight_progress_speed, weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
+        WeightCalc,
     },
 };
 
@@ -202,6 +203,10 @@ impl Generator {
                     itinerary,
                     self.rules.clone(),
                     vec![
+                        WeightCalc {
+                            name: "weight_avoid_nogo_areas".to_string(),
+                            calc: weight_avoid_nogo_areas,
+                        },
                         WeightCalc {
                             name: "weight_no_sharp_turns".to_string(),
                             calc: weight_no_sharp_turns,
