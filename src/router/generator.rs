@@ -270,7 +270,7 @@ impl Generator {
             .iter()
             .enumerate()
             .map(|(idx, route)| {
-                let mut stats = route.calc_stats();
+                let mut stats = route.calc_stats(&self.rules);
                 let approx_route = &clustering.approximated_routes[idx];
                 stats.cluster = Some(clustering.labels[idx] as usize);
                 stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();

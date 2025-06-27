@@ -58,6 +58,9 @@ jobs:
         cd src/debug/viewer/ui/
         pnpm build
 
+    - name: Install clippy
+      run: rustup component add clippy
+
     - name: Run tests
       run: cargo test
 
