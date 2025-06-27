@@ -14,7 +14,7 @@ use crate::{
 
 use self::segment::Segment;
 
-const LOOP_DISTANCE_THESHOLD: f32 = 50.;
+const LOOP_DISTANCE_THRESHOLD: f32 = 50.;
 const LOOP_SEGMENT_THESHOLD: usize = 10;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -141,7 +141,7 @@ impl Route {
 
                         let distance_between_points_over_threshold =
                             segment_point.borrow().distance_between(last_segment_point)
-                                < LOOP_DISTANCE_THESHOLD;
+                                < LOOP_DISTANCE_THRESHOLD;
                         let route_segments_between_points_over_threshold =
                             slice_len - idx > LOOP_SEGMENT_THESHOLD;
 
