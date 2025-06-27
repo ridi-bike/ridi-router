@@ -14,6 +14,9 @@ use crate::{
 
 use self::segment::Segment;
 
+const LOOP_DISTANCE_THRESHOLD: f32 = 50.;
+const LOOP_SEGMENT_THESHOLD: usize = 10;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RouteStatElement {
     pub len_m: f64,
@@ -116,11 +119,46 @@ impl Route {
         };
         let last_segment = self.route_segments.last();
         if let Some(last_segment) = last_segment {
+            let last_segment_point = last_segment.get_end_point();
+            let last_segment_line_tags = last_segment.get_line().borrow().tags.borrow();
+            let last_segment_line_hw_ref = last_segment_line_tags.hw_ref();
+            let last_segment_line_name = last_segment_line_tags.name();
             let end_index = self.route_segments.len().checked_sub(1);
             if let Some(end_index) = end_index {
+                let slice_len = self.route_segments[since_point_pos..end_index].len();
                 return self.route_segments[since_point_pos..end_index]
                     .iter()
-                    .any(|segment| segment.get_end_point() == last_segment.get_end_point());
+                    .enumerate()
+                    .any(|(idx, segment)| {
+                        // if points are equal or
+                        // if points are less than 20m apart and
+                        // there are at least 20 segments between points
+                        // and hw ref or road name exist and match
+                        // treat them as looped as they are proabaly two sides of a motorway or
+                        // multi lane road with a direction separator
+                        let segment_point = segment.get_end_point();
+                        let are_points_eq = segment_point == last_segment_point;
+
+                        let distance_between_points_over_threshold =
+                            segment_point.borrow().distance_between(last_segment_point)
+                                < LOOP_DISTANCE_THRESHOLD;
+                        let route_segments_between_points_over_threshold =
+                            slice_len - idx > LOOP_SEGMENT_THESHOLD;
+
+                        let segment_line_tags = segment.get_line().borrow().tags.borrow();
+                        let segment_line_hw_ref = segment_line_tags.hw_ref();
+                        let segment_line_name = segment_line_tags.name();
+
+                        are_points_eq
+                            || (distance_between_points_over_threshold
+                                && route_segments_between_points_over_threshold
+                                && ((segment_line_hw_ref.is_some()
+                                    && last_segment_line_hw_ref.is_some()
+                                    && segment_line_hw_ref == last_segment_line_hw_ref)
+                                    || (segment_line_name.is_some()
+                                        && last_segment_line_name.is_some()
+                                        && segment_line_name == last_segment_line_name)))
+                    });
             }
         }
         false
