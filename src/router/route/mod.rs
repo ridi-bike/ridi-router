@@ -7,7 +7,10 @@ use std::collections::HashMap;
 use score::Score;
 use serde::{Deserialize, Serialize};
 
-use crate::map_data::{graph::MapDataPointRef, line::MapDataLine, point::MapDataPoint};
+use crate::{
+    map_data::{graph::MapDataPointRef, line::MapDataLine, point::MapDataPoint},
+    router::rules::RouterRules,
+};
 
 use self::segment::Segment;
 
@@ -212,7 +215,7 @@ impl Route {
             .cloned()
     }
 
-    pub fn calc_stats(&self) -> RouteStats {
+    pub fn calc_stats(&self, rules: &RouterRules) -> RouteStats {
         fn update_map(
             tag_val: &Option<&smartstring::alias::String>,
             line_len: f64,
@@ -274,7 +277,7 @@ impl Route {
             highway: calc_stat_map(len_m, &highway),
             smoothness: calc_stat_map(len_m, &smoothness),
             surface: calc_stat_map(len_m, &surface),
-            score: Score::calc_score(self),
+            score: Score::calc_score(self, rules),
             cluster: None,
             approximated_route: Vec::new(),
         }
