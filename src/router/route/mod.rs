@@ -11,6 +11,9 @@ use crate::map_data::{graph::MapDataPointRef, line::MapDataLine, point::MapDataP
 
 use self::segment::Segment;
 
+const LOOP_DISTANCE_THESHOLD: f32 = 50.;
+const LOOP_SEGMENT_THESHOLD: usize = 10;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RouteStatElement {
     pub len_m: f64,
@@ -124,7 +127,7 @@ impl Route {
                     .iter()
                     .enumerate()
                     .any(|(idx, segment)| {
-                        // points are equal
+                        // if points are equal or
                         // if points are less than 20m apart and
                         // there are at least 20 segments between points
                         // and hw ref or road name exist and match
@@ -134,8 +137,10 @@ impl Route {
                         let are_points_eq = segment_point == last_segment_point;
 
                         let distance_between_points_over_threshold =
-                            segment_point.borrow().distance_between(last_segment_point) < 50.;
-                        let route_segments_between_points_over_threshold = slice_len - idx > 10;
+                            segment_point.borrow().distance_between(last_segment_point)
+                                < LOOP_DISTANCE_THESHOLD;
+                        let route_segments_between_points_over_threshold =
+                            slice_len - idx > LOOP_SEGMENT_THESHOLD;
 
                         let segment_line_tags = segment.get_line().borrow().tags.borrow();
                         let segment_line_hw_ref = segment_line_tags.hw_ref();
