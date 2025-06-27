@@ -58,6 +58,11 @@ jobs:
         cd src/debug/viewer/ui/
         pnpm build
 
+    - name: Temporarily modify the rust toolchain version
+      run: rustup override set nightly
+    - name: Output rust version for educational purposes
+      run: rustup --version
+
     - name: Run tests
       run: cargo test
 

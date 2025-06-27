@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::router::rules::{RouterRules, RulesTagValueAction};
 
 use super::Route;
@@ -6,6 +8,26 @@ pub struct Score;
 
 fn scale_priority(priority: u8) -> f64 {
     priority as f64 / 255.0
+}
+
+fn get_rule_adjustment(
+    bearing_diff: f64,
+    tag: &Option<&smartstring::alias::String>,
+    rule: &Option<HashMap<String, RulesTagValueAction>>,
+) -> f64 {
+    if let Some(ref curr_tag) = tag {
+        if let Some(ref tag_rules) = rule {
+            if let Some(curr_tag_rule) = tag_rules.get(curr_tag.as_str()) {
+                if let RulesTagValueAction::Priority {
+                    value: priority_value,
+                } = curr_tag_rule
+                {
+                    return bearing_diff * scale_priority(*priority_value);
+                }
+            }
+        }
+    }
+    0.
 }
 
 impl Score {
@@ -28,50 +50,21 @@ impl Score {
                     0.
                 } else {
                     let mut adjusted = bearing_diff;
-                    if let Some(ref curr_hw) = segment.get_line().borrow().tags.borrow().highway() {
-                        if let Some(ref hw_rules) = rules.highway {
-                            if let Some(curr_hw_rule) = hw_rules.get(curr_hw.as_str()) {
-                                if let RulesTagValueAction::Priority {
-                                    value: priority_value,
-                                } = curr_hw_rule
-                                {
-                                    adjusted += bearing_diff * scale_priority(*priority_value);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(ref curr_surface) =
-                        segment.get_line().borrow().tags.borrow().surface()
-                    {
-                        if let Some(ref surface_rules) = rules.surface {
-                            if let Some(curr_surface_rule) =
-                                surface_rules.get(curr_surface.as_str())
-                            {
-                                if let RulesTagValueAction::Priority {
-                                    value: priority_value,
-                                } = curr_surface_rule
-                                {
-                                    adjusted += bearing_diff * scale_priority(*priority_value);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(ref curr_smoothness) =
-                        segment.get_line().borrow().tags.borrow().smoothness()
-                    {
-                        if let Some(ref smoothness_rules) = rules.smoothness {
-                            if let Some(curr_smoothness_rule) =
-                                smoothness_rules.get(curr_smoothness.as_str())
-                            {
-                                if let RulesTagValueAction::Priority {
-                                    value: priority_value,
-                                } = curr_smoothness_rule
-                                {
-                                    adjusted += bearing_diff * scale_priority(*priority_value);
-                                }
-                            }
-                        }
-                    }
+                    adjusted += get_rule_adjustment(
+                        bearing_diff,
+                        &segment.get_line().borrow().tags.borrow().highway(),
+                        &rules.highway,
+                    );
+                    adjusted += get_rule_adjustment(
+                        bearing_diff,
+                        &segment.get_line().borrow().tags.borrow().surface(),
+                        &rules.surface,
+                    );
+                    adjusted += get_rule_adjustment(
+                        bearing_diff,
+                        &segment.get_line().borrow().tags.borrow().smoothness(),
+                        &rules.smoothness,
+                    );
                     adjusted
                 }
             }
