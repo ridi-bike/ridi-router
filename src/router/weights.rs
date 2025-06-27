@@ -432,6 +432,7 @@ pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
 }
 
 pub fn weight_avoid_nogo_areas(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_avoid_nogo_areas");
     if input
         .current_fork_segment
         .get_end_point()
@@ -479,6 +480,8 @@ where
 }
 
 pub fn weight_check_avoid_rules(input: WeightCalcInput) -> WeightCalcResult {
+    trace!("weight_check_avoid_rules");
+
     let last_chunk = input.route.get_route_chunk_since_junction_before_last();
     if was_on_avoid(&last_chunk, &input.rules.highway, |segment| {
         segment.get_line().borrow().tags.borrow().highway()
