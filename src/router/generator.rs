@@ -3,7 +3,7 @@ use std::{collections::HashMap, ops::Sub};
 use crate::{
     debug::writer::DebugWriter,
     map_data::graph::{MapDataGraph, MapDataPointRef},
-    router::{clustering::Clustering, rules::RouterRules},
+    router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
 };
 use geo::{Destination, Haversine, Point};
 use rayon::prelude::*;
@@ -246,6 +246,10 @@ impl Generator {
                         WeightCalc {
                             name: "weight_rules_smoothness".to_string(),
                             calc: weight_rules_smoothness,
+                        },
+                        WeightCalc {
+                            name: "weight_check_avoid_rules".to_string(),
+                            calc: weight_check_avoid_rules,
                         },
                     ],
                     self.round_trip.is_some(),

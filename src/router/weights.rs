@@ -451,6 +451,54 @@ pub fn weight_avoid_nogo_areas(input: WeightCalcInput) -> WeightCalcResult {
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+fn was_on_avoid<F>(
+    route_chunk: &Vec<Segment>,
+    tag_rule: &Option<HashMap<String, RulesTagValueAction>>,
+    tag_getter: F,
+) -> bool
+where
+    F: Fn(&Segment) -> Option<&smartstring::alias::String>,
+{
+    if let Some(tag_rules) = tag_rule {
+        let avoid_rules = tag_rules
+            .iter()
+            .filter_map(|(key, rule)| match rule {
+                RulesTagValueAction::Avoid => Some(key),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if route_chunk
+            .iter()
+            .filter_map(tag_getter)
+            .any(|tag| avoid_rules.contains(&&tag.to_string()))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn weight_check_avoid_rules(input: WeightCalcInput) -> WeightCalcResult {
+    let last_chunk = input.route.get_route_chunk_since_junction_before_last();
+    if was_on_avoid(&last_chunk, &input.rules.highway, |segment| {
+        segment.get_line().borrow().tags.borrow().highway()
+    }) {
+        return WeightCalcResult::LastSegmentDoNotUse;
+    }
+    if was_on_avoid(&last_chunk, &input.rules.surface, |segment| {
+        segment.get_line().borrow().tags.borrow().surface()
+    }) {
+        return WeightCalcResult::LastSegmentDoNotUse;
+    }
+    if was_on_avoid(&last_chunk, &input.rules.smoothness, |segment| {
+        segment.get_line().borrow().tags.borrow().smoothness()
+    }) {
+        return WeightCalcResult::LastSegmentDoNotUse;
+    }
+
+    WeightCalcResult::ForkChoiceUseWithWeight(0)
+}
+
 #[cfg(test)]
 mod test {
 
