@@ -91,6 +91,12 @@ jobs:
           version: 8
           run_install: false
 
+      - name: Normalize Cargo.toml and Cargo.lock versions for caching
+        run: |
+          sed -i 's/^version = ".*"/version = "0.0.0"/' Cargo.toml
+          sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' Cargo.lock
+        shell: bash
+
       - name: Cache cargo and build files
         uses: actions/cache@v4
         with:
@@ -98,9 +104,9 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: ${{ runner.os }}-cargo-debug-viewer
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}-debug-view
           restore-keys: |
-            ${{ runner.os }}-cargo-debug-viewer
+              ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
 
       - name: Cache pnpm
         uses: actions/cache@v4
@@ -165,6 +171,12 @@ jobs:
           targets: ${{ matrix.os == 'macos-latest' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
           toolchain: nightly
 
+      - name: Normalize Cargo.toml and Cargo.lock versions for caching
+        run: |
+          sed -i 's/^version = ".*"/version = "0.0.0"/' Cargo.toml
+          sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' Cargo.lock
+        shell: bash
+
       - name: Cache cargo and build files
         uses: actions/cache@v4
         with:
@@ -172,9 +184,9 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: ${{ matrix.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}-debug-view
           restore-keys: |
-            ${{ matrix.os }}-${{ matrix.target }}-cargo-
+              ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
 
       - name: Build
         shell: bash

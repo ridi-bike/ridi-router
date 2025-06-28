@@ -32,6 +32,12 @@ jobs:
         version: 8
         run_install: false
 
+    - name: Normalize Cargo.toml and Cargo.lock versions for caching
+      run: |
+        sed -i 's/^version = ".*"/version = "0.0.0"/' Cargo.toml
+        sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' Cargo.lock
+      shell: bash
+
     - name: Cache cargo and build files
       uses: actions/cache@v4
       with:
@@ -39,9 +45,9 @@ jobs:
           ~/.cargo/registry/
           ~/.cargo/git/
           target/
-        key: ${{ runner.os }}-cargo
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}---all-features
         restore-keys: |
-          ${{ runner.os }}-cargo
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}
 
     - name: Cache pnpm
       uses: actions/cache@v4
@@ -66,14 +72,14 @@ jobs:
     - name: Install clippy
       run: rustup component add clippy
 
+    - name: Run clippy
+      run: cargo clippy
+
     - name: Run tests
       run: cargo test
 
     - name: Run check
       run: cargo check
-
-    - name: Run clippy
-      run: cargo clippy
 
     - name: Run cargo build
       run: cargo build --all-features
