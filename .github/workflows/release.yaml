@@ -173,8 +173,13 @@ jobs:
 
       - name: Normalize Cargo.toml and Cargo.lock versions for caching
         run: |
-          sed -i 's/^version = ".*"/version = "0.0.0"/' Cargo.toml
-          sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' Cargo.lock
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' 's/^version = ".*"/version = "0.0.0"/' Cargo.toml
+            sed -i '' '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' Cargo.lock
+          else
+            sed -i 's/^version = ".*"/version = "0.0.0"/' Cargo.toml
+            sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' Cargo.lock
+          fi
         shell: bash
 
       - name: Cache cargo and build files
