@@ -15,6 +15,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-gnu
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
@@ -30,7 +35,6 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
-          ~/.cargo/bin/
           ~/.cargo/registry/
           ~/.cargo/git/
           target/
