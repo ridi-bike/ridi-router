@@ -94,7 +94,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
@@ -163,7 +162,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
-          target: nightly
 
       - name: Cache cargo and build files
         uses: actions/cache@v4
