@@ -65,7 +65,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         input.itinerary.next.borrow().lat,
     );
 
-    let next_bearing = Haversine::bearing(fork_point_geo, next_point_geo);
+    let next_bearing = Haversine.bearing(fork_point_geo, next_point_geo);
     let fork_line_0_geo = Point::new(
         fork_segment.get_line().borrow().points.0.borrow().lon,
         fork_segment.get_line().borrow().points.0.borrow().lat,
@@ -76,9 +76,9 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
     );
     let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
     {
-        Haversine::bearing(fork_line_0_geo, fork_line_1_geo)
+        Haversine.bearing(fork_line_0_geo, fork_line_1_geo)
     } else {
-        Haversine::bearing(fork_line_1_geo, fork_line_0_geo)
+        Haversine.bearing(fork_line_1_geo, fork_line_0_geo)
     };
 
     WeightCalcResult::ForkChoiceUseWithWeight(get_priority_from_headings(
