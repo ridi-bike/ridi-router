@@ -85,25 +85,24 @@ impl<'a> PbfReader<'a> {
                         ) {
                             Some(areas) => areas.iter().fold(0., |tot, multi_polygon| {
                                 let geo_point = Point::new(node.lon(), node.lat());
-                                let distance = match multi_polygon
-                                    .haversine_closest_point(&geo_point)
-                                {
-                                    geo::Closest::Intersection(_) => 0.,
-                                    geo::Closest::SinglePoint(p) => {
-                                        Haversine::distance(p, geo_point)
-                                    }
-                                    geo::Closest::Indeterminate => {
-                                        multi_polygon.coords_iter().fold(10000., |min, coords| {
-                                            let dist =
-                                                Haversine::distance(geo_point, Point::from(coords));
-                                            if dist < min {
-                                                dist
-                                            } else {
-                                                min
-                                            }
-                                        })
-                                    }
-                                };
+                                let distance =
+                                    match multi_polygon.haversine_closest_point(&geo_point) {
+                                        geo::Closest::Intersection(_) => 0.,
+                                        geo::Closest::SinglePoint(p) => {
+                                            Haversine.distance(p, geo_point)
+                                        }
+                                        geo::Closest::Indeterminate => multi_polygon
+                                            .coords_iter()
+                                            .fold(10000., |min, coords| {
+                                                let dist = Haversine
+                                                    .distance(geo_point, Point::from(coords));
+                                                if dist < min {
+                                                    dist
+                                                } else {
+                                                    min
+                                                }
+                                            }),
+                                    };
                                 if distance <= RESIDENTIAL_PROXIMITY_THRESHOLD_METERS {
                                     let area = multi_polygon.geodesic_area_signed().abs();
                                     return tot + area;
@@ -130,7 +129,7 @@ impl<'a> PbfReader<'a> {
                                     // techcnally be in a military zone but on the outer edge and
                                     // ok to be on. but this will prevent from choosing roads that
                                     // go deeper into the area
-                                    Haversine::distance(geo_point, p) > MILITARY_ENTRY_MAX_M
+                                    Haversine.distance(geo_point, p) > MILITARY_ENTRY_MAX_M
                                 }
                                 geo::Closest::SinglePoint(_) => false,
                                 geo::Closest::Indeterminate => false,

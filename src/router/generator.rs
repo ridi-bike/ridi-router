@@ -67,7 +67,7 @@ impl Generator {
                 START_FINISH_VARIATION_DISTANCES
                     .iter()
                     .filter_map(|distance| {
-                        let wp_geo = Haversine::destination(point_geo, *bearing, *distance);
+                        let wp_geo = Haversine.destination(point_geo, *bearing, *distance);
 
                         MapDataGraph::get().get_closest_to_coords(
                             wp_geo.y(),
@@ -99,7 +99,7 @@ impl Generator {
                                         .iter()
                                         .filter_map(|bearing_variation| {
                                             let dist = round_trip.1 as f32 / 5.;
-                                            let tip_geo = Haversine::destination(
+                                            let tip_geo = Haversine.destination(
                                                 start_geo,
                                                 bearing + bearing_variation,
                                                 dist * tip_ratio,
@@ -116,7 +116,7 @@ impl Generator {
                                                 Some(p) => p,
                                             };
 
-                                            let side_left_geo = Haversine::destination(
+                                            let side_left_geo = Haversine.destination(
                                                 start_geo,
                                                 bearing + bearing_variation - 45.,
                                                 dist * side_left_ratio,
@@ -133,7 +133,7 @@ impl Generator {
                                                 Some(p) => p,
                                             };
 
-                                            let side_right_geo = Haversine::destination(
+                                            let side_right_geo = Haversine.destination(
                                                 start_geo,
                                                 bearing + bearing_variation + 45.,
                                                 dist * side_right_ratio,

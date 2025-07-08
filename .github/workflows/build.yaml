@@ -19,7 +19,7 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         targets: x86_64-unknown-linux-gnu
-        toolchain: nightly
+        toolchain: stable
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -68,9 +68,6 @@ jobs:
       run: |
         cd src/debug/viewer/ui/
         pnpm build
-
-    - name: Install clippy
-      run: rustup component add clippy
 
     - name: Run clippy
       run: cargo clippy

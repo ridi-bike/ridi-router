@@ -729,7 +729,7 @@ impl MapDataGraph {
                 let point = &self.points[p.idx];
                 let geo_point = Point::new(point.lon, point.lat);
                 let geo_lookup_point = Point::new(lon, lat);
-                (*p, Haversine::distance(geo_point, geo_lookup_point))
+                (*p, Haversine.distance(geo_point, geo_lookup_point))
             })
             .collect::<Vec<(&MapDataPointRef, f32)>>();
 
