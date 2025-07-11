@@ -93,7 +93,7 @@ impl Generator {
                 .flat_map(|side_left_ratio| {
                     let bearing_adjusted = round_trip.0 + offset.unwrap_or(0.);
                     let bearing = if bearing_adjusted < 0. {
-                        360. - bearing_adjusted
+                        360. - bearing_adjusted.abs()
                     } else {
                         bearing_adjusted
                     };
@@ -206,12 +206,12 @@ impl Generator {
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
         let mut routes: Vec<Route> = Vec::new();
-        for avoid_residential in vec![true, false] {
+        'outer: for avoid_residential in vec![true, false] {
             for adjustment in ADJUSTMENT_DEGREES {
                 if routes.len() >= MIN_ROUTE_COUNT {
-                    break;
+                    break 'outer;
                 }
-                let itineraries = self.generate_itineraries(true, Some(adjustment));
+                let itineraries = self.generate_itineraries(avoid_residential, Some(adjustment));
                 let itinerary_count = itineraries.len();
 
                 DebugWriter::write_itineraries(&itineraries);
