@@ -1,8 +1,9 @@
-name: PR test
+name: Build all-features and test
 
 on:
   pull_request:
     branches: [ "main" ]
+  push:
 
 env:
   CARGO_TERM_COLOR: always
