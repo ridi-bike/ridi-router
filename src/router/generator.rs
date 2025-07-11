@@ -7,7 +7,7 @@ use crate::{
 };
 use geo::{Destination, Haversine, Point};
 use rayon::prelude::*;
-use tracing::trace;
+use tracing::{info, trace};
 
 use super::{
     itinerary::Itinerary,
@@ -25,6 +25,8 @@ const START_FINISH_VARIATION_DISTANCES: [f32; 3] = [10000., 20000., 30000.];
 const START_FINISH_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., 225., 270., 315.];
 const ROUND_TRIP_DISTANCE_RATIOS: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
 const ROUND_TRIP_BEARING_VARIATION: [f32; 4] = [-25., -10., 10., 25.];
+const ADJUSTMENT_DEGREES: [f32; 7] = [0., -135., -90., -45., 45., 90., 135.];
+const MIN_ROUTE_COUNT: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct RouteWithStats {
@@ -58,6 +60,7 @@ impl Generator {
         &self,
         point: &MapDataPointRef,
         bearing: &f32,
+        avoid_residential: bool,
     ) -> Vec<MapDataPointRef> {
         let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
         START_FINISH_VARIATION_DEGREES
@@ -73,7 +76,7 @@ impl Generator {
                             wp_geo.y(),
                             wp_geo.x(),
                             &self.rules,
-                            true,
+                            avoid_residential,
                         )
                     })
             })
@@ -81,14 +84,19 @@ impl Generator {
     }
 
     #[tracing::instrument(skip(self))]
-    fn generate_itineraries(&self) -> Vec<Itinerary> {
+    fn generate_itineraries(&self, avoid_residential: bool, offset: Option<f32>) -> Vec<Itinerary> {
         if let Some(round_trip) = self.round_trip {
             let start_geo = Point::new(self.start.borrow().lon, self.start.borrow().lat);
 
             return ROUND_TRIP_DISTANCE_RATIOS
                 .iter()
                 .flat_map(|side_left_ratio| {
-                    let bearing = round_trip.0;
+                    let bearing_adjusted = round_trip.0 + offset.unwrap_or(0.);
+                    let bearing = if bearing_adjusted < 0. {
+                        360. - bearing_adjusted
+                    } else {
+                        bearing_adjusted
+                    };
                     ROUND_TRIP_DISTANCE_RATIOS
                         .iter()
                         .flat_map(|tip_ratio| {
@@ -110,7 +118,7 @@ impl Generator {
                                                     tip_geo.y(),
                                                     tip_geo.x(),
                                                     &self.rules,
-                                                    true,
+                                                    avoid_residential,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -127,7 +135,7 @@ impl Generator {
                                                     side_left_geo.y(),
                                                     side_left_geo.x(),
                                                     &self.rules,
-                                                    true,
+                                                    avoid_residential,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -144,7 +152,7 @@ impl Generator {
                                                     side_right_geo.y(),
                                                     side_right_geo.x(),
                                                     &self.rules,
-                                                    true,
+                                                    avoid_residential,
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -165,10 +173,16 @@ impl Generator {
                 })
                 .collect();
         }
-        let from_waypoints =
-            self.create_waypoints_around(&self.start, &self.finish.borrow().bearing(&self.start));
-        let to_waypoints =
-            self.create_waypoints_around(&self.finish, &self.start.borrow().bearing(&self.finish));
+        let from_waypoints = self.create_waypoints_around(
+            &self.start,
+            &self.finish.borrow().bearing(&self.start),
+            avoid_residential,
+        );
+        let to_waypoints = self.create_waypoints_around(
+            &self.finish,
+            &self.start.borrow().bearing(&self.finish),
+            avoid_residential,
+        );
         let mut itineraries = vec![Itinerary::new_start_finish(
             self.start.clone(),
             self.finish.clone(),
@@ -191,77 +205,94 @@ impl Generator {
 
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
-        let itineraries = self.generate_itineraries();
+        let mut routes: Vec<Route> = Vec::new();
+        for avoid_residential in vec![true, false] {
+            for adjustment in ADJUSTMENT_DEGREES {
+                if routes.len() >= MIN_ROUTE_COUNT {
+                    break;
+                }
+                let itineraries = self.generate_itineraries(true, Some(adjustment));
+                let itinerary_count = itineraries.len();
 
-        DebugWriter::write_itineraries(&itineraries);
+                DebugWriter::write_itineraries(&itineraries);
 
-        trace!("Created {} itineraries", itineraries.len());
-        let routes = itineraries
-            .into_par_iter()
-            .map(|itinerary| {
-                Navigator::new(
-                    itinerary,
-                    self.rules.clone(),
-                    vec![
-                        WeightCalc {
-                            name: "weight_avoid_nogo_areas".to_string(),
-                            calc: weight_avoid_nogo_areas,
-                        },
-                        WeightCalc {
-                            name: "weight_no_sharp_turns".to_string(),
-                            calc: weight_no_sharp_turns,
-                        },
-                        WeightCalc {
-                            name: "weight_no_short_detours".to_string(),
-                            calc: weight_no_short_detours,
-                        },
-                        WeightCalc {
-                            name: "weight_progress_speed".to_string(),
-                            calc: weight_progress_speed,
-                        },
-                        WeightCalc {
-                            name: "weight_check_distance_to_next".to_string(),
-                            calc: weight_check_distance_to_next,
-                        },
-                        WeightCalc {
-                            name: "weight_prefer_same_road".to_string(),
-                            calc: weight_prefer_same_road,
-                        },
-                        WeightCalc {
-                            name: "weight_no_loops".to_string(),
-                            calc: weight_no_loops,
-                        },
-                        WeightCalc {
-                            name: "weight_heading".to_string(),
-                            calc: weight_heading,
-                        },
-                        WeightCalc {
-                            name: "weight_rules_highway".to_string(),
-                            calc: weight_rules_highway,
-                        },
-                        WeightCalc {
-                            name: "weight_rules_surface".to_string(),
-                            calc: weight_rules_surface,
-                        },
-                        WeightCalc {
-                            name: "weight_rules_smoothness".to_string(),
-                            calc: weight_rules_smoothness,
-                        },
-                        WeightCalc {
-                            name: "weight_check_avoid_rules".to_string(),
-                            calc: weight_check_avoid_rules,
-                        },
-                    ],
-                    self.round_trip.is_some(),
-                )
-                .generate_routes()
-            })
-            .filter_map(|nav_route| match nav_route {
-                NavigationResult::Stuck => None,
-                NavigationResult::Finished(route) => Some(route),
-                NavigationResult::Stopped => None,
-            })
-            .collect::<Vec<_>>();
+                let mut routes_new = itineraries
+                    .into_par_iter()
+                    .map(|itinerary| {
+                        Navigator::new(
+                            itinerary,
+                            self.rules.clone(),
+                            vec![
+                                WeightCalc {
+                                    name: "weight_avoid_nogo_areas".to_string(),
+                                    calc: weight_avoid_nogo_areas,
+                                },
+                                WeightCalc {
+                                    name: "weight_no_sharp_turns".to_string(),
+                                    calc: weight_no_sharp_turns,
+                                },
+                                WeightCalc {
+                                    name: "weight_no_short_detours".to_string(),
+                                    calc: weight_no_short_detours,
+                                },
+                                WeightCalc {
+                                    name: "weight_progress_speed".to_string(),
+                                    calc: weight_progress_speed,
+                                },
+                                WeightCalc {
+                                    name: "weight_check_distance_to_next".to_string(),
+                                    calc: weight_check_distance_to_next,
+                                },
+                                WeightCalc {
+                                    name: "weight_prefer_same_road".to_string(),
+                                    calc: weight_prefer_same_road,
+                                },
+                                WeightCalc {
+                                    name: "weight_no_loops".to_string(),
+                                    calc: weight_no_loops,
+                                },
+                                WeightCalc {
+                                    name: "weight_heading".to_string(),
+                                    calc: weight_heading,
+                                },
+                                WeightCalc {
+                                    name: "weight_rules_highway".to_string(),
+                                    calc: weight_rules_highway,
+                                },
+                                WeightCalc {
+                                    name: "weight_rules_surface".to_string(),
+                                    calc: weight_rules_surface,
+                                },
+                                WeightCalc {
+                                    name: "weight_rules_smoothness".to_string(),
+                                    calc: weight_rules_smoothness,
+                                },
+                                WeightCalc {
+                                    name: "weight_check_avoid_rules".to_string(),
+                                    calc: weight_check_avoid_rules,
+                                },
+                            ],
+                            self.round_trip.is_some(),
+                        )
+                        .generate_routes()
+                    })
+                    .filter_map(|nav_route| match nav_route {
+                        NavigationResult::Stuck => None,
+                        NavigationResult::Finished(route) => Some(route),
+                        NavigationResult::Stopped => None,
+                    })
+                    .collect::<Vec<_>>();
+
+                info!(
+                    itinerary_count,
+                    routes_count = routes_new.len(),
+                    adjustment,
+                    avoid_residential,
+                    "Routes from itineraries"
+                );
+                routes.append(&mut routes_new);
+            }
+        }
 
         let clustering = match Clustering::generate(&routes) {
             None => return Vec::new(),
