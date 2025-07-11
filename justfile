@@ -52,16 +52,20 @@ data-fetch-pbf-greece:
 # gps-test-from-lon := '24.13688' # zaķusala
 # gps-test-from-lat := '57.55998' # zilaiskalns
 # gps-test-from-lon := '25.20804' # zilaiskalns
-gps-test-from-lat := '56.956384' # riga
-gps-test-from-lon := '24.121288' # riga
+# gps-test-from-lat := '56.956384' # riga
+# gps-test-from-lon := '24.121288' # riga
 # gps-test-from-lat := '57.154260' # sigulda
 # gps-test-from-lon := '24.853496' # sigulda
+# gps-test-from-lat := '57.094175' # adazi
+# gps-test-from-lon := '24.313313' # adazi
+gps-test-from-lat := '52.38901' # berlin
+gps-test-from-lon := '13.20376' # berlin
 # gps-test-to-lat := '56.92517' # zaķusala
 # gps-test-to-lon := '24.13688' # zaķusala
-gps-test-to-lat := '57.154260' # sigulda
-gps-test-to-lon := '24.853496' # sigulda
-# gps-test-to-lat := '56.956384' # riga
-# gps-test-to-lon := '24.121288' # riga
+# gps-test-to-lat := '57.154260' # sigulda
+# gps-test-to-lon := '24.853496' # sigulda
+gps-test-to-lat := '56.956384' # riga
+gps-test-to-lon := '24.121288' # riga
 # gps-test-from-lat := '36.618195' # malaga
 # gps-test-from-lon := '-4.500159' # malaga
 # gps-test-to-lat := '56.856551'		# doles sala
@@ -116,4 +120,19 @@ cache-spain:
 	cargo run -- prep-cache --input ./map-data/spain-latest.osm.pbf --cache-dir ./map-data/cache/spain
 
 debug-viewer:
-	cargo run --features debug-viewer -- debug-viewer --debug-dir ./map-data/debug
+  cargo run --features debug-viewer -- \
+    debug-viewer \
+      --debug-dir ./map-data/debug
+
+run:
+  cargo run --features=debug-split-gpx,debug-with-postgres -- \
+    generate-route \
+      --input ./map-data/brandenburg-latest.osm.pbf \
+      --output ./map-data/output.gpx \
+      --debug-dir ./map-data/debug/ \
+      --cache-dir ./map-data/cache/brandenburg-latest/ \
+      --rule-file ./rule-examples/rules-empty.json \
+    round-trip \
+      --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} \
+      --bearing 0 \
+      --distance 100000
