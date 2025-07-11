@@ -78,7 +78,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           targets: x86_64-unknown-linux-gnu
-          toolchain: nightly
+          toolchain: stable
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -169,7 +169,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           targets: ${{ matrix.os == 'macos-latest' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
-          toolchain: nightly
+          toolchain: stable
 
       - name: Normalize Cargo.toml and Cargo.lock versions for caching
         run: |
