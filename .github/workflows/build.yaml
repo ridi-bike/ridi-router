@@ -1,8 +1,12 @@
-name: PR test
+name: Build all-features and test
 
 on:
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
+  push:
+    branches:
+      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,8 +38,10 @@ jobs:
 
     - name: Normalize Cargo.toml and Cargo.lock versions for caching
       run: |
-        sed -i 's/^version = ".*"/version = "0.0.0"/' Cargo.toml
-        sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' Cargo.lock
+        cp Cargo.toml _cargo.toml
+        cp Cargo.lock _cargo.lock
+        sed -i 's/^version = ".*"/version = "0.0.0"/' _cargo.toml
+        sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' _cargo.lock
       shell: bash
 
     - name: Cache cargo and build files
@@ -45,9 +51,9 @@ jobs:
           ~/.cargo/registry/
           ~/.cargo/git/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}---all-features
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}---all-features
         restore-keys: |
-          ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml') }}---all-features
+          ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}---all-features
 
     - name: Cache pnpm
       uses: actions/cache@v4
