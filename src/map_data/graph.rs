@@ -837,7 +837,7 @@ mod tests {
     use tracing::info;
 
     use crate::{
-        router::rules::BasicRules,
+        router::rules::{BasicRules, GenerationRules},
         test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1},
     };
 
@@ -1548,6 +1548,7 @@ mod tests {
                     )])),
                     surface: None,
                     smoothness: None,
+                    generation: GenerationRules::default(),
                 }),
                 OsmNode {
                     id: 0,
