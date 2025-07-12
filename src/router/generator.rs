@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Sub};
+use std::{collections::HashMap, ops::Sub, time::Instant};
 
 use crate::{
     debug::writer::DebugWriter,
@@ -20,13 +20,6 @@ use super::{
         WeightCalc,
     },
 };
-
-const START_FINISH_VARIATION_DISTANCES: [f32; 3] = [10000., 20000., 30000.];
-const START_FINISH_VARIATION_DEGREES: [f32; 8] = [0., 45., 90., 135., 180., 225., 270., 315.];
-const ROUND_TRIP_DISTANCE_RATIOS: [f32; 4] = [1.0, 0.8, 0.6, 0.4];
-const ROUND_TRIP_BEARING_VARIATION: [f32; 4] = [-25., -10., 10., 25.];
-const ADJUSTMENT_DEGREES: [f32; 7] = [0., -135., -90., -45., 45., 90., 135.];
-const MIN_ROUTE_COUNT: usize = 100;
 
 #[derive(Debug, Clone)]
 pub struct RouteWithStats {
@@ -63,11 +56,19 @@ impl Generator {
         avoid_residential: bool,
     ) -> Vec<MapDataPointRef> {
         let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
-        START_FINISH_VARIATION_DEGREES
+        self.rules
+            .generation
+            .waypoint_generation
+            .start_finish
+            .variation_bearing_deg
             .iter()
             .filter(|deg| deg.sub(bearing).abs() > 20.)
             .flat_map(|bearing| {
-                START_FINISH_VARIATION_DISTANCES
+                self.rules
+                    .generation
+                    .waypoint_generation
+                    .start_finish
+                    .variation_distances_m
                     .iter()
                     .filter_map(|distance| {
                         let wp_geo = Haversine.destination(point_geo, *bearing, *distance);
@@ -84,26 +85,48 @@ impl Generator {
     }
 
     #[tracing::instrument(skip(self))]
-    fn generate_itineraries(&self, avoid_residential: bool, offset: Option<f32>) -> Vec<Itinerary> {
+    fn generate_itineraries(
+        &self,
+        avoid_residential: bool,
+        round_trip_bearing_adjustment: Option<f32>,
+    ) -> Vec<Itinerary> {
         if let Some(round_trip) = self.round_trip {
             let start_geo = Point::new(self.start.borrow().lon, self.start.borrow().lat);
 
-            return ROUND_TRIP_DISTANCE_RATIOS
+            return self
+                .rules
+                .generation
+                .waypoint_generation
+                .round_trip
+                .variation_distance_ratios
                 .iter()
                 .flat_map(|side_left_ratio| {
-                    let bearing_adjusted = round_trip.0 + offset.unwrap_or(0.);
+                    let bearing_adjusted =
+                        round_trip.0 + round_trip_bearing_adjustment.unwrap_or(0.);
                     let bearing = if bearing_adjusted < 0. {
                         360. - bearing_adjusted.abs()
                     } else {
                         bearing_adjusted
                     };
-                    ROUND_TRIP_DISTANCE_RATIOS
+                    self.rules
+                        .generation
+                        .waypoint_generation
+                        .round_trip
+                        .variation_distance_ratios
                         .iter()
                         .flat_map(|tip_ratio| {
-                            ROUND_TRIP_DISTANCE_RATIOS
+                            self.rules
+                                .generation
+                                .waypoint_generation
+                                .round_trip
+                                .variation_distance_ratios
                                 .iter()
                                 .flat_map(|side_right_ratio| {
-                                    ROUND_TRIP_BEARING_VARIATION
+                                    self.rules
+                                        .generation
+                                        .waypoint_generation
+                                        .round_trip
+                                        .variation_bearing_deg
                                         .iter()
                                         .filter_map(|bearing_variation| {
                                             let dist = round_trip.1 as f32 / 5.;
@@ -206,15 +229,41 @@ impl Generator {
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
         let mut routes: Vec<Route> = Vec::new();
-        'outer: for avoid_residential in vec![true, false] {
-            for adjustment in ADJUSTMENT_DEGREES {
-                if routes.len() >= MIN_ROUTE_COUNT {
+        'outer: for avoid_residential in self
+            .rules
+            .generation
+            .route_generation_retry
+            .avoid_residential
+            .iter()
+        {
+            // no adjustment by default, only for round trip
+            let mut adjustments = vec![0.];
+            if self.round_trip.is_some() {
+                adjustments.append(
+                    &mut self
+                        .rules
+                        .generation
+                        .route_generation_retry
+                        .round_trip_adjustment_bearing_deg
+                        .clone(),
+                );
+            }
+            for adjustment in adjustments {
+                if routes.len()
+                    >= self
+                        .rules
+                        .generation
+                        .route_generation_retry
+                        .trigger_min_route_count
+                {
                     break 'outer;
                 }
-                let itineraries = self.generate_itineraries(avoid_residential, Some(adjustment));
+                let itineraries = self.generate_itineraries(*avoid_residential, Some(adjustment));
                 let itinerary_count = itineraries.len();
 
                 DebugWriter::write_itineraries(&itineraries);
+
+                let route_gen_start_instant = Instant::now();
 
                 let mut routes_new = itineraries
                     .into_par_iter()
@@ -283,7 +332,9 @@ impl Generator {
                     })
                     .collect::<Vec<_>>();
 
+                let route_gen_duration_secs = route_gen_start_instant.elapsed().as_secs();
                 info!(
+                    route_gen_duration_secs,
                     itinerary_count,
                     routes_count = routes_new.len(),
                     adjustment,
