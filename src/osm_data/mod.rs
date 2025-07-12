@@ -28,6 +28,9 @@ pub enum OsmDataReaderError {
 
     #[error("PBF file error: {error}")]
     PbfFileError { error: String },
+
+    #[error("Unexpected element")]
+    UnexpectedElement,
 }
 
 #[derive(Debug, PartialEq, Clone)]
