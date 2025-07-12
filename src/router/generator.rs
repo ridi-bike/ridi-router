@@ -435,8 +435,8 @@ impl Generator {
         let noise_count = if best_routes.len() > 10 { 3 } else { 10 };
         best_routes.append(&mut noise[..noise.len().min(noise_count)].to_vec());
 
-        let route_genration_duration_secs = route_generation_start.elapsed().as_secs();
-        info!(route_genration_duration_secs, "Route generation finished");
+        let route_generation_duration_secs = route_generation_start.elapsed().as_secs();
+        info!(route_generation_duration_secs, "Route generation finished");
 
         best_routes
     }
