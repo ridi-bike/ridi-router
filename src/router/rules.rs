@@ -142,6 +142,81 @@ pub struct BasicRules {
     pub no_sharp_turns: BasicRuleNoSharpTurns,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationRulesStartFinish {
+    #[serde(default)]
+    pub variation_distances_m: Vec<f32>,
+    #[serde(default)]
+    pub variation_bearing_deg: Vec<f32>,
+}
+
+impl Default for GenerationRulesStartFinish {
+    fn default() -> Self {
+        Self {
+            variation_distances_m: vec![10000., 20000., 30000.],
+            variation_bearing_deg: vec![0., 45., 90., 135., 180., 225., 270., 315.],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationRulesRoundTrip {
+    #[serde(default)]
+    pub variation_distance_ratios: Vec<f32>,
+    #[serde(default)]
+    pub variation_bearing_deg: Vec<f32>,
+}
+
+impl Default for GenerationRulesRoundTrip {
+    fn default() -> Self {
+        Self {
+            variation_distance_ratios: vec![1.0, 0.8, 0.6, 0.4],
+            variation_bearing_deg: vec![-25., -10., 10., 25.],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationRulesRetry {
+    #[serde(default)]
+    pub trigger_min_route_count: usize,
+    #[serde(default)]
+    pub round_trip_adjustment_bearing_deg: Vec<f32>,
+    #[serde(default)]
+    pub avoid_residential: Vec<bool>,
+}
+
+impl Default for GenerationRulesRetry {
+    fn default() -> Self {
+        Self {
+            trigger_min_route_count: 50,
+            round_trip_adjustment_bearing_deg: vec![-135., -90., -45., 45., 90., 135.],
+            avoid_residential: vec![true, false],
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationRulesWaypoints {
+    #[serde(default)]
+    pub start_finish: GenerationRulesStartFinish,
+    #[serde(default)]
+    pub round_trip: GenerationRulesRoundTrip,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GenerationRules {
+    #[serde(default)]
+    pub waypoint_generation: GenerationRulesWaypoints,
+    #[serde(default)]
+    pub route_generation_retry: GenerationRulesRetry,
+}
+
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RouterRules {
@@ -150,6 +225,8 @@ pub struct RouterRules {
     pub highway: Option<HashMap<String, RulesTagValueAction>>,
     pub surface: Option<HashMap<String, RulesTagValueAction>>,
     pub smoothness: Option<HashMap<String, RulesTagValueAction>>,
+    #[serde(default)]
+    pub generation: GenerationRules,
 }
 
 impl RouterRules {

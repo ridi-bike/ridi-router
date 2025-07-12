@@ -35,6 +35,63 @@
         }
       ]
     },
+    "generation": {
+      "default": {
+        "route_generation_retry": {
+          "avoid_residential": [
+            true,
+            false
+          ],
+          "round_trip_adjustment_bearing_deg": [
+            -135.0,
+            -90.0,
+            -45.0,
+            45.0,
+            90.0,
+            135.0
+          ],
+          "trigger_min_route_count": 50
+        },
+        "waypoint_generation": {
+          "round_trip": {
+            "variation_bearing_deg": [
+              -25.0,
+              -10.0,
+              10.0,
+              25.0
+            ],
+            "variation_distance_ratios": [
+              1.0,
+              0.800000011920929,
+              0.6000000238418579,
+              0.4000000059604645
+            ]
+          },
+          "start_finish": {
+            "variation_bearing_deg": [
+              0.0,
+              45.0,
+              90.0,
+              135.0,
+              180.0,
+              225.0,
+              270.0,
+              315.0
+            ],
+            "variation_distances_m": [
+              10000.0,
+              20000.0,
+              30000.0
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/GenerationRules"
+        }
+      ]
+    },
     "highway": {
       "type": [
         "object",
@@ -234,6 +291,196 @@
           "allOf": [
             {
               "$ref": "#/definitions/BasicRuleStepLimit"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "GenerationRules": {
+      "type": "object",
+      "properties": {
+        "route_generation_retry": {
+          "default": {
+            "avoid_residential": [
+              true,
+              false
+            ],
+            "round_trip_adjustment_bearing_deg": [
+              -135.0,
+              -90.0,
+              -45.0,
+              45.0,
+              90.0,
+              135.0
+            ],
+            "trigger_min_route_count": 50
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/GenerationRulesRetry"
+            }
+          ]
+        },
+        "waypoint_generation": {
+          "default": {
+            "round_trip": {
+              "variation_bearing_deg": [
+                -25.0,
+                -10.0,
+                10.0,
+                25.0
+              ],
+              "variation_distance_ratios": [
+                1.0,
+                0.800000011920929,
+                0.6000000238418579,
+                0.4000000059604645
+              ]
+            },
+            "start_finish": {
+              "variation_bearing_deg": [
+                0.0,
+                45.0,
+                90.0,
+                135.0,
+                180.0,
+                225.0,
+                270.0,
+                315.0
+              ],
+              "variation_distances_m": [
+                10000.0,
+                20000.0,
+                30000.0
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/GenerationRulesWaypoints"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "GenerationRulesRetry": {
+      "type": "object",
+      "properties": {
+        "avoid_residential": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          }
+        },
+        "round_trip_adjustment_bearing_deg": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "trigger_min_route_count": {
+          "default": 0,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "GenerationRulesRoundTrip": {
+      "type": "object",
+      "properties": {
+        "variation_bearing_deg": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "variation_distance_ratios": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "GenerationRulesStartFinish": {
+      "type": "object",
+      "properties": {
+        "variation_bearing_deg": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "variation_distances_m": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "GenerationRulesWaypoints": {
+      "type": "object",
+      "properties": {
+        "round_trip": {
+          "default": {
+            "variation_bearing_deg": [
+              -25.0,
+              -10.0,
+              10.0,
+              25.0
+            ],
+            "variation_distance_ratios": [
+              1.0,
+              0.800000011920929,
+              0.6000000238418579,
+              0.4000000059604645
+            ]
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/GenerationRulesRoundTrip"
+            }
+          ]
+        },
+        "start_finish": {
+          "default": {
+            "variation_bearing_deg": [
+              0.0,
+              45.0,
+              90.0,
+              135.0,
+              180.0,
+              225.0,
+              270.0,
+              315.0
+            ],
+            "variation_distances_m": [
+              10000.0,
+              20000.0,
+              30000.0
+            ]
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/GenerationRulesStartFinish"
             }
           ]
         }
