@@ -192,7 +192,7 @@ pub struct GenerationRulesRetry {
 impl Default for GenerationRulesRetry {
     fn default() -> Self {
         Self {
-            trigger_min_route_count: 10,
+            trigger_min_route_count: 50,
             round_trip_adjustment_bearing_deg: vec![-135., -90., -45., 45., 90., 135.],
             avoid_residential: vec![true, false],
         }

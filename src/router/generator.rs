@@ -3,11 +3,14 @@ use std::{collections::HashMap, ops::Sub, time::Instant};
 use crate::{
     debug::writer::DebugWriter,
     map_data::graph::{MapDataGraph, MapDataPointRef},
-    router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
+    router::{
+        clustering::Clustering, itinerary, rules::RouterRules, weights::weight_check_avoid_rules,
+    },
 };
 use geo::{Destination, Haversine, Point};
+use hdbscan::{Hdbscan, HdbscanHyperParams};
 use rayon::prelude::*;
-use tracing::{info, trace};
+use tracing::{error, info, trace};
 
 use super::{
     itinerary::Itinerary,
@@ -226,8 +229,49 @@ impl Generator {
         itineraries
     }
 
+    #[tracing::instrument(skip(self, itineraries))]
+    pub fn dedupe_itineraries(&self, itineraries: Vec<Itinerary>) -> Vec<Itinerary> {
+        let mut points = Vec::new();
+        for itinerary in itineraries.iter() {
+            points.push(
+                itinerary
+                    .waypoints
+                    .iter()
+                    .map(|p| {
+                        let point = p.borrow();
+                        vec![point.lat, point.lon]
+                    })
+                    .flatten()
+                    .collect(),
+            );
+        }
+        if points.is_empty() {
+            return vec![];
+        }
+        let params = HdbscanHyperParams::builder()
+            .epsilon(0.01)
+            .min_cluster_size(2)
+            .build();
+        let alg = Hdbscan::new(&points, params);
+        let labels = match alg.cluster() {
+            Ok(l) => l,
+            Err(e) => {
+                error!(error = ?e, "Failed to cluster itineraries");
+                return vec![];
+            }
+        };
+
+        let mut deduped_itineraries_map = HashMap::new();
+        labels.iter().enumerate().for_each(|(idx, label)| {
+            deduped_itineraries_map.insert(*label, itineraries[idx].clone());
+        });
+
+        deduped_itineraries_map.into_values().collect()
+    }
+
     #[tracing::instrument(skip(self))]
     pub fn generate_routes(self) -> Vec<RouteWithStats> {
+        let route_generation_start = Instant::now();
         let mut routes: Vec<Route> = Vec::new();
         'outer: for avoid_residential in self
             .rules
@@ -259,6 +303,7 @@ impl Generator {
                     break 'outer;
                 }
                 let itineraries = self.generate_itineraries(*avoid_residential, Some(adjustment));
+                let itineraries = self.dedupe_itineraries(itineraries);
                 let itinerary_count = itineraries.len();
 
                 DebugWriter::write_itineraries(&itineraries);
@@ -389,6 +434,10 @@ impl Generator {
 
         let noise_count = if best_routes.len() > 10 { 3 } else { 10 };
         best_routes.append(&mut noise[..noise.len().min(noise_count)].to_vec());
+
+        let route_genration_duration_secs = route_generation_start.elapsed().as_secs();
+        info!(route_genration_duration_secs, "Route generation finished");
+
         best_routes
     }
 }
