@@ -3,12 +3,10 @@ use std::{collections::HashMap, ops::Sub, time::Instant};
 use crate::{
     debug::writer::DebugWriter,
     map_data::graph::{MapDataGraph, MapDataPointRef},
-    router::{
-        clustering::Clustering, itinerary, rules::RouterRules, weights::weight_check_avoid_rules,
-    },
+    router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
 };
 use geo::{Destination, Haversine, Point};
-use hdbscan::{Hdbscan, HdbscanHyperParams};
+use hdbscan::{Hdbscan, HdbscanError, HdbscanHyperParams};
 use rayon::prelude::*;
 use tracing::{error, info, trace};
 
@@ -23,6 +21,12 @@ use super::{
         WeightCalc,
     },
 };
+
+#[derive(Debug, thiserror::Error)]
+pub enum GeneratorError {
+    #[error("Hdbscan error: {error}")]
+    Hdbscan { error: HdbscanError },
+}
 
 #[derive(Debug, Clone)]
 pub struct RouteWithStats {
@@ -230,9 +234,12 @@ impl Generator {
     }
 
     #[tracing::instrument(skip(self, itineraries))]
-    pub fn dedupe_itineraries(&self, itineraries: Vec<Itinerary>) -> Vec<Itinerary> {
+    pub fn dedupe_itineraries(
+        &self,
+        itineraries: Vec<Itinerary>,
+    ) -> Result<Vec<Itinerary>, GeneratorError> {
         let mut points = Vec::new();
-        for itinerary in itineraries.iter() {
+        for itinerary in itineraries.iter().filter(|i| i.waypoints.len() > 0) {
             points.push(
                 itinerary
                     .waypoints
@@ -246,7 +253,7 @@ impl Generator {
             );
         }
         if points.is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
         let params = HdbscanHyperParams::builder()
             .epsilon(0.01)
@@ -255,10 +262,7 @@ impl Generator {
         let alg = Hdbscan::new(&points, params);
         let labels = match alg.cluster() {
             Ok(l) => l,
-            Err(e) => {
-                error!(error = ?e, "Failed to cluster itineraries");
-                return vec![];
-            }
+            Err(e) => return Err(GeneratorError::Hdbscan { error: e }),
         };
 
         let mut deduped_itineraries_map = HashMap::new();
@@ -266,11 +270,19 @@ impl Generator {
             deduped_itineraries_map.insert(*label, itineraries[idx].clone());
         });
 
-        deduped_itineraries_map.into_values().collect()
+        let mut deduped_itineraries = deduped_itineraries_map.into_values().collect::<Vec<_>>();
+        deduped_itineraries.append(
+            &mut itineraries
+                .into_iter()
+                .filter(|i| i.waypoints.len() == 0)
+                .collect(),
+        );
+
+        Ok(deduped_itineraries)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn generate_routes(self) -> Vec<RouteWithStats> {
+    pub fn generate_routes(self) -> Result<Vec<RouteWithStats>, GeneratorError> {
         let route_generation_start = Instant::now();
         let mut routes: Vec<Route> = Vec::new();
         'outer: for avoid_residential in self
@@ -303,7 +315,7 @@ impl Generator {
                     break 'outer;
                 }
                 let itineraries = self.generate_itineraries(*avoid_residential, Some(adjustment));
-                let itineraries = self.dedupe_itineraries(itineraries);
+                let itineraries = self.dedupe_itineraries(itineraries)?;
                 let itinerary_count = itineraries.len();
 
                 DebugWriter::write_itineraries(&itineraries);
@@ -391,7 +403,7 @@ impl Generator {
         }
 
         let clustering = match Clustering::generate(&routes) {
-            None => return Vec::new(),
+            None => return Ok(Vec::new()),
             Some(c) => c,
         };
 
@@ -438,6 +450,6 @@ impl Generator {
         let route_generation_duration_secs = route_generation_start.elapsed().as_secs();
         info!(route_generation_duration_secs, "Route generation finished");
 
-        best_routes
+        Ok(best_routes)
     }
 }
