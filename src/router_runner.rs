@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, trace};
 
 use crate::osm_data::DataSource;
+use crate::router::generator::GeneratorError;
 use crate::{
     debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
@@ -53,6 +54,9 @@ pub enum RouterRunnerError {
 
     #[error("Failed to write cache: {error}")]
     CacheWrite { error: MapDataCacheError },
+
+    #[error("Failed to generate routes: {error}")]
+    GenerateRoute { error: GeneratorError },
 
     #[cfg(feature = "debug-viewer")]
     #[error("Failed run debug viewer: {error}")]
@@ -333,7 +337,9 @@ impl RouterRunner {
             None
         };
         let route_generator = Generator::new(start.clone(), finish.clone(), round_trip, rules);
-        let routes = route_generator.generate_routes();
+        let routes = route_generator
+            .generate_routes()
+            .map_err(|error| RouterRunnerError::GenerateRoute { error })?;
         Ok(routes)
     }
 
