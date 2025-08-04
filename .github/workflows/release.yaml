@@ -24,7 +24,7 @@ jobs:
       id: semver
       uses: ietf-tools/semver-action@v1
       with:
-        token: ${{ steps.generate_token.outputs.token }}
+        token: ${{ secrets.GH_TOKEN }}
         branch: main
         majorList: major
         patchList: chore, fix, bugfix, perf, refactor, test, tests
@@ -241,13 +241,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Generate token
-        id: generate_token
-        uses: tibdex/github-app-token@v1
-        with:
-          app_id: ${{ secrets.APP_ID }}
-          private_key: ${{ secrets.APP_PRIVATE_KEY }}
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -270,4 +263,4 @@ jobs:
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ steps.generate_token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
