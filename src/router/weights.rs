@@ -161,7 +161,13 @@ pub fn weight_no_sharp_turns(input: WeightCalcInput) -> WeightCalcResult {
 
 pub fn weight_no_short_detours(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_no_short_detours");
-    if !input.rules.basic.no_short_detours.enabled {
+    if !input.rules.basic.no_short_detours.enabled
+        || input
+            .current_fork_segment
+            .get_end_point()
+            .borrow()
+            .residential_in_proximity
+    {
         return WeightCalcResult::ForkChoiceUseWithWeight(0);
     }
 

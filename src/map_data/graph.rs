@@ -9,9 +9,9 @@ use std::{
 };
 
 use anyhow::Context;
-use geo::{closest_point, Distance, Haversine, Point};
+use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
-use tracing::{info, trace};
+use tracing::trace;
 
 #[cfg(feature = "debug-with-postgres")]
 use crate::map_data::debug_writer::MapDebugWriter;
