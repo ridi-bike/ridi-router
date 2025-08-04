@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, trace};
 
 use crate::osm_data::DataSource;
-use crate::router::generator::GeneratorError;
+use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
     debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
@@ -313,7 +313,13 @@ impl RouterRunner {
             ),
         };
         let start = MapDataGraph::get()
-            .get_closest_to_coords(start_lat, start_lon, &rules, false)
+            .get_closest_to_coords(
+                start_lat,
+                start_lon,
+                &rules,
+                false,
+                Some(&WP_LOOKUP_ALLOWED_HWS),
+            )
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Start point".to_string(),
             })?;
@@ -321,7 +327,13 @@ impl RouterRunner {
         trace!("Start point {start}");
 
         let finish = MapDataGraph::get()
-            .get_closest_to_coords(finish_lat, finish_lon, &rules, false)
+            .get_closest_to_coords(
+                finish_lat,
+                finish_lon,
+                &rules,
+                false,
+                Some(&WP_LOOKUP_ALLOWED_HWS),
+            )
             .ok_or(RouterRunnerError::PointNotFound {
                 point: "Finish point".to_string(),
             })?;

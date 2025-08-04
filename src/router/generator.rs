@@ -22,6 +22,15 @@ use super::{
     },
 };
 
+pub const WP_LOOKUP_ALLOWED_HWS: [&'static str; 6] = [
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+];
+
 #[derive(Debug, thiserror::Error)]
 pub enum GeneratorError {
     #[error("Hdbscan error: {error}")]
@@ -85,6 +94,7 @@ impl Generator {
                             wp_geo.x(),
                             &self.rules,
                             avoid_residential,
+                            Some(&WP_LOOKUP_ALLOWED_HWS),
                         )
                     })
             })
@@ -149,6 +159,7 @@ impl Generator {
                                                     tip_geo.x(),
                                                     &self.rules,
                                                     avoid_residential,
+                                                    Some(&WP_LOOKUP_ALLOWED_HWS),
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -166,6 +177,7 @@ impl Generator {
                                                     side_left_geo.x(),
                                                     &self.rules,
                                                     avoid_residential,
+                                                    Some(&WP_LOOKUP_ALLOWED_HWS),
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
@@ -183,6 +195,7 @@ impl Generator {
                                                     side_right_geo.x(),
                                                     &self.rules,
                                                     avoid_residential,
+                                                    Some(&WP_LOOKUP_ALLOWED_HWS),
                                                 ) {
                                                 None => return None,
                                                 Some(p) => p,
