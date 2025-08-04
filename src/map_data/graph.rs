@@ -9,9 +9,9 @@ use std::{
 };
 
 use anyhow::Context;
-use geo::{Distance, Haversine, Point};
+use geo::{closest_point, Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
-use tracing::trace;
+use tracing::{info, trace};
 
 #[cfg(feature = "debug-with-postgres")]
 use crate::map_data::debug_writer::MapDebugWriter;
@@ -38,6 +38,13 @@ use super::{
     rule::MapDataRuleType,
     MapDataError,
 };
+
+#[derive(PartialEq, Eq, Hash)]
+enum AvoidTag {
+    Highway(String),
+    Surface(String),
+    Smoothness(String),
+}
 
 pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
@@ -643,27 +650,27 @@ impl MapDataGraph {
             .collect()
     }
 
-    fn get_avoid_rules(rules: &RouterRules) -> HashSet<String> {
+    fn get_avoid_rules(rules: &RouterRules) -> HashSet<AvoidTag> {
         let mut avoid_tags = HashSet::new();
 
         if let Some(ref hw) = rules.highway {
             hw.iter().for_each(|(tag_value, tag_action)| {
                 if tag_action == &RulesTagValueAction::Avoid {
-                    avoid_tags.insert(format!("highway:{tag_value}"));
+                    avoid_tags.insert(AvoidTag::Highway(tag_value.clone()));
                 }
             });
         }
         if let Some(ref surface) = rules.surface {
             surface.iter().for_each(|(tag_value, tag_action)| {
                 if tag_action == &RulesTagValueAction::Avoid {
-                    avoid_tags.insert(format!("surface:{tag_value}"));
+                    avoid_tags.insert(AvoidTag::Surface(tag_value.clone()));
                 }
             });
         }
         if let Some(ref smoothness) = rules.smoothness {
             smoothness.iter().for_each(|(tag_value, tag_action)| {
                 if tag_action == &RulesTagValueAction::Avoid {
-                    avoid_tags.insert(format!("smoothness:{tag_value}"));
+                    avoid_tags.insert(AvoidTag::Smoothness(tag_value.clone()));
                 }
             });
         }
@@ -677,6 +684,7 @@ impl MapDataGraph {
         lon: f32,
         rules: &RouterRules,
         avoid_proximity_to_residential: bool,
+        limit_to_hw_tags: Option<&[&'static str]>,
     ) -> Option<MapDataPointRef> {
         let closest_points = self.point_grid.find_closest_point_refs(lat, lon, 20);
         let closest_points = match closest_points {
@@ -685,6 +693,16 @@ impl MapDataGraph {
         };
 
         let avoid_tags = Self::get_avoid_rules(rules);
+        let check_limit_tags = limit_to_hw_tags.as_ref().map_or(false, |limit_tags| {
+            limit_tags
+                .iter()
+                .any(|limit_tag| !avoid_tags.contains(&AvoidTag::Highway(limit_tag.to_string())))
+        });
+        info!(
+            check_limit_tags,
+            num_of_points = closest_points.len(),
+            "one"
+        );
 
         let mut distances = closest_points
             .iter()
@@ -698,30 +716,36 @@ impl MapDataGraph {
                     .iter()
                     .map(|line| line.borrow())
                     .collect::<Vec<_>>();
-                let mut hws = lines.iter().filter_map(|line| {
-                    line.tags
-                        .borrow()
-                        .highway()
-                        .map(|hw| format!("highway:{hw}"))
-                });
+
+                let mut hws = lines
+                    .iter()
+                    .filter_map(|line| line.tags.borrow().highway().map(|hw| hw.to_string()));
+
                 let mut surfaces = lines.iter().filter_map(|line| {
                     line.tags
                         .borrow()
                         .surface()
-                        .map(|surface| format!("surface:{surface}"))
+                        .map(|surface| surface.to_string())
                 });
-                let mut smoothnesses = lines.iter().filter_map(|line| {
-                    line.tags
-                        .borrow()
-                        .smoothness()
-                        .map(|sm| format!("smoothness:{sm}"))
-                });
+                let mut smoothnesses = lines
+                    .iter()
+                    .filter_map(|line| line.tags.borrow().smoothness().map(|sm| sm.to_string()));
 
-                if hws.any(|tag| avoid_tags.contains(&tag))
-                    || surfaces.any(|tag| avoid_tags.contains(&tag))
-                    || smoothnesses.any(|tag| avoid_tags.contains(&tag))
+                if hws
+                    .clone()
+                    .any(|tag| avoid_tags.contains(&AvoidTag::Highway(tag)))
+                    || surfaces.any(|tag| avoid_tags.contains(&AvoidTag::Surface(tag)))
+                    || smoothnesses.any(|tag| avoid_tags.contains(&AvoidTag::Smoothness(tag)))
                 {
                     return false;
+                }
+
+                if check_limit_tags {
+                    if let Some(limit_tags) = limit_to_hw_tags {
+                        if hws.all(|tag| !limit_tags.contains(&tag.as_str())) {
+                            return false;
+                        }
+                    }
                 }
                 true
             })
@@ -1343,6 +1367,7 @@ mod tests {
                 |r| r,
             ),
             false,
+            None,
         );
         if let Some(closest) = closest {
             assert_eq!(closest.borrow().id, closest_id);

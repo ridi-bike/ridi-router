@@ -246,19 +246,18 @@ impl<T: Clone> PointGrid<T> {
     pub fn find_closest_point_refs(&self, lat: f32, lon: f32, steps: u16) -> Option<Vec<&T>> {
         let center_cell_id = PointGrid::<T>::get_cell_id(lat, lon);
 
+        let mut found_points = Vec::new();
         for step in 0..=steps {
             let cell_ids = PointGrid::<T>::get_outer_cell_ids(center_cell_id, step);
             let cell_ids = match cell_ids {
                 Some(ids) => ids,
                 None => return None,
             };
-            let points_in_cell = self.get_points_in_cells(cell_ids);
-            if !points_in_cell.is_empty() {
-                return Some(points_in_cell);
-            }
+            let mut points_in_cell = self.get_points_in_cells(cell_ids);
+            found_points.append(&mut points_in_cell);
         }
 
-        None
+        Some(found_points)
     }
 }
 
