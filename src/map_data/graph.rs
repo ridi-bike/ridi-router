@@ -698,11 +698,6 @@ impl MapDataGraph {
                 .iter()
                 .any(|limit_tag| !avoid_tags.contains(&AvoidTag::Highway(limit_tag.to_string())))
         });
-        info!(
-            check_limit_tags,
-            num_of_points = closest_points.len(),
-            "one"
-        );
 
         let mut distances = closest_points
             .iter()
