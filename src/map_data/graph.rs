@@ -24,7 +24,7 @@ use crate::{
         rule::MapDataRule,
     },
     osm_data::{
-        data_reader::{OsmDataReader, ALLOWED_HIGHWAY_VALUES},
+        data_reader::{OsmDataReader, ALLOWED_ACCESS_VALUES, ALLOWED_HIGHWAY_VALUES},
         DataSource,
     },
     router::rules::{RouterRules, RulesTagValueAction},
@@ -436,12 +436,12 @@ impl MapDataGraph {
                 return false;
             }
             if let Some(access) = tags.get("access") {
-                if access == "no" || access == "private" {
+                if !ALLOWED_ACCESS_VALUES.contains(&access.as_str()) {
                     return false;
                 }
             }
             if let Some(motor_vehicle) = tags.get("motor_vehicle") {
-                if motor_vehicle == "private" || motor_vehicle == "no" {
+                if !ALLOWED_ACCESS_VALUES.contains(&motor_vehicle.as_str()) {
                     return false;
                 }
             }
