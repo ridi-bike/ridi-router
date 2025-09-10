@@ -2,6 +2,8 @@ use crate::map_data::graph::MapDataGraph;
 
 use super::{json_reader::JsonReader, pbf_reader::PbfReader, DataSource, OsmDataReaderError};
 
+pub const ALLOWED_ACCESS_VALUES: [&str; 3] = ["yes", "permissive", "public"];
+
 pub const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
     "motorway",
     "trunk",
