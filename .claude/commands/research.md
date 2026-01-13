@@ -45,23 +45,39 @@ The user will provide a ticket for you to read and begin researching.
    - Group analysis tasks by topic/component
    - Spawn **codebase-analyzer** agents in parallel for each topic group to understand HOW specific code works
    - Spawn **thoughts-analyzer** agents in parallel to extract key insights from the most relevant documents found
-   - **WAIT** for all analyzer agents to complete before synthesizing
+   - **WAIT** for all analyzer agents to complete before proceeding
+
+   **Phase 4 - Platform Expert Analysis (Optional - when cross-platform concerns exist):**
+   - Based on ticket and code analysis, determine if changes affect Android, iOS, or WASM builds
+   - **When to use**:
+     - Changes involve file I/O, networking, threading, or system calls
+     - Native code or platform-specific APIs are involved
+     - Build system changes may affect cross-compilation
+     - Performance or size constraints are platform-specific
+   - Spawn platform expert agents in parallel (all that apply):
+     - **android-expert**: For Android compatibility and build analysis
+     - **ios-expert**: For iOS compatibility and build analysis
+     - **wasm-expert**: For WebAssembly/browser compatibility analysis
+   - **WAIT** for all platform expert agents to complete before synthesizing
 
    **Important sequencing notes:**
-   - Each phase builds on the previous one - locators inform pattern-finding, both inform analysis
+   - Each phase builds on the previous one - locators inform pattern-finding, both inform analysis, all inform platform analysis
    - Run agents of the same type in parallel within each phase
    - Never mix agent types in parallel execution
    - Each agent knows its job - just tell it what you're looking for
    - Don't write detailed prompts about HOW to search - the agents already know
+   - Platform experts are optional - only use when cross-platform concerns exist
 
 4. **Wait for all sub-agents to complete and synthesize findings:**
    - IMPORTANT: Wait for ALL sub-agent tasks to complete before proceeding
-   - Compile all sub-agent results (both codebase and thoughts findings)
+   - Compile all sub-agent results (codebase, thoughts, and platform expert findings)
    - Prioritize live codebase findings as primary source of truth
    - Use thoughts/ findings as supplementary historical context
+   - Integrate platform expert analysis for cross-compilation impacts
    - Connect findings across different components
    - Include specific file paths and line numbers for reference
    - Highlight patterns, connections, and architectural decisions
+   - Document platform-specific constraints and requirements
    - Answer the user's specific questions with concrete evidence
 
 5. **Gather metadata for the research document:**
@@ -112,6 +128,33 @@ Use the following metadata for the research document frontmatter:
 
      ## Architecture Insights
      [Patterns, conventions, and design decisions discovered]
+
+     ## Platform Analysis (if applicable)
+     [Cross-compilation compatibility and platform-specific requirements]
+
+     ### Android Compatibility
+     - Compatibility status: ✅ Compatible | ⚠️ Requires Changes | ❌ Incompatible
+     - Build configuration changes needed
+     - Platform-specific code requirements
+     - Permission/entitlement requirements
+     - Performance and size implications
+     - Key file references with line numbers
+
+     ### iOS Compatibility
+     - Compatibility status: ✅ Compatible | ⚠️ Requires Changes | ❌ Incompatible
+     - Build configuration changes needed
+     - Platform-specific code requirements
+     - Permission/entitlement requirements
+     - Performance and size implications
+     - Key file references with line numbers
+
+     ### WASM Compatibility
+     - Compatibility status: ✅ Compatible | ⚠️ Requires Changes | ❌ Incompatible
+     - Build configuration changes needed
+     - Platform-specific code requirements
+     - Browser/runtime constraints
+     - Performance and binary size implications
+     - Key file references with line numbers
 
      ## Historical Context (from thoughts/)
      [Relevant insights from thoughts/ directory with references]

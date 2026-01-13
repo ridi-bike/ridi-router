@@ -22,7 +22,120 @@ You create well-structured tickets that provide maximum context for downstream r
    - Error messages, symptoms, behaviors
    - Technologies, libraries, or services mentioned
 
-### Step 2: Interactive Question Flow
+### Step 2: Codebase Research
+**CRITICAL**: Before asking the user questions, research the codebase to understand the existing context. This ensures your questions are relevant, well-informed, and respect existing patterns.
+
+**Purpose**: Gather contextual information about the codebase to:
+- Understand what already exists
+- Identify existing patterns and conventions
+- Discover limitations and constraints
+- Find related features or components
+- Avoid asking questions about things that are already clear from the code
+
+**Research Process**: Use the **codebase-pattern-finder** agent to conduct research.
+
+**How to Use the Agent**:
+Call the Task tool with subagent_type="codebase-pattern-finder" and provide a detailed prompt describing what you're looking for. The agent will:
+- Search for files related to the user's request
+- Read relevant source files to understand implementation
+- Extract code patterns and conventions
+- Provide concrete examples with file:line references
+- Identify testing patterns
+- Note architectural decisions
+
+**Example Agent Call**:
+```
+Task tool with:
+  subagent_type: "codebase-pattern-finder"
+  prompt: "Find similar implementations for [feature/bug/component]. I need to understand:
+    - How similar features are currently implemented
+    - What patterns and conventions are used (naming, architecture, testing)
+    - What libraries or frameworks are in use
+    - How similar features handle [specific concern from user request]
+    - What the testing patterns look like for similar code"
+```
+
+**What to Ask the Agent to Find**:
+- **For Bug Tickets**:
+  - "Find the code related to [affected feature], including error handling patterns and similar validation logic"
+  - "Show me how errors are currently handled in [related area]"
+
+- **For Feature Tickets**:
+  - "Find similar features to [requested feature], showing implementation patterns, testing approaches, and integration points"
+  - "Show me how [similar functionality] is implemented, including API patterns, data models, and UI components"
+
+- **For Debt Tickets**:
+  - "Find the current implementation of [component to refactor] and similar patterns that could serve as reference"
+  - "Show me anti-patterns related to [technical debt issue] and any better implementations elsewhere"
+
+**What to Extract from Agent Results**:
+- What currently exists in the codebase related to this request
+- How it's structured and organized
+- What patterns and conventions are followed
+- What constraints or limitations exist
+- What gaps exist between current state and the request
+- Concrete code examples to reference in questions
+
+**Time Investment**: Let the agent run (typically 1-3 minutes). This automated research is far better than asking generic questions that might not align with the codebase.
+
+**Example Research Flow**:
+```
+User Request: "Add user profile editing"
+
+Call codebase-pattern-finder with:
+"Find implementations related to user profiles and form handling. I need to understand:
+- How user data is currently displayed and managed
+- What form libraries and validation patterns are used
+- How API endpoints are structured for user operations
+- What the user data model looks like
+- How similar forms are tested"
+
+Agent Returns:
+- Found user profile display at src/components/UserProfile.tsx
+- Uses React Hook Form for all forms (pattern to follow)
+- User data model in src/types/User.ts has fields: name, email, avatar, role
+- API endpoints follow pattern: /api/users/:id (RESTful)
+- Form validation uses Zod schemas in src/schemas/
+- No email verification system exists currently
+- All forms use a shared FormField component
+- Test pattern: uses testing-library with mock API responses
+```
+
+**Platform Expert Analysis**: After codebase research, if the changes may affect cross-platform builds (Android, iOS, WASM), call the appropriate platform expert agents:
+
+**When to Call Platform Experts**:
+- **android-expert**: Changes affect native code, file I/O, networking, permissions, or Android builds
+- **ios-expert**: Changes affect native code, file I/O, networking, permissions, or iOS builds
+- **wasm-expert**: Changes affect browser compatibility, file system access, or WASM builds
+
+**How to Use Platform Expert Agents**:
+```
+Task tool with:
+  subagent_type: "android-expert" | "ios-expert" | "wasm-expert"
+  prompt: "Analyze [the proposed changes/feature] for [Android|iOS|WASM] compatibility:
+    - [Brief description of the change]
+    - [Key areas of concern: file I/O, networking, threading, etc.]
+    - What build configuration changes are needed?
+    - What platform-specific code is required?
+    - What permissions or entitlements are needed?
+    - What are the performance/size implications?"
+```
+
+**Extract from Platform Analysis**:
+- Platform-specific constraints and limitations
+- Required build configuration changes
+- Permission/entitlement requirements
+- Platform-specific code patterns to follow
+- Compatibility issues to address
+- Performance and size implications
+
+**Document in Ticket**:
+- Add platform-specific requirements to the ticket
+- Note build system changes needed
+- Include platform constraints in "Requirements" section
+- Add platform-specific testing to "Success Criteria"
+
+### Step 3: Interactive Question Flow
 Ask specific, targeted questions based on ticket type to gather comprehensive context. **Present questions in a numbered format** for clarity:
 
 #### For Bug Tickets:
@@ -51,7 +164,13 @@ Ask specific, targeted questions based on ticket type to gather comprehensive co
 5. Any specific patterns or anti-patterns to address?
 6. Should this include tests or documentation updates?
 
-### Step 3: Scope Boundary Exploration
+**Use your research findings to inform your questions**:
+- Reference specific files, components, or patterns you found
+- Ask about decisions that align with existing conventions
+- Propose options that match the current architecture
+- Avoid asking about constraints you already discovered
+
+### Step 4: Scope Boundary Exploration
 **CRITICAL STEP**: This iterative process should be repeated at least 2-3 times to thoroughly explore scope boundaries. Do not rush through this step - the quality of the final ticket depends on clearly defined scope.
 
 After receiving initial responses, analyze how these answers impact the original user query and generate 5-10 follow-up questions to drill down for more clarification.
@@ -106,7 +225,7 @@ Follow-up questions (Round 2):
 - No more meaningful expansion questions can be generated
 - User can confidently describe the final scope
 
-### Step 4: Context Extraction for Research
+### Step 5: Context Extraction for Research
 Extract and organize information specifically for the research phase:
 
 **Keywords for Search:**
@@ -127,7 +246,7 @@ Extract and organize information specifically for the research phase:
 - Performance constraints
 - Security requirements
 
-### Step 5: Ticket Creation
+### Step 6: Ticket Creation
 Create the ticket file at: `thoughts/tickets/type_subject.md`
 
 Use this template structure:
@@ -201,16 +320,16 @@ patterns: [comma-separated patterns to search for]
 [Any additional notes or questions for research/planning]
 ```
 
-### Step 6: Validation & Confirmation
+### Step 7: Validation & Confirmation
 Before finalizing:
 1. **Review completeness**: Ensure all critical information is captured
 2. **Validate logic**: Check that requirements are clear and achievable
 3. **Confirm research hooks**: Verify keywords and patterns will be useful for research
 4. **Check scope**: Ensure the ticket is atomic and well-scoped
 
-### Step 7: Update ticket status to 'created' by editing the ticket file's frontmatter.
+### Step 8: Update ticket status to 'created' by editing the ticket file's frontmatter.
 
-Use the todowrite tool to create a structured task list for the 7 steps above, marking each as pending initially.
+Use the todowrite tool to create a structured task list for the 8 steps above, marking each as pending initially.
 
 ## Important Guidelines
 

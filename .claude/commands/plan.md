@@ -84,12 +84,24 @@ After getting initial clarifications:
    - **thoughts-locator** - To find any research, plans, or decisions about this area
    - **thoughts-analyzer** - To extract key insights from the most relevant documents
 
+   **For platform cross-compilation analysis (when applicable):**
+   - **android-expert** - To analyze Android compatibility and build requirements
+   - **ios-expert** - To analyze iOS compatibility and build requirements
+   - **wasm-expert** - To analyze WebAssembly/browser compatibility
+
+   Use platform experts when:
+   - Changes involve file I/O, networking, threading, or system calls
+   - Native code or platform-specific APIs are involved
+   - Build system changes may affect cross-compilation
+   - The ticket mentions Android, iOS, or WASM specifically
+
    Each agent knows how to:
    - Find the right files and code patterns
    - Identify conventions and patterns to follow
    - Look for integration points and dependencies
    - Return specific file:line references
    - Find tests and examples
+   - (Platform experts) Identify platform-specific constraints and requirements
 
 3. **Wait for ALL sub-tasks to complete** before proceeding
 
@@ -101,13 +113,19 @@ After getting initial clarifications:
    - [Key discovery about existing code]
    - [Pattern or convention to follow]
 
+   **Platform Analysis (if applicable):**
+   - Android: [Compatibility status and key requirements]
+   - iOS: [Compatibility status and key requirements]
+   - WASM: [Compatibility status and key requirements]
+
    **Design Options:**
-   1. [Option A] - [pros/cons]
-   2. [Option B] - [pros/cons]
+   1. [Option A] - [pros/cons, including platform impacts]
+   2. [Option B] - [pros/cons, including platform impacts]
 
    **Open Questions:**
    - [Technical uncertainty]
    - [Design decision needed]
+   - [Platform-specific concerns needing clarification]
 
    Which approach aligns best with your vision?
    ```
@@ -221,6 +239,33 @@ After structure approval:
 ## Performance Considerations
 
 [Any performance implications or optimizations needed]
+
+## Platform-Specific Considerations (if applicable)
+
+### Android Build Requirements
+- Compatibility status: ✅ Compatible | ⚠️ Requires Changes | ❌ Incompatible
+- Build configuration changes needed (Gradle, manifest, etc.)
+- Platform-specific code requirements (JNI, Android APIs)
+- Permissions/entitlements required
+- Performance and APK size implications
+- Testing requirements specific to Android
+
+### iOS Build Requirements
+- Compatibility status: ✅ Compatible | ⚠️ Requires Changes | ❌ Incompatible
+- Build configuration changes needed (Xcode, Info.plist, etc.)
+- Platform-specific code requirements (Swift/ObjC bridging, iOS frameworks)
+- Permissions/entitlements required
+- Performance and IPA size implications
+- App Store compliance considerations
+- Testing requirements specific to iOS
+
+### WASM Build Requirements
+- Compatibility status: ✅ Compatible | ⚠️ Requires Changes | ❌ Incompatible
+- Build configuration changes needed (Cargo.toml, wasm-pack, etc.)
+- Platform-specific code requirements (wasm-bindgen, web-sys)
+- Browser runtime constraints
+- Performance and binary size implications
+- Testing requirements specific to WASM/browser
 
 ## Migration Notes
 
