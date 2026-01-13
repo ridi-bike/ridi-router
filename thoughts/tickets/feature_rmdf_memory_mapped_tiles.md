@@ -104,19 +104,27 @@ OSM PBF → PBF Reader → MapDataGraph → pack() → Bincode Cache → unpack(
     - lines_count: u32
     - rules_offset: u64 (offset into Rules Section)
     - rules_count: u32
-    - flags: u8 (bit 0: residential_in_proximity, bit 1: nogo_area)
-    - _padding: [u8; 7]
+    - flags: u16 (bit 0: residential_in_proximity, bit 1: nogo_area, bits 2-15: reserved)
+    - _padding: [u8; 6]
 
 [Lines Section]
   - Array of LineRecord structs
   - Indexed by local line index
 
-  LineRecord (24 bytes):
+  LineRecord (40 bytes):
     - point_a_osm_id: u64
+    - point_a_lat: f32
+    - point_a_lon: f32
     - point_b_osm_id: u64
+    - point_b_lat: f32
+    - point_b_lon: f32
     - direction: u8 (0=BothWays, 1=OneWay, 2=Roundabout)
     - tag_set_index: u32
     - _padding: [u8; 3]
+
+  Note: Endpoint coordinates are denormalized (duplicated from PointRecord)
+        to enable efficient tile boundary crossing detection without
+        requiring point lookups across tiles.
 
 [Line References Section]
   - Flat array of u64 (OSM way IDs + segment indices encoded)
@@ -326,13 +334,15 @@ pub struct TileManager {
     tile_dir: PathBuf,
     manifest: TileManifest,
     loaded_tiles: HashMap<TileId, MappedTile>,
-    point_id_map: HashMap<u64, Vec<(TileId, u32)>>,  // OSM ID → [(tile, local_idx), ...]
-    line_id_map: HashMap<u64, Vec<(TileId, u32)>>,   // Encoded line ID → [(tile, local_idx), ...]
+    current_routing_tile: Option<TileId>,  // Tracks active tile during routing traversal
 }
 
 impl TileManager {
     /// Initialize from tile directory and manifest
     pub fn new(tile_dir: PathBuf) -> Result<Self>;
+
+    /// Compute tile ID from coordinates
+    fn compute_tile_id(lat: f32, lon: f32) -> TileId;
 
     /// Load tiles dynamically as routing accesses them
     fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()>;
@@ -341,13 +351,15 @@ impl TileManager {
     fn unload_tile(&mut self, tile_id: TileId);
 
     // API compatible with current MapDataGraph:
-    pub fn get_point(&mut self, osm_id: u64) -> Option<&PointRecord>;
-    pub fn get_line(&mut self, line_id: u64) -> Option<&LineRecord>;
-    pub fn get_adjacent(&mut self, point_osm_id: u64) -> Vec<(LineRef, PointRef)>;
+    pub fn get_point(&mut self, point_ref: PointRef) -> Option<&PointRecord>;
+    pub fn get_line(&mut self, line_ref: LineRef) -> Option<&LineRecord>;
+    pub fn get_adjacent(&mut self, point_ref: PointRef) -> Vec<(LineRef, PointRef)>;
     pub fn get_closest_to_coords(&mut self, lat: f32, lon: f32, ...) -> Option<PointRef>;
 }
 
 struct MappedTile {
+    tile_id: TileId,
+    bounds: TileBounds,
     file: memmap2::Mmap,
     header: &'static Header,
     points: &'static [PointRecord],
@@ -355,78 +367,147 @@ struct MappedTile {
     spatial_index: &'static [GridCellEntry],
     // ... other sections
 }
+
+// References now include tile context
+struct PointRef {
+    tile_id: TileId,
+    osm_id: u64,
+    lat: f32,  // Cached for quick tile determination
+    lon: f32,
+}
+
+struct LineRef {
+    tile_id: TileId,
+    line_id: u64,
+}
 ```
+
+**Tile Loading Strategy:**
+
+Tiles are loaded based on routing context, NOT via global ID lookup:
+
+1. **Initial Route Start** (coordinate-based):
+   ```rust
+   fn get_closest_to_coords(&mut self, lat: f32, lon: f32, ...) -> Option<PointRef> {
+       // Compute which tile contains these coordinates
+       let tile_id = self.compute_tile_id(lat, lon);
+       self.ensure_tile_loaded(tile_id)?;
+
+       // Search within tile's spatial index
+       let tile = &self.loaded_tiles[&tile_id];
+       let point = tile.find_closest_point(lat, lon, ...)?;
+
+       Some(PointRef {
+           tile_id,
+           osm_id: point.osm_id,
+           lat: point.lat,
+           lon: point.lon,
+       })
+   }
+   ```
+
+2. **Routing Traversal** (reference-based):
+   ```rust
+   fn get_adjacent(&mut self, point_ref: PointRef) -> Vec<(LineRef, PointRef)> {
+       // We already know which tile the point is in
+       let tile = &self.loaded_tiles[&point_ref.tile_id];
+       let point = tile.find_point_by_osm_id(point_ref.osm_id)?;
+
+       point.lines.iter().map(|line_id| {
+           let line = tile.get_line(line_id);
+           let other_point_osm_id = /* get other endpoint */;
+
+           // Check if other point is in current tile
+           if let Some(other_point) = tile.find_point_by_osm_id(other_point_osm_id) {
+               // Same tile - easy case
+               return (LineRef { tile_id: point_ref.tile_id, line_id },
+                      PointRef { tile_id: point_ref.tile_id, ... });
+           } else {
+               // Border crossing - determine adjacent tile from point coordinates
+               let next_tile_id = self.compute_tile_id(other_point.lat, other_point.lon);
+               self.ensure_tile_loaded(next_tile_id)?;
+
+               let next_tile = &self.loaded_tiles[&next_tile_id];
+               let other_point = next_tile.find_point_by_osm_id(other_point_osm_id)?;
+
+               return (LineRef { tile_id: point_ref.tile_id, line_id },
+                      PointRef { tile_id: next_tile_id, ... });
+           }
+       }).collect()
+   }
+   ```
+
+3. **Border/Corner Handling**:
+   - Lines crossing borders store both endpoint OSM IDs
+   - Line record also stores endpoint coordinates (or they're looked up)
+   - When crossing border, use endpoint coordinates to compute next tile ID
+   - For corners: may need to load up to 3 adjacent tiles (load based on line direction)
 
 **Dynamic Tile Loading:**
 - Tiles loaded on-demand when routing crosses into new tile
 - File descriptor limit awareness (typically 1024-4096 per process)
 - LRU eviction strategy if fd limit approached (configurable)
+- No global OSM ID → tile mapping required (saves memory and initialization time)
 
-**Border Point/Line Deduplication:**
+**Border Point Deduplication:**
+
+No explicit deduplication needed! The routing algorithm naturally handles duplicated border points:
+
 ```rust
-// Points duplicated across tiles are in point_id_map multiple times
-// When accessing, use routing-aware selection:
+// When a line crosses a tile boundary:
+// - Point A is in Tile 1 (and duplicated in Tile 2 if on border)
+// - Point B is in Tile 2 (and duplicated in Tile 1 if on border)
+// - Line AB exists in both tiles
 
-fn get_point_for_routing(&mut self, osm_id: u64, routing_context: &RoutingContext)
-    -> Option<&PointRecord>
-{
-    let candidates = self.point_id_map.get(&osm_id)?;
+// During routing from Point A:
+1. We're in Tile 1, access Point A
+2. get_adjacent() returns Line AB
+3. Line AB knows Point B's OSM ID and coordinates
+4. Compute tile ID from Point B's coordinates → Tile 2
+5. Load Tile 2 if not already loaded
+6. Find Point B in Tile 2 by OSM ID (local scan or spatial index)
+7. Continue routing from Point B in Tile 2
 
-    if candidates.len() == 1 {
-        return self.get_point_from_tile(candidates[0]);
-    }
-
-    // Multiple tiles contain this point (border/corner point)
-    // Strategy: Pick based on outgoing line direction
-
-    let outgoing_lines = self.get_adjacent(osm_id);
-    if outgoing_lines.len() == 1 {
-        // Not a junction, just continuation - pick tile containing outgoing line
-        let outgoing_line = &outgoing_lines[0];
-        return self.get_point_from_tile_containing_line(osm_id, outgoing_line.line_id);
-    } else {
-        // Junction - pick first loaded tile (arbitrary but deterministic)
-        return self.get_point_from_tile(candidates[0]);
-    }
-}
+// No need to track which tiles contain which points globally!
 ```
 
 **Missing Tile Handling:**
 ```rust
-// When routing encounters missing tile:
-match tile_manager.get_point(osm_id) {
-    Some(point) => { /* continue routing */ },
-    None => {
-        // Treat as dead-end AND report error to user
-        return Err(RoutingError::MissingTile {
-            osm_id,
-            expected_tile: compute_tile_id(osm_id),
-            message: "Tile not available. Please download or regenerate."
-        });
-    }
+// When routing tries to cross into a missing tile:
+fn get_adjacent(&mut self, point_ref: PointRef) -> Vec<(LineRef, PointRef)> {
+    let tile = &self.loaded_tiles[&point_ref.tile_id];
+    let point = tile.find_point_by_osm_id(point_ref.osm_id)?;
+
+    point.lines.iter().filter_map(|line_id| {
+        let line = tile.get_line(line_id);
+        let other_point_osm_id = /* get other endpoint */;
+
+        // Determine which tile contains the other point
+        let next_tile_id = self.compute_tile_id(other_point.lat, other_point.lon);
+
+        // Try to load the tile
+        match self.ensure_tile_loaded(next_tile_id) {
+            Ok(_) => {
+                let next_tile = &self.loaded_tiles[&next_tile_id];
+                let other_point = next_tile.find_point_by_osm_id(other_point_osm_id)?;
+                Some((LineRef { tile_id: point_ref.tile_id, line_id },
+                     PointRef { tile_id: next_tile_id, ... }))
+            },
+            Err(_) => {
+                // Tile missing - treat this line as a dead-end
+                warn!("Tile {} not available, treating line {} as dead-end",
+                      next_tile_id, line_id);
+                None  // Filter out this adjacent line
+            }
+        }
+    }).collect()
 }
-```
 
-**Spatial Index Query:**
-```rust
-fn get_closest_to_coords(&mut self, lat: f32, lon: f32, ...) -> Option<PointRef> {
-    // Determine which tile(s) to search
-    let primary_tile = self.compute_tile_id(lat, lon);
-    self.ensure_tile_loaded(primary_tile)?;
-
-    let tile = &self.loaded_tiles[&primary_tile];
-    let cell_id = compute_grid_cell_id(lat, lon);
-
-    // Binary search in spatial index directory
-    let cell_entry = tile.spatial_index.binary_search_by_key(&cell_id, |e| e.cell_id).ok()?;
-
-    // Zero-copy slice into points section
-    let cell_points = &tile.points[cell_entry.points_offset..][..cell_entry.points_count];
-
-    // Find closest by Haversine distance
-    cell_points.iter()
-        .filter(|p| matches_routing_criteria(p, ...))
-        .min_by_key(|p| haversine_distance(lat, lon, p.lat, p.lon))
+// At routing level, report to user if no valid routes found:
+if route.is_none() {
+    return Err(RoutingError::NoRouteFound {
+        reason: "One or more required tiles are missing. Please download tiles for the route area."
+    });
 }
 ```
 
@@ -826,13 +907,19 @@ ridi-router route --tiles ./tiles --from "56.9,24.1" --to "57.1,24.3"
 **RMDF System (Latvia, 1° tiles):**
 - Input: Same PBF
 - Tiles: ~6-8 tiles (Latvia spans ~56-58°N, 21-28°E)
-- Per tile: ~8MB (routing only)
-- Total: ~50MB (smaller due to less duplication than current cache)
+- Per tile breakdown (estimated):
+  - Points: 45k × 48 bytes = 2.16 MB
+  - Lines: 89k × 40 bytes = 3.56 MB (includes denormalized coordinates)
+  - Line Refs: ~270k × 8 bytes = 2.16 MB
+  - Tags: ~0.8 MB
+  - Spatial Index: ~2k cells × 16 bytes = 32 KB
+  - **Total per tile: ~9 MB (routing only)**
+- Total for Latvia: ~6-8 tiles = ~54-72 MB
 
 **Global Coverage Estimate:**
 - Tiles: 360 × 180 = 64,800 tiles
-- Average: ~8MB per tile (assuming Latvia density)
-- Total: ~520GB (actual will be lower due to oceans/deserts)
+- Average: ~9 MB per tile (assuming Latvia density)
+- Total: ~583 GB (actual will be lower due to oceans/deserts)
 
 ### Future Work
 
