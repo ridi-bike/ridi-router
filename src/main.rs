@@ -13,6 +13,7 @@ mod map_data;
 mod map_data_cache;
 mod osm_data;
 mod result_writer;
+mod rmdf;
 mod router;
 mod router_runner;
 #[cfg(test)]
