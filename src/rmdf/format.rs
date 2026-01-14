@@ -1,6 +1,13 @@
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 
+// Magic number for RMDF files - compiler infers the array size from the literal
+const MAGIC_BYTES: &[u8; 4] = b"RMDF";
+pub const MAGIC_LEN: usize = MAGIC_BYTES.len();
+
+// Number of sections in RMDF format
+pub const NUM_SECTIONS: usize = 7;
+
 // Tile coordinates
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TileId {
@@ -30,26 +37,26 @@ pub struct TileBounds {
     pub lon_max: f32,
 }
 
-// RMDF file header (144 bytes total)
+// RMDF file header
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct RmdfHeader {
-    pub magic: [u8; 4],                // b"RMDF"
-    pub version: u32,                  // Format version (1)
-    pub tile_bounds: TileBounds,       // 16 bytes
+    pub magic: [u8; MAGIC_LEN],                    // b"RMDF"
+    pub version: u32,                              // Format version (1)
+    pub tile_bounds: TileBounds,                   // 16 bytes
     pub point_count: u64,
     pub line_count: u64,
     pub spatial_grid_cell_count: u32,
     pub tag_value_count: u32,
     pub tag_set_count: u32,
     pub rule_count: u32,
-    pub section_offsets: [u64; 7],     // Offsets to each section
+    pub section_offsets: [u64; NUM_SECTIONS],      // Offsets to each section
     // checksum stored separately at end of file (not in header)
 }
 
 impl RmdfHeader {
-    pub const SIZE: usize = 144; // 4 + 4 + 16 + 8 + 8 + 4 + 4 + 4 + 4 + (8 * 7) = 144
-    pub const MAGIC: [u8; 4] = *b"RMDF";
+    pub const SIZE: usize = std::mem::size_of::<RmdfHeader>();
+    pub const MAGIC: [u8; MAGIC_LEN] = *MAGIC_BYTES;
     pub const VERSION: u32 = 1;
 }
 
@@ -164,4 +171,7 @@ pub mod section {
     pub const TAG_VALUES: usize = 4;
     pub const TAG_SETS: usize = 5;
     pub const RULES: usize = 6;
+
+    // Compile-time assertion: ensure NUM_SECTIONS matches the highest section index + 1
+    const _: () = assert!(super::NUM_SECTIONS == RULES + 1, "NUM_SECTIONS must equal the number of section constants");
 }
