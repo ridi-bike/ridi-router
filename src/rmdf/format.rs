@@ -9,7 +9,7 @@ pub const MAGIC_LEN: usize = MAGIC_BYTES.len();
 pub const NUM_SECTIONS: usize = 7;
 
 // Tile coordinates
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct TileId {
     pub col: u16,  // 0-359 (longitude-based)
     pub row: u16,  // 0-179 (latitude-based)

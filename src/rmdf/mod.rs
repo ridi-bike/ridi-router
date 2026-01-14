@@ -5,3 +5,6 @@ pub mod format;
 pub mod validation;
 #[allow(dead_code)]
 pub mod io;
+
+// Phase 2: Tile generation
+pub mod generator;

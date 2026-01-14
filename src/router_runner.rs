@@ -277,6 +277,20 @@ enum CliMode {
         /// Directory to store the generated cache
         cache_dir: PathBuf,
     },
+    /// Generate RMDF tiles from OSM PBF file
+    GenerateTiles {
+        #[arg(short, long, value_name = "FILE")]
+        /// Input OSM PBF file
+        input: PathBuf,
+
+        #[arg(short, long, value_name = "DIR")]
+        /// Output directory for tiles and manifest
+        output: PathBuf,
+
+        #[arg(long, default_value = "1.0")]
+        /// Tile size in degrees (e.g., 0.1, 1.0)
+        tile_size: f32,
+    },
     /// Run Debug viewer
     #[cfg(feature = "debug-viewer")]
     DebugViewer {
@@ -618,6 +632,18 @@ impl RouterRunner {
                 rule_file.clone(),
                 route_req_id.clone(),
             ),
+            CliMode::GenerateTiles { input, output, tile_size } => {
+                use crate::rmdf::generator::TileGenerator;
+
+                info!("Generating tiles from {:?} to {:?} (tile_size={}°)",
+                      input, output, tile_size);
+
+                let generator = TileGenerator::new(input.clone(), output.clone(), *tile_size)?;
+                generator.generate()?;
+
+                info!("Tile generation complete");
+                Ok(())
+            }
             #[cfg(feature = "debug-viewer")]
             CliMode::DebugViewer { debug_dir } => {
                 Ok(crate::debug::viewer::DebugViewer::run(debug_dir.clone())?)

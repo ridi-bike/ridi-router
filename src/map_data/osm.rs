@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OsmNode {
     pub id: u64,
     pub lat: f64,
@@ -9,7 +10,7 @@ pub struct OsmNode {
     pub nogo_area: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OsmWay {
     pub id: u64,
     pub point_ids: Vec<u64>,
@@ -38,13 +39,13 @@ impl OsmWay {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OsmRelationMemberType {
     Way,
     Node,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OsmRelationMemberRole {
     From,
     To,
@@ -52,14 +53,14 @@ pub enum OsmRelationMemberRole {
     Other(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OsmRelationMember {
     pub member_type: OsmRelationMemberType,
     pub role: OsmRelationMemberRole,
     pub member_ref: u64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OsmRelation {
     pub id: u64,
     pub members: Vec<OsmRelationMember>,

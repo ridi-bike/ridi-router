@@ -533,10 +533,10 @@ pub use generator::*;  // NEW
 
 ### Automated Verification
 
-- [ ] CLI accepts `generate-tiles` subcommand: `cargo run -- generate-tiles --help`
-- [ ] Unit tests pass: `cargo test rmdf::generator`
-- [ ] Border detection tests pass (no border, on border, on corner)
-- [ ] Type checking passes: `cargo check`
+- [x] CLI accepts `generate-tiles` subcommand: `cargo run -- generate-tiles --help`
+- [x] Unit tests pass: `cargo test rmdf::generator`
+- [x] Border detection tests pass (no border, on border, on corner)
+- [x] Type checking passes: `cargo check`
 
 ### Manual Verification
 
