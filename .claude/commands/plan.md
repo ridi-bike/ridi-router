@@ -155,8 +155,14 @@ Once aligned on approach:
 
 After structure approval:
 
-1. **Write the plan** to `thoughts/plans/{descriptive_name}.md`
-2. **Use this template structure**:
+1. **Create the plan folder structure**:
+   - Create folder: `thoughts/plans/{descriptive_name}/`
+   - Create overview file: `thoughts/plans/{descriptive_name}/00_overview.md`
+   - Create phase files: `thoughts/plans/{descriptive_name}/01_{phase_name}.md`, `02_{phase_name}.md`, etc.
+
+2. **Use these template structures**:
+
+**File: `thoughts/plans/{descriptive_name}/00_overview.md`**
 
 ```markdown
 # [Feature/Task Name] Implementation Plan
@@ -169,14 +175,14 @@ After structure approval:
 
 [What exists now, what's missing, key constraints discovered]
 
-## Desired End State
-
-[A Specification of the desired end state after this plan is complete, and how to verify it]
-
 ### Key Discoveries:
 - [Important finding with file:line reference]
 - [Pattern to follow]
 - [Constraint to work within]
+
+## Desired End State
+
+[A Specification of the desired end state after this plan is complete, and how to verify it]
 
 ## What We're NOT Doing
 
@@ -186,41 +192,14 @@ After structure approval:
 
 [High-level strategy and reasoning]
 
-## Phase 1: [Descriptive Name]
+## Implementation Phases
 
-### Overview
-[What this phase accomplishes]
-
-### Changes Required:
-
-#### 1. [Component/File Group]
-**File**: `path/to/file.ext`
-**Changes**: [Summary of changes]
-
-```[language]
-// Specific code to add/modify
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Unit tests pass: `turbo test`
-- [ ] Type checking passes: `turbo check`
-- [ ] Integration tests pass: `turbo test-integration`
-
-#### Manual Verification:
-- [ ] Feature works as expected when tested via UI
-- [ ] Performance is acceptable under load
-- [ ] Edge case handling verified manually
-- [ ] No regressions in related features
-
----
-
-## Phase 2: [Descriptive Name]
-
-[Similar structure with both automated and manual success criteria...]
-
----
+1. **Phase 1**: [Phase Name] - [Brief description of what it accomplishes]
+   - See: `01_{phase_name}.md`
+2. **Phase 2**: [Phase Name] - [Brief description of what it accomplishes]
+   - See: `02_{phase_name}.md`
+3. **Phase 3**: [Phase Name] - [Brief description of what it accomplishes]
+   - See: `03_{phase_name}.md`
 
 ## Testing Strategy
 
@@ -278,27 +257,89 @@ After structure approval:
 - Similar implementation: `[file:line]`
 ```
 
+**File: `thoughts/plans/{descriptive_name}/01_{phase_name}.md`** (and `02_`, `03_`, etc. for each phase)
+
+```markdown
+# Phase 1: [Descriptive Name]
+
+## Overview
+
+[What this phase accomplishes and why it comes first]
+
+## Changes Required
+
+### 1. [Component/File Group]
+
+**File**: `path/to/file.ext`
+
+**Changes**: [Summary of changes]
+
+```[language]
+// Specific code to add/modify
+```
+
+**Rationale**: [Why this change is needed]
+
+### 2. [Component/File Group]
+
+[Similar structure...]
+
+## Success Criteria
+
+### Automated Verification:
+- [ ] Unit tests pass: `turbo test`
+- [ ] Type checking passes: `turbo check`
+- [ ] Integration tests pass: `turbo test-integration`
+
+### Manual Verification:
+- [ ] Feature works as expected when tested via UI
+- [ ] Performance is acceptable under load
+- [ ] Edge case handling verified manually
+- [ ] No regressions in related features
+
+## Dependencies
+
+- Depends on: [Previous phase if applicable, or "None - can start immediately"]
+- Blocks: [Next phase that depends on this, or "None"]
+
+## Risks & Mitigations
+
+- **Risk**: [Potential issue]
+  - **Mitigation**: [How to handle it]
+
+## Notes
+
+[Any additional context, gotchas, or considerations for this phase]
+```
+
 ### Step 5: Review
 
-2. **Present the draft plan location**:
+1. **Present the draft plan location**:
     ```
-    I've created the initial implementation plan at:
-    `thoughts/plans/[filename].md`
+    I've created the initial implementation plan in:
+    `thoughts/plans/[descriptive_name]/`
 
-    Please review it and let me know:
+    Files created:
+    - `00_overview.md` - Overall plan structure and context
+    - `01_{phase_name}.md` - [Brief description]
+    - `02_{phase_name}.md` - [Brief description]
+    - ... (additional phase files)
+
+    Please review the plan and let me know:
     - Are the phases properly scoped?
     - Are the success criteria specific enough?
     - Any technical details that need adjustment?
     - Missing edge cases or considerations?
     ```
 
-3. **Iterate based on feedback** - be ready to:
-    - Add missing phases
-    - Adjust technical approach
+2. **Iterate based on feedback** - be ready to:
+    - Add missing phases (new numbered files)
+    - Adjust technical approach in specific phases
     - Clarify success criteria (both automated and manual)
     - Add/remove scope items
+    - Update the overview to reflect changes
 
-4. **Continue refining** until the user is satisfied
+3. **Continue refining** until the user is satisfied
 
 ### Step 6: Update ticket status to 'planned' by editing the ticket file's frontmatter.
 
