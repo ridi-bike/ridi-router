@@ -158,7 +158,7 @@ impl Debug for ForkWeights {
                 .fold(String::new(), |all, el| format!(
                     "{}\n\t{}:{}",
                     all,
-                    el.0.borrow().id,
+                    el.0.get().id,
                     el.1
                 ))
         )
@@ -255,7 +255,7 @@ impl Navigator {
                                     DebugWriter::write_fork_choice_weight(
                                         self.itinerary.id(),
                                         loop_counter,
-                                        &fork_route_segment.get_end_point().borrow().id,
+                                        &fork_route_segment.get_end_point().get().id,
                                         &weight_calc.name,
                                         &weight_calc_result,
                                     );
@@ -282,7 +282,7 @@ impl Navigator {
                         self.itinerary.id(),
                         loop_counter,
                         "ForkChoice",
-                        Some(chosen_fork_point.borrow().id),
+                        Some(chosen_fork_point.get().id),
                     );
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
@@ -362,8 +362,8 @@ mod test {
                     Some(segment) => segment.get_end_point(),
                     None => &input.itinerary.start.clone(),
                 };
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 6
+                if prev_point.get().id == 3
+                    && input.current_fork_segment.get_end_point().get().id == 6
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
@@ -395,8 +395,8 @@ mod test {
                     None => &input.itinerary.finish.clone(),
                 };
 
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 4
+                if prev_point.get().id == 3
+                    && input.current_fork_segment.get_end_point().get().id == 4
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
@@ -430,16 +430,16 @@ mod test {
                     None => &input.itinerary.finish.clone(),
                 };
 
-                if prev_point.borrow().id == 3 {
-                    if input.current_fork_segment.get_end_point().borrow().id == 5 {
+                if prev_point.get().id == 3 {
+                    if input.current_fork_segment.get_end_point().get().id == 5 {
                         return WeightCalcResult::ForkChoiceUseWithWeight(10);
                     }
-                    if input.current_fork_segment.get_end_point().borrow().id == 6 {
+                    if input.current_fork_segment.get_end_point().get().id == 6 {
                         return WeightCalcResult::ForkChoiceUseWithWeight(5);
                     }
                 }
-                if prev_point.borrow().id == 6
-                    && input.current_fork_segment.get_end_point().borrow().id == 7
+                if prev_point.get().id == 6
+                    && input.current_fork_segment.get_end_point().get().id == 7
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
@@ -496,7 +496,7 @@ mod test {
         #[test]
         fn navigate_no_routes_with_do_not_use_weight() {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
-                if input.current_fork_segment.get_end_point().borrow().id == 7 {
+                if input.current_fork_segment.get_end_point().get().id == 7 {
                     return WeightCalcResult::ForkChoiceDoNotUse;
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
@@ -526,8 +526,8 @@ mod test {
                     Some(segment) => segment.get_end_point(),
                     None => &input.itinerary.finish.clone(),
                 };
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 6
+                if prev_point.get().id == 3
+                    && input.current_fork_segment.get_end_point().get().id == 6
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
@@ -539,8 +539,8 @@ mod test {
                     None => &input.itinerary.finish.clone(),
                 };
 
-                if prev_point.borrow().id == 3
-                    && input.current_fork_segment.get_end_point().borrow().id == 6
+                if prev_point.get().id == 3
+                    && input.current_fork_segment.get_end_point().get().id == 6
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(1);
                 }

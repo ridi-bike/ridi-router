@@ -90,9 +90,9 @@ impl Route {
                 .enumerate()
                 .rev()
                 .find(|(_idx, route_segment)| {
-                    route_segment.get_end_point().borrow().is_junction()
-                        && route_segment.get_end_point().borrow().id
-                            != last_segment.get_end_point().borrow().id
+                    route_segment.get_end_point().get().is_junction()
+                        && route_segment.get_end_point().get().id
+                            != last_segment.get_end_point().get().id
                 })
                 .map_or(0, |v| v.0),
         };
@@ -102,9 +102,9 @@ impl Route {
         match self.get_segment_last() {
             None => None,
             Some(last_segment) => self.route_segments.iter().rev().find(|route_segment| {
-                route_segment.get_end_point().borrow().is_junction()
-                    && route_segment.get_end_point().borrow().id
-                        != last_segment.get_end_point().borrow().id
+                route_segment.get_end_point().get().is_junction()
+                    && route_segment.get_end_point().get().id
+                        != last_segment.get_end_point().get().id
             }),
         }
     }
@@ -120,7 +120,7 @@ impl Route {
         let last_segment = self.route_segments.last();
         if let Some(last_segment) = last_segment {
             let last_segment_point = last_segment.get_end_point();
-            let last_segment_line_tags = last_segment.get_line().borrow().tags.borrow();
+            let last_segment_line_tags = last_segment.get_line().get(). tags.borrow();
             let last_segment_line_hw_ref = last_segment_line_tags.hw_ref();
             let last_segment_line_name = last_segment_line_tags.name();
             let end_index = self.route_segments.len().checked_sub(1);
@@ -140,12 +140,12 @@ impl Route {
                         let are_points_eq = segment_point == last_segment_point;
 
                         let distance_between_points_over_threshold =
-                            segment_point.borrow().distance_between(last_segment_point)
+                            segment_point.get().distance_between(last_segment_point)
                                 < LOOP_DISTANCE_THRESHOLD;
                         let route_segments_between_points_over_threshold =
                             slice_len - idx > LOOP_SEGMENT_THESHOLD;
 
-                        let segment_line_tags = segment.get_line().borrow().tags.borrow();
+                        let segment_line_tags = segment.get_line().get(). tags.borrow();
                         let segment_line_hw_ref = segment_line_tags.hw_ref();
                         let segment_line_name = segment_line_tags.name();
 
@@ -178,26 +178,26 @@ impl Route {
         if let Some(last_route_segment) = self.get_segment_last() {
             if (last_route_segment
                 .get_line()
-                .borrow()
+                .get()
                 .tags
-                .borrow()
+                .get()
                 .hw_ref()
                 .is_some()
                 && last_route_segment
                     .get_line()
-                    .borrow()
+                    .get()
                     .tags
-                    .borrow()
+                    .get()
                     .hw_ref()
                     == hw_ref.as_ref())
                 || (last_route_segment
                     .get_line()
-                    .borrow()
+                    .get()
                     .tags
-                    .borrow()
+                    .get()
                     .name()
                     .is_some()
-                    && last_route_segment.get_line().borrow().tags.borrow().name()
+                    && last_route_segment.get_line().get(). tags.borrow().name()
                         == hw_name.as_ref())
             {
                 return false;
@@ -209,12 +209,12 @@ impl Route {
             if let Some(prev_segment) = prev_segment {
                 len_tot_m += prev_segment
                     .get_end_point()
-                    .borrow()
+                    .get()
                     .distance_between(segment.get_end_point());
-                if (segment.get_line().borrow().tags.borrow().hw_ref().is_some()
-                    && segment.get_line().borrow().tags.borrow().hw_ref() == hw_ref.as_ref())
-                    || (segment.get_line().borrow().tags.borrow().name().is_some()
-                        && segment.get_line().borrow().tags.borrow().name() == hw_name.as_ref())
+                if (segment.get_line().get(). tags.borrow().hw_ref().is_some()
+                    && segment.get_line().get(). tags.borrow().hw_ref() == hw_ref.as_ref())
+                    || (segment.get_line().get(). tags.borrow().name().is_some()
+                        && segment.get_line().get(). tags.borrow().name() == hw_name.as_ref())
                 {
                     return len_check_m >= len_tot_m;
                 }
@@ -234,7 +234,7 @@ impl Route {
 
         let mut segment_num = 0;
         for segment in self.route_segments.iter().rev() {
-            if segment.get_end_point().borrow().is_junction() {
+            if segment.get_end_point().get().is_junction() {
                 segment_num += 1;
             }
             if segment_num == num_of_junctions {
@@ -295,12 +295,12 @@ impl Route {
         let mut smoothness: HashMap<String, f64> = HashMap::new();
 
         for segment in &self.route_segments {
-            let line_len: f64 = segment.get_line().borrow().get_len_m().into();
+            let line_len: f64 = segment.get_line().get().get_len_m().into();
             len_m += line_len;
-            if segment.get_end_point().borrow().is_junction() {
+            if segment.get_end_point().get().is_junction() {
                 junction_count += 1;
             }
-            let line_tags = segment.get_line().borrow().tags.borrow();
+            let line_tags = segment.get_line().get(). tags.borrow();
             let highway_val = line_tags.highway();
             update_map(&highway_val, line_len, &mut highway);
             let surface_val = line_tags.surface();

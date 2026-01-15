@@ -301,3 +301,38 @@ let generator = Generator::new(tile_manager_static, /*...*/);
 - Missing tiles handled gracefully (route around or fail)
 - --tiles parameter required, --input/--cache-dir deprecated (removed in Phase 8)
 - Static lifetime workaround documented for future cleanup
+
+## Deviations from Plan
+
+### Phase 7: Routing Integration
+- **Original Plan**: Fully integrate TileManager into routing by updating Walker/Navigator/Generator
+- **Actual Implementation**: Partial integration with CLI infrastructure and TileManager initialization, but routing logic stubbed out
+- **Reason for Deviation**: The routing code is more tightly coupled to `MapDataPointRef` than anticipated. Full integration requires:
+  1. Replacing all `MapDataPointRef` with `PointRef` throughout routing code
+  2. Replacing `.borrow()` calls (which access global static) with TileManager queries
+  3. Threading TileManager through all routing components
+  4. Handling lifetime differences between static references and tile-scoped references
+- **Impact Assessment**:
+  - CLI accepts `--tiles` parameter successfully
+  - TileManager initializes correctly with unsafe lifetime extension
+  - `generate_route_with_tiles()` is stubbed and returns empty results with warning
+  - Old `--input` path continues to work as before
+  - Requires additional implementation work on Walker/Navigator/Generator to complete
+- **Date/Time**: 2026-01-15
+
+### What Was Completed:
+- [x] CLI parameter `--tiles` added to GenerateRoute
+- [x] RouterRunner::run_dual() updated to initialize TileManager
+- [x] Unsafe lifetime extension implemented (std::mem::transmute)
+- [x] TileManager::get_closest_to_coords() signature enhanced with routing parameters
+- [x] Routing path bifurcation (old vs new system)
+- [x] Code compiles successfully
+
+### What Remains:
+- [ ] Update Walker to query TileManager instead of MapDataGraph
+- [ ] Update Navigator to work with TileManager
+- [ ] Update Generator to work with TileManager
+- [ ] Replace MapDataPointRef usage with PointRef in routing code
+- [ ] Implement or replace all `.borrow()` calls with TileManager queries
+- [ ] Handle missing tile errors in routing algorithm
+- [ ] End-to-end testing with Montenegro tiles

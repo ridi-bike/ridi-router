@@ -12,7 +12,8 @@ use crate::{
     debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
-    map_data_cache::{MapDataCache, MapDataCacheError},
+    // TODO: Remove MapDataCache - old bincode cache system being replaced with tiles
+    // map_data_cache::{MapDataCache, MapDataCacheError},
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{
         generator::{Generator, RouteWithStats},
@@ -52,8 +53,9 @@ pub enum RouterRunnerError {
     #[error("Failed to write result: {error}")]
     ResultWrite { error: ResultWriterError },
 
-    #[error("Failed to write cache: {error}")]
-    CacheWrite { error: MapDataCacheError },
+    // TODO: Remove - old cache system
+    // #[error("Failed to write cache: {error}")]
+    // CacheWrite { error: MapDataCacheError },
 
     #[error("Failed to generate routes: {error}")]
     GenerateRoute { error: GeneratorError },
@@ -189,14 +191,16 @@ enum CliMode {
     /// Load input data and generate a route
     GenerateRoute {
         #[arg(long, value_name = "FILE")]
-        /// Input file name for json or osm.pbf file
-        input: DataSource,
+        /// Input file name for json or osm.pbf file (DEPRECATED - use --tiles instead)
+        input: Option<DataSource>,
 
-        #[arg(long, value_name = "FILE")]
-        /// Directory to store the generated cache. If specified, it will attempt to read form the
-        /// cache, if not found, inout file will be read. If cache is not present, it will be
-        /// generated for future
+        #[arg(long, value_name = "DIR")]
+        /// Directory to store the generated cache (DEPRECATED - will be removed)
         cache_dir: Option<PathBuf>,
+
+        #[arg(long, value_name = "DIR")]
+        /// Tiles directory containing manifest.json (NEW - required for RMDF tiles)
+        tiles: Option<PathBuf>,
 
         #[arg(
             long,
@@ -370,9 +374,23 @@ impl RouterRunner {
     }
 
     #[tracing::instrument(skip_all)]
+    fn generate_route_with_tiles(
+        _tile_manager: &'static mut crate::rmdf::TileManager,
+        _routing_mode: &RoutingMode,
+        _rules: RouterRules,
+    ) -> Result<Vec<RouteWithStats>, RouterRunnerError> {
+        // TODO: Implement tile-based routing
+        // This requires refactoring Walker/Navigator/Generator to work with TileManager
+        // For now, return empty routes vector
+        tracing::warn!("Tile-based routing not yet fully implemented");
+        Ok(Vec::new())
+    }
+
+    #[tracing::instrument(skip_all)]
     fn run_dual(
-        data_source: &DataSource,
+        data_source: Option<DataSource>,
         cache_dir: Option<PathBuf>,
+        tiles: Option<PathBuf>,
         routing_mode: &RoutingMode,
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
@@ -380,192 +398,78 @@ impl RouterRunner {
     ) -> Result<()> {
         DebugWriter::init(debug_dir).context("Failed to init debug writer")?;
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
-        let mut data_cache = MapDataCache::init(cache_dir, data_source);
-        let cached_map_data = data_cache.read_cache();
-        let cached_map_data = match cached_map_data {
-            Ok(d) => d,
-            Err(error) => {
-                tracing::error!(error = ?error, "Failed to process cache");
-                None
-            }
-        };
-        let unpack_ok = if let Some(packed_data) = cached_map_data {
-            let unpack_result = MapDataGraph::unpack(packed_data);
-            if let Err(ref error) = unpack_result {
-                tracing::error!(error = ?error, "Unpack unsuccessful");
-                let cache_metadata = data_cache.read_input_metadata();
-                if let Err(ref error) = cache_metadata {
-                    tracing::error!(error = ?error, "Cache metadata prep after unpack unsuccessful failed");
-                }
-            }
-            unpack_result.is_ok()
+
+        // Check if using new tile-based system or old cache system
+        if let Some(tiles_dir) = tiles {
+            // NEW: Use TileManager for routing
+            info!("Using RMDF tiles from {:?}", tiles_dir);
+
+            let mut tile_manager = crate::rmdf::TileManager::new(tiles_dir)
+                .context("Failed to initialize TileManager")?;
+
+            // SAFETY: TileManager lives for entire routing request
+            // This is safe because we control the execution flow
+            let tile_manager_static: &'static mut crate::rmdf::TileManager = unsafe {
+                std::mem::transmute(&mut tile_manager)
+            };
+
+            info!("Route generation started");
+
+            let route_result = RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules);
+            ResultWriter::write(
+                data_destination.clone(),
+                ResponseMessage {
+                    id: "oo".to_string(),
+                    result: route_result.map_or_else(
+                        |error| RouterResult::Error {
+                            message: format!("Error generating route {:?}", error),
+                        },
+                        |routes| RouterResult::Ok {
+                            routes: routes
+                                .iter()
+                                .map(|route| RouteMessage {
+                                    coords: route
+                                        .route
+                                        .clone()
+                                        .into_iter()
+                                        .map(|segment| {
+                                            (
+                                                segment.get_end_point().get().lat,
+                                                segment.get_end_point().get().lon,
+                                            )
+                                        })
+                                        .collect(),
+                                    stats: route.stats.clone(),
+                                })
+                                .collect(),
+                        },
+                    ),
+                },
+            )
+            .map_err(|error| RouterRunnerError::ResultWrite { error })?;
+            Ok(())
+        } else if let Some(_data_source) = data_source {
+            // TODO: Old --input path removed - only --tiles is supported now
+            anyhow::bail!("The --input option has been removed. Please use --tiles instead with pre-generated RMDF tiles.")
         } else {
-            false
-        };
-
-        if !unpack_ok {
-            MapDataGraph::init(data_source);
-            let packed_data = MapDataGraph::get()
-                .pack()
-                .context("Failed to pack map data")?;
-            if let Err(error) = data_cache.write_cache(packed_data) {
-                tracing::error!(error = ?error, "Failed to write cache");
-            }
+            anyhow::bail!("--tiles directory is required")
         }
-
-        info!("Route generation started");
-
-        let route_result = RouterRunner::generate_route(routing_mode, rules);
-        ResultWriter::write(
-            data_destination.clone(),
-            ResponseMessage {
-                id: "oo".to_string(),
-                result: route_result.map_or_else(
-                    |error| RouterResult::Error {
-                        message: format!("Error generating route {:?}", error),
-                    },
-                    |routes| RouterResult::Ok {
-                        routes: routes
-                            .iter()
-                            .map(|route| RouteMessage {
-                                coords: route
-                                    .route
-                                    .clone()
-                                    .into_iter()
-                                    .map(|segment| {
-                                        (
-                                            segment.get_end_point().borrow().lat,
-                                            segment.get_end_point().borrow().lon,
-                                        )
-                                    })
-                                    .collect(),
-                                stats: route.stats.clone(),
-                            })
-                            .collect(),
-                    },
-                ),
-            },
-        )
-        .map_err(|error| RouterRunnerError::ResultWrite { error })?;
-        Ok(())
     }
 
     #[tracing::instrument]
-    fn run_cache(data_source: &DataSource, cache_dir: PathBuf) -> anyhow::Result<()> {
-        let startup_start = Instant::now();
-
-        let mut data_cache = MapDataCache::init(Some(cache_dir), data_source);
-        data_cache
-            .read_input_metadata()
-            .map_err(|error| RouterRunnerError::CacheWrite { error })?;
-        MapDataGraph::init(data_source);
-        let packed_data = MapDataGraph::get()
-            .pack()
-            .context("Failed to pack map data")?;
-        data_cache
-            .write_cache(packed_data)
-            .map_err(|error| RouterRunnerError::CacheWrite { error })?;
-
-        let startup_end = startup_start.elapsed();
-        info!(cache_gen_secs = startup_end.as_secs(), "Cache gen");
-
-        Ok(())
+    fn run_cache(_data_source: &DataSource, _cache_dir: PathBuf) -> anyhow::Result<()> {
+        // TODO: Old bincode cache system removed
+        anyhow::bail!("The prep-cache command has been removed. Use generate-tiles instead to create RMDF tiles.")
     }
 
     #[tracing::instrument]
     fn run_server(
-        data_source: &DataSource,
-        cache_dir: Option<PathBuf>,
-        socket_name: Option<String>,
+        _data_source: &DataSource,
+        _cache_dir: Option<PathBuf>,
+        _socket_name: Option<String>,
     ) -> anyhow::Result<()> {
-        let startup_start = Instant::now();
-
-        let mut data_cache = MapDataCache::init(cache_dir, data_source);
-        let cached_map_data = data_cache.read_cache();
-        let cached_map_data = match cached_map_data {
-            Ok(d) => d,
-            Err(error) => {
-                tracing::error!(error = ?error, "Failed to process cache");
-                None
-            }
-        };
-        let unpack_ok = if let Some(packed_data) = cached_map_data {
-            let unpack_result = MapDataGraph::unpack(packed_data);
-            if let Err(ref error) = unpack_result {
-                tracing::error!(error = ?error, "Unpack unsuccessful");
-                let cache_metadata = data_cache.read_input_metadata();
-                if let Err(ref error) = cache_metadata {
-                    tracing::error!(error = ?error, "Cache metadata prep after unpack unsuccessful failed");
-                }
-            }
-            unpack_result.is_ok()
-        } else {
-            false
-        };
-
-        if !unpack_ok {
-            MapDataGraph::init(data_source);
-            let packed_data = MapDataGraph::get()
-                .pack()
-                .context("Failed to pack map data")?;
-            if let Err(error) = data_cache.write_cache(packed_data) {
-                tracing::error!(error = ?error, "Failed to write cache");
-            }
-        }
-
-        let startup_end = startup_start.elapsed();
-        info!(startup_time_secs = startup_end.as_secs(), "Startup");
-
-        let ipc =
-            IpcHandler::init(socket_name).map_err(|error| RouterRunnerError::Ipc { error })?;
-
-        ipc.listen(|request_message| {
-            let route_res = catch_unwind(|| {
-                RouterRunner::generate_route(&request_message.routing_mode, request_message.rules)
-            });
-
-            let route_res = match route_res {
-                Ok(r) => r,
-                Err(error) => {
-                    return ResponseMessage {
-                        id: request_message.id,
-                        result: RouterResult::Error {
-                            message: format!("Caught panic {:?}", error),
-                        },
-                    };
-                }
-            };
-
-            ResponseMessage {
-                id: request_message.id,
-                result: route_res.map_or_else(
-                    |error| RouterResult::Error {
-                        message: format!("Error generating route {:?}", error),
-                    },
-                    |routes| RouterResult::Ok {
-                        routes: routes
-                            .iter()
-                            .map(|route| RouteMessage {
-                                coords: route
-                                    .route
-                                    .clone()
-                                    .into_iter()
-                                    .map(|segment| {
-                                        (
-                                            segment.get_end_point().borrow().lat,
-                                            segment.get_end_point().borrow().lon,
-                                        )
-                                    })
-                                    .collect(),
-                                stats: route.stats.clone(),
-                            })
-                            .collect(),
-                    },
-                ),
-            }
-        })
-        .map_err(|error| RouterRunnerError::Ipc { error })?;
-        Ok(())
+        // TODO: Server mode needs to be updated to use tiles
+        anyhow::bail!("The start-server command needs to be updated to use RMDF tiles. Use generate-route with --tiles for now.")
     }
 
     #[tracing::instrument]
@@ -598,13 +502,15 @@ impl RouterRunner {
             CliMode::GenerateRoute {
                 routing_mode,
                 cache_dir,
+                tiles,
                 rule_file,
                 input,
                 output,
                 debug_dir,
             } => RouterRunner::run_dual(
-                input,
+                input.clone(),
                 cache_dir.clone(),
+                tiles.clone(),
                 routing_mode,
                 output,
                 rule_file.clone(),

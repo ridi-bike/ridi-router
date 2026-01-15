@@ -75,13 +75,13 @@ impl Itinerary {
     pub fn id(&self) -> String {
         format!(
             "{}-{}-{}",
-            self.start.borrow().id,
+            self.start.get().id,
             self.waypoints
                 .iter()
-                .map(|p| format!("{}", p.borrow().id))
+                .map(|p| format!("{}", p.get().id))
                 .collect::<Vec<_>>()
                 .join("-"),
-            self.finish.borrow().id
+            self.finish.get().id
         )
     }
 
@@ -101,7 +101,7 @@ impl Itinerary {
 
     pub fn check_set_next(&mut self, current: MapDataPointRef) -> bool {
         if self.next != self.finish
-            && current.borrow().distance_between(&self.next) <= self.waypoint_radius
+            && current.get().distance_between(&self.next) <= self.waypoint_radius
         {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 let prev_point = self.next.clone();
@@ -123,7 +123,7 @@ impl Itinerary {
             return true;
         } else if !self.visit_all_wps
             && self.next != self.finish
-            && current.borrow().distance_between(&self.finish) <= self.waypoint_radius
+            && current.get().distance_between(&self.finish) <= self.waypoint_radius
         {
             self.switched_wps_on.push(WaypointHistoryElement {
                 on_point: current.clone(),

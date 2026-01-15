@@ -71,7 +71,7 @@ impl Generator {
         bearing: &f32,
         avoid_residential: bool,
     ) -> Vec<MapDataPointRef> {
-        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
+        let point_geo = Point::new(point.get().lon, point.get().lat);
         self.rules
             .generation
             .waypoint_generation
@@ -108,7 +108,7 @@ impl Generator {
         round_trip_bearing_adjustment: Option<f32>,
     ) -> Vec<Itinerary> {
         if let Some(round_trip) = self.round_trip {
-            let start_geo = Point::new(self.start.borrow().lon, self.start.borrow().lat);
+            let start_geo = Point::new(self.start.get().lon, self.start.get().lat);
 
             return self
                 .rules
@@ -218,12 +218,12 @@ impl Generator {
         }
         let from_waypoints = self.create_waypoints_around(
             &self.start,
-            &self.finish.borrow().bearing(&self.start),
+            &self.finish.get().bearing(&self.start),
             avoid_residential,
         );
         let to_waypoints = self.create_waypoints_around(
             &self.finish,
-            &self.start.borrow().bearing(&self.finish),
+            &self.start.get().bearing(&self.finish),
             avoid_residential,
         );
         let mut itineraries = vec![Itinerary::new_start_finish(
@@ -258,7 +258,7 @@ impl Generator {
                     .waypoints
                     .iter()
                     .map(|p| {
-                        let point = p.borrow();
+                        let point = p.get();
                         vec![point.lat, point.lon]
                     })
                     .flatten()

@@ -52,7 +52,7 @@ impl TileManager {
     }
 
     /// Get point by OSM ID within a specific tile
-    pub fn get_point(&mut self, tile_id: TileId, osm_id: u64) -> Result<Option<PointRef>> {
+    pub fn get_point_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<PointRecord> {
         self.ensure_tile_loaded(tile_id)?;
 
         let tile = self.loaded_tiles.get(&tile_id).unwrap();
@@ -61,20 +61,37 @@ impl TileManager {
         // Linear search for now (could optimize with binary search if sorted)
         for point in points {
             if point.osm_id == osm_id {
-                return Ok(Some(PointRef {
-                    tile_id,
-                    osm_id,
-                    lat: point.lat,
-                    lon: point.lon,
-                }));
+                return Ok(*point);
             }
         }
 
-        Ok(None)
+        anyhow::bail!("Point {} not found in tile {:?}", osm_id, tile_id)
     }
 
-    /// Get closest point to coordinates (single-tile version)
-    pub fn get_closest_to_coords(&mut self, lat: f32, lon: f32) -> Result<Option<PointRef>> {
+    /// Get line by index within a specific tile
+    pub fn get_line_by_index(&mut self, tile_id: TileId, line_index: usize) -> Result<LineRecord> {
+        self.ensure_tile_loaded(tile_id)?;
+
+        let tile = self.loaded_tiles.get(&tile_id).unwrap();
+        let lines = tile.get_lines()?;
+
+        if line_index < lines.len() {
+            Ok(lines[line_index])
+        } else {
+            anyhow::bail!("Line index {} out of bounds in tile {:?}", line_index, tile_id)
+        }
+    }
+
+    /// Get closest point to coordinates with filtering
+    /// Returns (TileId, osm_id) tuple
+    pub fn get_closest_to_coords(
+        &mut self,
+        lat: f32,
+        lon: f32,
+        _rules: &crate::router::rules::RouterRules,
+        avoid_proximity_to_residential: bool,
+        _limit_to_hw_tags: Option<&[&'static str]>,
+    ) -> Result<Option<(TileId, u64)>> {
         // Determine which tile contains these coordinates
         let tile_id = TileId::from_coords(lat, lon);
 
@@ -88,58 +105,50 @@ impl TileManager {
 
         // For now: linear scan through spatial index
         // TODO: Implement expanding ring search like PointGrid
+        // TODO: Implement rules filtering
+        // TODO: Implement highway tag filtering
         let points = tile.get_points()?;
 
-        let mut closest: Option<(PointRef, f32)> = None;
+        let mut closest: Option<((TileId, u64), f32)> = None;
 
         for point in points {
             if point.lines_count == 0 {
                 continue; // Skip disconnected points
             }
 
+            // Apply proximity filter
+            if avoid_proximity_to_residential && point.residential_in_proximity() {
+                continue;
+            }
+
             let dist = ((point.lat - lat).powi(2) + (point.lon - lon).powi(2)).sqrt();
 
             if let Some((_, min_dist)) = closest {
                 if dist < min_dist {
-                    closest = Some((
-                        PointRef {
-                            tile_id,
-                            osm_id: point.osm_id,
-                            lat: point.lat,
-                            lon: point.lon,
-                        },
-                        dist,
-                    ));
+                    closest = Some(((tile_id, point.osm_id), dist));
                 }
             } else {
-                closest = Some((
-                    PointRef {
-                        tile_id,
-                        osm_id: point.osm_id,
-                        lat: point.lat,
-                        lon: point.lon,
-                    },
-                    dist,
-                ));
+                closest = Some(((tile_id, point.osm_id), dist));
             }
         }
 
-        Ok(closest.map(|(point_ref, _)| point_ref))
+        Ok(closest.map(|(id_tuple, _)| id_tuple))
     }
 
     /// Get adjacent lines and points from a point (handles border crossing)
-    pub fn get_adjacent(&mut self, point_ref: &PointRef) -> Result<Vec<(LineRef, PointRef)>> {
-        self.ensure_tile_loaded(point_ref.tile_id)?;
+    /// Returns Vec<(line_tile_id, line_index, other_point_tile_id, other_point_osm_id)>
+    pub fn get_adjacent_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<Vec<(TileId, usize, TileId, u64)>> {
+        self.ensure_tile_loaded(tile_id)?;
 
         // First, collect information from the current tile
         // We need to clone/copy the data to avoid holding references while loading other tiles
         let line_indices_and_data: Vec<(usize, u64, f32, f32, u64, f32, f32)> = {
-            let tile = self.loaded_tiles.get(&point_ref.tile_id).unwrap();
+            let tile = self.loaded_tiles.get(&tile_id).unwrap();
             let points = tile.get_points()?;
 
             // Find the point in the tile
             let point = points.iter()
-                .find(|p| p.osm_id == point_ref.osm_id)
+                .find(|p| p.osm_id == osm_id)
                 .context("Point not found in tile")?;
 
             let lines = tile.get_lines()?;
@@ -170,7 +179,7 @@ impl TileManager {
 
         for (line_idx, point_a_osm_id, point_a_lat, point_a_lon, point_b_osm_id, point_b_lat, point_b_lon) in line_indices_and_data {
             // Determine which endpoint is the "other" point
-            let (other_osm_id, other_lat, other_lon) = if point_a_osm_id == point_ref.osm_id {
+            let (other_osm_id, other_lat, other_lon) = if point_a_osm_id == osm_id {
                 (point_b_osm_id, point_b_lat, point_b_lon)
             } else {
                 (point_a_osm_id, point_a_lat, point_a_lon)
@@ -180,7 +189,7 @@ impl TileManager {
             let other_tile_id = TileId::from_coords(other_lat, other_lon);
 
             // Check if we need to load a different tile
-            if other_tile_id != point_ref.tile_id {
+            if other_tile_id != tile_id {
                 // Border crossing detected
                 match self.ensure_tile_loaded(other_tile_id) {
                     Ok(_) => {
@@ -197,20 +206,7 @@ impl TileManager {
                 }
             }
 
-            // Create references
-            let line_ref = LineRef {
-                tile_id: point_ref.tile_id,
-                line_index: line_idx,
-            };
-
-            let other_point_ref = PointRef {
-                tile_id: other_tile_id,
-                osm_id: other_osm_id,
-                lat: other_lat,
-                lon: other_lon,
-            };
-
-            result.push((line_ref, other_point_ref));
+            result.push((tile_id, line_idx, other_tile_id, other_osm_id));
         }
 
         // Evict old tiles if needed
@@ -235,45 +231,6 @@ impl TileManager {
         Ok(())
     }
 
-    /// Get line data (for routing algorithms)
-    pub fn get_line(&mut self, line_ref: &LineRef) -> Result<LineRecord> {
-        self.ensure_tile_loaded(line_ref.tile_id)?;
-
-        let tile = self.loaded_tiles.get(&line_ref.tile_id).unwrap();
-        let lines = tile.get_lines()?;
-
-        Ok(lines[line_ref.line_index])
-    }
-
-    /// Get point data (for routing algorithms)
-    pub fn get_point_data(&mut self, point_ref: &PointRef) -> Result<PointRecord> {
-        self.ensure_tile_loaded(point_ref.tile_id)?;
-
-        let tile = self.loaded_tiles.get(&point_ref.tile_id).unwrap();
-        let points = tile.get_points()?;
-
-        let point = points.iter()
-            .find(|p| p.osm_id == point_ref.osm_id)
-            .context("Point not found")?;
-
-        Ok(*point)
-    }
-}
-
-/// Reference to a point (includes tile context)
-#[derive(Debug, Clone, PartialEq)]
-pub struct PointRef {
-    pub tile_id: TileId,
-    pub osm_id: u64,
-    pub lat: f32,
-    pub lon: f32,
-}
-
-/// Reference to a line (includes tile context)
-#[derive(Debug, Clone, PartialEq)]
-pub struct LineRef {
-    pub tile_id: TileId,
-    pub line_index: usize,  // Index within tile's lines array
 }
 
 #[cfg(test)]

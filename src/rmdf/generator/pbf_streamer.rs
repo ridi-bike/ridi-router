@@ -7,7 +7,16 @@ use tracing::info;
 
 use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType};
 use crate::rmdf::format::TileId;
-use crate::osm_data::data_reader::ALLOWED_HIGHWAY_VALUES;
+// TODO: Move this constant somewhere accessible or re-export from osm_data
+// use crate::osm_data::data_reader::ALLOWED_HIGHWAY_VALUES;
+
+// Temporarily define locally until we re-organize modules
+const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
+    "motorway", "trunk", "primary", "secondary", "tertiary",
+    "unclassified", "residential", "motorway_link", "trunk_link",
+    "primary_link", "secondary_link", "tertiary_link",
+    "living_street", "track", "escape", "raceway", "road",
+];
 
 use super::intermediate::TileBuffers;
 

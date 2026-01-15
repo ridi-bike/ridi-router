@@ -19,28 +19,28 @@ impl Segment {
         &self.line
     }
     pub fn get_bearing(&self) -> f32 {
-        if self.end_point == self.line.borrow().points.0 {
+        if self.end_point == self.line.get().points.0 {
             return self
                 .line
-                .borrow()
+                .get()
                 .points
                 .0
-                .borrow()
-                .bearing(&self.line.borrow().points.1);
+                .get()
+                .bearing(&self.line.get().points.1);
         }
         self.line
-            .borrow()
+            .get()
             .points
             .1
-            .borrow()
-            .bearing(&self.line.borrow().points.0)
+            .get()
+            .bearing(&self.line.get().points.0)
     }
 }
 
 impl Debug for Segment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let line = self.get_line().borrow().clone();
-        let point = self.get_end_point().borrow().clone();
+        let line = self.get_line().get().clone();
+        let point = self.get_end_point().get().clone();
         write!(f, "line:\n\t{:#?}\npoint:\n\t{:#?}", line, point)
     }
 }

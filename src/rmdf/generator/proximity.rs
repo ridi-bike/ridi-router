@@ -5,7 +5,8 @@ use std::path::Path;
 use tracing::info;
 
 use crate::map_data::proximity::AreaGrid;
-use crate::osm_data::pbf_area_reader::PbfAreaReader;
+// TODO: Re-enable when pbf_area_reader is available
+// use crate::osm_data::pbf_area_reader::PbfAreaReader;
 use crate::rmdf::format::{TileId, TileBounds};
 
 use super::intermediate::{IntermediateTile, TileBuffers};

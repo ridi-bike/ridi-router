@@ -27,8 +27,8 @@ impl MapDataLine {
     pub fn line_id(&self) -> String {
         format!(
             "{}-{}",
-            self.points.0.borrow().id,
-            self.points.1.borrow().id
+            self.points.0.get().id,
+            self.points.1.get().id
         )
     }
     pub fn is_one_way(&self) -> bool {
@@ -38,7 +38,7 @@ impl MapDataLine {
         self.direction == LineDirection::Roundabout
     }
     pub fn get_len_m(&self) -> f32 {
-        self.points.0.borrow().distance_between(&self.points.1)
+        self.points.0.get().distance_between(&self.points.1)
     }
 }
 
@@ -58,8 +58,8 @@ impl Debug for MapDataLine {
     one_way={}
     roundabout={}",
             self.line_id(),
-            self.points.0.borrow().id,
-            self.points.1.borrow().id,
+            self.points.0.get().id,
+            self.points.1.get().id,
             self.is_one_way(),
             self.direction == LineDirection::Roundabout
         )

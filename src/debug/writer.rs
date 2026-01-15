@@ -276,13 +276,13 @@ impl DebugWriter {
                     .serialize(DebugStreamForkChoices {
                         itinerary_id: itinerary_id.clone(),
                         step_num: step as i64,
-                        end_point_id: segment.get_end_point().borrow().id as i64,
-                        line_point_0_lat: segment.get_line().borrow().points.0.borrow().lat as f64,
-                        line_point_0_lon: segment.get_line().borrow().points.0.borrow().lon as f64,
-                        line_point_1_lat: segment.get_line().borrow().points.1.borrow().lat as f64,
-                        line_point_1_lon: segment.get_line().borrow().points.1.borrow().lon as f64,
+                        end_point_id: segment.get_end_point().get().id as i64,
+                        line_point_0_lat: segment.get_line().get().points.0.get().lat as f64,
+                        line_point_0_lon: segment.get_line().get().points.0.get().lon as f64,
+                        line_point_1_lat: segment.get_line().get().points.1.get().lat as f64,
+                        line_point_1_lon: segment.get_line().get().points.1.get().lon as f64,
                         segment_end_point: if segment.get_end_point()
-                            == &segment.get_line().borrow().points.0
+                            == &segment.get_line().get().points.0
                         {
                             0
                         } else {
@@ -322,8 +322,8 @@ impl DebugWriter {
                             .iter()
                             .map(|segment| {
                                 (
-                                    segment.get_end_point().borrow().lat,
-                                    segment.get_end_point().borrow().lon,
+                                    segment.get_end_point().get().lat,
+                                    segment.get_end_point().get().lon,
                                 )
                             })
                             .collect::<Vec<_>>(),
@@ -343,10 +343,10 @@ impl DebugWriter {
                         itinerary_id: itinerary.id(),
                         waypoints_count: itinerary.waypoints.len() as i64,
                         radius: itinerary.waypoint_radius as i64,
-                        start_lat: itinerary.start.borrow().lat,
-                        start_lon: itinerary.start.borrow().lon,
-                        finish_lat: itinerary.finish.borrow().lat,
-                        finish_lon: itinerary.finish.borrow().lon,
+                        start_lat: itinerary.start.get().lat,
+                        start_lon: itinerary.start.get().lon,
+                        finish_lat: itinerary.finish.get().lat,
+                        finish_lon: itinerary.finish.get().lon,
                     })
                     .map_err(|error| DebugWriterError::Write { error })?;
                 Ok(())
@@ -357,8 +357,8 @@ impl DebugWriter {
                         .serialize(DebugStreamItineraryWaypoints {
                             itinerary_id: itinerary.id(),
                             idx: idx as i64,
-                            lat: wp.borrow().lat as f64,
-                            lon: wp.borrow().lon as f64,
+                            lat: wp.get().lat as f64,
+                            lon: wp.get().lon as f64,
                         })
                         .map_err(|error| DebugWriterError::Write { error })?;
                     Ok(())

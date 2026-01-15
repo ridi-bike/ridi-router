@@ -12,7 +12,7 @@ fn scale_priority(priority: u8) -> f64 {
 
 fn get_rule_adjustment(
     bearing_diff: f64,
-    tag: &Option<&smartstring::alias::String>,
+    tag: &Option<String>,
     rule: &Option<HashMap<String, RulesTagValueAction>>,
 ) -> f64 {
     if let Some(ref curr_tag) = tag {
@@ -37,7 +37,7 @@ impl Score {
         let mut len_m: f64 = 0.;
 
         for segment in route.iter() {
-            let line_len: f64 = segment.get_line().borrow().get_len_m().into();
+            let line_len: f64 = segment.get_line().get().get_len_m().into();
             len_m += line_len;
 
             let curr_bearing = segment.get_bearing();
@@ -52,26 +52,26 @@ impl Score {
                     let mut adjusted = bearing_diff;
                     adjusted += get_rule_adjustment(
                         bearing_diff,
-                        &segment.get_line().borrow().tags.borrow().highway(),
+                        &segment.get_line().get(). tags.borrow().highway(),
                         &rules.highway,
                     );
                     adjusted += get_rule_adjustment(
                         bearing_diff,
-                        &segment.get_line().borrow().tags.borrow().surface(),
+                        &segment.get_line().get(). tags.borrow().surface(),
                         &rules.surface,
                     );
                     adjusted += get_rule_adjustment(
                         bearing_diff,
-                        &segment.get_line().borrow().tags.borrow().smoothness(),
+                        &segment.get_line().get(). tags.borrow().smoothness(),
                         &rules.smoothness,
                     );
                     adjusted
                 }
             }
-            prev_bearing = if segment.get_end_point().borrow().is_junction() {
+            prev_bearing = if segment.get_end_point().get().is_junction() {
                 None
-            } else if let Some(hw) = segment.get_line().borrow().tags.borrow().highway() {
-                if hw == "residential" || segment.get_end_point().borrow().residential_in_proximity
+            } else if let Some(hw) = segment.get_line().get(). tags.borrow().highway() {
+                if hw == "residential" || segment.get_end_point().get().residential_in_proximity
                 {
                     None
                 } else {

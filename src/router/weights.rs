@@ -57,24 +57,24 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         None => input.current_fork_segment,
     };
     let fork_point_geo = Point::new(
-        fork_segment.get_end_point().borrow().lon,
-        fork_segment.get_end_point().borrow().lat,
+        fork_segment.get_end_point().get().lon,
+        fork_segment.get_end_point().get().lat,
     );
     let next_point_geo = Point::new(
-        input.itinerary.next.borrow().lon,
-        input.itinerary.next.borrow().lat,
+        input.itinerary.next.get().lon,
+        input.itinerary.next.get().lat,
     );
 
     let next_bearing = Haversine.bearing(fork_point_geo, next_point_geo);
     let fork_line_0_geo = Point::new(
-        fork_segment.get_line().borrow().points.0.borrow().lon,
-        fork_segment.get_line().borrow().points.0.borrow().lat,
+        fork_segment.get_line().get().points.0.get().lon,
+        fork_segment.get_line().get().points.0.get().lat,
     );
     let fork_line_1_geo = Point::new(
-        fork_segment.get_line().borrow().points.1.borrow().lon,
-        fork_segment.get_line().borrow().points.1.borrow().lat,
+        fork_segment.get_line().get().points.1.get().lon,
+        fork_segment.get_line().get().points.1.get().lat,
     );
-    let fork_bearing = if &fork_segment.get_line().borrow().points.1 == fork_segment.get_end_point()
+    let fork_bearing = if &fork_segment.get_line().get().points.1 == fork_segment.get_end_point()
     {
         Haversine.bearing(fork_line_0_geo, fork_line_1_geo)
     } else {
@@ -95,24 +95,24 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
     let current_ref = input
         .route
         .get_segment_last()
-        .and_then(|s| s.get_line().borrow().tags.borrow().hw_ref());
+        .and_then(|s| s.get_line().get().tags.borrow().hw_ref());
     let current_name = input
         .route
         .get_segment_last()
-        .and_then(|s| s.get_line().borrow().tags.borrow().name());
+        .and_then(|s| s.get_line().get().tags.borrow().name());
     let fork_ref = input
         .current_fork_segment
         .get_line()
-        .borrow()
+        .get()
         .tags
-        .borrow()
+        .get()
         .hw_ref();
     let fork_name = input
         .current_fork_segment
         .get_line()
-        .borrow()
+        .get()
         .tags
-        .borrow()
+        .get()
         .name();
 
     if (current_ref.is_some() && fork_ref.is_some() && current_ref == fork_ref)
@@ -165,7 +165,7 @@ pub fn weight_no_short_detours(input: WeightCalcInput) -> WeightCalcResult {
         || input
             .current_fork_segment
             .get_end_point()
-            .borrow()
+            .get()
             .residential_in_proximity
     {
         return WeightCalcResult::ForkChoiceUseWithWeight(0);
@@ -174,17 +174,17 @@ pub fn weight_no_short_detours(input: WeightCalcInput) -> WeightCalcResult {
     let hw_ref = input
         .current_fork_segment
         .get_line()
-        .borrow()
+        .get()
         .tags
-        .borrow()
+        .get()
         .hw_ref()
         .cloned();
     let hw_name = input
         .current_fork_segment
         .get_line()
-        .borrow()
+        .get()
         .tags
-        .borrow()
+        .get()
         .name()
         .cloned();
     if input.route.is_back_on_road_within_distance(
@@ -210,7 +210,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
         None => return WeightCalcResult::ForkChoiceUseWithWeight(0),
         Some(segment) => segment
             .get_end_point()
-            .borrow()
+            .get()
             .distance_between(&input.itinerary.next),
     };
 
@@ -227,7 +227,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput) -> WeightCalcResult
         None => return WeightCalcResult::ForkChoiceUseWithWeight(0),
         Some(segment) => segment
             .get_end_point()
-            .borrow()
+            .get()
             .distance_between(&input.itinerary.next),
     };
     trace!(
@@ -258,7 +258,7 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
     let total_distance = input
         .itinerary
         .start
-        .borrow()
+        .get()
         .distance_between(&input.itinerary.next);
     let point_steps_back = match input.route.get_segments_from_end(check_steps_back) {
         None => return WeightCalcResult::ForkChoiceUseWithWeight(0),
@@ -267,7 +267,7 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
     let average_distance_per_segment = total_distance / (input.route.get_segment_count() as f32);
 
-    let distance_last_points = point_steps_back.borrow().distance_between(current_point);
+    let distance_last_points = point_steps_back.get().distance_between(current_point);
     let average_distance_last_points = distance_last_points / (check_steps_back as f32);
 
     if average_distance_last_points
@@ -306,8 +306,8 @@ fn get_rule_for_tag(
 
 fn is_last_point_near_residential(input: &WeightCalcInput) -> bool {
     match input.route.get_segment_last() {
-        None => input.itinerary.start.borrow().residential_in_proximity,
-        Some(s) => s.get_end_point().borrow().residential_in_proximity,
+        None => input.itinerary.start.get().residential_in_proximity,
+        Some(s) => s.get_end_point().get().residential_in_proximity,
     }
 }
 
@@ -325,7 +325,7 @@ pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
         .any(|seg| {
             if let Some(tag_rule) = get_rule_for_tag(
                 &input.rules.highway,
-                seg.get_line().borrow().tags.borrow().highway(),
+                seg.get_line().get().tags.borrow().highway(),
             ) {
                 if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
                     return true;
@@ -342,9 +342,9 @@ pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
         input
             .current_fork_segment
             .get_line()
-            .borrow()
+            .get()
             .tags
-            .borrow()
+            .get()
             .highway(),
     ) {
         return res;
@@ -367,7 +367,7 @@ pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
         .any(|seg| {
             if let Some(tag_rule) = get_rule_for_tag(
                 &input.rules.surface,
-                seg.get_line().borrow().tags.borrow().surface(),
+                seg.get_line().get().tags.borrow().surface(),
             ) {
                 if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
                     return true;
@@ -384,9 +384,9 @@ pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
         input
             .current_fork_segment
             .get_line()
-            .borrow()
+            .get()
             .tags
-            .borrow()
+            .get()
             .surface(),
     ) {
         return res;
@@ -409,7 +409,7 @@ pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
         .any(|seg| {
             if let Some(tag_rule) = get_rule_for_tag(
                 &input.rules.smoothness,
-                seg.get_line().borrow().tags.borrow().smoothness(),
+                seg.get_line().get().tags.borrow().smoothness(),
             ) {
                 if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
                     return true;
@@ -426,9 +426,9 @@ pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
         input
             .current_fork_segment
             .get_line()
-            .borrow()
+            .get()
             .tags
-            .borrow()
+            .get()
             .smoothness(),
     ) {
         return res;
@@ -442,17 +442,17 @@ pub fn weight_avoid_nogo_areas(input: WeightCalcInput) -> WeightCalcResult {
     if input
         .current_fork_segment
         .get_end_point()
-        .borrow()
+        .get()
         .nogo_area
     {
         return WeightCalcResult::ForkChoiceDoNotUse;
     }
 
     if let Some(seg) = input.route.get_segment_last() {
-        if seg.get_end_point().borrow().nogo_area {
+        if seg.get_end_point().get().nogo_area {
             return WeightCalcResult::LastSegmentDoNotUse;
         }
-    } else if input.itinerary.start.borrow().nogo_area {
+    } else if input.itinerary.start.get().nogo_area {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
     WeightCalcResult::ForkChoiceUseWithWeight(0)
@@ -490,17 +490,17 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput) -> WeightCalcResult {
 
     let last_chunk = input.route.get_route_chunk_since_junction_before_last();
     if was_on_avoid(&last_chunk, &input.rules.highway, |segment| {
-        segment.get_line().borrow().tags.borrow().highway()
+        segment.get_line().get().tags.borrow().highway()
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
     if was_on_avoid(&last_chunk, &input.rules.surface, |segment| {
-        segment.get_line().borrow().tags.borrow().surface()
+        segment.get_line().get().tags.borrow().surface()
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
     if was_on_avoid(&last_chunk, &input.rules.smoothness, |segment| {
-        segment.get_line().borrow().tags.borrow().smoothness()
+        segment.get_line().get().tags.borrow().smoothness()
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
@@ -557,12 +557,12 @@ mod test {
         end_point: MapDataPointRef,
         opposite_point_for_line: MapDataPointRef,
     ) -> Segment {
-        let end_point_borrowed = end_point.borrow();
+        let end_point_borrowed = end_point.get();
         let line = end_point_borrowed
             .lines
             .iter()
             .find(|line| {
-                let line = line.borrow();
+                let line = line.get();
                 (line.points.0 == end_point && line.points.1 == opposite_point_for_line)
                     || (line.points.1 == end_point && line.points.0 == opposite_point_for_line)
             })

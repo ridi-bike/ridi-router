@@ -3,11 +3,12 @@ use json_parser::OsmJsonParserError;
 use crate::map_data::MapDataError;
 use std::{io, path::PathBuf};
 
-pub mod data_reader;
+// TODO: These modules use old MapDataGraph building - comment out for now
+// pub mod data_reader;
 pub mod json_parser;
-pub mod json_reader;
-pub mod pbf_area_reader;
-pub mod pbf_reader;
+// pub mod json_reader;
+// pub mod pbf_area_reader;
+// pub mod pbf_reader;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OsmDataReaderError {

@@ -26,12 +26,12 @@ pub struct MapDataPoint {
 impl MapDataPoint {
     pub fn distance_between(&self, point: &MapDataPointRef) -> f32 {
         let self_geo = Point::new(self.lon, self.lat);
-        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
+        let point_geo = Point::new(point.get().lon, point.get().lat);
         Haversine.distance(self_geo, point_geo)
     }
     pub fn bearing(&self, point: &MapDataPointRef) -> f32 {
         let self_geo = Point::new(self.lon, self.lat);
-        let point_geo = Point::new(point.borrow().lon, point.borrow().lat);
+        let point_geo = Point::new(point.get().lon, point.get().lat);
         Haversine.bearing(self_geo, point_geo)
     }
     pub fn is_junction(&self) -> bool {
@@ -62,7 +62,7 @@ impl Debug for MapDataPoint {
             self.lon,
             self.lines
                 .iter()
-                .map(|l| l.borrow().line_id())
+                .map(|l| l.get().line_id())
                 .collect::<Vec<_>>(),
             self.is_junction(),
             self.residential_in_proximity,

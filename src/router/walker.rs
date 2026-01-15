@@ -48,7 +48,7 @@ impl Walker {
     }
 
     fn get_segments_for_point(&self, center_point: &MapDataPointRef) -> SegmentList {
-        let center_point_borrowed = center_point.borrow();
+        let center_point_borrowed = center_point.get();
 
         let not_allow_rules = center_point_borrowed
             .rules
@@ -59,7 +59,7 @@ impl Walker {
         let segment_list = segments
             .iter()
             .filter_map(|(l, p)| {
-                if l.borrow().is_one_way() && &l.borrow().points.1 == center_point {
+                if l.get().is_one_way() && &l.get().points.1 == center_point {
                     return None;
                 }
                 if !not_allow_rules.is_empty() {
@@ -90,15 +90,15 @@ impl Walker {
 
         let prev_point = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
             if let Some(p) = self.route_walked.get_segment_by_index(idx) {
-                &p.get_end_point().borrow()
+                &p.get_end_point().get()
             } else {
-                &self.start.borrow()
+                &self.start.get()
             }
         } else {
-            &self.start.borrow()
+            &self.start.get()
         };
 
-        let center_point_borrowed = center_point.borrow();
+        let center_point_borrowed = center_point.get();
         let only_allow_rules = center_point_borrowed
             .rules
             .iter()
@@ -122,17 +122,17 @@ impl Walker {
             .into_iter()
             .filter(|(line_next, point_next)| {
                 // do not offer the same line as you came from
-                if point_next.borrow().id == prev_point.id {
+                if point_next.get().id == prev_point.id {
                     return false;
                 }
 
                 // exclude if next line is one way and the direction is backwards
-                if line_next.borrow().is_one_way() && &line_next.borrow().points.1 == center_point {
+                if line_next.get().is_one_way() && &line_next.get().points.1 == center_point {
                     return false;
                 }
 
                 // if no rules exist, don't check anything further
-                if center_point.borrow().rules.is_empty() {
+                if center_point.get().rules.is_empty() {
                     return true;
                 }
 
@@ -164,7 +164,7 @@ impl Walker {
 
     fn get_roundabout_exits(&self, segment: &Segment) -> SegmentList {
         let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
-        if !segment.get_line().borrow().is_roundabout() {
+        if !segment.get_line().get().is_roundabout() {
             return SegmentList::new();
         }
 
@@ -180,7 +180,7 @@ impl Walker {
                 fork_segments
                     .iter()
                     .filter_map(|f| {
-                        if f.get_line().borrow().is_roundabout() {
+                        if f.get_line().get().is_roundabout() {
                             return None;
                         }
                         Some(f.clone())
@@ -190,7 +190,7 @@ impl Walker {
 
             current_segment = match fork_segments
                 .iter()
-                .find(|s| s.get_line().borrow().is_roundabout())
+                .find(|s| s.get_line().get().is_roundabout())
             {
                 None => break,
                 Some(s) => {
@@ -214,7 +214,7 @@ impl Walker {
 
         let last_segment = match self.route_walked.get_segment_last() {
             Some(seg) => {
-                if !seg.get_line().borrow().is_roundabout() {
+                if !seg.get_line().get().is_roundabout() {
                     return;
                 }
                 seg.clone()
@@ -247,7 +247,7 @@ impl Walker {
 
             current_segment = match fork_segments
                 .iter()
-                .find(|s| s.get_line().borrow().is_roundabout())
+                .find(|s| s.get_line().get().is_roundabout())
             {
                 None => break,
                 Some(s) => {
@@ -279,7 +279,7 @@ impl Walker {
             let available_segments = match self.route_walked.get_segment_last() {
                 None => self.get_segments_for_point(&self.start),
                 Some(segment) => {
-                    if segment.get_line().borrow().is_roundabout() {
+                    if segment.get_line().get().is_roundabout() {
                         self.get_roundabout_exits(segment)
                     } else {
                         self.get_fork_segments_for_segment(segment)
@@ -294,11 +294,11 @@ impl Walker {
             let next_segment = if let Some(next_point) = self.next_fork_choice_point.take() {
                 if !available_segments.has_segment_with_point(&next_point) {
                     return Err(WalkerError::WrongForkChoice {
-                        id: next_point.borrow().id,
+                        id: next_point.get().id,
                         available_fork_ids: available_segments
                             .get_all_segment_points()
                             .iter()
-                            .map(|p| p.borrow().id)
+                            .map(|p| p.get().id)
                             .collect(),
                     });
                 }
@@ -317,7 +317,7 @@ impl Walker {
 
             // due to problematic map data we can get into a scenario where we get into a loop
             // where incoming road is one way and there are no leaving roads
-            if next_segment.get_end_point().borrow().is_junction() {
+            if next_segment.get_end_point().get().is_junction() {
                 if visited_junction.contains(next_segment.get_end_point()) {
                     return Ok(WalkerMoveResult::DeadEnd);
                 }
@@ -335,12 +335,12 @@ impl Walker {
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
-                if (last_segment.get_end_point().borrow().is_junction()
+                if (last_segment.get_end_point().get().is_junction()
                     && self
                         .get_fork_segments_for_segment(last_segment)
                         .get_segment_count()
                         > 1)
-                    || (last_segment.get_line().borrow().is_roundabout()
+                    || (last_segment.get_line().get().is_roundabout()
                         && self.get_roundabout_exits(last_segment).get_segment_count() > 1)
                 {
                     break;
@@ -461,7 +461,7 @@ mod tests {
                     from_id,
                     to_id
                 ));
-                assert_eq!(route_segment.get_end_point().borrow().id, to_id);
+                assert_eq!(route_segment.get_end_point().get().id, to_id);
             } else {
                 assert!(false)
             }
@@ -491,9 +491,9 @@ mod tests {
 
             choices.into_iter().for_each(|route_segment| {
                 assert!(
-                    route_segment.get_end_point().borrow().id == 5
-                        || route_segment.get_end_point().borrow().id == 4
-                        || route_segment.get_end_point().borrow().id == 6
+                    route_segment.get_end_point().get().id == 5
+                        || route_segment.get_end_point().get().id == 4
+                        || route_segment.get_end_point().get().id == 6
                 );
                 assert!(
                     line_is_between_point_ids(route_segment.get_line(), 5, 3)
@@ -513,8 +513,8 @@ mod tests {
             assert_eq!(choices.get_segment_count(), 2);
             choices.into_iter().for_each(|route_segment| {
                 assert!(
-                    route_segment.get_end_point().borrow().id == 8
-                        || route_segment.get_end_point().borrow().id == 7
+                    route_segment.get_end_point().get().id == 8
+                        || route_segment.get_end_point().get().id == 7
                 );
                 assert!(
                     line_is_between_point_ids(route_segment.get_line(), 8, 6)
@@ -533,27 +533,27 @@ mod tests {
             assert!(el.is_some());
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(route_segment.get_line(), 2, 1));
-                assert_eq!(route_segment.get_end_point().borrow().id, 2);
+                assert_eq!(route_segment.get_end_point().get().id, 2);
             }
 
             let el = route.get_segment_by_index(1);
             assert!(el.is_some());
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(route_segment.get_line(), 3, 2));
-                assert_eq!(route_segment.get_end_point().borrow().id, 3);
+                assert_eq!(route_segment.get_end_point().get().id, 3);
             }
 
             let el = route.get_segment_by_index(2);
             assert!(el.is_some());
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(route_segment.get_line(), 6, 3));
-                assert_eq!(route_segment.get_end_point().borrow().id, 6);
+                assert_eq!(route_segment.get_end_point().get().id, 6);
             }
             let el = route.get_segment_by_index(3);
             assert!(el.is_some());
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(route_segment.get_line(), 7, 6));
-                assert_eq!(route_segment.get_end_point().borrow().id, 7);
+                assert_eq!(route_segment.get_end_point().get().id, 7);
             }
         }
     }
@@ -580,9 +580,9 @@ mod tests {
 
             choices.into_iter().for_each(|route_segment| {
                 assert!(
-                    route_segment.get_end_point().borrow().id == 5
-                        || route_segment.get_end_point().borrow().id == 4
-                        || route_segment.get_end_point().borrow().id == 6
+                    route_segment.get_end_point().get().id == 5
+                        || route_segment.get_end_point().get().id == 4
+                        || route_segment.get_end_point().get().id == 6
                 );
                 assert!(
                     line_is_between_point_ids(route_segment.get_line(), 5, 3)
@@ -604,9 +604,9 @@ mod tests {
 
             choices.into_iter().for_each(|route_segment| {
                 assert!(
-                    route_segment.get_end_point().borrow().id == 5
-                        || route_segment.get_end_point().borrow().id == 4
-                        || route_segment.get_end_point().borrow().id == 6
+                    route_segment.get_end_point().get().id == 5
+                        || route_segment.get_end_point().get().id == 4
+                        || route_segment.get_end_point().get().id == 6
                 );
                 assert!(
                     line_is_between_point_ids(route_segment.get_line(), 5, 3)
@@ -627,21 +627,21 @@ mod tests {
             assert!(el.is_some());
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(route_segment.get_line(), 2, 1));
-                assert_eq!(route_segment.get_end_point().borrow().id, 2);
+                assert_eq!(route_segment.get_end_point().get().id, 2);
             }
 
             let el = route.get_segment_by_index(1);
             assert!(el.is_some());
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(route_segment.get_line(), 3, 2));
-                assert_eq!(route_segment.get_end_point().borrow().id, 3);
+                assert_eq!(route_segment.get_end_point().get().id, 3);
             }
 
             let el = route.get_segment_by_index(2);
             assert!(el.is_some());
             if let Some(route_segment) = el {
                 assert!(line_is_between_point_ids(route_segment.get_line(), 4, 3));
-                assert_eq!(route_segment.get_end_point().borrow().id, 4);
+                assert_eq!(route_segment.get_end_point().get().id, 4);
             }
         }
     }
@@ -672,8 +672,8 @@ mod tests {
 
             choices.into_iter().for_each(|route_segment| {
                 assert!(
-                    route_segment.get_end_point().borrow().id == 2
-                        || route_segment.get_end_point().borrow().id == 11
+                    route_segment.get_end_point().get().id == 2
+                        || route_segment.get_end_point().get().id == 11
                 );
                 assert!(
                     line_is_between_point_ids(route_segment.get_line(), 7, 2)
@@ -694,9 +694,9 @@ mod tests {
 
             choices.into_iter().for_each(|route_segment| {
                 assert!(
-                    route_segment.get_end_point().borrow().id == 111
-                        || route_segment.get_end_point().borrow().id == 121
-                        || route_segment.get_end_point().borrow().id == 131
+                    route_segment.get_end_point().get().id == 111
+                        || route_segment.get_end_point().get().id == 121
+                        || route_segment.get_end_point().get().id == 131
                 );
                 assert!(
                     line_is_between_point_ids(route_segment.get_line(), 11, 111)

@@ -30,8 +30,8 @@ impl Clustering {
                             .iter()
                             .map(|s| {
                                 (
-                                    s.get_end_point().borrow().lat,
-                                    s.get_end_point().borrow().lon,
+                                    s.get_end_point().get().lat,
+                                    s.get_end_point().get().lon,
                                 )
                             })
                             .fold((0., 0.), |acc, el| (acc.0 + el.0, acc.1 + el.1));
