@@ -49,7 +49,7 @@ enum AvoidTag {
 pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
-struct ElementTagValueRef {
+pub struct ElementTagValueRef {
     pub tag_value_pos: u32,
 }
 impl ElementTagValueRef {
@@ -73,7 +73,7 @@ impl ElementTagValueRef {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagSetRef {
-    tag_set_idx: u32,
+    pub tag_set_idx: u32,
 }
 
 impl ElementTagSetRef {
@@ -87,11 +87,11 @@ impl ElementTagSetRef {
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagSet {
-    name: ElementTagValueRef,
-    hw_ref: ElementTagValueRef,
-    highway: ElementTagValueRef,
-    surface: ElementTagValueRef,
-    smoothness: ElementTagValueRef,
+    pub name: ElementTagValueRef,
+    pub hw_ref: ElementTagValueRef,
+    pub highway: ElementTagValueRef,
+    pub surface: ElementTagValueRef,
+    pub smoothness: ElementTagValueRef,
 }
 
 impl ElementTagSet {
@@ -113,7 +113,7 @@ impl ElementTagSet {
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
-struct ElementTags {
+pub struct ElementTags {
     pub tag_values: Vec<smartstring::alias::String>,
     pub tag_sets: Vec<ElementTagSet>,
     tag_map: HashMap<smartstring::alias::String, u32>,
@@ -225,6 +225,10 @@ impl<T: MapDataElement> MapDataElementRef<T> {
     pub fn borrow(&self) -> &'static T {
         T::get(self.idx)
     }
+
+    pub fn get_idx(&self) -> usize {
+        self.idx
+    }
 }
 
 impl<T: MapDataElement> Clone for MapDataElementRef<T> {
@@ -287,6 +291,19 @@ impl MapDataGraph {
             lines: Vec::new(),
             tags: ElementTags::new(),
         }
+    }
+
+    // Public accessors for RMDF writer
+    pub fn get_points(&self) -> &[MapDataPoint] {
+        &self.points
+    }
+
+    pub fn get_lines(&self) -> &[MapDataLine] {
+        &self.lines
+    }
+
+    pub fn get_tags(&self) -> &ElementTags {
+        &self.tags
     }
 
     pub fn pack(&self) -> anyhow::Result<MapDataGraphPacked> {

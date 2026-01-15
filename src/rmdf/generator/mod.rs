@@ -1,12 +1,20 @@
 mod pbf_streamer;
 mod intermediate;
 mod proximity;
+mod writer;
+mod manifest;
 
 pub use pbf_streamer::PbfStreamer;
 pub use proximity::ProximityComputer;
+pub use writer::RmdfWriter;
+pub use manifest::ManifestGenerator;
 
 use std::path::PathBuf;
 use anyhow::Result;
+use tracing::info;
+
+use crate::rmdf::format::TileId;
+use super::generator::intermediate::IntermediateTile;
 
 pub struct TileGenerator {
     input_file: PathBuf,
@@ -40,7 +48,26 @@ impl TileGenerator {
         let proximity_computer = ProximityComputer::new(&self.input_file, self.tile_size_degrees)?;
         proximity_computer.compute_all(&tile_buffers, &self.output_dir)?;
 
-        // Phase 4: RMDF writing (not implemented yet)
+        // Phase 4: RMDF writing
+        let writer = RmdfWriter::new(self.tile_size_degrees);
+        let tile_ids: Vec<TileId> = tile_buffers.tiles.keys().cloned().collect();
+
+        info!("Writing RMDF files for {} tiles", tile_ids.len());
+        for tile_id in &tile_ids {
+            let intermediate = IntermediateTile::load_from_disk(&self.output_dir, *tile_id)?;
+            let output_path = self.output_dir.join(tile_id.to_filename());
+            writer.write_tile(&intermediate, &output_path)?;
+        }
+
+        // Generate manifest
+        let manifest_gen = ManifestGenerator::new(self.tile_size_degrees);
+        manifest_gen.generate(
+            &self.output_dir,
+            &tile_ids,
+            self.input_file.to_str().unwrap_or("unknown"),
+        )?;
+
+        info!("Generated {} tiles with manifest", tile_ids.len());
 
         Ok(())
     }

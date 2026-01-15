@@ -509,7 +509,9 @@ checksum = "c469d952047f47f91b68d1cba3f10d63c11d73e4636f24f08daf0278abf01c4d"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1118,6 +1120,12 @@ name = "hermit-abi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
+
+[[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hmac"
@@ -2012,6 +2020,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "bytemuck",
+ "chrono",
  "clap",
  "csv",
  "derive-name",
@@ -2019,6 +2028,7 @@ dependencies = [
  "geo",
  "gpx",
  "hdbscan",
+ "hex",
  "include_directory",
  "interprocess",
  "json-tools",
