@@ -1,12 +1,20 @@
+use json_parser::OsmJsonParserError;
+
 use crate::map_data::MapDataError;
 use std::{io, path::PathBuf};
 
-// These modules are for tile generation (not routing)
-pub mod pbf_area_reader;
-pub mod pbf_reader;
+// TODO: These modules use old MapDataGraph building - comment out for now
+// pub mod data_reader;
+pub mod json_parser;
+// pub mod json_reader;
+// pub mod pbf_area_reader;
+// pub mod pbf_reader;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OsmDataReaderError {
+    #[error("OSM JSON parser error: {error}")]
+    ParserError { error: OsmJsonParserError },
+
     #[error("Map data error: {error}")]
     MapDataError { error: MapDataError },
 
@@ -28,5 +36,6 @@ pub enum OsmDataReaderError {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum DataSource {
+    JsonFile { file: PathBuf },
     PbfFile { file: PathBuf },
 }

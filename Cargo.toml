@@ -19,7 +19,7 @@ debug-split-gpx = []
 
 [dependencies]
 anyhow = "1.0.95"
-bincode = "1.3.3"  # Used for intermediate tile storage during generation (not final RMDF format)
+bincode = "1.3.3"
 bytemuck = { version = "1.14", features = ["derive"] }
 chrono = "0.4"
 clap = { version = "4.5.9", features = ["derive"] }
