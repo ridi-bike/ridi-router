@@ -10,8 +10,6 @@ mod debug;
 mod gpx_writer;
 mod ipc_handler;
 mod map_data;
-// TODO: Remove - old bincode cache system being replaced with tiles
-// mod map_data_cache;
 mod osm_data;
 mod result_writer;
 mod rmdf;

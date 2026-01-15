@@ -1,26 +1,55 @@
-use crate::{
-    map_data::graph::MapDataGraph,
-    osm_data::{data_reader::ALLOWED_HIGHWAY_VALUES, pbf_area_reader::PbfAreaReader},
-};
-use geo::{CoordsIter, Distance, GeodesicArea, Haversine, HaversineClosestPoint, Point};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use tracing::info;
+// TODO: Old PbfReader implementation removed - tile generation now uses rmdf/generator
+// This file kept for constants that may still be used elsewhere
 
-use crate::map_data::osm::{
-    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
-};
-use std::{path::PathBuf, time::Instant};
+// use crate::{
+//     map_data::graph::MapDataGraph,
+//     osm_data::pbf_area_reader::PbfAreaReader,
+// };
+// use geo::{CoordsIter, Distance, GeodesicArea, Haversine, HaversineClosestPoint, Point};
+// use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+// use tracing::info;
 
-use super::OsmDataReaderError;
+// use crate::map_data::osm::{
+//     OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
+// };
+// use std::{path::PathBuf, time::Instant};
 
+// use super::OsmDataReaderError;
+
+const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "motorway_link",
+    "trunk_link",
+    "primary_link",
+    "secondary_link",
+    "tertiary_link",
+    "living_street",
+    "track",
+    "escape",
+    "raceway",
+    "road",
+];
+
+// Keeping these constants in case they're needed elsewhere
+#[allow(dead_code)]
 const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
+#[allow(dead_code)]
 const RESIDENTIAL_PART_COVERED: f64 = 0.10;
+#[allow(dead_code)]
 const THRESHOLD_AREA: f64 = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
     * RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
     * std::f64::consts::PI)
     * RESIDENTIAL_PART_COVERED;
+#[allow(dead_code)]
 const MILITARY_ENTRY_MAX_M: f64 = 100.;
 
+/*
 pub struct PbfReader<'a> {
     map_data: &'a mut MapDataGraph,
     file_name: &'a PathBuf,
@@ -237,3 +266,4 @@ impl<'a> PbfReader<'a> {
         Ok(())
     }
 }
+*/

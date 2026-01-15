@@ -12,8 +12,6 @@ use crate::{
     debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
-    // TODO: Remove MapDataCache - old bincode cache system being replaced with tiles
-    // map_data_cache::{MapDataCache, MapDataCacheError},
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{
         generator::{Generator, RouteWithStats},
@@ -52,10 +50,6 @@ pub enum RouterRunnerError {
 
     #[error("Failed to write result: {error}")]
     ResultWrite { error: ResultWriterError },
-
-    // TODO: Remove - old cache system
-    // #[error("Failed to write cache: {error}")]
-    // CacheWrite { error: MapDataCacheError },
 
     #[error("Failed to generate routes: {error}")]
     GenerateRoute { error: GeneratorError },
@@ -125,9 +119,7 @@ impl FromStr for DataSource {
             filename: s.to_string(),
         })?;
         if let Some(ext) = file.extension() {
-            if ext == "json" {
-                return Ok(DataSource::JsonFile { file });
-            } else if ext == "pbf" {
+            if ext == "pbf" {
                 return Ok(DataSource::PbfFile { file });
             }
         }
@@ -190,17 +182,9 @@ pub enum RoutingMode {
 enum CliMode {
     /// Load input data and generate a route
     GenerateRoute {
-        #[arg(long, value_name = "FILE")]
-        /// Input file name for json or osm.pbf file (DEPRECATED - use --tiles instead)
-        input: Option<DataSource>,
-
         #[arg(long, value_name = "DIR")]
-        /// Directory to store the generated cache (DEPRECATED - will be removed)
-        cache_dir: Option<PathBuf>,
-
-        #[arg(long, value_name = "DIR")]
-        /// Tiles directory containing manifest.json (NEW - required for RMDF tiles)
-        tiles: Option<PathBuf>,
+        /// Tiles directory containing manifest.json (required)
+        tiles: PathBuf,
 
         #[arg(
             long,
@@ -270,16 +254,6 @@ enum CliMode {
         #[arg(long, value_name = "IDENTIFIER")]
         /// Route request id to track individual requests in flight
         route_req_id: Option<String>,
-    },
-    /// Create an input data cache
-    PrepCache {
-        #[arg(long, value_name = "FILE")]
-        /// Input file name for json or osm.pbf file
-        input: DataSource,
-
-        #[arg(long, value_name = "DIR")]
-        /// Directory to store the generated cache
-        cache_dir: PathBuf,
     },
     /// Generate RMDF tiles from OSM PBF file
     GenerateTiles {
@@ -388,9 +362,7 @@ impl RouterRunner {
 
     #[tracing::instrument(skip_all)]
     fn run_dual(
-        data_source: Option<DataSource>,
-        cache_dir: Option<PathBuf>,
-        tiles: Option<PathBuf>,
+        tiles: PathBuf,
         routing_mode: &RoutingMode,
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
@@ -399,13 +371,11 @@ impl RouterRunner {
         DebugWriter::init(debug_dir).context("Failed to init debug writer")?;
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
 
-        // Check if using new tile-based system or old cache system
-        if let Some(tiles_dir) = tiles {
-            // NEW: Use TileManager for routing
-            info!("Using RMDF tiles from {:?}", tiles_dir);
+        // Use TileManager for routing
+        info!("Using RMDF tiles from {:?}", tiles);
 
-            let mut tile_manager = crate::rmdf::TileManager::new(tiles_dir)
-                .context("Failed to initialize TileManager")?;
+        let mut tile_manager = crate::rmdf::TileManager::new(tiles)
+            .context("Failed to initialize TileManager")?;
 
             // SAFETY: TileManager lives for entire routing request
             // This is safe because we control the execution flow
@@ -447,19 +417,7 @@ impl RouterRunner {
                 },
             )
             .map_err(|error| RouterRunnerError::ResultWrite { error })?;
-            Ok(())
-        } else if let Some(_data_source) = data_source {
-            // TODO: Old --input path removed - only --tiles is supported now
-            anyhow::bail!("The --input option has been removed. Please use --tiles instead with pre-generated RMDF tiles.")
-        } else {
-            anyhow::bail!("--tiles directory is required")
-        }
-    }
-
-    #[tracing::instrument]
-    fn run_cache(_data_source: &DataSource, _cache_dir: PathBuf) -> anyhow::Result<()> {
-        // TODO: Old bincode cache system removed
-        anyhow::bail!("The prep-cache command has been removed. Use generate-tiles instead to create RMDF tiles.")
+        Ok(())
     }
 
     #[tracing::instrument]
@@ -501,24 +459,17 @@ impl RouterRunner {
         match &cli.mode {
             CliMode::GenerateRoute {
                 routing_mode,
-                cache_dir,
                 tiles,
                 rule_file,
-                input,
                 output,
                 debug_dir,
             } => RouterRunner::run_dual(
-                input.clone(),
-                cache_dir.clone(),
                 tiles.clone(),
                 routing_mode,
                 output,
                 rule_file.clone(),
                 debug_dir.clone(),
             ),
-            CliMode::PrepCache { input, cache_dir } => {
-                RouterRunner::run_cache(input, cache_dir.clone()).context("Failed to run cache")
-            }
             CliMode::StartServer {
                 input,
                 cache_dir,

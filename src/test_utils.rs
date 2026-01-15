@@ -5,7 +5,9 @@ use crate::{
         graph::{MapDataGraph, MapDataLineRef, MAP_DATA_GRAPH},
         osm::{OsmNode, OsmRelation, OsmWay},
     },
-    osm_data::{data_reader::OsmDataReader, DataSource},
+    // TODO: OsmDataReader removed - old graph building system replaced with tiles
+    // osm_data::{data_reader::OsmDataReader, DataSource},
+    osm_data::DataSource,
     router::route::Route,
 };
 
@@ -355,6 +357,8 @@ pub fn test_dataset_3() -> OsmTestData {
     )
 }
 
+// TODO: Old graph building system removed - these test helpers need to be rewritten for tile system
+/*
 pub fn graph_from_test_file(file: &PathBuf) -> MapDataGraph {
     let data_source = DataSource::JsonFile { file: file.clone() };
     let data_reader = OsmDataReader::new(data_source);
@@ -380,6 +384,7 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
 
     map_data
 }
+*/
 
 pub fn set_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
     MAP_DATA_GRAPH.get_or_init(|| map_data)
