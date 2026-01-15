@@ -1,7 +1,9 @@
 mod pbf_streamer;
 mod intermediate;
+mod proximity;
 
 pub use pbf_streamer::PbfStreamer;
+pub use proximity::ProximityComputer;
 
 use std::path::PathBuf;
 use anyhow::Result;
@@ -32,9 +34,12 @@ impl TileGenerator {
     pub fn generate(&self) -> Result<()> {
         // Phase 2: Stream and partition
         let streamer = PbfStreamer::new(&self.input_file, &self.output_dir, self.tile_size_degrees)?;
-        let _tile_buffers = streamer.partition()?;
+        let tile_buffers = streamer.partition()?;
 
-        // Phase 3: Proximity computation (not implemented yet)
+        // Phase 3: Proximity computation
+        let proximity_computer = ProximityComputer::new(&self.input_file, self.tile_size_degrees)?;
+        proximity_computer.compute_all(&tile_buffers, &self.output_dir)?;
+
         // Phase 4: RMDF writing (not implemented yet)
 
         Ok(())

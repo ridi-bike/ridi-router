@@ -1,24 +1,3 @@
-# Phase 3: Proximity & Nogo Computation with Overlap
-
-## Overview
-
-Implement proximity and nogo area computation for each tile using a 500m buffer overlap strategy. This phase computes the `residential_in_proximity` and `nogo_area` flags for all nodes, which were initialized to false in Phase 2.
-
-**Goals:**
-- Extract residential and military area polygons from PBF
-- Implement 500m tile boundary overlap for proximity computation
-- Parallelize computation across tiles using rayon
-- Update intermediate tile buffers with computed flags
-
-## Changes Required
-
-### 1. Create Proximity Computation Module
-
-**File**: `src/rmdf/generator/proximity.rs` (new file)
-
-**Changes**: Implement overlap-based proximity computation
-
-```rust
 use anyhow::{Context, Result};
 use geo::{Point, Distance, Haversine, HaversineClosestPoint, CoordsIter, GeodesicArea};
 use rayon::prelude::*;
@@ -107,7 +86,7 @@ impl ProximityComputer {
         let buffered_bounds = self.add_buffer_to_bounds(core_bounds, RESIDENTIAL_PROXIMITY_THRESHOLD_METERS);
 
         // For each node in the core tile
-        for (node_id, node) in tile.nodes.iter_mut() {
+        for (_node_id, node) in tile.nodes.iter_mut() {
             // Only compute for nodes in core bounds (not buffer nodes)
             if !self.point_in_bounds(node.lat as f32, node.lon as f32, core_bounds) {
                 continue;
@@ -167,7 +146,7 @@ impl ProximityComputer {
     }
 
     /// Compute residential proximity flag (from src/osm_data/pbf_reader.rs:90-126)
-    fn compute_residential_proximity(&self, lat: f64, lon: f64, bounds: TileBounds) -> bool {
+    fn compute_residential_proximity(&self, lat: f64, lon: f64, _bounds: TileBounds) -> bool {
         let tot_area = match self.residential_areas.find_closest_areas_refs(
             lat as f32,
             lon as f32,
@@ -266,102 +245,3 @@ mod tests {
         assert!(buffered.lon_max > 25.0);
     }
 }
-```
-
-**Rationale**:
-- Reuses existing proximity logic from pbf_reader.rs
-- 500m buffer ensures correct computation at tile edges
-- Parallel processing with rayon for performance
-- Only updates nodes in core tile bounds (not buffer duplicates)
-
-### 2. Integrate with Tile Generator
-
-**File**: `src/rmdf/generator/mod.rs`
-
-**Changes**: Add proximity computation phase
-
-```rust
-mod pbf_streamer;
-mod intermediate;
-mod proximity;  // NEW
-
-pub use pbf_streamer::*;
-pub use intermediate::*;
-pub use proximity::*;  // NEW
-
-use std::path::PathBuf;
-use anyhow::Result;
-
-pub struct TileGenerator {
-    input_file: PathBuf,
-    output_dir: PathBuf,
-    tile_size_degrees: f32,
-}
-
-impl TileGenerator {
-    // ... existing new() method
-
-    pub fn generate(&self) -> Result<()> {
-        // Phase 2: Stream and partition
-        let streamer = PbfStreamer::new(&self.input_file, &self.output_dir, self.tile_size_degrees)?;
-        let tile_buffers = streamer.partition()?;
-
-        // Phase 3: Proximity computation (NEW)
-        let proximity_computer = ProximityComputer::new(&self.input_file, self.tile_size_degrees)?;
-        proximity_computer.compute_all(&tile_buffers, &self.output_dir)?;
-
-        // Phase 4: RMDF writing (not implemented yet)
-
-        Ok(())
-    }
-}
-```
-
-**Rationale**: Chains proximity computation after partitioning.
-
-## Success Criteria
-
-### Automated Verification
-
-- [x] Unit tests pass: `cargo test rmdf::generator::proximity`
-- [x] Bounds computation tests pass
-- [x] Buffer expansion tests pass
-- [x] Parallel computation completes without deadlocks
-- [x] Type checking passes: `cargo check`
-
-### Manual Verification
-
-**Note:** Manual verification will be performed in Phase 9 (End-to-End Testing) once the full pipeline is complete.
-
-- [ ] Generate tiles with proximity: `ridi-router generate-tiles --input test.pbf --output ./tiles`
-- [ ] Inspect intermediate files - nodes have proximity flags set
-- [ ] Nodes near residential areas have `residential_in_proximity = true`
-- [ ] Nodes inside military areas have `nogo_area = true`
-- [ ] Border nodes get correct flags (not influenced by buffer artifacts)
-
-## Dependencies
-
-- **Depends on**: Phase 2 (needs intermediate tile buffers)
-- **Blocks**: Phase 4 (needs proximity flags for RMDF serialization)
-
-## Risks & Mitigations
-
-**Risk**: Buffer size calculation inaccurate at high latitudes
-- **Mitigation**: Use Haversine distance for exact calculations if needed
-
-**Risk**: PBF opened twice (residential + military)
-- **Mitigation**: Acceptable for Phase 3; could optimize with single pass in future
-
-**Risk**: Memory usage for AreaGrid
-- **Mitigation**: AreaGrid is kept in memory but is small (~1GB for global coverage)
-
-**Risk**: Parallel computation race conditions
-- **Mitigation**: Each tile processed independently, no shared state except read-only AreaGrids
-
-## Notes
-
-- Buffer overlap strategy eliminates edge artifacts
-- Only core tile nodes updated (border duplicates remain with default false)
-- AreaGrid extraction matches current pbf_reader.rs behavior exactly
-- Constants (500m, 100m thresholds) unchanged from current implementation
-- Parallel processing should complete Montenegro in <10 seconds
