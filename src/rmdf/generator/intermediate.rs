@@ -37,36 +37,36 @@ impl IntermediateTile {
         self.relations.push(relation);
     }
 
-    /// Save to disk as bincode (for performance)
+    /// Save to disk as JSON (for debugging and compatibility)
     pub fn save_to_disk(&self, output_dir: &std::path::Path) -> anyhow::Result<()> {
-        let filename = format!("intermediate_{}_{}.bin", self.tile_id.col, self.tile_id.row);
+        let filename = format!("intermediate_{}_{}.json", self.tile_id.col, self.tile_id.row);
         let path = output_dir.join(filename);
 
         let file = std::fs::File::create(path)?;
-        bincode::serialize_into(file, self)?;
+        serde_json::to_writer(file, self)?;
 
         Ok(())
     }
 
     /// Load from disk
     pub fn load_from_disk(output_dir: &std::path::Path, tile_id: TileId) -> anyhow::Result<Self> {
-        let filename = format!("intermediate_{}_{}.bin", tile_id.col, tile_id.row);
+        let filename = format!("intermediate_{}_{}.json", tile_id.col, tile_id.row);
         let path = output_dir.join(filename);
 
         let file = std::fs::File::open(path)?;
-        let tile = bincode::deserialize_from(file)?;
+        let tile = serde_json::from_reader(file)?;
 
         Ok(tile)
     }
 
     /// Load from disk if exists, otherwise create new
     pub fn load_from_disk_if_exists(output_dir: &std::path::Path, tile_id: TileId) -> anyhow::Result<Self> {
-        let filename = format!("intermediate_{}_{}.bin", tile_id.col, tile_id.row);
+        let filename = format!("intermediate_{}_{}.json", tile_id.col, tile_id.row);
         let path = output_dir.join(filename);
 
         if path.exists() {
             let file = std::fs::File::open(path)?;
-            let tile = bincode::deserialize_from(file)?;
+            let tile = serde_json::from_reader(file)?;
             Ok(tile)
         } else {
             Ok(Self::new(tile_id))

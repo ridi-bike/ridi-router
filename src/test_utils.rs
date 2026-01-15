@@ -5,7 +5,6 @@ use crate::{
         graph::{MapDataGraph, MapDataLineRef, MAP_DATA_GRAPH},
         osm::{OsmNode, OsmRelation, OsmWay},
     },
-    osm_data::{data_reader::OsmDataReader, DataSource},
     router::route::Route,
 };
 
@@ -355,11 +354,10 @@ pub fn test_dataset_3() -> OsmTestData {
     )
 }
 
-pub fn graph_from_test_file(file: &PathBuf) -> MapDataGraph {
-    let data_source = DataSource::JsonFile { file: file.clone() };
-    let data_reader = OsmDataReader::new(data_source);
-    data_reader.read_data().unwrap()
-}
+// REMOVED: JSON support has been removed. Use graph_from_test_dataset instead.
+// pub fn graph_from_test_file(file: &PathBuf) -> MapDataGraph {
+//     ...
+// }
 
 pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
     let mut map_data = MapDataGraph::new();

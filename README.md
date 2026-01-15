@@ -36,6 +36,22 @@ Repeat the process until all possible routes are explored, we've reached an arbi
 
 Multiple different waypoints are chosen to introduce variation in the generated routes.
 
+## Breaking Changes in v1.0
+
+**IMPORTANT**: Version 1.0 introduces a new tile-based map data format (RMDF) and removes several deprecated features:
+
+- **Removed**: JSON input support (only PBF files supported)
+- **Removed**: Bincode cache system (`--cache-dir` parameter)
+- **Removed**: `prep-cache` command
+- **Removed**: Direct PBF loading for routing (`--input` parameter for `generate-route`)
+- **Required**: You must now generate RMDF tiles before routing using the `generate-tiles` command
+- **New**: `--tiles` directory parameter (required for routing)
+
+**Migration**: To upgrade from v0.x, you'll need to:
+1. Download OSM PBF files for your region from https://download.geofabrik.de/
+2. Generate RMDF tiles using `ridi-router generate-tiles`
+3. Use the generated tiles directory for routing
+
 ## Usage
 
 ### Get the CLI tool
@@ -52,111 +68,69 @@ Rust must be installed and set up beforehand.
 
 The binary can be built from source by cloning the repo and running `cargo build --release`. A release binary is needed to ensure routes are generated at an acceptable speed.
 
-### Input map data
+### Input Map Data (PBF format)
 
-#### PBF format
+Data files for regions can be downloaded at https://download.geofabrik.de/ - there are individual files available for all countries, US states and other special regions. Depending on the region size, these files can be fairly large in their packed state (for example Spain is 1.2 GB, Germany is 4.1 GB, USA is 10.1 GB).
 
-Data files for regions can be downloaded at https://download.geofabrik.de/ - there are individual files available for all countries, US states and other special regions. Depending on the region size, these files can be fairly large in their packed state (for example Spain is 1.2 GB, Germany is 4.1 GB, USA is 10.1 GB)
+**Note**: As of version 1.0, only PBF format is supported. JSON format has been removed.
 
-When the files are loaded into ridi-router, they are unpacked and stored in memory in a way that's convenient for route generation, but takes up more memory than the original file by roughly 8-10x, for example Spain would require 9 GB of memory to process.
+### CLI Usage
 
-#### JSON format
+#### Step 1: Generate Tiles
 
-Map data json can be downloaded from a web interface at https://overpass-turbo.eu/ by querying the map data based on specific GPS coordinates and distances. This is preferred as it will reduce the file sizes and memory consumption when generating routes.
-
-An example query might look like this. 
-
-```
-[out:json];
-way
-  [highway]
-  [highway!=cycleway]
-  [highway!=steps]
-  [highway!=pedestrian]
-  [highway!=path]
-  [highway!=service]
-  [highway!=footway]
-  [motor_vehicle!=private]
-  [motor_vehicle!=no]
-  [!service]
-  [access!=no]
-  [access!=private]
-  (around:100000,56.951861,24.113821,57.313103,25.281460)->.roads;
-relation
-  [type=restriction]
-  (around:100000,56.951861,24.113821,57.313103,25.281460)->.rules;
-(
-  .roads;>>;
-  .rules;>>;
-);
-out;
-
-```
-
-It queries all relevant data in a 100km zone around a line between two gps points 56.951861,24.113821 and 57.313103,25.281460. The same service is also available as an API endpoint at https://overpass-api.de/api/interpreter that can be queried with `curl` and saved as a json file
+Before routing, you must first generate RMDF tiles from a PBF file:
 
 ```bash
-curl --data "[out:json];
-way
-  [highway]
-  [highway!=cycleway]
-  [highway!=steps]
-  [highway!=pedestrian]
-  [highway!=path]
-  [highway!=service]
-  [highway!=footway]
-  [motor_vehicle!=private]
-  [motor_vehicle!=no]
-  [!service]
-  [access!=no]
-  [access!=private]
-  (around:100000,56.951861,24.113821,57.313103,25.281460)->.roads;
-relation
-  [type=restriction]
-  (around:100000,56.951861,24.113821,57.313103,25.281460)->.rules;
-(
-  .roads;>>;
-  .rules;>>;
-);
-out;" "https://overpass-api.de/api/interpreter" > map-data.json
-
+ridi-router generate-tiles \
+    --input montenegro.osm.pbf \
+    --output ./tiles \
+    --tile-size 0.1
 ```
 
-The above query will produce a json file with the size around 150 MB.
+Args:
+- `--input` - OSM PBF file downloaded from https://download.geofabrik.de/
+- `--output` - Directory where tiles and manifest will be stored
+- `--tile-size` - Tile size in degrees (default: 1.0, smaller values like 0.1 for better granularity)
 
-### CLI usage
+#### Step 2: Start-Finish Route Generation
 
-#### Start-finish route generation
-
-`ridi-router generate-route --input map.json --output routes.gpx --rule-file avoid-pavement.json start-finish --start 56.951861,24.113821 --finish 57.313103,25.281460`
+```bash
+ridi-router generate-route \
+    --tiles ./tiles \
+    --output routes.gpx \
+    --rule-file avoid-pavement.json \
+    start-finish \
+    --start 56.951861,24.113821 \
+    --finish 57.313103,25.281460
+```
 
 Args:
+- `--tiles` - Directory containing RMDF tiles and manifest.json (from Step 1)
+- `--output` - File to write the generated routes to (GPX or JSON). Can be omitted to print to terminal
+- `--rule-file` - Rule file defining route generation options (see below)
+- `--start` - Start GPS coordinates (LAT,LON)
+- `--finish` - Finish GPS coordinates (LAT,LON)
 
-- input - file to read map data from. Can be either osm.pbf file downloaded form [https://download.geofabrik.de/] or json file downloaded from [https://overpass-api.de/api/interpreter]
-- output - a file to write the generated routes to. Can be a gpx file or a json file. Can be omitted for the result to be printed to terminal
-- rule-file - a rule file to define route generation options. See below for the format and rule description
-- start - GPS coordinates in the format of LAT,LON
-- finish - GPS coordinates in the format of LAT,LON
+#### Step 2 Alternative: Round-Trip Route Generation
 
-#### Round-trip route generation
-
-`ridi-router generate-route --input map.json --output routes.gpx --rule-file avoid-pavement.json round-trip --start-finish 56.951861,24.113821 --bearing 35 --distance 100000`
+```bash
+ridi-router generate-route \
+    --tiles ./tiles \
+    --output routes.gpx \
+    --rule-file avoid-pavement.json \
+    round-trip \
+    --start-finish 56.951861,24.113821 \
+    --bearing 35 \
+    --distance 100000
+```
 
 Args:
-
-- input - file to read map data from. Can be either osm.pbf file downloaded form [https://download.geofabrik.de/] or json file downloaded from [https://overpass-api.de/api/interpreter]
-- output - a file to write the generated routes to. Can be a gpx file or a json file. Can be omitted for the result to be printed to terminal
-- rule-file - a rule file to define route generation options. See below for the format and rule description
-- start-finish - GPS coordinates in the format of LAT,LON
-- bearing - direction specified in degrees where North: 0°, East: 90°, South: 180°, West: 270°
-- distance - desired distance for the round trip specified in meters
-
-#### Input Data caching
-
-If the input map file is large and the startup time takes too long, the input map data can be cached in a processed state. This can be done by specifying the `--cache-dir` argument. If this directory is specified, `ridi-router` on first run will cache the input data in the directory and in subsequent runs will read the cached data and considerably speed up the start up time.
-
-Example with data caching
-`ridi-router generate-route --input map.json --output routes.gpx --cache-dir ./map-data/cache --rule-file avoid-pavement.json round-trip --start-finish 56.951861,24.113821 --bearing 35 --distance 100000`
+- `--tiles` - Directory containing RMDF tiles and manifest.json
+- `--output` - File to write the generated routes to (GPX or JSON)
+- `--rule-file` - Rule file defining route generation options
+- `--start-finish` - Start and finish GPS coordinates (LAT,LON)
+- `--bearing` - Direction in degrees (North: 0°, East: 90°, South: 180°, West: 270°)
+- `--distance` - Desired round trip distance in meters
 
 ### Rule file
 
@@ -192,15 +166,7 @@ A rule file with default basic rule settings can be found here `./rule-examples/
 - no_short_detours - avoids jumping off roads at a junction with a more favourable surface or road type just to get back on the same road shortly after for example doing a short detour on a forst track coming off of a primary road just to join back in several hundred meters
 - no_sharp_turns - avoids scenarios where missing traffic rules in the OpenStreetMap data cause illegal U turns on highways or off/on ramps
 
-### Advanced usage
-
-#### Server-client setup
-
-Advanced use cases can include a long running server that processes the routes and a client that connects to the server to send and receive route requests. This can be done by running `ridi-router start-server <...args>` and `ridi-router start-client <...args>`. Details on usage are available in the cli help docs.
-
-#### Cache preperation
-
-Cache data files can be prepared for later usage without starting a server or generating routes. This can be done by running `ridi-router prep-cache <...args>`. More info in the cli help docs.
+### Advanced Usage
 
 #### Result Debugging
 
