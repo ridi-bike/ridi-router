@@ -2,12 +2,12 @@ mod pbf_streamer;
 mod intermediate;
 mod proximity;
 mod writer;
-mod manifest;
+pub mod manifest;
 
 pub use pbf_streamer::PbfStreamer;
 pub use proximity::ProximityComputer;
 pub use writer::RmdfWriter;
-pub use manifest::ManifestGenerator;
+pub use manifest::{ManifestGenerator, TileManifest};
 
 use std::path::PathBuf;
 use anyhow::Result;

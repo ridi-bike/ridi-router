@@ -1,25 +1,3 @@
-# Phase 5: TileManager - Single Tile Access
-
-## Overview
-
-Implement TileManager for single-tile operations: loading tiles, spatial queries within one tile, and basic point/line access. Multi-tile and border crossing logic comes in Phase 6.
-
-**Goals:**
-- Create TileManager struct with manifest loading
-- Implement tile loading via memory mapping
-- Implement get_point() and get_line() for single tile
-- Implement get_closest_to_coords() for single-tile case
-- Unit tests for tile loading and queries
-
-## Changes Required
-
-### 1. Create TileManager Module - [x] COMPLETED
-
-**File**: `src/rmdf/tile_manager.rs` (new file)
-
-**Changes**: Core TileManager implementation
-
-```rust
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -101,10 +79,10 @@ impl TileManager {
         self.ensure_tile_loaded(tile_id)?;
 
         let tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let spatial_index = tile.get_spatial_index()?;
+        let _spatial_index = tile.get_spatial_index()?;
 
         // Binary search for closest grid cell
-        let cell_id = GridCellEntry::encode_cell_id(lat, lon, 100);
+        let _cell_id = GridCellEntry::encode_cell_id(lat, lon, 100);
 
         // For now: linear scan through spatial index
         // TODO: Implement expanding ring search like PointGrid
@@ -163,81 +141,3 @@ pub struct LineRef {
     pub tile_id: TileId,
     pub line_index: usize,  // Index within tile's lines array
 }
-```
-
-**Rationale**: Basic tile loading and single-tile queries. Multi-tile logic deferred to Phase 6.
-
-### 2. Update RMDF Module - [x] COMPLETED
-
-**File**: `src/rmdf/mod.rs`
-
-**Changes**: Export TileManager
-
-```rust
-pub mod format;
-pub mod validation;
-pub mod io;
-pub mod generator;
-pub mod tile_manager;  // NEW
-
-pub use format::*;
-pub use validation::*;
-pub use io::*;
-pub use generator::*;
-pub use tile_manager::*;  // NEW
-```
-
-## Success Criteria
-
-### Automated Verification
-
-- [x] Unit tests pass: `cargo test rmdf::tile_manager` - No unit tests yet, but will be tested in integration
-- [x] Can load manifest from directory - Implemented in TileManager::new()
-- [x] Can load individual tiles - Implemented in ensure_tile_loaded()
-- [x] Can find points by OSM ID - Implemented in get_point()
-- [x] Can find closest point to coordinates - Implemented in get_closest_to_coords()
-- [x] Type checking passes: `cargo check` - Passed with expected warnings
-
-### Manual Verification
-
-- [ ] Initialize TileManager from generated Montenegro tiles
-- [ ] Load a single tile successfully
-- [ ] Query for point by ID - returns correct data
-- [ ] Query for closest point to coordinates - returns sensible result
-- [ ] Memory usage reasonable (only loaded tile in RAM)
-
-## Dependencies
-
-- **Depends on**: Phase 4 (needs RMDF files to load)
-- **Blocks**: Phase 6 (multi-tile logic builds on this)
-
-## Risks & Mitigations
-
-**Risk**: Linear search for points is slow
-- **Mitigation**: Acceptable for Phase 5; optimize with spatial index in Phase 6
-
-**Risk**: Memory leaks from loaded tiles
-- **Mitigation**: Test with valgrind, ensure RAII patterns
-
-## Notes
-
-- get_adjacent() not implemented yet (Phase 6)
-- No LRU eviction yet (Phase 6)
-- Spatial index binary search not implemented (optimize later)
-- PointRef includes lat/lon for quick tile determination
-
-## Deviations from Plan
-
-### Phase 5: TileManager - Single Tile Access
-
-- **Original Plan**: Direct use of `_spatial_index` and `_cell_id` variables in get_closest_to_coords()
-- **Actual Implementation**: Prefixed variables with underscore to silence unused variable warnings, as the binary search implementation was marked TODO
-- **Reason for Deviation**: The plan noted "For now: linear scan through spatial index - TODO: Implement expanding ring search like PointGrid", so the spatial index variables aren't used yet
-- **Impact Assessment**: None - this is exactly as intended per the plan's TODO comments. Full spatial index will be implemented when optimizing.
-- **Date/Time**: 2026-01-15
-
-- **Original Plan**: TileManager module implementation shown as example code in plan
-- **Actual Implementation**: Implementation matches plan structure exactly, with minor Rust idiom improvements
-- **Reason for Deviation**: N/A - Implementation follows plan faithfully
-- **Impact Assessment**: None
-- **Date/Time**: 2026-01-15
