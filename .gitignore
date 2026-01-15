@@ -1,3 +1,7 @@
 /.tmp
 /target
 /debug
+/test_data/montenegro_tiles_e2e/
+/test_data/tiles_backup/
+/test_data/*.gpx
+/test_data/*.json

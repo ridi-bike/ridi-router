@@ -165,8 +165,8 @@ impl Route {
     }
     pub fn is_back_on_road_within_distance(
         &self,
-        hw_ref: Option<smartstring::alias::String>,
-        hw_name: Option<smartstring::alias::String>,
+        hw_ref: Option<String>,
+        hw_name: Option<String>,
         len_check_m: f32,
     ) -> bool {
         let mut len_tot_m = 0.;
@@ -189,7 +189,7 @@ impl Route {
                     .tags
                     .get()
                     .hw_ref()
-                    == hw_ref.as_ref())
+                    == hw_ref)
                 || (last_route_segment
                     .get_line()
                     .get()
@@ -198,7 +198,7 @@ impl Route {
                     .name()
                     .is_some()
                     && last_route_segment.get_line().get(). tags.get().name()
-                        == hw_name.as_ref())
+                        == hw_name)
             {
                 return false;
             }
@@ -212,9 +212,9 @@ impl Route {
                     .get()
                     .distance_between(segment.get_end_point());
                 if (segment.get_line().get(). tags.get().hw_ref().is_some()
-                    && segment.get_line().get(). tags.get().hw_ref() == hw_ref.as_ref())
+                    && segment.get_line().get(). tags.get().hw_ref() == hw_ref)
                     || (segment.get_line().get(). tags.get().name().is_some()
-                        && segment.get_line().get(). tags.get().name() == hw_name.as_ref())
+                        && segment.get_line().get(). tags.get().name() == hw_name)
                 {
                     return len_check_m >= len_tot_m;
                 }
@@ -255,7 +255,7 @@ impl Route {
 
     pub fn calc_stats(&self, rules: &RouterRules) -> RouteStats {
         fn update_map(
-            tag_val: &Option<&smartstring::alias::String>,
+            tag_val: &Option<String>,
             line_len: f64,
             map: &mut HashMap<String, f64>,
         ) {

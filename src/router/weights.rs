@@ -177,16 +177,14 @@ pub fn weight_no_short_detours(input: WeightCalcInput) -> WeightCalcResult {
         .get()
         .tags
         .get()
-        .hw_ref()
-        .cloned();
+        .hw_ref();
     let hw_name = input
         .current_fork_segment
         .get_line()
         .get()
         .tags
         .get()
-        .name()
-        .cloned();
+        .name();
     if input.route.is_back_on_road_within_distance(
         hw_ref,
         hw_name,
@@ -286,11 +284,11 @@ pub fn weight_progress_speed(input: WeightCalcInput) -> WeightCalcResult {
 
 fn get_rule_for_tag(
     rule: &Option<HashMap<String, RulesTagValueAction>>,
-    segment_tag: Option<&smartstring::alias::String>,
+    segment_tag: Option<String>,
 ) -> Option<WeightCalcResult> {
     if let Some(ref rule_tag) = rule {
         if let Some(segment_tag) = segment_tag {
-            let rule_tag = rule_tag.get(&segment_tag.to_string());
+            let rule_tag = rule_tag.get(&segment_tag);
             if let Some(rule_tag) = rule_tag {
                 return Some(match rule_tag {
                     RulesTagValueAction::Avoid => WeightCalcResult::ForkChoiceDoNotUse,
@@ -464,7 +462,7 @@ fn was_on_avoid<F>(
     tag_getter: F,
 ) -> bool
 where
-    F: Fn(&Segment) -> Option<&smartstring::alias::String>,
+    F: Fn(&Segment) -> Option<String>,
 {
     if let Some(tag_rules) = tag_rule {
         let avoid_rules = tag_rules
@@ -477,7 +475,7 @@ where
         if route_chunk
             .iter()
             .filter_map(tag_getter)
-            .any(|tag| avoid_rules.contains(&&tag.to_string()))
+            .any(|tag| avoid_rules.contains(&&tag))
         {
             return true;
         }
