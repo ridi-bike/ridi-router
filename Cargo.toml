@@ -38,6 +38,7 @@ osmpbfreader = "0.16.1"
 postgres = "0.19.10"
 qstring = { version = "0.7.2", optional = true }
 rayon = "1.10.0"
+redb = "2.3"
 schemars = "0.8.21"
 serde = { version = "1.0.201", features = ["derive"] }
 serde_derive = "1.0.201"

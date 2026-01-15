@@ -376,14 +376,69 @@ impl RouterRunner {
     #[tracing::instrument(skip_all)]
     fn generate_route_with_tiles(
         _tile_manager: &'static mut crate::rmdf::TileManager,
-        _routing_mode: &RoutingMode,
-        _rules: RouterRules,
+        routing_mode: &RoutingMode,
+        rules: RouterRules,
     ) -> Result<Vec<RouteWithStats>, RouterRunnerError> {
-        // TODO: Implement tile-based routing
-        // This requires refactoring Walker/Navigator/Generator to work with TileManager
-        // For now, return empty routes vector
-        tracing::warn!("Tile-based routing not yet fully implemented");
-        Ok(Vec::new())
+        // Note: TileManager is already initialized in MapDataGraph
+        // The routing code will access it via MapDataGraph::get()
+        // The _tile_manager parameter is kept for API consistency but unused
+
+        let (start_lat, start_lon, finish_lat, finish_lon) = match routing_mode {
+            RoutingMode::StartFinish { start, finish } => {
+                (start.lat, start.lon, finish.lat, finish.lon)
+            }
+            RoutingMode::RoundTrip { start_finish, .. } => (
+                start_finish.lat,
+                start_finish.lon,
+                start_finish.lat,
+                start_finish.lon,
+            ),
+        };
+
+        // Find start point using MapDataGraph (which uses TileManager internally)
+        let start = MapDataGraph::get()
+            .get_closest_to_coords(
+                start_lat,
+                start_lon,
+                &rules,
+                false,
+                Some(&WP_LOOKUP_ALLOWED_HWS),
+            )
+            .ok_or(RouterRunnerError::PointNotFound {
+                point: "Start point".to_string(),
+            })?;
+
+        trace!("Start point {start}");
+
+        let finish = MapDataGraph::get()
+            .get_closest_to_coords(
+                finish_lat,
+                finish_lon,
+                &rules,
+                false,
+                Some(&WP_LOOKUP_ALLOWED_HWS),
+            )
+            .ok_or(RouterRunnerError::PointNotFound {
+                point: "Finish point".to_string(),
+            })?;
+
+        trace!("Finish point {finish}");
+
+        let round_trip = if let RoutingMode::RoundTrip {
+            bearing, distance, ..
+        } = routing_mode
+        {
+            Some((*bearing, *distance))
+        } else {
+            None
+        };
+
+        let route_generator = Generator::new(start.clone(), finish.clone(), round_trip, rules);
+        let routes = route_generator
+            .generate_routes()
+            .map_err(|error| RouterRunnerError::GenerateRoute { error })?;
+
+        Ok(routes)
     }
 
     #[tracing::instrument(skip_all)]

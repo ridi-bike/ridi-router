@@ -2,12 +2,15 @@ use self::osm::OsmRelation;
 
 #[cfg(feature = "debug-with-postgres")]
 pub mod debug_writer;
+pub mod generation_graph;
 pub mod graph;
 pub mod line;
 pub mod osm;
 pub mod point;
 pub mod proximity;
 pub mod rule;
+
+pub use generation_graph::GenerationGraph;
 
 #[derive(Debug, PartialEq, Clone, thiserror::Error)]
 pub enum MapDataError {

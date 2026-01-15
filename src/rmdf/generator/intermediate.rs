@@ -58,6 +58,36 @@ impl IntermediateTile {
 
         Ok(tile)
     }
+
+    /// Load from disk if exists, otherwise create new
+    pub fn load_from_disk_if_exists(output_dir: &std::path::Path, tile_id: TileId) -> anyhow::Result<Self> {
+        let filename = format!("intermediate_{}_{}.bin", tile_id.col, tile_id.row);
+        let path = output_dir.join(filename);
+
+        if path.exists() {
+            let file = std::fs::File::open(path)?;
+            let tile = bincode::deserialize_from(file)?;
+            Ok(tile)
+        } else {
+            Ok(Self::new(tile_id))
+        }
+    }
+
+    /// Merge another tile into this one
+    pub fn merge(&mut self, other: IntermediateTile) -> anyhow::Result<()> {
+        // Merge nodes (HashMap insert will replace if exists, but they should be identical)
+        for (id, node) in other.nodes {
+            self.nodes.insert(id, node);
+        }
+
+        // Merge ways (append, duplicates may occur but will be deduplicated later)
+        self.ways.extend(other.ways);
+
+        // Merge relations (append)
+        self.relations.extend(other.relations);
+
+        Ok(())
+    }
 }
 
 /// Collection of all intermediate tiles
@@ -81,6 +111,22 @@ impl TileBuffers {
         for tile in self.tiles.values() {
             tile.save_to_disk(output_dir)?;
         }
+        Ok(())
+    }
+
+    /// Flush tiles to disk and clear memory (incremental saving)
+    pub fn flush_to_disk(&mut self, output_dir: &std::path::Path) -> anyhow::Result<()> {
+        for (tile_id, tile) in self.tiles.drain() {
+            // Load existing tile from disk if it exists, otherwise create new
+            let mut existing_tile = IntermediateTile::load_from_disk_if_exists(output_dir, tile_id)?;
+
+            // Merge new data with existing
+            existing_tile.merge(tile)?;
+
+            // Write back to disk
+            existing_tile.save_to_disk(output_dir)?;
+        }
+
         Ok(())
     }
 }

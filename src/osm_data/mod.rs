@@ -7,7 +7,7 @@ use std::{io, path::PathBuf};
 // pub mod data_reader;
 pub mod json_parser;
 // pub mod json_reader;
-// pub mod pbf_area_reader;
+pub mod pbf_area_reader;  // Re-enabled - doesn't depend on MapDataGraph
 // pub mod pbf_reader;
 
 #[derive(Debug, thiserror::Error)]

@@ -95,11 +95,11 @@ pub fn weight_prefer_same_road(input: WeightCalcInput) -> WeightCalcResult {
     let current_ref = input
         .route
         .get_segment_last()
-        .and_then(|s| s.get_line().get().tags.borrow().hw_ref());
+        .and_then(|s| s.get_line().get().tags.get().hw_ref());
     let current_name = input
         .route
         .get_segment_last()
-        .and_then(|s| s.get_line().get().tags.borrow().name());
+        .and_then(|s| s.get_line().get().tags.get().name());
     let fork_ref = input
         .current_fork_segment
         .get_line()
@@ -325,7 +325,7 @@ pub fn weight_rules_highway(input: WeightCalcInput) -> WeightCalcResult {
         .any(|seg| {
             if let Some(tag_rule) = get_rule_for_tag(
                 &input.rules.highway,
-                seg.get_line().get().tags.borrow().highway(),
+                seg.get_line().get().tags.get().highway(),
             ) {
                 if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
                     return true;
@@ -367,7 +367,7 @@ pub fn weight_rules_surface(input: WeightCalcInput) -> WeightCalcResult {
         .any(|seg| {
             if let Some(tag_rule) = get_rule_for_tag(
                 &input.rules.surface,
-                seg.get_line().get().tags.borrow().surface(),
+                seg.get_line().get().tags.get().surface(),
             ) {
                 if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
                     return true;
@@ -409,7 +409,7 @@ pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
         .any(|seg| {
             if let Some(tag_rule) = get_rule_for_tag(
                 &input.rules.smoothness,
-                seg.get_line().get().tags.borrow().smoothness(),
+                seg.get_line().get().tags.get().smoothness(),
             ) {
                 if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
                     return true;
@@ -490,17 +490,17 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput) -> WeightCalcResult {
 
     let last_chunk = input.route.get_route_chunk_since_junction_before_last();
     if was_on_avoid(&last_chunk, &input.rules.highway, |segment| {
-        segment.get_line().get().tags.borrow().highway()
+        segment.get_line().get().tags.get().highway()
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
     if was_on_avoid(&last_chunk, &input.rules.surface, |segment| {
-        segment.get_line().get().tags.borrow().surface()
+        segment.get_line().get().tags.get().surface()
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
     if was_on_avoid(&last_chunk, &input.rules.smoothness, |segment| {
-        segment.get_line().get().tags.borrow().smoothness()
+        segment.get_line().get().tags.get().smoothness()
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }

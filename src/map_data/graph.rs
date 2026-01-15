@@ -28,6 +28,7 @@ use crate::{
         // data_reader::{OsmDataReader, ALLOWED_ACCESS_VALUES, ALLOWED_HIGHWAY_VALUES},
         DataSource,
     },
+    rmdf::format::{TileId, TagSetRecord},
     router::rules::{RouterRules, RulesTagValueAction},
 };
 
@@ -51,48 +52,82 @@ pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagValueRef {
-    pub tag_value_pos: u32,
+    pub tile_id: TileId,
+    pub tag_value_idx: u32,
 }
 impl ElementTagValueRef {
-    pub fn none() -> Self {
-        Self { tag_value_pos: 0 }
-    }
-    pub fn some(tag_idx: u32) -> Self {
+    pub fn none(tile_id: TileId) -> Self {
         Self {
-            tag_value_pos: tag_idx + 1,
+            tile_id,
+            tag_value_idx: TagSetRecord::NONE,
         }
     }
-    pub fn borrow(&self) -> Option<String> {
-        let idx = if self.tag_value_pos == 0 {
-            return None;
+
+    pub fn some(tile_id: TileId, tag_idx: u32) -> Self {
+        Self {
+            tile_id,
+            tag_value_idx: tag_idx,
+        }
+    }
+
+    pub fn from_idx(tile_id: TileId, tag_idx: u32) -> Self {
+        if tag_idx == TagSetRecord::NONE {
+            Self::none(tile_id)
         } else {
-            self.tag_value_pos - 1
-        };
-        let tags = MapDataGraph::get().tags.read().unwrap();
-        tags.tag_values.get(idx as usize).map(|s| s.to_string())
+            Self::some(tile_id, tag_idx)
+        }
+    }
+
+    pub fn get(&self) -> Option<String> {
+        if self.tag_value_idx == TagSetRecord::NONE {
+            return None;
+        }
+
+        MapDataGraph::get()
+            .tile_manager
+            .write()
+            .unwrap()
+            .get_tag_value(self.tile_id, self.tag_value_idx)
+            .ok()
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagSetRef {
+    pub tile_id: TileId,
     pub tag_set_idx: u32,
 }
 
 impl ElementTagSetRef {
-    pub fn borrow(&self) -> ElementTagSet {
-        let tags = MapDataGraph::get().tags.read().unwrap();
-        tags.tag_sets.get(self.tag_set_idx as usize)
-            .cloned()
-            .unwrap_or_else(|| ElementTagSet {
-                name: ElementTagValueRef::none(),
-                hw_ref: ElementTagValueRef::none(),
-                highway: ElementTagValueRef::none(),
-                surface: ElementTagValueRef::none(),
-                smoothness: ElementTagValueRef::none(),
-            })
+    pub fn new(tile_id: TileId, idx: u32) -> Self {
+        Self {
+            tile_id,
+            tag_set_idx: idx,
+        }
     }
-    pub fn new(idx: u32) -> Self {
-        Self { tag_set_idx: idx }
+
+    pub fn get(&self) -> ElementTagSet {
+        let tag_set_record = MapDataGraph::get()
+            .tile_manager
+            .write()
+            .unwrap()
+            .get_tag_set_record(self.tile_id, self.tag_set_idx)
+            .unwrap_or_else(|_| TagSetRecord {
+                name_idx: TagSetRecord::NONE,
+                hw_ref_idx: TagSetRecord::NONE,
+                highway_idx: TagSetRecord::NONE,
+                surface_idx: TagSetRecord::NONE,
+                smoothness_idx: TagSetRecord::NONE,
+            });
+
+        // Construct ElementTagSet with tile-aware refs
+        ElementTagSet {
+            name: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.name_idx),
+            hw_ref: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.hw_ref_idx),
+            highway: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.highway_idx),
+            surface: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.surface_idx),
+            smoothness: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.smoothness_idx),
+        }
     }
 }
 
@@ -107,19 +142,19 @@ pub struct ElementTagSet {
 
 impl ElementTagSet {
     pub fn name(&self) -> Option<String> {
-        self.name.borrow()
+        self.name.get()
     }
     pub fn hw_ref(&self) -> Option<String> {
-        self.hw_ref.borrow()
+        self.hw_ref.get()
     }
     pub fn highway(&self) -> Option<String> {
-        self.highway.borrow()
+        self.highway.get()
     }
     pub fn surface(&self) -> Option<String> {
-        self.surface.borrow()
+        self.surface.get()
     }
     pub fn smoothness(&self) -> Option<String> {
-        self.smoothness.borrow()
+        self.smoothness.get()
     }
 }
 
@@ -150,11 +185,16 @@ impl ElementTags {
         surface: Option<&String>,
         smoothness: Option<&String>,
     ) -> ElementTagSetRef {
-        let name_ref = self.get_tag_value_ref(name);
-        let hw_ref_ref = self.get_tag_value_ref(hw_ref);
-        let highway_ref = self.get_tag_value_ref(highway);
-        let surface_ref = self.get_tag_value_ref(surface);
-        let smoothness_ref = self.get_tag_value_ref(smoothness);
+        // LEGACY: This old tag deduplication system is not used in tile-based routing
+        // Using placeholder TileId for compatibility with old code
+        // This will be removed in Phase 8 cleanup
+        let placeholder_tile = TileId { col: 0, row: 0 };
+
+        let name_ref = self.get_tag_value_ref(name, placeholder_tile);
+        let hw_ref_ref = self.get_tag_value_ref(hw_ref, placeholder_tile);
+        let highway_ref = self.get_tag_value_ref(highway, placeholder_tile);
+        let surface_ref = self.get_tag_value_ref(surface, placeholder_tile);
+        let smoothness_ref = self.get_tag_value_ref(smoothness, placeholder_tile);
 
         let tag_set = ElementTagSet {
             name: name_ref,
@@ -172,11 +212,11 @@ impl ElementTags {
                 new_idx
             }
         };
-        ElementTagSetRef::new(idx)
+        ElementTagSetRef::new(placeholder_tile, idx)
     }
-    fn get_tag_value_ref(&mut self, value: Option<&String>) -> ElementTagValueRef {
+    fn get_tag_value_ref(&mut self, value: Option<&String>, tile_id: TileId) -> ElementTagValueRef {
         match value {
-            None => ElementTagValueRef::none(),
+            None => ElementTagValueRef::none(tile_id),
             Some(v) => {
                 let v = if v.ends_with("_link") {
                     v.replace("_link", "")
@@ -193,7 +233,7 @@ impl ElementTags {
                         new_idx
                     }
                 };
-                ElementTagValueRef::some(idx)
+                ElementTagValueRef::some(tile_id, idx)
             }
         }
     }
@@ -348,7 +388,7 @@ impl MapDataGraph {
                 2 => LineDirection::Roundabout,
                 _ => LineDirection::BothWays,
             },
-            tags: ElementTagSetRef::new(line_record.tag_set_index),
+            tags: ElementTagSetRef::new(tile_id, line_record.tag_set_index),
         }
     }
 

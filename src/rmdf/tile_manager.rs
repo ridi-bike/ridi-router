@@ -231,6 +231,26 @@ impl TileManager {
         Ok(())
     }
 
+    /// Get tag value string from tile
+    pub fn get_tag_value(&mut self, tile_id: TileId, tag_value_idx: u32) -> Result<String> {
+        self.ensure_tile_loaded(tile_id)?;
+
+        let tile = self.loaded_tiles.get(&tile_id).unwrap();
+        let value_str = tile.get_tag_value(tag_value_idx)?;
+
+        Ok(value_str.to_string())
+    }
+
+    /// Get tag set record from tile
+    pub fn get_tag_set_record(&mut self, tile_id: TileId, tag_set_idx: u32) -> Result<TagSetRecord> {
+        self.ensure_tile_loaded(tile_id)?;
+
+        let tile = self.loaded_tiles.get(&tile_id).unwrap();
+        let tag_set = tile.get_tag_set(tag_set_idx)?;
+
+        Ok(*tag_set)
+    }
+
 }
 
 #[cfg(test)]

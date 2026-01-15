@@ -7,7 +7,7 @@ use std::io::{Write, Seek, SeekFrom};
 use std::path::Path;
 use tracing::debug;
 
-use crate::map_data::graph::MapDataGraph;
+use crate::map_data::GenerationGraph;
 use crate::rmdf::format::*;
 
 use super::intermediate::IntermediateTile;
@@ -25,7 +25,7 @@ impl RmdfWriter {
     pub fn write_tile(&self, intermediate: &IntermediateTile, output_path: &Path) -> Result<()> {
         debug!("Writing RMDF file: {:?}", output_path);
 
-        // Step 1: Build MapDataGraph from intermediate data
+        // Step 1: Build GenerationGraph from intermediate data
         let graph = self.build_graph(intermediate)?;
 
         // Step 2: Build spatial index
@@ -105,8 +105,8 @@ impl RmdfWriter {
         Ok(())
     }
 
-    fn build_graph(&self, intermediate: &IntermediateTile) -> Result<MapDataGraph> {
-        let mut graph = MapDataGraph::new();
+    fn build_graph(&self, intermediate: &IntermediateTile) -> Result<GenerationGraph> {
+        let mut graph = GenerationGraph::new();
 
         // Insert all nodes
         for node in intermediate.nodes.values() {
@@ -131,7 +131,7 @@ impl RmdfWriter {
         Ok(graph)
     }
 
-    fn build_spatial_index(&self, graph: &MapDataGraph) -> Result<Vec<u8>> {
+    fn build_spatial_index(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
         // Group points by grid cell
         let mut cells: HashMap<u32, Vec<usize>> = HashMap::new();
 
@@ -173,44 +173,64 @@ impl RmdfWriter {
         Ok(bytes)
     }
 
-    fn serialize_points(&self, graph: &MapDataGraph) -> Result<Vec<u8>> {
+    fn serialize_points(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
-        for point in graph.get_points() {
-            let record = PointRecord {
-                osm_id: point.id,
-                lat: point.lat,
-                lon: point.lon,
-                lines_offset: 0,  // TODO: Calculate from line refs
-                lines_count: point.lines.len() as u32,
-                _padding1: 0,
-                rules_offset: 0,  // TODO: Calculate from rules
-                rules_count: point.rules.len() as u32,
-                flags: {
-                    let mut flags = 0u16;
-                    if point.residential_in_proximity {
-                        flags |= PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
-                    }
-                    if point.nogo_area {
-                        flags |= PointRecord::NOGO_AREA_FLAG;
-                    }
-                    flags
-                },
-                _padding2: 0,
-            };
+        // CRITICAL FIX: Group points by grid cell and sort by cell_id
+        // This ensures point indices match the spatial index offsets
+        let mut cells: HashMap<u32, Vec<&crate::map_data::point::MapDataPoint>> = HashMap::new();
 
-            bytes.extend_from_slice(bytes_of(&record));
+        for point in graph.get_points() {
+            if point.lines.is_empty() {
+                continue; // Skip disconnected points (same as build_spatial_index)
+            }
+
+            let cell_id = GridCellEntry::encode_cell_id(point.lat, point.lon, 100);
+            cells.entry(cell_id).or_default().push(point);
+        }
+
+        // Sort cells by cell_id (must match build_spatial_index ordering)
+        let mut sorted_cells: Vec<_> = cells.into_iter().collect();
+        sorted_cells.sort_by_key(|(cell_id, _)| *cell_id);
+
+        // Serialize points in sorted cell order
+        for (_, points_in_cell) in sorted_cells {
+            for point in points_in_cell {
+                let record = PointRecord {
+                    osm_id: point.id,
+                    lat: point.lat,
+                    lon: point.lon,
+                    lines_offset: 0,  // TODO: Calculate from line refs
+                    lines_count: point.lines.len() as u32,
+                    _padding1: 0,
+                    rules_offset: 0,  // TODO: Calculate from rules
+                    rules_count: point.rules.len() as u32,
+                    flags: {
+                        let mut flags = 0u16;
+                        if point.residential_in_proximity {
+                            flags |= PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
+                        }
+                        if point.nogo_area {
+                            flags |= PointRecord::NOGO_AREA_FLAG;
+                        }
+                        flags
+                    },
+                    _padding2: 0,
+                };
+
+                bytes.extend_from_slice(bytes_of(&record));
+            }
         }
 
         Ok(bytes)
     }
 
-    fn serialize_lines(&self, graph: &MapDataGraph) -> Result<Vec<u8>> {
+    fn serialize_lines(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
         for line in graph.get_lines() {
-            let point_a = line.points.0.borrow();
-            let point_b = line.points.1.borrow();
+            let point_a = line.points.0.get();
+            let point_b = line.points.1.get();
 
             let record = LineRecord {
                 point_a_osm_id: point_a.id,
@@ -235,15 +255,34 @@ impl RmdfWriter {
         Ok(bytes)
     }
 
-    fn serialize_line_refs(&self, graph: &MapDataGraph) -> Result<Vec<u8>> {
-        // Flatten all line references from all points
+    fn serialize_line_refs(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
+        // CRITICAL FIX: Must use identical sorting as serialize_points()
+        // Otherwise line_refs indices won't match point indices in the file
         let mut line_refs = Vec::new();
 
+        let mut cells: HashMap<u32, Vec<&crate::map_data::point::MapDataPoint>> = HashMap::new();
+
         for point in graph.get_points() {
-            for line_ref in &point.lines {
-                // For now, use line index as reference
-                // TODO: Encode way ID + segment index into u64 when available
-                line_refs.push(line_ref.get_idx() as u64);
+            if point.lines.is_empty() {
+                continue; // Skip disconnected points (same as serialize_points)
+            }
+
+            let cell_id = GridCellEntry::encode_cell_id(point.lat, point.lon, 100);
+            cells.entry(cell_id).or_default().push(point);
+        }
+
+        // Sort cells by cell_id (must match serialize_points ordering)
+        let mut sorted_cells: Vec<_> = cells.into_iter().collect();
+        sorted_cells.sort_by_key(|(cell_id, _)| *cell_id);
+
+        // Flatten line refs in same sorted order as points
+        for (_, points_in_cell) in sorted_cells {
+            for point in points_in_cell {
+                for line_ref in &point.lines {
+                    // For now, use line index as reference
+                    // TODO: Encode way ID + segment index into u64 when available
+                    line_refs.push(line_ref.get_element_id());
+                }
             }
         }
 
@@ -254,7 +293,7 @@ impl RmdfWriter {
         Ok(bytes)
     }
 
-    fn serialize_tag_values(&self, graph: &MapDataGraph) -> Result<(Vec<u8>, Vec<u8>)> {
+    fn serialize_tag_values(&self, graph: &GenerationGraph) -> Result<(Vec<u8>, Vec<u8>)> {
         let mut entries = Vec::new();
         let mut string_pool = Vec::new();
 
@@ -275,16 +314,16 @@ impl RmdfWriter {
         Ok((entries, string_pool))
     }
 
-    fn serialize_tag_sets(&self, graph: &MapDataGraph) -> Result<Vec<u8>> {
+    fn serialize_tag_sets(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
         for tag_set in &graph.get_tags().tag_sets {
             let record = TagSetRecord {
-                name_idx: tag_set.name.tag_value_pos.wrapping_sub(1),
-                hw_ref_idx: tag_set.hw_ref.tag_value_pos.wrapping_sub(1),
-                highway_idx: tag_set.highway.tag_value_pos.wrapping_sub(1),
-                surface_idx: tag_set.surface.tag_value_pos.wrapping_sub(1),
-                smoothness_idx: tag_set.smoothness.tag_value_pos.wrapping_sub(1),
+                name_idx: tag_set.name.tag_value_idx.wrapping_sub(1),
+                hw_ref_idx: tag_set.hw_ref.tag_value_idx.wrapping_sub(1),
+                highway_idx: tag_set.highway.tag_value_idx.wrapping_sub(1),
+                surface_idx: tag_set.surface.tag_value_idx.wrapping_sub(1),
+                smoothness_idx: tag_set.smoothness.tag_value_idx.wrapping_sub(1),
             };
 
             bytes.extend_from_slice(bytes_of(&record));
@@ -293,7 +332,7 @@ impl RmdfWriter {
         Ok(bytes)
     }
 
-    fn serialize_rules(&self, _graph: &MapDataGraph) -> Result<Vec<u8>> {
+    fn serialize_rules(&self, _graph: &GenerationGraph) -> Result<Vec<u8>> {
         // Rules serialization - similar to line refs
         // TODO: Implement based on MapDataRule structure
         Ok(Vec::new())

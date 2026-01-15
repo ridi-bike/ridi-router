@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use osmpbfreader::{OsmPbfReader, OsmObj};
-use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use tracing::info;
+use redb::{Database, TableDefinition, ReadableTable};
 
 use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType};
 use crate::rmdf::format::TileId;
@@ -19,6 +19,12 @@ const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
 ];
 
 use super::intermediate::TileBuffers;
+
+// redb table definition for node coordinates
+const NODE_COORDS_TABLE: TableDefinition<u64, (f32, f32)> = TableDefinition::new("node_coords");
+
+// Flush tile buffers to disk every N ways to prevent memory accumulation
+const FLUSH_INTERVAL: usize = 10_000;
 
 pub struct PbfStreamer {
     input_file: PathBuf,
@@ -38,55 +44,98 @@ impl PbfStreamer {
     pub fn partition(&self) -> Result<TileBuffers> {
         info!("Starting PBF streaming partitioning");
 
-        let file = File::open(&self.input_file)
-            .context("Failed to open PBF file")?;
-        let mut pbf = OsmPbfReader::new(file);
+        // Create redb database for node coordinates (disk-backed storage)
+        let db_path = self.output_dir.join("node_coords.redb");
+        let db = Database::create(&db_path)
+            .context("Failed to create node coordinates database")?;
 
-        let mut tile_buffers = TileBuffers::new();
+        // First pass: collect all nodes with their coordinates in redb
+        info!("First pass: collecting node coordinates to disk-backed database");
+        {
+            let file = File::open(&self.input_file)
+                .context("Failed to open PBF file")?;
+            let mut pbf = OsmPbfReader::new(file);
 
-        // First pass: collect all nodes with their coordinates
-        // We need this because ways reference nodes, and we need coordinates to determine tiles
-        let mut node_coords: HashMap<u64, (f64, f64)> = HashMap::new();
+            let write_txn = db.begin_write()
+                .context("Failed to begin write transaction")?;
+            {
+                let mut table = write_txn.open_table(NODE_COORDS_TABLE)
+                    .context("Failed to open node coords table")?;
 
-        info!("First pass: collecting node coordinates");
-        for obj_result in pbf.iter() {
-            let obj = obj_result.context("Failed to read PBF object")?;
+                let mut node_count = 0;
+                for obj_result in pbf.iter() {
+                    let obj = obj_result.context("Failed to read PBF object")?;
 
-            if let OsmObj::Node(node) = obj {
-                node_coords.insert(node.id.0 as u64, (node.lat(), node.lon()));
+                    if let OsmObj::Node(node) = obj {
+                        table.insert(node.id.0 as u64, (node.lat() as f32, node.lon() as f32))
+                            .context("Failed to insert node coordinates")?;
+                        node_count += 1;
+
+                        if node_count % 1_000_000 == 0 {
+                            info!("Collected {} million node coordinates", node_count / 1_000_000);
+                        }
+                    }
+                }
+
+                info!("Collected {} total node coordinates", node_count);
             }
+            write_txn.commit()
+                .context("Failed to commit node coordinates")?;
         }
 
-        info!("Collected {} node coordinates", node_coords.len());
-
-        // Second pass: partition elements by tile
-        let file = File::open(&self.input_file)
-            .context("Failed to reopen PBF file for second pass")?;
-        let mut pbf = OsmPbfReader::new(file);
-
+        // Second pass: partition elements by tile with incremental flushing
         info!("Second pass: partitioning elements");
+        let mut tile_buffers = TileBuffers::new();
+        {
+            let file = File::open(&self.input_file)
+                .context("Failed to reopen PBF file for second pass")?;
+            let mut pbf = OsmPbfReader::new(file);
 
-        for obj_result in pbf.iter() {
-            let obj = obj_result.context("Failed to read PBF object")?;
+            let read_txn = db.begin_read()
+                .context("Failed to begin read transaction")?;
+            let table = read_txn.open_table(NODE_COORDS_TABLE)
+                .context("Failed to open node coords table")?;
 
-            match obj {
-                OsmObj::Node(node) => {
-                    self.partition_node(&mut tile_buffers, node)?;
+            let mut processed_count = 0;
+            let mut way_count = 0;
+
+            for obj_result in pbf.iter() {
+                let obj = obj_result.context("Failed to read PBF object")?;
+
+                match obj {
+                    OsmObj::Node(node) => {
+                        self.partition_node(&mut tile_buffers, node)?;
+                    }
+                    OsmObj::Way(way) => {
+                        self.partition_way_redb(&mut tile_buffers, way, &table)?;
+                        way_count += 1;
+
+                        // Flush tiles periodically to prevent memory accumulation
+                        if way_count % FLUSH_INTERVAL == 0 {
+                            info!("Flushing tiles after {} ways", way_count);
+                            tile_buffers.flush_to_disk(&self.output_dir)?;
+                        }
+                    }
+                    OsmObj::Relation(relation) => {
+                        self.partition_relation_redb(&mut tile_buffers, relation, &table)?;
+                    }
                 }
-                OsmObj::Way(way) => {
-                    self.partition_way(&mut tile_buffers, way, &node_coords)?;
-                }
-                OsmObj::Relation(relation) => {
-                    self.partition_relation(&mut tile_buffers, relation, &node_coords)?;
-                }
+
+                processed_count += 1;
             }
+
+            info!("Processed {} total objects, {} ways", processed_count, way_count);
+
+            // Final flush of remaining tiles
+            info!("Final flush of remaining tiles");
+            tile_buffers.flush_to_disk(&self.output_dir)?;
         }
 
-        info!("Partitioned into {} tiles", tile_buffers.tiles.len());
-
-        // Save to disk
-        tile_buffers.save_all(&self.output_dir)?;
-        info!("Saved intermediate tiles to disk");
+        // Clean up redb database
+        drop(db);
+        std::fs::remove_file(&db_path)
+            .context("Failed to remove node coordinates database")?;
+        info!("Cleaned up temporary node coordinates database");
 
         Ok(tile_buffers)
     }
@@ -110,7 +159,12 @@ impl PbfStreamer {
         Ok(())
     }
 
-    fn partition_way(&self, buffers: &mut TileBuffers, way: osmpbfreader::Way, node_coords: &HashMap<u64, (f64, f64)>) -> Result<()> {
+    fn partition_way_redb<T: ReadableTable<u64, (f32, f32)>>(
+        &self,
+        buffers: &mut TileBuffers,
+        way: osmpbfreader::Way,
+        node_coords_table: &T
+    ) -> Result<()> {
         // Only include ways with highway tags (matching current behavior)
         let has_highway = way.tags.iter().any(|(k, v)| {
             k == "highway" && (
@@ -134,8 +188,10 @@ impl PbfStreamer {
         let mut tile_set = std::collections::HashSet::new();
 
         for node_id in &osm_way.point_ids {
-            if let Some((lat, lon)) = node_coords.get(node_id) {
-                let tile_ids = self.get_tiles_for_point(*lat as f32, *lon as f32);
+            if let Some(coords_guard) = node_coords_table.get(node_id)
+                .context("Failed to lookup node coordinates")? {
+                let (lat, lon) = coords_guard.value();
+                let tile_ids = self.get_tiles_for_point(lat, lon);
                 for tile_id in tile_ids {
                     tile_set.insert(tile_id);
                 }
@@ -150,7 +206,12 @@ impl PbfStreamer {
         Ok(())
     }
 
-    fn partition_relation(&self, buffers: &mut TileBuffers, relation: osmpbfreader::Relation, node_coords: &HashMap<u64, (f64, f64)>) -> Result<()> {
+    fn partition_relation_redb<T: ReadableTable<u64, (f32, f32)>>(
+        &self,
+        buffers: &mut TileBuffers,
+        relation: osmpbfreader::Relation,
+        node_coords_table: &T
+    ) -> Result<()> {
         // Only include restriction relations (matching current behavior)
         let is_restriction = relation.tags.iter().any(|(k, v)| {
             k == "type" && v.starts_with("restriction")
@@ -192,8 +253,10 @@ impl PbfStreamer {
         // For now, add to all tiles that contain any member nodes
         for member in &osm_relation.members {
             if member.member_type == OsmRelationMemberType::Node {
-                if let Some((lat, lon)) = node_coords.get(&member.member_ref) {
-                    let tile_ids = self.get_tiles_for_point(*lat as f32, *lon as f32);
+                if let Some(coords_guard) = node_coords_table.get(&member.member_ref)
+                    .context("Failed to lookup node coordinates")? {
+                    let (lat, lon) = coords_guard.value();
+                    let tile_ids = self.get_tiles_for_point(lat, lon);
                     for tile_id in tile_ids {
                         tile_set.insert(tile_id);
                     }
