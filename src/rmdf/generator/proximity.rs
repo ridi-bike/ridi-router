@@ -20,6 +20,13 @@ const THRESHOLD_AREA: f64 = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
     * RESIDENTIAL_PART_COVERED;
 const MILITARY_ENTRY_MAX_M: f64 = 100.0;
 
+/// DEPRECATED: Proximity computation now happens in PbfStreamer::compute_proximity_parallel()
+///
+/// This struct is kept for reference and potential rollback, but is no longer used in the
+/// tile generation pipeline. The new implementation computes proximity flags for all nodes
+/// in parallel BEFORE partitioning them into tiles, eliminating database I/O overhead and
+/// restoring the original parallel processing pattern.
+#[deprecated(note = "Proximity computation now happens in PbfStreamer::compute_proximity_parallel()")]
 pub struct ProximityComputer {
     tile_size_degrees: f32,
     residential_areas: AreaGrid,

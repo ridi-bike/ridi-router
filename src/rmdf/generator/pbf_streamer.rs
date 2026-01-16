@@ -4,8 +4,12 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use tracing::info;
 use redb::{Database, TableDefinition, ReadableTable};
+use rayon::prelude::*;
+use geo::{Point, Distance, Haversine, HaversineClosestPoint, CoordsIter, GeodesicArea};
 
 use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType};
+use crate::map_data::proximity::AreaGrid;
+use crate::osm_data::pbf_area_reader::PbfAreaReader;
 use crate::rmdf::format::TileId;
 // TODO: Move this constant somewhere accessible or re-export from osm_data
 // use crate::osm_data::data_reader::ALLOWED_HIGHWAY_VALUES;
@@ -18,10 +22,20 @@ const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
     "living_street", "track", "escape", "raceway", "road",
 ];
 
+// Constants from src/osm_data/pbf_reader.rs
+const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
+const RESIDENTIAL_PART_COVERED: f64 = 0.10;
+const THRESHOLD_AREA: f64 = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
+    * RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
+    * std::f64::consts::PI)
+    * RESIDENTIAL_PART_COVERED;
+const MILITARY_ENTRY_MAX_M: f64 = 100.0;
+
 use super::intermediate::TileBuffers;
 
-// redb table definition for node coordinates
-const NODE_COORDS_TABLE: TableDefinition<u64, (f32, f32)> = TableDefinition::new("node_coords");
+// redb table definition for node coordinates with proximity flags
+// Format: (lat, lon, residential_in_proximity, nogo_area)
+const NODE_COORDS_TABLE: TableDefinition<u64, (f32, f32, bool, bool)> = TableDefinition::new("node_coords");
 
 // Flush tile buffers to disk every N ways to prevent memory accumulation
 const FLUSH_INTERVAL: usize = 10_000;
@@ -41,7 +55,7 @@ impl PbfStreamer {
         })
     }
 
-    pub fn partition(&self) -> Result<TileBuffers> {
+    pub fn partition(&self) -> Result<(TileBuffers, Database)> {
         info!("Starting PBF streaming partitioning");
 
         // Create redb database for node coordinates (disk-backed storage)
@@ -72,7 +86,7 @@ impl PbfStreamer {
                     let obj = obj_result.context("Failed to read PBF object")?;
 
                     if let OsmObj::Node(node) = obj {
-                        table.insert(node.id.0 as u64, (node.lat() as f32, node.lon() as f32))
+                        table.insert(node.id.0 as u64, (node.lat() as f32, node.lon() as f32, false, false))
                             .context("Failed to insert node coordinates")?;
                         node_count += 1;
 
@@ -87,6 +101,10 @@ impl PbfStreamer {
             write_txn.commit()
                 .context("Failed to commit node coordinates")?;
         }
+
+        // Phase 2A: Compute proximity flags for all nodes in parallel
+        info!("Computing proximity flags for all nodes");
+        self.compute_proximity_parallel(&node_coords_db)?;
 
         // Second pass: partition elements by tile with incremental flushing
         info!("Second pass: partitioning elements");
@@ -109,7 +127,7 @@ impl PbfStreamer {
 
                 match obj {
                     OsmObj::Node(node) => {
-                        self.partition_node(&mut tile_buffers, node)?;
+                        self.partition_node(&mut tile_buffers, node, &table)?;
                     }
                     OsmObj::Way(way) => {
                         self.partition_way_redb(&mut tile_buffers, way, &table)?;
@@ -142,19 +160,30 @@ impl PbfStreamer {
             .context("Failed to remove node coordinates database")?;
         info!("Cleaned up temporary node coordinates database");
 
-        // Keep tiles_db open - it will be used by subsequent phases
-        drop(tiles_db);  // Close handle but DON'T delete the file
-
-        Ok(tile_buffers)
+        // Return the database handle to keep it alive for subsequent phases
+        Ok((tile_buffers, tiles_db))
     }
 
-    fn partition_node(&self, buffers: &mut TileBuffers, node: osmpbfreader::Node) -> Result<()> {
+    fn partition_node(
+        &self,
+        buffers: &mut TileBuffers,
+        node: osmpbfreader::Node,
+        node_coords_table: &impl ReadableTable<u64, (f32, f32, bool, bool)>
+    ) -> Result<()> {
+        // Read proximity flags from database (computed in Phase 2A)
+        let (residential, nogo) = if let Some(coords) = node_coords_table.get(&(node.id.0 as u64))? {
+            let (_, _, residential, nogo) = coords.value();
+            (residential, nogo)
+        } else {
+            (false, false) // Default if missing
+        };
+
         let osm_node = OsmNode {
             id: node.id.0 as u64,
             lat: node.lat(),
             lon: node.lon(),
-            residential_in_proximity: false,  // Will be computed in Phase 3
-            nogo_area: false,                 // Will be computed in Phase 3
+            residential_in_proximity: residential,
+            nogo_area: nogo,
         };
 
         // Determine which tile(s) this node belongs to
@@ -167,7 +196,7 @@ impl PbfStreamer {
         Ok(())
     }
 
-    fn partition_way_redb<T: ReadableTable<u64, (f32, f32)>>(
+    fn partition_way_redb<T: ReadableTable<u64, (f32, f32, bool, bool)>>(
         &self,
         buffers: &mut TileBuffers,
         way: osmpbfreader::Way,
@@ -198,7 +227,7 @@ impl PbfStreamer {
         for node_id in &osm_way.point_ids {
             if let Some(coords_guard) = node_coords_table.get(node_id)
                 .context("Failed to lookup node coordinates")? {
-                let (lat, lon) = coords_guard.value();
+                let (lat, lon, _, _) = coords_guard.value();
                 let tile_ids = self.get_tiles_for_point(lat, lon);
                 for tile_id in tile_ids {
                     tile_set.insert(tile_id);
@@ -214,7 +243,7 @@ impl PbfStreamer {
         Ok(())
     }
 
-    fn partition_relation_redb<T: ReadableTable<u64, (f32, f32)>>(
+    fn partition_relation_redb<T: ReadableTable<u64, (f32, f32, bool, bool)>>(
         &self,
         buffers: &mut TileBuffers,
         relation: osmpbfreader::Relation,
@@ -263,7 +292,7 @@ impl PbfStreamer {
             if member.member_type == OsmRelationMemberType::Node {
                 if let Some(coords_guard) = node_coords_table.get(&member.member_ref)
                     .context("Failed to lookup node coordinates")? {
-                    let (lat, lon) = coords_guard.value();
+                    let (lat, lon, _, _) = coords_guard.value();
                     let tile_ids = self.get_tiles_for_point(lat, lon);
                     for tile_id in tile_ids {
                         tile_set.insert(tile_id);
@@ -278,6 +307,150 @@ impl PbfStreamer {
         }
 
         Ok(())
+    }
+
+    /// Compute proximity flags for all nodes in parallel
+    fn compute_proximity_parallel(&self, node_coords_db: &Database) -> Result<()> {
+        // 1. Extract area grids (residential and military)
+        info!("Extracting area grids from PBF");
+        let residential_areas = self.extract_residential_areas()?;
+        let military_areas = self.extract_military_areas()?;
+        info!("Area grids extracted");
+
+        // 2. Load ALL node coordinates into memory
+        let read_txn = node_coords_db.begin_read()?;
+        let table = read_txn.open_table(NODE_COORDS_TABLE)?;
+
+        let nodes: Vec<(u64, f32, f32)> = table.iter()?
+            .map(|entry| {
+                let entry = entry?;
+                let key = entry.0.value();
+                let (lat, lon, _, _) = entry.1.value();
+                Ok((key, lat, lon))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        drop(read_txn);
+
+        info!("Computing proximity for {} nodes in parallel", nodes.len());
+
+        // 3. Compute proximity in parallel (RESTORE ORIGINAL PATTERN)
+        let results: Vec<(u64, bool, bool)> = nodes.par_iter()
+            .map(|(node_id, lat, lon)| {
+                let residential = Self::compute_residential_proximity(
+                    *lat as f64, *lon as f64, &residential_areas
+                );
+                let nogo = Self::compute_nogo_area(
+                    *lat as f64, *lon as f64, &military_areas
+                );
+                (*node_id, residential, nogo)
+            })
+            .collect();
+
+        // 4. Write results back to database
+        info!("Writing proximity results back to database");
+        let write_txn = node_coords_db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(NODE_COORDS_TABLE)?;
+            for (node_id, residential, nogo) in results {
+                // Extract coordinates before inserting to avoid borrow checker issues
+                let coords = if let Some(coords_guard) = table.get(&node_id)? {
+                    let (lat, lon, _, _) = coords_guard.value();
+                    Some((lat, lon))
+                } else {
+                    None
+                };
+
+                if let Some((lat, lon)) = coords {
+                    table.insert(node_id, (lat, lon, residential, nogo))?;
+                }
+            }
+        }
+        write_txn.commit()?;
+
+        info!("Proximity computation complete");
+        Ok(())
+    }
+
+    /// Extract residential areas from PBF
+    fn extract_residential_areas(&self) -> Result<AreaGrid> {
+        let file = File::open(&self.input_file)
+            .context("Failed to open PBF file")?;
+        let mut pbf = OsmPbfReader::new(file);
+
+        let mut boundary_reader = PbfAreaReader::new(&mut pbf);
+        boundary_reader.read(&|obj| {
+            (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "residential")
+        })?;
+        Ok(boundary_reader.get_area_grid())
+    }
+
+    /// Extract military areas from PBF
+    fn extract_military_areas(&self) -> Result<AreaGrid> {
+        let file = File::open(&self.input_file)
+            .context("Failed to open PBF file")?;
+        let mut pbf = OsmPbfReader::new(file);
+
+        let mut boundary_reader = PbfAreaReader::new(&mut pbf);
+        boundary_reader.read(&|obj| {
+            (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "military")
+        })?;
+        Ok(boundary_reader.get_area_grid())
+    }
+
+    /// Compute residential proximity flag (from src/osm_data/pbf_reader.rs:90-126)
+    fn compute_residential_proximity(lat: f64, lon: f64, residential_areas: &AreaGrid) -> bool {
+        let tot_area = match residential_areas.find_closest_areas_refs(
+            lat as f32,
+            lon as f32,
+            1,  // Search 1 grid step (~1.1km)
+        ) {
+            Some(areas) => areas.iter().fold(0., |tot, multi_polygon| {
+                let geo_point = Point::new(lon, lat);
+                let distance = match multi_polygon.haversine_closest_point(&geo_point) {
+                    geo::Closest::Intersection(_) => 0.,
+                    geo::Closest::SinglePoint(p) => {
+                        Haversine.distance(p, geo_point)
+                    }
+                    geo::Closest::Indeterminate => multi_polygon
+                        .coords_iter()
+                        .fold(10000., |min, coords| {
+                            let dist = Haversine.distance(geo_point, Point::from(coords));
+                            if dist < min { dist } else { min }
+                        }),
+                };
+
+                if distance <= RESIDENTIAL_PROXIMITY_THRESHOLD_METERS {
+                    let area = multi_polygon.geodesic_area_signed().abs();
+                    return tot + area;
+                }
+                tot
+            }),
+            None => 0.,
+        };
+
+        tot_area > THRESHOLD_AREA
+    }
+
+    /// Compute nogo area flag (from src/osm_data/pbf_reader.rs:128-149)
+    fn compute_nogo_area(lat: f64, lon: f64, military_areas: &AreaGrid) -> bool {
+        match military_areas.find_closest_areas_refs(
+            lat as f32,
+            lon as f32,
+            1,
+        ) {
+            None => false,
+            Some(areas) => areas.iter().any(|multi_polygon| {
+                let geo_point = Point::new(lon, lat);
+                match multi_polygon.haversine_closest_point(&geo_point) {
+                    geo::Closest::Intersection(p) => {
+                        // Only mark as nogo if inside military area >100m from boundary
+                        Haversine.distance(geo_point, p) > MILITARY_ENTRY_MAX_M
+                    }
+                    geo::Closest::SinglePoint(_) => false,
+                    geo::Closest::Indeterminate => false,
+                }
+            }),
+        }
     }
 
     /// Get tile ID(s) for a point
