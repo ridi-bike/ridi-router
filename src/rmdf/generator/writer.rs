@@ -21,6 +21,120 @@ impl RmdfWriter {
         Self { tile_size_degrees }
     }
 
+    /// Write RMDF tile directly from GenerationGraph
+    pub fn write_tile_from_graph(
+        &self,
+        tile_id: TileId,
+        graph: GenerationGraph,
+        output_path: &Path,
+    ) -> Result<()> {
+        debug!("Writing RMDF file from GenerationGraph: {:?}", output_path);
+
+        // Build spatial index from graph
+        let spatial_index = self.build_spatial_index(&graph)
+            .context("Failed to build spatial index")?;
+
+        // Serialize all sections
+        let points = self.serialize_points(&graph)
+            .context("Failed to serialize points")?;
+        let lines = self.serialize_lines(&graph)
+            .context("Failed to serialize lines")?;
+        let line_refs = self.serialize_line_refs(&graph)
+            .context("Failed to serialize line refs")?;
+        let (tag_values, tag_strings) = self.serialize_tag_values(&graph)
+            .context("Failed to serialize tag values")?;
+        let tag_sets = self.serialize_tag_sets(&graph)
+            .context("Failed to serialize tag sets")?;
+        let rules = self.serialize_rules(&graph)
+            .context("Failed to serialize rules")?;
+
+        // Calculate section offsets
+        let mut offset = RmdfHeader::SIZE;
+        let mut section_offsets = [0u64; NUM_SECTIONS];
+
+        section_offsets[section::SPATIAL_INDEX] = offset as u64;
+        offset += spatial_index.len();
+
+        section_offsets[section::POINTS] = offset as u64;
+        offset += points.len();
+
+        section_offsets[section::LINES] = offset as u64;
+        offset += lines.len();
+
+        section_offsets[section::LINE_REFS] = offset as u64;
+        offset += line_refs.len();
+
+        section_offsets[section::TAG_VALUES] = offset as u64;
+        offset += tag_values.len() + tag_strings.len();
+
+        section_offsets[section::TAG_SETS] = offset as u64;
+        offset += tag_sets.len();
+
+        section_offsets[section::RULES] = offset as u64;
+        offset += rules.len();
+
+        // Build header
+        let bounds = self.compute_tile_bounds(tile_id);
+        let header = RmdfHeader {
+            magic: RmdfHeader::MAGIC,
+            version: RmdfHeader::VERSION,
+            tile_bounds: bounds,
+            point_count: graph.get_points().len() as u64,
+            line_count: graph.get_lines().len() as u64,
+            spatial_grid_cell_count: (spatial_index.len() / std::mem::size_of::<GridCellEntry>()) as u32,
+            tag_value_count: (tag_values.len() / std::mem::size_of::<StringEntry>()) as u32,
+            tag_set_count: (tag_sets.len() / std::mem::size_of::<TagSetRecord>()) as u32,
+            rule_count: (rules.len() / std::mem::size_of::<RuleRecord>()) as u32,
+            section_offsets,
+        };
+
+        // Write all data to file
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output_path)
+            .context("Failed to create output file")?;
+
+        file.write_all(bytes_of(&header))
+            .context("Failed to write header")?;
+        file.write_all(&spatial_index)
+            .context("Failed to write spatial index")?;
+        file.write_all(&points)
+            .context("Failed to write points")?;
+        file.write_all(&lines)
+            .context("Failed to write lines")?;
+        file.write_all(&line_refs)
+            .context("Failed to write line refs")?;
+        file.write_all(&tag_values)
+            .context("Failed to write tag values")?;
+        file.write_all(&tag_strings)
+            .context("Failed to write tag strings")?;
+        file.write_all(&tag_sets)
+            .context("Failed to write tag sets")?;
+        file.write_all(&rules)
+            .context("Failed to write rules")?;
+
+        // Compute and append checksum
+        file.seek(SeekFrom::Start(0))
+            .context("Failed to seek to start for checksum")?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher)
+            .context("Failed to copy file for checksum")?;
+        let checksum = hasher.finalize();
+
+        file.write_all(&checksum)
+            .context("Failed to write checksum")?;
+
+        let file_size = file.metadata()
+            .context("Failed to get file metadata")?
+            .len();
+        debug!("RMDF file written: {} bytes", file_size);
+
+        Ok(())
+    }
+
     /// Write RMDF file for a single tile
     pub fn write_tile(&self, intermediate: &IntermediateTile, output_path: &Path) -> Result<()> {
         debug!("Writing RMDF file: {:?}", output_path);
@@ -258,9 +372,18 @@ impl RmdfWriter {
     fn serialize_lines(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
+        // Build a map of node IDs to points for quick lookup
+        let mut node_map = std::collections::HashMap::new();
+        for point in graph.get_points() {
+            node_map.insert(point.id, point);
+        }
+
         for line in graph.get_lines() {
-            let point_a = line.points.0.get();
-            let point_b = line.points.1.get();
+            // Look up point data from node IDs
+            let point_a = node_map.get(&line.from_node_id)
+                .ok_or_else(|| anyhow::anyhow!("Point {} not found for line", line.from_node_id))?;
+            let point_b = node_map.get(&line.to_node_id)
+                .ok_or_else(|| anyhow::anyhow!("Point {} not found for line", line.to_node_id))?;
 
             let record = LineRecord {
                 point_a_osm_id: point_a.id,

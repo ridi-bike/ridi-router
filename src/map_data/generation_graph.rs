@@ -3,19 +3,27 @@ use anyhow::Result;
 
 use super::{
     point::MapDataPoint,
-    line::MapDataLine,
-    graph::ElementTags,
-    rule::MapDataRule,
+    line::LineDirection,
+    graph::{ElementTags, ElementTagSetRef},
     osm::{OsmNode, OsmWay, OsmRelation},
     MapDataError,
 };
+
+/// Simple line structure for generation (without runtime Ref types)
+#[derive(Clone)]
+pub struct GenerationLine {
+    pub from_node_id: u64,      // OSM node ID
+    pub to_node_id: u64,        // OSM node ID
+    pub direction: LineDirection,
+    pub tags: ElementTagSetRef,
+}
 
 /// Graph for building map data during tile generation.
 /// Separate from MapDataGraph which is for routing queries via TileManager.
 pub struct GenerationGraph {
     pub(crate) points: Vec<MapDataPoint>,
     pub(crate) points_map: HashMap<u64, usize>,  // OSM ID -> index in points vec
-    pub(crate) lines: Vec<MapDataLine>,
+    pub(crate) lines: Vec<GenerationLine>,
     pub(crate) tags: ElementTags,
 }
 
@@ -35,7 +43,7 @@ impl GenerationGraph {
     }
 
     /// Get lines slice for iteration (used by RMDF writer)
-    pub fn get_lines(&self) -> &[MapDataLine] {
+    pub fn get_lines(&self) -> &[GenerationLine] {
         &self.lines
     }
 
@@ -57,8 +65,8 @@ impl GenerationGraph {
             lon: node.lon as f32,
             lines: Vec::new(),
             rules: Vec::new(),
-            residential_in_proximity: false,
-            nogo_area: false,
+            residential_in_proximity: node.residential_in_proximity,  // FIX: Use actual value
+            nogo_area: node.nogo_area,                                // FIX: Use actual value
         };
 
         let idx = self.points.len();
@@ -67,26 +75,93 @@ impl GenerationGraph {
     }
 
     /// Insert a way from OSM data
-    /// This method needs to be implemented based on the old MapDataGraph logic
     pub fn insert_way(&mut self, way: OsmWay) -> Result<(), MapDataError> {
-        // TODO: Implement way insertion logic
-        // This is a complex method that needs to:
-        // 1. Check if way is valid for routing
-        // 2. Create MapDataLine segments
-        // 3. Link lines to points
-        // 4. Store tag information
+        // Validate way has at least 2 nodes
+        if way.point_ids.len() < 2 {
+            return Ok(()); // Skip invalid ways
+        }
 
-        // For now, return Ok to allow compilation
-        // Will need to port logic from old MapDataGraph
+        // Get tags for this way
+        let tags = way.tags.as_ref();
+        if tags.is_none() {
+            return Ok(()); // Skip ways without tags
+        }
+
+        let tags_map = tags.unwrap();
+
+        // Extract key tag values for ElementTagSet
+        let name = tags_map.get("name");
+        let hw_ref = tags_map.get("ref");
+        let highway = tags_map.get("highway");
+        let surface = tags_map.get("surface");
+        let smoothness = tags_map.get("smoothness");
+
+        // Get or create tag set
+        let tag_set_ref = self.tags.get_or_create(
+            name,
+            hw_ref,
+            highway,
+            surface,
+            smoothness,
+        );
+
+        // Determine line direction
+        let direction = if let Some(oneway) = tags_map.get("oneway") {
+            if oneway == "yes" || oneway == "1" || oneway == "true" {
+                LineDirection::OneWay
+            } else {
+                LineDirection::BothWays
+            }
+        } else if let Some(junction) = tags_map.get("junction") {
+            if junction == "roundabout" {
+                LineDirection::Roundabout
+            } else {
+                LineDirection::BothWays
+            }
+        } else {
+            LineDirection::BothWays
+        };
+
+        // Create line segments between consecutive nodes
+        for i in 0..way.point_ids.len() - 1 {
+            let from_id = way.point_ids[i];
+            let to_id = way.point_ids[i + 1];
+
+            // Look up node indices in graph
+            let from_idx = self.points_map.get(&from_id);
+            let to_idx = self.points_map.get(&to_id);
+
+            if from_idx.is_none() || to_idx.is_none() {
+                // Nodes not in graph (outside tile bounds), skip segment
+                continue;
+            }
+
+            let from_idx = *from_idx.unwrap();
+            let to_idx = *to_idx.unwrap();
+
+            // Create line using simple structure (no Refs)
+            let line = GenerationLine {
+                from_node_id: from_id,
+                to_node_id: to_id,
+                direction: direction.clone(),
+                tags: tag_set_ref.clone(),
+            };
+
+            self.lines.push(line);
+
+            // NOTE: We don't update point.lines here because MapDataPoint.lines expects MapDataLineRef
+            // The writer will build line refs when serializing to RMDF format
+        }
+
         Ok(())
     }
 
     /// Insert a relation from OSM data (turn restrictions, etc.)
-    pub fn insert_relation(&mut self, relation: OsmRelation) -> Result<(), MapDataError> {
-        // TODO: Implement relation insertion logic
-        // This handles turn restrictions and other routing rules
-
-        // For now, return Ok to allow compilation
+    pub fn insert_relation(&mut self, _relation: OsmRelation) -> Result<(), MapDataError> {
+        // Turn restrictions are complex and require additional data structures
+        // For now, we'll skip relation processing as it's not critical for basic routing
+        // TODO: Implement proper turn restriction storage and processing
+        // This will require adding a relations field to GenerationGraph
         Ok(())
     }
 

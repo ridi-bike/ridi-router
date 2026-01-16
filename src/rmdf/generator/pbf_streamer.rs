@@ -922,33 +922,57 @@ impl PbfStreamer {
     }
 
     /// Build GenerationGraph from tile data with proximity flags
-    /// TODO: Implement in Phase 5
     fn build_generation_graph(
         &self,
         nodes: HashMap<u64, OsmNode>,
         ways: Vec<OsmWay>,
         relations: Vec<OsmRelation>,
     ) -> Result<GenerationGraph> {
-        // Stub: Return empty graph
         info!("Building generation graph from {} nodes, {} ways, {} relations",
               nodes.len(), ways.len(), relations.len());
-        Ok(GenerationGraph::new())
+
+        let mut graph = GenerationGraph::new();
+
+        // Insert all nodes (with correct proximity flags)
+        for (_node_id, node) in nodes {
+            graph.insert_node(node);
+        }
+
+        // Insert all ways
+        for way in ways {
+            graph.insert_way(way)
+                .context("Failed to insert way into generation graph")?;
+        }
+
+        // Insert all relations (turn restrictions)
+        for relation in relations {
+            graph.insert_relation(relation)
+                .context("Failed to insert relation into generation graph")?;
+        }
+
+        // Generate point hashes for spatial indexing
+        graph.generate_point_hashes();
+
+        Ok(graph)
     }
 
     /// Write RMDF tile file from generation graph
-    /// TODO: Implement in Phase 5
     fn write_rmdf_tile(
         &self,
         tile_id: TileId,
         graph: GenerationGraph,
     ) -> Result<()> {
-        // Stub: Create empty file to verify tile writing works
+        use crate::rmdf::generator::writer::RmdfWriter;
+
         let output_path = self.output_dir.join(tile_id.to_filename());
         info!("Writing RMDF tile to {:?}", output_path);
 
-        // Create empty file as placeholder
-        std::fs::File::create(&output_path)
-            .context("Failed to create RMDF tile file")?;
+        // Create RmdfWriter (reusing existing implementation)
+        let writer = RmdfWriter::new(self.tile_size_degrees);
+
+        // Write tile directly from GenerationGraph
+        writer.write_tile_from_graph(tile_id, graph, &output_path)
+            .with_context(|| format!("Failed to write RMDF tile {:?}", tile_id))?;
 
         Ok(())
     }
