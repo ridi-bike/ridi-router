@@ -790,28 +790,134 @@ impl PbfStreamer {
     }
 
     /// Build residential and military AreaGrids from tile data
-    /// TODO: Implement in Phase 4
     fn build_area_grids(
         &self,
         tile_data: &TileData,
         buffered_bounds: crate::rmdf::format::TileBounds,
     ) -> Result<(AreaGrid, AreaGrid)> {
-        // Stub: Return empty grids
-        info!("Building area grids for tile {:?}", tile_data.tile_id);
-        Ok((AreaGrid::new(), AreaGrid::new()))
+        // Try to extract residential areas
+        let residential_grid = self.extract_residential_areas_for_bounds(buffered_bounds)
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to extract residential areas for tile {:?}: {:?}. Using empty grid.",
+                    tile_data.tile_id, e
+                );
+                AreaGrid::new()
+            });
+
+        // Try to extract military areas
+        let military_grid = self.extract_military_areas_for_bounds(buffered_bounds)
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "Failed to extract military areas for tile {:?}: {:?}. Using empty grid.",
+                    tile_data.tile_id, e
+                );
+                AreaGrid::new()
+            });
+
+        info!(
+            "Built area grids for tile {:?}: {} residential cells, {} military cells",
+            tile_data.tile_id,
+            residential_grid.len(),
+            military_grid.len()
+        );
+
+        Ok((residential_grid, military_grid))
+    }
+
+    /// Extract residential areas within buffered bounds
+    fn extract_residential_areas_for_bounds(&self, bounds: crate::rmdf::format::TileBounds) -> Result<AreaGrid> {
+        let file = File::open(&self.input_file)
+            .context("Failed to open PBF file for residential areas")?;
+        let mut pbf = OsmPbfReader::new(file);
+
+        let mut boundary_reader = PbfAreaReader::new(&mut pbf);
+
+        // Read all residential areas (landuse=residential)
+        boundary_reader.read(&|obj| {
+            (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "residential")
+        })?;
+
+        // Filter to only areas within or intersecting buffered bounds
+        let area_grid = self.filter_area_grid_by_bounds(
+            boundary_reader.get_area_grid(),
+            bounds
+        )?;
+
+        Ok(area_grid)
+    }
+
+    /// Extract military areas within buffered bounds
+    fn extract_military_areas_for_bounds(&self, bounds: crate::rmdf::format::TileBounds) -> Result<AreaGrid> {
+        let file = File::open(&self.input_file)
+            .context("Failed to open PBF file for military areas")?;
+        let mut pbf = OsmPbfReader::new(file);
+
+        let mut boundary_reader = PbfAreaReader::new(&mut pbf);
+
+        // Read all military areas (landuse=military)
+        boundary_reader.read(&|obj| {
+            (obj.is_way() || obj.is_relation()) && obj.tags().contains("landuse", "military")
+        })?;
+
+        // Filter to only areas within or intersecting buffered bounds
+        let area_grid = self.filter_area_grid_by_bounds(
+            boundary_reader.get_area_grid(),
+            bounds
+        )?;
+
+        Ok(area_grid)
+    }
+
+    /// Filter AreaGrid to only include polygons intersecting bounds
+    fn filter_area_grid_by_bounds(
+        &self,
+        full_grid: AreaGrid,
+        _bounds: crate::rmdf::format::TileBounds,
+    ) -> Result<AreaGrid> {
+        // Note: Current implementation of AreaGrid doesn't support filtering
+        // For now, return the full grid (inefficient but correct)
+        // TODO: Implement grid filtering if memory becomes an issue
+
+        // The grid will be dropped after tile processing, so memory impact is temporary
+        Ok(full_grid)
     }
 
     /// Compute proximity and nogo flags for nodes in core bounds
-    /// TODO: Implement in Phase 4
     fn compute_proximity_flags(
         &self,
-        nodes: HashMap<u64, OsmNode>,
+        mut nodes: HashMap<u64, OsmNode>,
         core_bounds: crate::rmdf::format::TileBounds,
         residential_grid: &AreaGrid,
         military_grid: &AreaGrid,
     ) -> Result<HashMap<u64, OsmNode>> {
-        // Stub: Return nodes unchanged (flags will be false)
-        info!("Computing proximity flags for {} nodes", nodes.len());
+        let mut computed_count = 0;
+
+        for (_node_id, node) in nodes.iter_mut() {
+            // Only compute for nodes in core bounds (not buffer zone)
+            if !self.point_in_bounds(node.lat, node.lon, core_bounds) {
+                continue;
+            }
+
+            // Compute residential proximity flag
+            node.residential_in_proximity = Self::compute_residential_proximity(
+                node.lat,
+                node.lon,
+                residential_grid,
+            );
+
+            // Compute nogo area flag
+            node.nogo_area = Self::compute_nogo_area(
+                node.lat,
+                node.lon,
+                military_grid,
+            );
+
+            computed_count += 1;
+        }
+
+        info!("Computed proximity flags for {} nodes in core bounds", computed_count);
+
         Ok(nodes)
     }
 

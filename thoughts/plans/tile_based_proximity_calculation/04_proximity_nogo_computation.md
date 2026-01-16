@@ -296,13 +296,13 @@ impl PbfStreamer {
 
 ### Automated Verification
 
-- [ ] Code compiles without errors
-- [ ] `build_area_grids()` successfully extracts residential and military areas
-- [ ] `compute_proximity_flags()` computes flags only for core bounds nodes
-- [ ] Proximity calculation matches current implementation logic
-- [ ] NoGo calculation matches current implementation logic
-- [ ] Empty grids (no residential/military areas) don't cause errors
-- [ ] Flags remain false for nodes outside core bounds (buffer zone nodes)
+- [x] Code compiles without errors
+- [x] `build_area_grids()` successfully extracts residential and military areas
+- [x] `compute_proximity_flags()` computes flags only for core bounds nodes
+- [x] Proximity calculation matches current implementation logic
+- [x] NoGo calculation matches current implementation logic
+- [x] Empty grids (no residential/military areas) don't cause errors
+- [x] Flags remain false for nodes outside core bounds (buffer zone nodes)
 
 ### Manual Verification
 
