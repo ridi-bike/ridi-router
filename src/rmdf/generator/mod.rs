@@ -41,6 +41,25 @@ impl TileGenerator {
     }
 
     pub fn generate(&self) -> Result<()> {
+        info!("Starting RMDF tile generation");
+
+        // Create PBF streamer
+        let streamer = PbfStreamer::new(
+            &self.input_file,
+            &self.output_dir,
+            self.tile_size_degrees,
+        )?;
+
+        // Use new parallel partition method (Phase 1 stub)
+        streamer.partition_parallel()?;
+
+        // TODO: Manifest generation will be added in later phases
+
+        info!("RMDF generation complete");
+        Ok(())
+    }
+
+    pub fn generate_old(&self) -> Result<()> {
         // Phase 2: Stream, compute proximity, and partition
         let streamer = PbfStreamer::new(&self.input_file, &self.output_dir, self.tile_size_degrees)?;
         let (_tile_buffers, tiles_db) = streamer.partition()?;  // Returns empty (drained) buffers and database; proximity computed in Phase 2A

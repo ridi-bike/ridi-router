@@ -216,12 +216,12 @@ impl PbfStreamer {
 
 ### Automated Verification
 
-- [ ] Code compiles without errors
-- [ ] `calculate_all_tiles()` returns correct number of tiles for given tile_size_degrees
-- [ ] `calculate_tile_bounds()` produces correct geographic bounds
-- [ ] `add_buffer_to_bounds()` adds ~500m buffer (0.005 degrees)
-- [ ] `partition_parallel()` executes without panics
-- [ ] Progress reporting shows all tiles processed
+- [x] Code compiles without errors
+- [x] `calculate_all_tiles()` returns correct number of tiles for given tile_size_degrees
+- [x] `calculate_tile_bounds()` produces correct geographic bounds
+- [x] `add_buffer_to_bounds()` adds ~500m buffer (0.005 degrees)
+- [x] `partition_parallel()` executes without panics
+- [x] Progress reporting shows all tiles processed
 
 ### Manual Verification
 

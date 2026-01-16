@@ -6,6 +6,8 @@ use tracing::info;
 use redb::{Database, TableDefinition, ReadableTable};
 use rayon::prelude::*;
 use geo::{Point, Distance, Haversine, HaversineClosestPoint, CoordsIter, GeodesicArea};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType};
 use crate::map_data::proximity::AreaGrid;
@@ -162,6 +164,49 @@ impl PbfStreamer {
 
         // Return the database handle to keep it alive for subsequent phases
         Ok((tile_buffers, tiles_db))
+    }
+
+    /// New partition method using tile-based parallel processing
+    pub fn partition_parallel(&self) -> Result<()> {
+        info!("Starting tile-based parallel partitioning");
+
+        // Calculate all tile boundaries upfront
+        let tiles = self.calculate_all_tiles();
+        let total_tiles = tiles.len();
+        info!("Processing {} tiles in parallel", total_tiles);
+
+        // Progress counter (shared across threads)
+        let completed = Arc::new(AtomicUsize::new(0));
+
+        // Process tiles in parallel using Rayon
+        tiles.par_iter()
+            .try_for_each(|tile_id| -> Result<()> {
+                self.process_tile(*tile_id)?;
+
+                // Update progress
+                let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                if count % 10 == 0 || count == total_tiles {
+                    info!("Processed {}/{} tiles", count, total_tiles);
+                }
+
+                Ok(())
+            })?;
+
+        info!("Tile-based partitioning complete");
+        Ok(())
+    }
+
+    /// Process a single tile (stub for now)
+    fn process_tile(&self, tile_id: TileId) -> Result<()> {
+        // Calculate bounds
+        let core_bounds = self.calculate_tile_bounds(tile_id);
+        let buffered_bounds = self.add_buffer_to_bounds(core_bounds);
+
+        info!("Processing tile {:?} (bounds: {:?})", tile_id, buffered_bounds);
+
+        // TODO: Implement tile processing in subsequent phases
+
+        Ok(())
     }
 
     fn partition_node(
@@ -499,6 +544,54 @@ impl PbfStreamer {
         }
 
         tiles
+    }
+
+    /// Calculate all tiles that cover the world for the given tile size
+    fn calculate_all_tiles(&self) -> Vec<TileId> {
+        let mut tiles = Vec::new();
+
+        // Longitude: -180 to +180 (360 degrees)
+        // Latitude: -90 to +90 (180 degrees)
+        let cols = (360.0 / self.tile_size_degrees).ceil() as u16;
+        let rows = (180.0 / self.tile_size_degrees).ceil() as u16;
+
+        for col in 0..cols {
+            for row in 0..rows {
+                tiles.push(TileId { col, row });
+            }
+        }
+
+        tiles
+    }
+
+    /// Calculate geographic bounds for a tile
+    fn calculate_tile_bounds(&self, tile_id: TileId) -> crate::rmdf::format::TileBounds {
+        let lon_min = (tile_id.col as f32 * self.tile_size_degrees) - 180.0;
+        let lon_max = lon_min + self.tile_size_degrees;
+        let lat_min = (tile_id.row as f32 * self.tile_size_degrees) - 90.0;
+        let lat_max = lat_min + self.tile_size_degrees;
+
+        crate::rmdf::format::TileBounds {
+            lat_min,
+            lat_max,
+            lon_min,
+            lon_max,
+        }
+    }
+
+    /// Add buffer zone to tile bounds (500m = RESIDENTIAL_PROXIMITY_THRESHOLD_METERS)
+    fn add_buffer_to_bounds(&self, bounds: crate::rmdf::format::TileBounds) -> crate::rmdf::format::TileBounds {
+        // Convert meters to degrees: 1 degree ≈ 111km at equator
+        // 500m / 111,000m ≈ 0.0045 degrees
+        // Use slightly larger buffer (0.005) for safety at higher latitudes
+        let buffer_degrees = 0.005f32;
+
+        crate::rmdf::format::TileBounds {
+            lat_min: (bounds.lat_min - buffer_degrees).max(-90.0),
+            lat_max: (bounds.lat_max + buffer_degrees).min(90.0),
+            lon_min: (bounds.lon_min - buffer_degrees).max(-180.0),
+            lon_max: (bounds.lon_max + buffer_degrees).min(180.0),
+        }
     }
 }
 
