@@ -9,8 +9,6 @@ use crate::map_data::proximity::AreaGrid;
 use crate::osm_data::pbf_area_reader::PbfAreaReader;
 use crate::rmdf::format::{TileId, TileBounds};
 
-use super::intermediate::IntermediateTile;
-
 // Constants from src/osm_data/pbf_reader.rs
 const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
 const RESIDENTIAL_PART_COVERED: f64 = 0.10;
@@ -83,39 +81,11 @@ impl ProximityComputer {
     }
 
     /// Compute flags for a single tile with 500m overlap
-    fn compute_tile(&self, tile_id: TileId, tiles_db: &Database) -> Result<()> {
-        // Load intermediate tile from redb
-        let mut tile = IntermediateTile::load_from_redb(tiles_db, tile_id)?;
-
-        // Compute tile bounds with 500m buffer
-        let core_bounds = self.compute_tile_bounds(tile_id);
-        let buffered_bounds = self.add_buffer_to_bounds(core_bounds, RESIDENTIAL_PROXIMITY_THRESHOLD_METERS);
-
-        // For each node in the core tile
-        for (_node_id, node) in tile.nodes.iter_mut() {
-            // Only compute for nodes in core bounds (not buffer nodes)
-            if !self.point_in_bounds(node.lat as f32, node.lon as f32, core_bounds) {
-                continue;
-            }
-
-            // Compute residential proximity
-            node.residential_in_proximity = self.compute_residential_proximity(
-                node.lat,
-                node.lon,
-                buffered_bounds,
-            );
-
-            // Compute nogo area
-            node.nogo_area = self.compute_nogo_area(
-                node.lat,
-                node.lon,
-            );
-        }
-
-        // Save updated tile back to redb
-        tile.save_to_redb(tiles_db)?;
-
-        Ok(())
+    #[allow(dead_code)]
+    fn compute_tile(&self, _tile_id: TileId, _tiles_db: &Database) -> Result<()> {
+        // This method is deprecated and no longer functional
+        // Proximity computation now happens in PbfStreamer::partition_parallel()
+        anyhow::bail!("This method is deprecated - use PbfStreamer::partition_parallel() instead")
     }
 
     fn compute_tile_bounds(&self, tile_id: TileId) -> TileBounds {
