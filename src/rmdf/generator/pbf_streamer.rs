@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use osmpbfreader::{OsmPbfReader, OsmObj};
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tracing::info;
 use redb::{Database, TableDefinition, ReadableTable};
 use rayon::prelude::*;
@@ -189,6 +190,7 @@ impl PbfStreamer {
 
     /// New partition method using tile-based parallel processing
     pub fn partition_parallel(&self) -> Result<()> {
+        let start_time = Instant::now();
         info!("Starting tile-based parallel partitioning");
 
         // Calculate all tile boundaries upfront
@@ -198,6 +200,7 @@ impl PbfStreamer {
 
         // Progress counter (shared across threads)
         let completed = Arc::new(AtomicUsize::new(0));
+        let start_time_clone = start_time;
 
         // Process tiles in parallel using Rayon
         tiles.par_iter()
@@ -206,51 +209,103 @@ impl PbfStreamer {
 
                 // Update progress
                 let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                if count % 10 == 0 || count == total_tiles {
-                    info!("Processed {}/{} tiles", count, total_tiles);
+
+                // Report progress every 100 tiles or at completion
+                if count % 100 == 0 || count == total_tiles {
+                    let elapsed = start_time_clone.elapsed();
+                    let rate = count as f64 / elapsed.as_secs_f64();
+                    let remaining = if rate > 0.0 {
+                        ((total_tiles - count) as f64 / rate) as u64
+                    } else {
+                        0
+                    };
+
+                    info!(
+                        "Progress: {}/{} tiles ({:.1}%) - {:.1} tiles/sec - ETA: {}s",
+                        count,
+                        total_tiles,
+                        (count as f64 / total_tiles as f64) * 100.0,
+                        rate,
+                        remaining
+                    );
                 }
 
                 Ok(())
             })?;
 
-        info!("Tile-based partitioning complete");
+        let total_duration = start_time.elapsed();
+        info!(
+            "Tile-based partitioning complete - {} tiles in {:.1}s ({:.1} tiles/sec)",
+            total_tiles,
+            total_duration.as_secs_f64(),
+            total_tiles as f64 / total_duration.as_secs_f64()
+        );
+
         Ok(())
     }
 
     /// Process a single tile
     fn process_tile(&self, tile_id: TileId) -> Result<()> {
-        // Step 1: Calculate bounds
-        let core_bounds = self.calculate_tile_bounds(tile_id);
-        let buffered_bounds = self.add_buffer_to_bounds(core_bounds);
+        // Wrap entire tile processing in context for better error messages
+        (|| -> Result<()> {
+            // Step 1: Calculate bounds
+            let core_bounds = self.calculate_tile_bounds(tile_id);
+            let buffered_bounds = self.add_buffer_to_bounds(core_bounds);
 
-        // Step 2: Extract PBF data for this tile (stub)
-        let tile_data = self.extract_tile_data(tile_id, buffered_bounds)
-            .context("Failed to extract tile data from PBF")?;
+            // Step 2: Extract PBF data for this tile
+            let tile_data = self.extract_tile_data(tile_id, buffered_bounds)
+                .with_context(|| format!(
+                    "Failed to extract PBF data for tile {:?} (bounds: lat={:.3}..{:.3}, lon={:.3}..{:.3})",
+                    tile_id, buffered_bounds.lat_min, buffered_bounds.lat_max,
+                    buffered_bounds.lon_min, buffered_bounds.lon_max
+                ))?;
 
-        // Step 3: Build area grids for proximity computation (stub)
-        let (residential_grid, military_grid) = self.build_area_grids(&tile_data, buffered_bounds)
-            .context("Failed to build area grids")?;
+            // Handle empty tiles (ocean, poles, etc.) - skip writing
+            if tile_data.nodes.is_empty() && tile_data.ways.is_empty() {
+                info!("Tile {:?} is empty, skipping RMDF write", tile_id);
+                return Ok(());
+            }
 
-        // Step 4: Compute proximity flags for nodes in core bounds (stub)
-        let nodes_with_flags = self.compute_proximity_flags(
-            tile_data.nodes,
-            core_bounds,
-            &residential_grid,
-            &military_grid,
-        ).context("Failed to compute proximity flags")?;
+            // Validate tile data (warns but doesn't fail)
+            self.validate_tile_data(&tile_data)?;
 
-        // Step 5: Build generation graph (stub)
-        let graph = self.build_generation_graph(
-            nodes_with_flags,
-            tile_data.ways,
-            tile_data.relations,
-        ).context("Failed to build generation graph")?;
+            // Step 3: Build area grids for proximity computation
+            let (residential_grid, military_grid) = self.build_area_grids(&tile_data, buffered_bounds)
+                .with_context(|| format!(
+                    "Failed to build area grids for tile {:?} ({} nodes, {} ways, {} relations)",
+                    tile_id, tile_data.nodes.len(), tile_data.ways.len(), tile_data.relations.len()
+                ))?;
 
-        // Step 6: Write RMDF tile file (stub)
-        self.write_rmdf_tile(tile_id, graph)
-            .context("Failed to write RMDF tile")?;
+            // Step 4: Compute proximity flags for nodes in core bounds
+            let nodes_with_flags = self.compute_proximity_flags(
+                tile_data.nodes,
+                core_bounds,
+                &residential_grid,
+                &military_grid,
+            ).with_context(|| format!(
+                "Failed to compute proximity flags for tile {:?}",
+                tile_id
+            ))?;
 
-        Ok(())
+            // Step 5: Build generation graph
+            let graph = self.build_generation_graph(
+                nodes_with_flags,
+                tile_data.ways,
+                tile_data.relations,
+            ).with_context(|| format!(
+                "Failed to build generation graph for tile {:?}",
+                tile_id
+            ))?;
+
+            // Step 6: Write RMDF tile file
+            self.write_rmdf_tile(tile_id, graph)
+                .with_context(|| format!(
+                    "Failed to write RMDF tile {:?} to disk",
+                    tile_id
+                ))?;
+
+            Ok(())
+        })().with_context(|| format!("Failed to process tile {:?}", tile_id))
     }
 
     fn partition_node(
@@ -650,48 +705,49 @@ impl PbfStreamer {
         tile_id: TileId,
         buffered_bounds: crate::rmdf::format::TileBounds,
     ) -> Result<TileData> {
-        // Open new PBF reader for this tile (thread-safe)
-        let file = File::open(&self.input_file)
-            .with_context(|| format!("Failed to open PBF file for tile {:?}", tile_id))?;
-        let mut pbf = OsmPbfReader::new(file);
-
         let mut tile_data = TileData::new(tile_id);
-
-        // Phase 1: Collect all nodes in buffered bounds
-        // We need to track which nodes are in bounds for filtering ways/relations
         let mut nodes_in_bounds = std::collections::HashSet::new();
 
-        for obj_result in pbf.iter() {
-            let obj = obj_result
-                .with_context(|| format!("Failed to read PBF object for tile {:?}", tile_id))?;
+        // Phase 1: Collect all nodes in buffered bounds
+        // File is opened in local scope and automatically closed when dropped
+        {
+            let file = File::open(&self.input_file)
+                .with_context(|| format!("Failed to open PBF file for tile {:?}", tile_id))?;
+            let mut pbf = OsmPbfReader::new(file);
 
-            match obj {
-                OsmObj::Node(node) => {
-                    let lat = node.lat();
-                    let lon = node.lon();
+            for obj_result in pbf.iter() {
+                let obj = obj_result
+                    .with_context(|| format!("Failed to read PBF object for tile {:?}", tile_id))?;
 
-                    if self.point_in_bounds(lat, lon, buffered_bounds) {
-                        nodes_in_bounds.insert(node.id.0);
+                match obj {
+                    OsmObj::Node(node) => {
+                        let lat = node.lat();
+                        let lon = node.lon();
 
-                        let osm_node = OsmNode {
-                            id: node.id.0 as u64,
-                            lat,
-                            lon,
-                            residential_in_proximity: false,  // Will be computed in Phase 4
-                            nogo_area: false,                 // Will be computed in Phase 4
-                        };
+                        if self.point_in_bounds(lat, lon, buffered_bounds) {
+                            nodes_in_bounds.insert(node.id.0);
 
-                        tile_data.nodes.insert(osm_node.id, osm_node);
+                            let osm_node = OsmNode {
+                                id: node.id.0 as u64,
+                                lat,
+                                lon,
+                                residential_in_proximity: false,  // Will be computed in Phase 4
+                                nogo_area: false,                 // Will be computed in Phase 4
+                            };
+
+                            tile_data.nodes.insert(osm_node.id, osm_node);
+                        }
                     }
+                    _ => {} // Collect ways and relations in second pass
                 }
-                _ => {} // Collect ways and relations in second pass
             }
-        }
+        } // File handle dropped here
 
         // Phase 2: Re-open PBF and collect ways/relations that reference nodes in bounds
-        let file = File::open(&self.input_file)
-            .with_context(|| format!("Failed to reopen PBF file for tile {:?}", tile_id))?;
-        let mut pbf = OsmPbfReader::new(file);
+        {
+            let file = File::open(&self.input_file)
+                .with_context(|| format!("Failed to reopen PBF file for tile {:?}", tile_id))?;
+            let mut pbf = OsmPbfReader::new(file);
 
         for obj_result in pbf.iter() {
             let obj = obj_result?;
@@ -772,6 +828,7 @@ impl PbfStreamer {
                 _ => {} // Nodes already collected in first pass
             }
         }
+        } // File handle dropped here
 
         // Log warning for empty tiles (common for ocean tiles)
         if tile_data.nodes.is_empty() && tile_data.ways.is_empty() {
@@ -973,6 +1030,33 @@ impl PbfStreamer {
         // Write tile directly from GenerationGraph
         writer.write_tile_from_graph(tile_id, graph, &output_path)
             .with_context(|| format!("Failed to write RMDF tile {:?}", tile_id))?;
+
+        Ok(())
+    }
+
+    /// Validate tile data for consistency (warns but doesn't fail)
+    fn validate_tile_data(&self, tile_data: &TileData) -> Result<()> {
+        use tracing::warn;
+
+        // Check for orphaned ways (ways referencing nodes not in tile)
+        let node_ids: std::collections::HashSet<u64> = tile_data.nodes.keys().copied().collect();
+
+        for way in &tile_data.ways {
+            let missing_nodes: Vec<u64> = way.point_ids.iter()
+                .filter(|id| !node_ids.contains(id))
+                .copied()
+                .collect();
+
+            if !missing_nodes.is_empty() {
+                warn!(
+                    "Way {} references {} nodes not in tile {:?}: {:?}",
+                    way.id,
+                    missing_nodes.len(),
+                    tile_data.tile_id,
+                    &missing_nodes[..missing_nodes.len().min(5)] // Show first 5
+                );
+            }
+        }
 
         Ok(())
     }

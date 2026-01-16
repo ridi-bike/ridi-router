@@ -58,6 +58,43 @@ impl ManifestGenerator {
         Self { tile_size_degrees }
     }
 
+    /// Parse tile ID from filename like "tile_123_456.rmdf"
+    fn parse_tile_id_from_filename(path: &Path) -> Option<TileId> {
+        let filename = path.file_stem()?.to_str()?;
+
+        // Parse "tile_123_456" format
+        let parts: Vec<&str> = filename.split('_').collect();
+        if parts.len() == 3 && parts[0] == "tile" {
+            let col = parts[1].parse().ok()?;
+            let row = parts[2].parse().ok()?;
+            return Some(TileId { col, row });
+        }
+
+        None
+    }
+
+    /// Discover all RMDF tiles in output directory by scanning filesystem
+    pub fn discover_tiles(&self, output_dir: &Path) -> Result<Vec<TileId>> {
+        let mut tile_ids = Vec::new();
+
+        for entry in std::fs::read_dir(output_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.extension().and_then(|s| s.to_str()) == Some("rmdf") {
+                if let Some(tile_id) = Self::parse_tile_id_from_filename(&path) {
+                    tile_ids.push(tile_id);
+                }
+            }
+        }
+
+        tile_ids.sort_by_key(|id| (id.col, id.row));
+
+        tracing::info!("Discovered {} tiles for manifest", tile_ids.len());
+
+        Ok(tile_ids)
+    }
+
     pub fn generate(
         &self,
         output_dir: &Path,

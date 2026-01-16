@@ -50,10 +50,24 @@ impl TileGenerator {
             self.tile_size_degrees,
         )?;
 
-        // Use new parallel partition method (Phase 1 stub)
+        // Process all tiles in parallel
         streamer.partition_parallel()?;
 
-        // TODO: Manifest generation will be added in later phases
+        // Generate manifest by discovering tiles from filesystem
+        info!("Generating manifest");
+        let manifest_gen = ManifestGenerator::new(self.tile_size_degrees);
+        let tile_ids = manifest_gen.discover_tiles(&self.output_dir)
+            .context("Failed to discover tiles from filesystem")?;
+
+        if tile_ids.is_empty() {
+            tracing::warn!("No tiles were generated - all tiles may have been empty");
+        } else {
+            manifest_gen.generate(
+                &self.output_dir,
+                &tile_ids,
+                self.input_file.to_str().unwrap_or("unknown"),
+            ).context("Failed to generate manifest")?;
+        }
 
         info!("RMDF generation complete");
         Ok(())

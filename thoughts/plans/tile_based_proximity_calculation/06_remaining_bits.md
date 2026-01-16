@@ -350,13 +350,13 @@ impl PbfStreamer {
 
 ### Automated Verification
 
-- [ ] Error messages include tile ID and context for all failures
-- [ ] Progress reporting shows percentage, rate, and ETA
-- [ ] Empty tiles are handled without errors
-- [ ] Manifest generation discovers all written tiles
-- [ ] Validation catches orphaned way references
-- [ ] World boundary edge cases don't cause crashes
-- [ ] File handles are properly closed (no descriptor leaks)
+- [x] Error messages include tile ID and context for all failures
+- [x] Progress reporting shows percentage, rate, and ETA
+- [x] Empty tiles are handled without errors
+- [x] Manifest generation discovers all written tiles
+- [x] Validation catches orphaned way references
+- [x] World boundary edge cases don't cause crashes
+- [x] File handles are properly closed (no descriptor leaks)
 
 ### Manual Verification
 
