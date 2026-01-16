@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use bytemuck::bytes_of;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Write, Seek, SeekFrom};
 use std::path::Path;
 use tracing::debug;
@@ -88,7 +88,13 @@ impl RmdfWriter {
         };
 
         // Step 6: Write all data to file
-        let mut file = File::create(output_path)
+        // Open with read+write permissions so we can read it back for checksum
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output_path)
             .context("Failed to create output file")?;
 
         file.write_all(bytes_of(&header))
