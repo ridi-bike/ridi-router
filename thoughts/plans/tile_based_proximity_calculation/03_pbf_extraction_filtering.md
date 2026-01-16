@@ -271,13 +271,13 @@ impl PbfStreamer {
 
 ### Automated Verification
 
-- [ ] Code compiles without errors
-- [ ] `extract_tile_data()` successfully filters nodes by buffered bounds
-- [ ] Ways are included if any node is in bounds
-- [ ] Relations are included if any member node is in bounds
-- [ ] Empty tiles (ocean) don't cause errors
-- [ ] Highway filtering matches current behavior
-- [ ] Restriction relation filtering matches current behavior
+- [x] Code compiles without errors
+- [x] `extract_tile_data()` successfully filters nodes by buffered bounds
+- [x] Ways are included if any node is in bounds
+- [x] Relations are included if any member node is in bounds
+- [x] Empty tiles (ocean) don't cause errors
+- [x] Highway filtering matches current behavior
+- [x] Restriction relation filtering matches current behavior
 
 ### Manual Verification
 
