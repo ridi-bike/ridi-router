@@ -2,6 +2,15 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation};
 use crate::rmdf::format::TileId;
+use redb::{Database, TableDefinition, ReadableTable};
+use bincode;
+
+// redb table definitions for intermediate tile data
+// Key: (col: u16, row: u16, osm_id: u64)
+// Value: Serialized node/way/relation data
+const TILE_NODES: TableDefinition<(u16, u16, u64), &[u8]> = TableDefinition::new("tile_nodes");
+const TILE_WAYS: TableDefinition<(u16, u16, u64), &[u8]> = TableDefinition::new("tile_ways");
+const TILE_RELATIONS: TableDefinition<(u16, u16, u64), &[u8]> = TableDefinition::new("tile_relations");
 
 /// Intermediate representation of a tile before RMDF serialization
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -88,6 +97,90 @@ impl IntermediateTile {
 
         Ok(())
     }
+
+    /// Save tile data to redb database
+    pub fn save_to_redb(&self, db: &Database) -> anyhow::Result<()> {
+        let write_txn = db.begin_write()?;
+
+        {
+            let mut nodes_table = write_txn.open_table(TILE_NODES)?;
+            for (osm_id, node) in &self.nodes {
+                let key = (self.tile_id.col, self.tile_id.row, *osm_id);
+                let value = bincode::serialize(node)?;
+                nodes_table.insert(key, value.as_slice())?;
+            }
+        }
+
+        {
+            let mut ways_table = write_txn.open_table(TILE_WAYS)?;
+            for way in &self.ways {
+                let key = (self.tile_id.col, self.tile_id.row, way.id);
+                let value = bincode::serialize(way)?;
+                ways_table.insert(key, value.as_slice())?;
+            }
+        }
+
+        {
+            let mut relations_table = write_txn.open_table(TILE_RELATIONS)?;
+            for relation in &self.relations {
+                let key = (self.tile_id.col, self.tile_id.row, relation.id);
+                let value = bincode::serialize(relation)?;
+                relations_table.insert(key, value.as_slice())?;
+            }
+        }
+
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load tile data from redb database
+    pub fn load_from_redb(db: &Database, tile_id: TileId) -> anyhow::Result<Self> {
+        let read_txn = db.begin_read()?;
+
+        let mut tile = IntermediateTile::new(tile_id);
+
+        // Load nodes
+        {
+            let nodes_table = read_txn.open_table(TILE_NODES)?;
+            let start_key = (tile_id.col, tile_id.row, 0u64);
+            let end_key = (tile_id.col, tile_id.row, u64::MAX);
+
+            for entry in nodes_table.range(start_key..=end_key)? {
+                let (key_guard, value_guard) = entry?;
+                let (_col, _row, osm_id) = key_guard.value();
+                let node: OsmNode = bincode::deserialize(value_guard.value())?;
+                tile.nodes.insert(osm_id, node);
+            }
+        }
+
+        // Load ways
+        {
+            let ways_table = read_txn.open_table(TILE_WAYS)?;
+            let start_key = (tile_id.col, tile_id.row, 0u64);
+            let end_key = (tile_id.col, tile_id.row, u64::MAX);
+
+            for entry in ways_table.range(start_key..=end_key)? {
+                let (_key_guard, value_guard) = entry?;
+                let way: OsmWay = bincode::deserialize(value_guard.value())?;
+                tile.ways.push(way);
+            }
+        }
+
+        // Load relations
+        {
+            let relations_table = read_txn.open_table(TILE_RELATIONS)?;
+            let start_key = (tile_id.col, tile_id.row, 0u64);
+            let end_key = (tile_id.col, tile_id.row, u64::MAX);
+
+            for entry in relations_table.range(start_key..=end_key)? {
+                let (_key_guard, value_guard) = entry?;
+                let relation: OsmRelation = bincode::deserialize(value_guard.value())?;
+                tile.relations.push(relation);
+            }
+        }
+
+        Ok(tile)
+    }
 }
 
 /// Collection of all intermediate tiles
@@ -128,6 +221,34 @@ impl TileBuffers {
         }
 
         Ok(())
+    }
+
+    /// Flush tiles to redb database and clear memory (incremental saving)
+    pub fn flush_to_redb(&mut self, db: &Database) -> anyhow::Result<()> {
+        for (_tile_id, tile) in self.tiles.drain() {
+            tile.save_to_redb(db)?;
+        }
+        Ok(())
+    }
+
+    /// Discover all tile IDs from redb database
+    pub fn discover_tiles_from_redb(db: &Database) -> anyhow::Result<Vec<TileId>> {
+        let read_txn = db.begin_read()?;
+        let nodes_table = read_txn.open_table(TILE_NODES)?;
+
+        let mut tile_set = std::collections::HashSet::new();
+
+        // Iterate all keys and extract unique (col, row) pairs
+        for entry in nodes_table.iter()? {
+            let (key_guard, _value_guard) = entry?;
+            let (col, row, _osm_id) = key_guard.value();
+            tile_set.insert(TileId { col, row });
+        }
+
+        let mut tile_ids: Vec<TileId> = tile_set.into_iter().collect();
+        tile_ids.sort_by_key(|id| (id.col, id.row));
+
+        Ok(tile_ids)
     }
 }
 

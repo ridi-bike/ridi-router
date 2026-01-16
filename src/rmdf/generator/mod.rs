@@ -10,11 +10,12 @@ pub use writer::RmdfWriter;
 pub use manifest::{ManifestGenerator, TileManifest};
 
 use std::path::PathBuf;
-use anyhow::Result;
+use anyhow::{Result, Context};
 use tracing::info;
+use redb::Database;
 
 use crate::rmdf::format::TileId;
-use super::generator::intermediate::IntermediateTile;
+use super::generator::intermediate::{IntermediateTile, TileBuffers};
 
 pub struct TileGenerator {
     input_file: PathBuf,
@@ -42,24 +43,36 @@ impl TileGenerator {
     pub fn generate(&self) -> Result<()> {
         // Phase 2: Stream and partition
         let streamer = PbfStreamer::new(&self.input_file, &self.output_dir, self.tile_size_degrees)?;
-        let tile_buffers = streamer.partition()?;
+        let _tile_buffers = streamer.partition()?;  // Returns empty (drained) buffers
+
+        // Open intermediate tiles database
+        let tiles_db_path = self.output_dir.join("intermediate_tiles.redb");
+        let tiles_db = Database::open(&tiles_db_path)
+            .context("Failed to open intermediate tiles database")?;
+
+        // Discover tiles from database
+        let tile_ids = TileBuffers::discover_tiles_from_redb(&tiles_db)?;
+        info!("Discovered {} tiles from database", tile_ids.len());
+
+        if tile_ids.is_empty() {
+            anyhow::bail!("No tiles generated during partition phase");
+        }
 
         // Phase 3: Proximity computation
         let proximity_computer = ProximityComputer::new(&self.input_file, self.tile_size_degrees)?;
-        proximity_computer.compute_all(&tile_buffers, &self.output_dir)?;
+        proximity_computer.compute_all(&tile_ids, &tiles_db)?;  // Pass database instead of output_dir
 
         // Phase 4: RMDF writing
         let writer = RmdfWriter::new(self.tile_size_degrees);
-        let tile_ids: Vec<TileId> = tile_buffers.tiles.keys().cloned().collect();
 
         info!("Writing RMDF files for {} tiles", tile_ids.len());
         for tile_id in &tile_ids {
-            let intermediate = IntermediateTile::load_from_disk(&self.output_dir, *tile_id)?;
+            let intermediate = IntermediateTile::load_from_redb(&tiles_db, *tile_id)?;  // Load from redb
             let output_path = self.output_dir.join(tile_id.to_filename());
             writer.write_tile(&intermediate, &output_path)?;
         }
 
-        // Generate manifest
+        // Phase 5: Generate manifest
         let manifest_gen = ManifestGenerator::new(self.tile_size_degrees);
         manifest_gen.generate(
             &self.output_dir,
@@ -68,6 +81,12 @@ impl TileGenerator {
         )?;
 
         info!("Generated {} tiles with manifest", tile_ids.len());
+
+        // Clean up intermediate tiles database
+        drop(tiles_db);
+        std::fs::remove_file(&tiles_db_path)
+            .context("Failed to remove intermediate tiles database")?;
+        info!("Cleaned up intermediate tiles database");
 
         Ok(())
     }

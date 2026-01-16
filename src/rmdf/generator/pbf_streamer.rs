@@ -45,9 +45,14 @@ impl PbfStreamer {
         info!("Starting PBF streaming partitioning");
 
         // Create redb database for node coordinates (disk-backed storage)
-        let db_path = self.output_dir.join("node_coords.redb");
-        let db = Database::create(&db_path)
+        let node_coords_db_path = self.output_dir.join("node_coords.redb");
+        let node_coords_db = Database::create(&node_coords_db_path)
             .context("Failed to create node coordinates database")?;
+
+        // Create redb database for intermediate tiles
+        let tiles_db_path = self.output_dir.join("intermediate_tiles.redb");
+        let tiles_db = Database::create(&tiles_db_path)
+            .context("Failed to create intermediate tiles database")?;
 
         // First pass: collect all nodes with their coordinates in redb
         info!("First pass: collecting node coordinates to disk-backed database");
@@ -56,7 +61,7 @@ impl PbfStreamer {
                 .context("Failed to open PBF file")?;
             let mut pbf = OsmPbfReader::new(file);
 
-            let write_txn = db.begin_write()
+            let write_txn = node_coords_db.begin_write()
                 .context("Failed to begin write transaction")?;
             {
                 let mut table = write_txn.open_table(NODE_COORDS_TABLE)
@@ -91,7 +96,7 @@ impl PbfStreamer {
                 .context("Failed to reopen PBF file for second pass")?;
             let mut pbf = OsmPbfReader::new(file);
 
-            let read_txn = db.begin_read()
+            let read_txn = node_coords_db.begin_read()
                 .context("Failed to begin read transaction")?;
             let table = read_txn.open_table(NODE_COORDS_TABLE)
                 .context("Failed to open node coords table")?;
@@ -113,7 +118,7 @@ impl PbfStreamer {
                         // Flush tiles periodically to prevent memory accumulation
                         if way_count % FLUSH_INTERVAL == 0 {
                             info!("Flushing tiles after {} ways", way_count);
-                            tile_buffers.flush_to_disk(&self.output_dir)?;
+                            tile_buffers.flush_to_redb(&tiles_db)?;
                         }
                     }
                     OsmObj::Relation(relation) => {
@@ -128,14 +133,17 @@ impl PbfStreamer {
 
             // Final flush of remaining tiles
             info!("Final flush of remaining tiles");
-            tile_buffers.flush_to_disk(&self.output_dir)?;
+            tile_buffers.flush_to_redb(&tiles_db)?;
         }
 
-        // Clean up redb database
-        drop(db);
-        std::fs::remove_file(&db_path)
+        // Clean up node coordinates database
+        drop(node_coords_db);
+        std::fs::remove_file(&node_coords_db_path)
             .context("Failed to remove node coordinates database")?;
         info!("Cleaned up temporary node coordinates database");
+
+        // Keep tiles_db open - it will be used by subsequent phases
+        drop(tiles_db);  // Close handle but DON'T delete the file
 
         Ok(tile_buffers)
     }

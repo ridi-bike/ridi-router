@@ -3,12 +3,13 @@ use geo::{Point, Distance, Haversine, HaversineClosestPoint, CoordsIter, Geodesi
 use rayon::prelude::*;
 use std::path::Path;
 use tracing::info;
+use redb::Database;
 
 use crate::map_data::proximity::AreaGrid;
 use crate::osm_data::pbf_area_reader::PbfAreaReader;
 use crate::rmdf::format::{TileId, TileBounds};
 
-use super::intermediate::{IntermediateTile, TileBuffers};
+use super::intermediate::IntermediateTile;
 
 // Constants from src/osm_data/pbf_reader.rs
 const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
@@ -61,15 +62,13 @@ impl ProximityComputer {
     }
 
     /// Compute proximity flags for all tiles in parallel
-    pub fn compute_all(&self, tile_buffers: &TileBuffers, output_dir: &Path) -> Result<()> {
-        info!("Computing proximity flags for {} tiles", tile_buffers.tiles.len());
-
-        let tile_ids: Vec<TileId> = tile_buffers.tiles.keys().cloned().collect();
+    pub fn compute_all(&self, tile_ids: &[TileId], tiles_db: &Database) -> Result<()> {
+        info!("Computing proximity flags for {} tiles", tile_ids.len());
 
         // Process tiles in parallel
         tile_ids.par_iter()
             .try_for_each(|tile_id| -> Result<()> {
-                self.compute_tile(*tile_id, output_dir)
+                self.compute_tile(*tile_id, tiles_db)
             })?;
 
         info!("Proximity computation complete");
@@ -77,9 +76,9 @@ impl ProximityComputer {
     }
 
     /// Compute flags for a single tile with 500m overlap
-    fn compute_tile(&self, tile_id: TileId, output_dir: &Path) -> Result<()> {
-        // Load intermediate tile
-        let mut tile = IntermediateTile::load_from_disk(output_dir, tile_id)?;
+    fn compute_tile(&self, tile_id: TileId, tiles_db: &Database) -> Result<()> {
+        // Load intermediate tile from redb
+        let mut tile = IntermediateTile::load_from_redb(tiles_db, tile_id)?;
 
         // Compute tile bounds with 500m buffer
         let core_bounds = self.compute_tile_bounds(tile_id);
@@ -106,8 +105,8 @@ impl ProximityComputer {
             );
         }
 
-        // Save updated tile back to disk
-        tile.save_to_disk(output_dir)?;
+        // Save updated tile back to redb
+        tile.save_to_redb(tiles_db)?;
 
         Ok(())
     }
