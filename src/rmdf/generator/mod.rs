@@ -62,10 +62,12 @@ impl TileGenerator {
         let read_txn = tiles_db.begin_read()
             .context("Failed to begin read transaction for tile loading")?;
 
-        for tile_id in &tile_ids {
-            let intermediate = IntermediateTile::load_from_redb_with_txn(&read_txn, *tile_id)?;  // Load from redb with shared transaction
+        for (idx, tile_id) in tile_ids.iter().enumerate() {
+            let intermediate = IntermediateTile::load_from_redb_with_txn(&read_txn, *tile_id)
+                .with_context(|| format!("Failed to load tile {}/{} (ID: {:?})", idx + 1, tile_ids.len(), tile_id))?;
             let output_path = self.output_dir.join(tile_id.to_filename());
-            writer.write_tile(&intermediate, &output_path)?;
+            writer.write_tile(&intermediate, &output_path)
+                .with_context(|| format!("Failed to write tile {}/{} (ID: {:?})", idx + 1, tile_ids.len(), tile_id))?;
         }
 
         // Drop read transaction before closing database

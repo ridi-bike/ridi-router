@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use anyhow::Context;
 use serde::{Serialize, Deserialize};
 use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation};
 use crate::rmdf::format::TileId;
@@ -139,21 +140,26 @@ impl IntermediateTile {
 
         // Load nodes
         {
-            let nodes_table = read_txn.open_table(TILE_NODES)?;
+            let nodes_table = read_txn.open_table(TILE_NODES)
+                .context("Failed to open TILE_NODES table")?;
             let start_key = (tile_id.col, tile_id.row, 0u64);
             let end_key = (tile_id.col, tile_id.row, u64::MAX);
 
-            for entry in nodes_table.range(start_key..=end_key)? {
-                let (key_guard, value_guard) = entry?;
+            for entry in nodes_table.range(start_key..=end_key)
+                .context("Failed to create range iterator for nodes")? {
+                let (key_guard, value_guard) = entry
+                    .context("Failed to read node entry from database")?;
                 let (_col, _row, osm_id) = key_guard.value();
-                let node: OsmNode = bincode::deserialize(value_guard.value())?;
+                let node: OsmNode = bincode::deserialize(value_guard.value())
+                    .context("Failed to deserialize node")?;
                 tile.nodes.insert(osm_id, node);
             }
         }
 
         // Load ways
         {
-            let ways_table = read_txn.open_table(TILE_WAYS)?;
+            let ways_table = read_txn.open_table(TILE_WAYS)
+                .context("Failed to open TILE_WAYS table")?;
             let start_key = (tile_id.col, tile_id.row, 0u64);
             let end_key = (tile_id.col, tile_id.row, u64::MAX);
 
@@ -166,7 +172,8 @@ impl IntermediateTile {
 
         // Load relations
         {
-            let relations_table = read_txn.open_table(TILE_RELATIONS)?;
+            let relations_table = read_txn.open_table(TILE_RELATIONS)
+                .context("Failed to open TILE_RELATIONS table")?;
             let start_key = (tile_id.col, tile_id.row, 0u64);
             let end_key = (tile_id.col, tile_id.row, u64::MAX);
 
