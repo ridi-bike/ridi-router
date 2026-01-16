@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::format::*;
-use super::io::MappedTile;
 use super::generator::manifest::TileManifest;
+use super::io::MappedTile;
 
 pub struct TileManager {
     tile_dir: PathBuf,
@@ -14,15 +14,15 @@ pub struct TileManager {
 }
 
 impl TileManager {
-    const MAX_LOADED_TILES: usize = 100;  // Conservative FD limit
+    const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
 
     /// Initialize TileManager from directory containing manifest.json
     pub fn new(tile_dir: PathBuf) -> Result<Self> {
         let manifest_path = tile_dir.join("manifest.json");
-        let manifest_file = std::fs::File::open(&manifest_path)
-            .context("Failed to open manifest.json")?;
-        let manifest: TileManifest = serde_json::from_reader(manifest_file)
-            .context("Failed to parse manifest.json")?;
+        let manifest_file =
+            std::fs::File::open(&manifest_path).context("Failed to open manifest.json")?;
+        let manifest: TileManifest =
+            serde_json::from_reader(manifest_file).context("Failed to parse manifest.json")?;
 
         let tile_size_degrees = manifest.tile_size_degrees;
 
@@ -78,7 +78,11 @@ impl TileManager {
         if line_index < lines.len() {
             Ok(lines[line_index])
         } else {
-            anyhow::bail!("Line index {} out of bounds in tile {:?}", line_index, tile_id)
+            anyhow::bail!(
+                "Line index {} out of bounds in tile {:?}",
+                line_index,
+                tile_id
+            )
         }
     }
 
@@ -137,7 +141,11 @@ impl TileManager {
 
     /// Get adjacent lines and points from a point (handles border crossing)
     /// Returns Vec<(line_tile_id, line_index, other_point_tile_id, other_point_osm_id)>
-    pub fn get_adjacent_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<Vec<(TileId, usize, TileId, u64)>> {
+    pub fn get_adjacent_by_id(
+        &mut self,
+        tile_id: TileId,
+        osm_id: u64,
+    ) -> Result<Vec<(TileId, usize, TileId, u64)>> {
         self.ensure_tile_loaded(tile_id)?;
 
         // First, collect information from the current tile
@@ -147,7 +155,8 @@ impl TileManager {
             let points = tile.get_points()?;
 
             // Find the point in the tile
-            let point = points.iter()
+            let point = points
+                .iter()
                 .find(|p| p.osm_id == osm_id)
                 .context("Point not found in tile")?;
 
@@ -155,11 +164,12 @@ impl TileManager {
             let line_refs_array = tile.get_line_refs()?;
 
             // Get line references for this point
-            let point_line_refs = &line_refs_array[point.lines_offset as usize..]
-                [..point.lines_count as usize];
+            let point_line_refs =
+                &line_refs_array[point.lines_offset as usize..][..point.lines_count as usize];
 
             // Collect the data we need from each line
-            point_line_refs.iter()
+            point_line_refs
+                .iter()
                 .map(|&line_idx| {
                     let line = &lines[line_idx as usize];
                     (
@@ -177,7 +187,16 @@ impl TileManager {
 
         let mut result = Vec::new();
 
-        for (line_idx, point_a_osm_id, point_a_lat, point_a_lon, point_b_osm_id, point_b_lat, point_b_lon) in line_indices_and_data {
+        for (
+            line_idx,
+            point_a_osm_id,
+            point_a_lat,
+            point_a_lon,
+            point_b_osm_id,
+            point_b_lat,
+            point_b_lon,
+        ) in line_indices_and_data
+        {
             // Determine which endpoint is the "other" point
             let (other_osm_id, other_lat, other_lon) = if point_a_osm_id == osm_id {
                 (point_b_osm_id, point_b_lat, point_b_lon)
@@ -242,7 +261,11 @@ impl TileManager {
     }
 
     /// Get tag set record from tile
-    pub fn get_tag_set_record(&mut self, tile_id: TileId, tag_set_idx: u32) -> Result<TagSetRecord> {
+    pub fn get_tag_set_record(
+        &mut self,
+        tile_id: TileId,
+        tag_set_idx: u32,
+    ) -> Result<TagSetRecord> {
         self.ensure_tile_loaded(tile_id)?;
 
         let tile = self.loaded_tiles.get(&tile_id).unwrap();
@@ -250,7 +273,6 @@ impl TileManager {
 
         Ok(*tag_set)
     }
-
 }
 
 #[cfg(test)]

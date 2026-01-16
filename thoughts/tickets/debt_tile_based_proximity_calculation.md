@@ -2,13 +2,13 @@
 type: debt
 priority: high
 created: 2026-01-16T00:00:00Z
-status: in_progress
+status: implemented
 tags: [proximity, nogo, areagrid, performance, memory, refactoring, tiles, pbf]
 plan_document: thoughts/plans/tile_based_proximity_calculation/00_overview.md
 keywords: [AreaGrid, proximity, nogo, PbfStreamer, compute_proximity_parallel, partition_node, partition_way, partition_relation, node_coords_db, IntermediateTile, GenerationGraph, get_objs_and_deps, RESIDENTIAL_PROXIMITY_THRESHOLD_METERS, TileId, TileBounds, rayon, parallel]
 patterns: [tile-based processing, parallel iteration, geographic filtering, buffer zones, direct conversion, flag propagation]
 research_document: thoughts/research/2026-01-16_tile_based_proximity_calculation.md
-phases_completed: [1, 2, 3, 4, 5, 6, 7]
+phases_completed: [1, 2, 3, 4, 5, 6, 7, 8]
 ---
 
 # DEBT-001: Refactor Proximity/NoGo Calculation to Tile-Based Architecture

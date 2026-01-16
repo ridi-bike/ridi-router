@@ -74,8 +74,7 @@ pub fn weight_heading(input: WeightCalcInput) -> WeightCalcResult {
         fork_segment.get_line().get().points.1.get().lon,
         fork_segment.get_line().get().points.1.get().lat,
     );
-    let fork_bearing = if &fork_segment.get_line().get().points.1 == fork_segment.get_end_point()
-    {
+    let fork_bearing = if &fork_segment.get_line().get().points.1 == fork_segment.get_end_point() {
         Haversine.bearing(fork_line_0_geo, fork_line_1_geo)
     } else {
         Haversine.bearing(fork_line_1_geo, fork_line_0_geo)
@@ -437,12 +436,7 @@ pub fn weight_rules_smoothness(input: WeightCalcInput) -> WeightCalcResult {
 
 pub fn weight_avoid_nogo_areas(input: WeightCalcInput) -> WeightCalcResult {
     trace!("weight_avoid_nogo_areas");
-    if input
-        .current_fork_segment
-        .get_end_point()
-        .get()
-        .nogo_area
-    {
+    if input.current_fork_segment.get_end_point().get().nogo_area {
         return WeightCalcResult::ForkChoiceDoNotUse;
     }
 
@@ -520,7 +514,7 @@ mod test {
             itinerary::Itinerary, navigator::WeightCalcResult, route::segment::Segment,
             rules::RouterRules, walker::Walker,
         },
-        test_utils::{graph_from_test_file, set_graph_static},
+        test_utils::{graph_from_test_dataset, set_graph_static},
     };
 
     use super::{get_priority_from_headings, weight_heading, WeightCalcInput};
@@ -573,7 +567,7 @@ mod test {
         #![rusty_fork(timeout_ms = 2000)]
         #[test]
         fn weight_heading_test() {
-            set_graph_static(graph_from_test_file(&PathBuf::from("test-data/sigulda-100.json")));
+            set_graph_static(graph_from_test_dataset(&PathBuf::from("test-data/sigulda-100.json")));
             let from = MapDataGraph::get()
                 .test_get_point_ref_by_id(&885564366)
                 .expect("did not find start point");

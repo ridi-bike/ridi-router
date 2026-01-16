@@ -28,7 +28,7 @@ use crate::{
         // data_reader::{OsmDataReader, ALLOWED_ACCESS_VALUES, ALLOWED_HIGHWAY_VALUES},
         DataSource,
     },
-    rmdf::format::{TileId, TagSetRecord},
+    rmdf::format::{TagSetRecord, TileId},
     router::rules::{RouterRules, RulesTagValueAction},
 };
 
@@ -256,7 +256,7 @@ impl MapDataElement for MapDataLine {
 #[derive(Serialize, Deserialize)]
 pub struct MapDataElementRef<T: MapDataElement> {
     tile_id: crate::rmdf::TileId,
-    element_id: u64,  // osm_id for points, line_index as u64 for lines
+    element_id: u64, // osm_id for points, line_index as u64 for lines
     _marker: PhantomData<T>,
 }
 
@@ -329,7 +329,6 @@ pub struct MapDataGraph {
     tags: std::sync::RwLock<ElementTags>,
 }
 
-
 impl MapDataGraph {
     pub fn new(tile_manager: crate::rmdf::TileManager) -> Self {
         Self {
@@ -343,16 +342,21 @@ impl MapDataGraph {
         let mut tm = self.tile_manager.write().unwrap();
 
         // Get point data
-        let point_record = tm.get_point_by_id(tile_id, osm_id)
+        let point_record = tm
+            .get_point_by_id(tile_id, osm_id)
             .expect("Failed to get point from tile");
 
         // Get adjacent lines for this point
-        let adjacent = tm.get_adjacent_by_id(tile_id, osm_id)
+        let adjacent = tm
+            .get_adjacent_by_id(tile_id, osm_id)
             .expect("Failed to get adjacent lines");
 
-        let lines: Vec<MapDataLineRef> = adjacent.iter().map(|(line_tile_id, line_index, _, _)| {
-            MapDataLineRef::new(*line_tile_id, *line_index as u64)
-        }).collect();
+        let lines: Vec<MapDataLineRef> = adjacent
+            .iter()
+            .map(|(line_tile_id, line_index, _, _)| {
+                MapDataLineRef::new(*line_tile_id, *line_index as u64)
+            })
+            .collect();
 
         // Convert to MapDataPoint
         MapDataPoint {
@@ -360,17 +364,22 @@ impl MapDataGraph {
             lat: point_record.lat,
             lon: point_record.lon,
             lines,
-            rules: Vec::new(),  // TODO: Fetch rules from tiles
+            rules: Vec::new(), // TODO: Fetch rules from tiles
             residential_in_proximity: point_record.residential_in_proximity(),
             nogo_area: point_record.nogo_area(),
         }
     }
 
     // Get line data from tiles
-    pub fn get_line_from_tiles(&self, tile_id: crate::rmdf::TileId, line_index: usize) -> MapDataLine {
+    pub fn get_line_from_tiles(
+        &self,
+        tile_id: crate::rmdf::TileId,
+        line_index: usize,
+    ) -> MapDataLine {
         let mut tm = self.tile_manager.write().unwrap();
 
-        let line_record = tm.get_line_by_index(tile_id, line_index)
+        let line_record = tm
+            .get_line_by_index(tile_id, line_index)
             .expect("Failed to get line from tile");
 
         // Convert to MapDataLine
@@ -378,8 +387,11 @@ impl MapDataGraph {
             points: (
                 MapDataPointRef::new(tile_id, line_record.point_a_osm_id),
                 MapDataPointRef::new(
-                    crate::rmdf::TileId::from_coords(line_record.point_b_lat, line_record.point_b_lon),
-                    line_record.point_b_osm_id
+                    crate::rmdf::TileId::from_coords(
+                        line_record.point_b_lat,
+                        line_record.point_b_lon,
+                    ),
+                    line_record.point_b_osm_id,
                 ),
             ),
             direction: match line_record.direction {
@@ -392,24 +404,26 @@ impl MapDataGraph {
         }
     }
 
-
     pub fn get_adjacent(
         &self,
         center_point: MapDataPointRef,
     ) -> Vec<(MapDataLineRef, MapDataPointRef)> {
         let mut tm = self.tile_manager.write().unwrap();
 
-        let adjacent = tm.get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
+        let adjacent = tm
+            .get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
             .expect("Failed to get adjacent points");
 
-        adjacent.iter().map(|(line_tile_id, line_index, other_tile_id, other_osm_id)| {
-            (
-                MapDataLineRef::new(*line_tile_id, *line_index as u64),
-                MapDataPointRef::new(*other_tile_id, *other_osm_id),
-            )
-        }).collect()
+        adjacent
+            .iter()
+            .map(|(line_tile_id, line_index, other_tile_id, other_osm_id)| {
+                (
+                    MapDataLineRef::new(*line_tile_id, *line_index as u64),
+                    MapDataPointRef::new(*other_tile_id, *other_osm_id),
+                )
+            })
+            .collect()
     }
-
 
     pub fn get_closest_to_coords(
         &self,
@@ -422,7 +436,14 @@ impl MapDataGraph {
         let mut tm = self.tile_manager.write().unwrap();
 
         // Query TileManager for closest point
-        let result = tm.get_closest_to_coords(lat, lon, rules, avoid_proximity_to_residential, _limit_to_hw_tags)
+        let result = tm
+            .get_closest_to_coords(
+                lat,
+                lon,
+                rules,
+                avoid_proximity_to_residential,
+                _limit_to_hw_tags,
+            )
             .ok()??;
 
         // Convert to MapDataPointRef

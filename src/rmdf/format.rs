@@ -11,8 +11,8 @@ pub const NUM_SECTIONS: usize = 7;
 // Tile coordinates
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct TileId {
-    pub col: u16,  // 0-359 (longitude-based)
-    pub row: u16,  // 0-179 (latitude-based)
+    pub col: u16, // 0-359 (longitude-based)
+    pub row: u16, // 0-179 (latitude-based)
 }
 
 impl TileId {
@@ -41,17 +41,17 @@ pub struct TileBounds {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct RmdfHeader {
-    pub magic: [u8; MAGIC_LEN],                    // b"RMDF"
-    pub version: u32,                              // Format version (1)
-    pub tile_bounds: TileBounds,                   // 16 bytes
+    pub magic: [u8; MAGIC_LEN],  // b"RMDF"
+    pub version: u32,            // Format version (1)
+    pub tile_bounds: TileBounds, // 16 bytes
     pub point_count: u64,
     pub line_count: u64,
     pub spatial_grid_cell_count: u32,
     pub tag_value_count: u32,
     pub tag_set_count: u32,
     pub rule_count: u32,
-    pub section_offsets: [u64; NUM_SECTIONS],      // Offsets to each section
-    // checksum stored separately at end of file (not in header)
+    pub section_offsets: [u64; NUM_SECTIONS], // Offsets to each section
+                                              // checksum stored separately at end of file (not in header)
 }
 
 impl RmdfHeader {
@@ -64,9 +64,9 @@ impl RmdfHeader {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct GridCellEntry {
-    pub cell_id: u32,           // Encoded (lat_rounded << 16 | lon_rounded)
+    pub cell_id: u32, // Encoded (lat_rounded << 16 | lon_rounded)
     pub _padding1: u32,
-    pub points_offset: u64,     // Offset into Points Section
+    pub points_offset: u64, // Offset into Points Section
     pub points_count: u32,
     pub _padding2: u32,
 }
@@ -86,12 +86,12 @@ pub struct PointRecord {
     pub osm_id: u64,
     pub lat: f32,
     pub lon: f32,
-    pub lines_offset: u64,      // Offset into Line References Section
+    pub lines_offset: u64, // Offset into Line References Section
     pub lines_count: u32,
     pub _padding1: u32,
-    pub rules_offset: u64,      // Offset into Rules Section
+    pub rules_offset: u64, // Offset into Rules Section
     pub rules_count: u32,
-    pub flags: u16,             // bit 0: residential_in_proximity, bit 1: nogo_area
+    pub flags: u16, // bit 0: residential_in_proximity, bit 1: nogo_area
     pub _padding2: u16,
 }
 
@@ -118,17 +118,17 @@ pub struct LineRecord {
     pub point_b_osm_id: u64,
     pub point_b_lat: f32,
     pub point_b_lon: f32,
-    pub direction: u8,          // 0=BothWays, 1=OneWay, 2=Roundabout
+    pub direction: u8, // 0=BothWays, 1=OneWay, 2=Roundabout
     pub _padding1: u8,
     pub _padding2: u16,
-    pub tag_set_index: u32,     // Index into Tag Sets Section
+    pub tag_set_index: u32, // Index into Tag Sets Section
 }
 
 // String entry in tag values section (16 bytes - padded for alignment)
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct StringEntry {
-    pub offset: u64,            // Offset into string data pool
+    pub offset: u64, // Offset into string data pool
     pub length: u32,
     pub _padding: u32,
 }
@@ -137,7 +137,7 @@ pub struct StringEntry {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 pub struct TagSetRecord {
-    pub name_idx: u32,          // 0xFFFFFFFF = none
+    pub name_idx: u32, // 0xFFFFFFFF = none
     pub hw_ref_idx: u32,
     pub highway_idx: u32,
     pub surface_idx: u32,
@@ -157,7 +157,7 @@ pub struct RuleRecord {
     pub _padding1: u32,
     pub to_lines_offset: u64,
     pub to_lines_count: u32,
-    pub rule_type: u8,          // 0=OnlyAllowed, 1=NotAllowed
+    pub rule_type: u8, // 0=OnlyAllowed, 1=NotAllowed
     pub _padding2: u8,
     pub _padding3: u16,
 }
@@ -173,5 +173,8 @@ pub mod section {
     pub const RULES: usize = 6;
 
     // Compile-time assertion: ensure NUM_SECTIONS matches the highest section index + 1
-    const _: () = assert!(super::NUM_SECTIONS == RULES + 1, "NUM_SECTIONS must equal the number of section constants");
+    const _: () = assert!(
+        super::NUM_SECTIONS == RULES + 1,
+        "NUM_SECTIONS must equal the number of section constants"
+    );
 }

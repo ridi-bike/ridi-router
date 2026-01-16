@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
-use geo::{Point, Distance, Haversine, HaversineClosestPoint, CoordsIter, GeodesicArea};
+use geo::{CoordsIter, Distance, GeodesicArea, Haversine, HaversineClosestPoint, Point};
 use rayon::prelude::*;
+use redb::Database;
 use std::path::Path;
 use tracing::info;
-use redb::Database;
 
 use crate::map_data::proximity::AreaGrid;
 use crate::osm_data::pbf_area_reader::PbfAreaReader;
-use crate::rmdf::format::{TileId, TileBounds};
+use crate::rmdf::format::{TileBounds, TileId};
 
 // Constants from src/osm_data/pbf_reader.rs
 const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
@@ -24,7 +24,9 @@ const MILITARY_ENTRY_MAX_M: f64 = 100.0;
 /// tile generation pipeline. The new implementation computes proximity flags for all nodes
 /// in parallel BEFORE partitioning them into tiles, eliminating database I/O overhead and
 /// restoring the original parallel processing pattern.
-#[deprecated(note = "Proximity computation now happens in PbfStreamer::compute_proximity_parallel()")]
+#[deprecated(
+    note = "Proximity computation now happens in PbfStreamer::compute_proximity_parallel()"
+)]
 pub struct ProximityComputer {
     tile_size_degrees: f32,
     residential_areas: AreaGrid,
@@ -35,8 +37,7 @@ impl ProximityComputer {
     pub fn new(pbf_path: &Path, tile_size_degrees: f32) -> Result<Self> {
         info!("Extracting area grids from PBF");
 
-        let file = std::fs::File::open(pbf_path)
-            .context("Failed to open PBF file")?;
+        let file = std::fs::File::open(pbf_path).context("Failed to open PBF file")?;
         let mut pbf = osmpbfreader::OsmPbfReader::new(file);
 
         // Extract residential areas
@@ -47,8 +48,8 @@ impl ProximityComputer {
         let residential_areas = boundary_reader.get_area_grid();
 
         // Extract military areas
-        let file = std::fs::File::open(pbf_path)
-            .context("Failed to open PBF file for second pass")?;
+        let file =
+            std::fs::File::open(pbf_path).context("Failed to open PBF file for second pass")?;
         let mut pbf = osmpbfreader::OsmPbfReader::new(file);
 
         let mut boundary_reader = PbfAreaReader::new(&mut pbf);
@@ -71,10 +72,9 @@ impl ProximityComputer {
         info!("Computing proximity flags for {} tiles", tile_ids.len());
 
         // Process tiles in parallel
-        tile_ids.par_iter()
-            .try_for_each(|tile_id| -> Result<()> {
-                self.compute_tile(*tile_id, tiles_db)
-            })?;
+        tile_ids
+            .par_iter()
+            .try_for_each(|tile_id| -> Result<()> { self.compute_tile(*tile_id, tiles_db) })?;
 
         info!("Proximity computation complete");
         Ok(())
@@ -117,30 +117,32 @@ impl ProximityComputer {
     }
 
     fn point_in_bounds(&self, lat: f32, lon: f32, bounds: TileBounds) -> bool {
-        lat >= bounds.lat_min && lat < bounds.lat_max &&
-        lon >= bounds.lon_min && lon < bounds.lon_max
+        lat >= bounds.lat_min
+            && lat < bounds.lat_max
+            && lon >= bounds.lon_min
+            && lon < bounds.lon_max
     }
 
     /// Compute residential proximity flag (from src/osm_data/pbf_reader.rs:90-126)
     fn compute_residential_proximity(&self, lat: f64, lon: f64, _bounds: TileBounds) -> bool {
         let tot_area = match self.residential_areas.find_closest_areas_refs(
-            lat as f32,
-            lon as f32,
-            1,  // Search 1 grid step (~1.1km)
+            lat as f32, lon as f32, 1, // Search 1 grid step (~1.1km)
         ) {
             Some(areas) => areas.iter().fold(0., |tot, multi_polygon| {
                 let geo_point = Point::new(lon, lat);
                 let distance = match multi_polygon.haversine_closest_point(&geo_point) {
                     geo::Closest::Intersection(_) => 0.,
-                    geo::Closest::SinglePoint(p) => {
-                        Haversine.distance(p, geo_point)
-                    }
-                    geo::Closest::Indeterminate => multi_polygon
-                        .coords_iter()
-                        .fold(10000., |min, coords| {
+                    geo::Closest::SinglePoint(p) => Haversine.distance(p, geo_point),
+                    geo::Closest::Indeterminate => {
+                        multi_polygon.coords_iter().fold(10000., |min, coords| {
                             let dist = Haversine.distance(geo_point, Point::from(coords));
-                            if dist < min { dist } else { min }
-                        }),
+                            if dist < min {
+                                dist
+                            } else {
+                                min
+                            }
+                        })
+                    }
                 };
 
                 if distance <= RESIDENTIAL_PROXIMITY_THRESHOLD_METERS {
@@ -157,11 +159,10 @@ impl ProximityComputer {
 
     /// Compute nogo area flag (from src/osm_data/pbf_reader.rs:128-149)
     fn compute_nogo_area(&self, lat: f64, lon: f64) -> bool {
-        match self.military_areas.find_closest_areas_refs(
-            lat as f32,
-            lon as f32,
-            1,
-        ) {
+        match self
+            .military_areas
+            .find_closest_areas_refs(lat as f32, lon as f32, 1)
+        {
             None => false,
             Some(areas) => areas.iter().any(|multi_polygon| {
                 let geo_point = Point::new(lon, lat);

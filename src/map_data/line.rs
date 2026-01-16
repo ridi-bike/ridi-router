@@ -25,11 +25,7 @@ impl Display for MapDataLine {
 }
 impl MapDataLine {
     pub fn line_id(&self) -> String {
-        format!(
-            "{}-{}",
-            self.points.0.get().id,
-            self.points.1.get().id
-        )
+        format!("{}-{}", self.points.0.get().id, self.points.1.get().id)
     }
     pub fn is_one_way(&self) -> bool {
         self.direction == LineDirection::OneWay || self.direction == LineDirection::Roundabout

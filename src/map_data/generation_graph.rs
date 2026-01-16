@@ -1,19 +1,19 @@
-use std::collections::HashMap;
 use anyhow::Result;
+use std::collections::HashMap;
 
 use super::{
-    point::MapDataPoint,
+    graph::{ElementTagSetRef, ElementTags},
     line::LineDirection,
-    graph::{ElementTags, ElementTagSetRef},
-    osm::{OsmNode, OsmWay, OsmRelation},
+    osm::{OsmNode, OsmRelation, OsmWay},
+    point::MapDataPoint,
     MapDataError,
 };
 
 /// Simple line structure for generation (without runtime Ref types)
 #[derive(Clone)]
 pub struct GenerationLine {
-    pub from_node_id: u64,      // OSM node ID
-    pub to_node_id: u64,        // OSM node ID
+    pub from_node_id: u64, // OSM node ID
+    pub to_node_id: u64,   // OSM node ID
     pub direction: LineDirection,
     pub tags: ElementTagSetRef,
 }
@@ -22,7 +22,7 @@ pub struct GenerationLine {
 /// Separate from MapDataGraph which is for routing queries via TileManager.
 pub struct GenerationGraph {
     pub(crate) points: Vec<MapDataPoint>,
-    pub(crate) points_map: HashMap<u64, usize>,  // OSM ID -> index in points vec
+    pub(crate) points_map: HashMap<u64, usize>, // OSM ID -> index in points vec
     pub(crate) lines: Vec<GenerationLine>,
     pub(crate) tags: ElementTags,
 }
@@ -61,12 +61,12 @@ impl GenerationGraph {
     pub fn insert_node(&mut self, node: OsmNode) {
         let point = MapDataPoint {
             id: node.id,
-            lat: node.lat as f32,  // OsmNode has f64, MapDataPoint uses f32
+            lat: node.lat as f32, // OsmNode has f64, MapDataPoint uses f32
             lon: node.lon as f32,
             lines: Vec::new(),
             rules: Vec::new(),
-            residential_in_proximity: node.residential_in_proximity,  // FIX: Use actual value
-            nogo_area: node.nogo_area,                                // FIX: Use actual value
+            residential_in_proximity: node.residential_in_proximity, // FIX: Use actual value
+            nogo_area: node.nogo_area,                               // FIX: Use actual value
         };
 
         let idx = self.points.len();
@@ -97,13 +97,9 @@ impl GenerationGraph {
         let smoothness = tags_map.get("smoothness");
 
         // Get or create tag set
-        let tag_set_ref = self.tags.get_or_create(
-            name,
-            hw_ref,
-            highway,
-            surface,
-            smoothness,
-        );
+        let tag_set_ref = self
+            .tags
+            .get_or_create(name, hw_ref, highway, surface, smoothness);
 
         // Determine line direction
         let direction = if let Some(oneway) = tags_map.get("oneway") {
@@ -176,5 +172,55 @@ impl GenerationGraph {
 impl Default for GenerationGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_insert_node_preserves_flags() {
+        let mut graph = GenerationGraph::new();
+
+        // Create node with flags set
+        let node = OsmNode {
+            id: 12345,
+            lat: 56.95,
+            lon: 24.1,
+            residential_in_proximity: true,
+            nogo_area: true,
+        };
+
+        graph.insert_node(node);
+
+        // Verify flags are preserved in MapDataPoint
+        assert_eq!(graph.points.len(), 1);
+        let point = &graph.points[0];
+
+        assert_eq!(point.id, 12345);
+        assert_eq!(point.residential_in_proximity, true);
+        assert_eq!(point.nogo_area, true);
+    }
+
+    #[test]
+    fn test_insert_node_with_false_flags() {
+        let mut graph = GenerationGraph::new();
+
+        // Create node with flags false
+        let node = OsmNode {
+            id: 67890,
+            lat: 56.95,
+            lon: 24.1,
+            residential_in_proximity: false,
+            nogo_area: false,
+        };
+
+        graph.insert_node(node);
+
+        // Verify flags are preserved as false (not hardcoded)
+        let point = &graph.points[0];
+        assert_eq!(point.residential_in_proximity, false);
+        assert_eq!(point.nogo_area, false);
     }
 }

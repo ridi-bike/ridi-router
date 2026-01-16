@@ -383,18 +383,18 @@ impl RouterRunner {
 
         info!("Using RMDF tiles from {:?}", tiles_dir);
 
-        let mut tile_manager = crate::rmdf::TileManager::new(tiles_dir)
-            .context("Failed to initialize TileManager")?;
+        let mut tile_manager =
+            crate::rmdf::TileManager::new(tiles_dir).context("Failed to initialize TileManager")?;
 
         // SAFETY: TileManager lives for entire routing request
         // This is safe because we control the execution flow
-        let tile_manager_static: &'static mut crate::rmdf::TileManager = unsafe {
-            std::mem::transmute(&mut tile_manager)
-        };
+        let tile_manager_static: &'static mut crate::rmdf::TileManager =
+            unsafe { std::mem::transmute(&mut tile_manager) };
 
         info!("Route generation started");
 
-        let route_result = RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules);
+        let route_result =
+            RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules);
         ResultWriter::write(
             data_destination.clone(),
             ResponseMessage {
@@ -429,7 +429,6 @@ impl RouterRunner {
         Ok(())
     }
 
-
     #[tracing::instrument]
     pub fn run() -> Result<()> {
         let cli = Cli::parse();
@@ -447,11 +446,17 @@ impl RouterRunner {
                 rule_file.clone(),
                 debug_dir.clone(),
             ),
-            CliMode::GenerateTiles { input, output, tile_size } => {
+            CliMode::GenerateTiles {
+                input,
+                output,
+                tile_size,
+            } => {
                 use crate::rmdf::generator::TileGenerator;
 
-                info!("Generating tiles from {:?} to {:?} (tile_size={}°)",
-                      input, output, tile_size);
+                info!(
+                    "Generating tiles from {:?} to {:?} (tile_size={}°)",
+                    input, output, tile_size
+                );
 
                 let generator = TileGenerator::new(input.clone(), output.clone(), *tile_size)?;
                 generator.generate()?;

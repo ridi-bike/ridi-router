@@ -2,9 +2,9 @@
 #[allow(dead_code)]
 pub mod format;
 #[allow(dead_code)]
-pub mod validation;
-#[allow(dead_code)]
 pub mod io;
+#[allow(dead_code)]
+pub mod validation;
 
 // Phase 2: Tile generation
 pub mod generator;
@@ -13,7 +13,7 @@ pub mod generator;
 pub mod tile_manager;
 
 pub use format::*;
-pub use validation::*;
-pub use io::*;
 pub use generator::*;
+pub use io::*;
 pub use tile_manager::*;
+pub use validation::*;

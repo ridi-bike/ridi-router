@@ -52,17 +52,17 @@ impl Score {
                     let mut adjusted = bearing_diff;
                     adjusted += get_rule_adjustment(
                         bearing_diff,
-                        &segment.get_line().get(). tags.get().highway(),
+                        &segment.get_line().get().tags.get().highway(),
                         &rules.highway,
                     );
                     adjusted += get_rule_adjustment(
                         bearing_diff,
-                        &segment.get_line().get(). tags.get().surface(),
+                        &segment.get_line().get().tags.get().surface(),
                         &rules.surface,
                     );
                     adjusted += get_rule_adjustment(
                         bearing_diff,
-                        &segment.get_line().get(). tags.get().smoothness(),
+                        &segment.get_line().get().tags.get().smoothness(),
                         &rules.smoothness,
                     );
                     adjusted
@@ -70,9 +70,8 @@ impl Score {
             }
             prev_bearing = if segment.get_end_point().get().is_junction() {
                 None
-            } else if let Some(hw) = segment.get_line().get(). tags.get().highway() {
-                if hw == "residential" || segment.get_end_point().get().residential_in_proximity
-                {
+            } else if let Some(hw) = segment.get_line().get().tags.get().highway() {
+                if hw == "residential" || segment.get_end_point().get().residential_in_proximity {
                     None
                 } else {
                     Some(curr_bearing)

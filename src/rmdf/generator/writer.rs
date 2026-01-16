@@ -3,7 +3,7 @@ use bytemuck::bytes_of;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Write, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::debug;
 
@@ -29,21 +29,28 @@ impl RmdfWriter {
         debug!("Writing RMDF file from GenerationGraph: {:?}", output_path);
 
         // Build spatial index from graph
-        let spatial_index = self.build_spatial_index(&graph)
+        let spatial_index = self
+            .build_spatial_index(&graph)
             .context("Failed to build spatial index")?;
 
         // Serialize all sections
-        let points = self.serialize_points(&graph)
+        let points = self
+            .serialize_points(&graph)
             .context("Failed to serialize points")?;
-        let lines = self.serialize_lines(&graph)
+        let lines = self
+            .serialize_lines(&graph)
             .context("Failed to serialize lines")?;
-        let line_refs = self.serialize_line_refs(&graph)
+        let line_refs = self
+            .serialize_line_refs(&graph)
             .context("Failed to serialize line refs")?;
-        let (tag_values, tag_strings) = self.serialize_tag_values(&graph)
+        let (tag_values, tag_strings) = self
+            .serialize_tag_values(&graph)
             .context("Failed to serialize tag values")?;
-        let tag_sets = self.serialize_tag_sets(&graph)
+        let tag_sets = self
+            .serialize_tag_sets(&graph)
             .context("Failed to serialize tag sets")?;
-        let rules = self.serialize_rules(&graph)
+        let rules = self
+            .serialize_rules(&graph)
             .context("Failed to serialize rules")?;
 
         // Calculate section offsets
@@ -79,7 +86,8 @@ impl RmdfWriter {
             tile_bounds: bounds,
             point_count: graph.get_points().len() as u64,
             line_count: graph.get_lines().len() as u64,
-            spatial_grid_cell_count: (spatial_index.len() / std::mem::size_of::<GridCellEntry>()) as u32,
+            spatial_grid_cell_count: (spatial_index.len() / std::mem::size_of::<GridCellEntry>())
+                as u32,
             tag_value_count: (tag_values.len() / std::mem::size_of::<StringEntry>()) as u32,
             tag_set_count: (tag_sets.len() / std::mem::size_of::<TagSetRecord>()) as u32,
             rule_count: (rules.len() / std::mem::size_of::<RuleRecord>()) as u32,
@@ -99,10 +107,8 @@ impl RmdfWriter {
             .context("Failed to write header")?;
         file.write_all(&spatial_index)
             .context("Failed to write spatial index")?;
-        file.write_all(&points)
-            .context("Failed to write points")?;
-        file.write_all(&lines)
-            .context("Failed to write lines")?;
+        file.write_all(&points).context("Failed to write points")?;
+        file.write_all(&lines).context("Failed to write lines")?;
         file.write_all(&line_refs)
             .context("Failed to write line refs")?;
         file.write_all(&tag_values)
@@ -111,28 +117,26 @@ impl RmdfWriter {
             .context("Failed to write tag strings")?;
         file.write_all(&tag_sets)
             .context("Failed to write tag sets")?;
-        file.write_all(&rules)
-            .context("Failed to write rules")?;
+        file.write_all(&rules).context("Failed to write rules")?;
 
         // Compute and append checksum
         file.seek(SeekFrom::Start(0))
             .context("Failed to seek to start for checksum")?;
         let mut hasher = Sha256::new();
-        std::io::copy(&mut file, &mut hasher)
-            .context("Failed to copy file for checksum")?;
+        std::io::copy(&mut file, &mut hasher).context("Failed to copy file for checksum")?;
         let checksum = hasher.finalize();
 
         file.write_all(&checksum)
             .context("Failed to write checksum")?;
 
-        let file_size = file.metadata()
+        let file_size = file
+            .metadata()
             .context("Failed to get file metadata")?
             .len();
         debug!("RMDF file written: {} bytes", file_size);
 
         Ok(())
     }
-
 
     fn build_spatial_index(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
         // Group points by grid cell
@@ -169,7 +173,8 @@ impl RmdfWriter {
         }
 
         // Serialize to bytes
-        let bytes: Vec<u8> = grid_entries.iter()
+        let bytes: Vec<u8> = grid_entries
+            .iter()
             .flat_map(|entry| bytes_of(entry).to_vec())
             .collect();
 
@@ -203,10 +208,10 @@ impl RmdfWriter {
                     osm_id: point.id,
                     lat: point.lat,
                     lon: point.lon,
-                    lines_offset: 0,  // TODO: Calculate from line refs
+                    lines_offset: 0, // TODO: Calculate from line refs
                     lines_count: point.lines.len() as u32,
                     _padding1: 0,
-                    rules_offset: 0,  // TODO: Calculate from rules
+                    rules_offset: 0, // TODO: Calculate from rules
                     rules_count: point.rules.len() as u32,
                     flags: {
                         let mut flags = 0u16;
@@ -239,9 +244,11 @@ impl RmdfWriter {
 
         for line in graph.get_lines() {
             // Look up point data from node IDs
-            let point_a = node_map.get(&line.from_node_id)
+            let point_a = node_map
+                .get(&line.from_node_id)
                 .ok_or_else(|| anyhow::anyhow!("Point {} not found for line", line.from_node_id))?;
-            let point_b = node_map.get(&line.to_node_id)
+            let point_b = node_map
+                .get(&line.to_node_id)
                 .ok_or_else(|| anyhow::anyhow!("Point {} not found for line", line.to_node_id))?;
 
             let record = LineRecord {
@@ -298,9 +305,7 @@ impl RmdfWriter {
             }
         }
 
-        let bytes: Vec<u8> = line_refs.iter()
-            .flat_map(|&id| id.to_le_bytes())
-            .collect();
+        let bytes: Vec<u8> = line_refs.iter().flat_map(|&id| id.to_le_bytes()).collect();
 
         Ok(bytes)
     }

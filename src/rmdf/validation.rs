@@ -55,8 +55,8 @@ pub fn validate_checksum(file_bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::format::TileBounds;
+    use super::*;
 
     #[test]
     fn test_invalid_magic() {

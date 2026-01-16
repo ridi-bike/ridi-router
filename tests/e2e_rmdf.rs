@@ -17,11 +17,15 @@ fn test_01_generate_tiles() {
 
     let output = Command::new("cargo")
         .args(&[
-            "run", "--",
+            "run",
+            "--",
             "generate-tiles",
-            "--input", MONTENEGRO_PBF,
-            "--output", TEST_TILES_DIR,
-            "--tile-size", "0.1",
+            "--input",
+            MONTENEGRO_PBF,
+            "--output",
+            TEST_TILES_DIR,
+            "--tile-size",
+            "0.1",
         ])
         .output()
         .expect("Failed to execute generate-tiles");
@@ -40,13 +44,7 @@ fn test_01_generate_tiles() {
     // Verify at least one tile created
     let tiles = std::fs::read_dir(TEST_TILES_DIR).unwrap();
     let rmdf_count = tiles
-        .filter(|e| {
-            e.as_ref()
-                .unwrap()
-                .path()
-                .extension()
-                == Some(std::ffi::OsStr::new("rmdf"))
-        })
+        .filter(|e| e.as_ref().unwrap().path().extension() == Some(std::ffi::OsStr::new("rmdf")))
         .count();
     assert!(rmdf_count > 0, "No RMDF tiles created");
 
@@ -57,13 +55,19 @@ fn test_01_generate_tiles() {
 fn test_02_route_success() {
     let output = Command::new("cargo")
         .args(&[
-            "run", "--",
+            "run",
+            "--",
             "generate-route",
-            "--tiles", TEST_TILES_DIR,
-            "--routing-mode", "start-finish",
-            "--start", "42.45785,18.50767",
-            "--finish", "41.92802,19.22959",
-            "--output", "test_data/route_success.gpx",
+            "--tiles",
+            TEST_TILES_DIR,
+            "--routing-mode",
+            "start-finish",
+            "--start",
+            "42.45785,18.50767",
+            "--finish",
+            "41.92802,19.22959",
+            "--output",
+            "test_data/route_success.gpx",
         ])
         .output()
         .expect("Failed to execute routing");
@@ -88,7 +92,10 @@ fn test_02_route_success() {
     assert!(route_content.len() > 100, "Route file too small");
     assert!(route_content.contains("<gpx"), "Route file not valid GPX");
 
-    println!("Successfully generated route: {} bytes", route_content.len());
+    println!(
+        "Successfully generated route: {} bytes",
+        route_content.len()
+    );
 }
 
 #[test]
@@ -111,13 +118,19 @@ fn test_03_route_around_missing_tile() {
     // Route again
     let output = Command::new("cargo")
         .args(&[
-            "run", "--",
+            "run",
+            "--",
             "generate-route",
-            "--tiles", TEST_TILES_DIR,
-            "--routing-mode", "start-finish",
-            "--start", "42.45785,18.50767",
-            "--finish", "41.92802,19.22959",
-            "--output", "test_data/route_detour.gpx",
+            "--tiles",
+            TEST_TILES_DIR,
+            "--routing-mode",
+            "start-finish",
+            "--start",
+            "42.45785,18.50767",
+            "--finish",
+            "41.92802,19.22959",
+            "--output",
+            "test_data/route_detour.gpx",
         ])
         .output()
         .expect("Failed to execute routing");
@@ -190,13 +203,19 @@ fn test_04_route_fail_many_missing_tiles() {
     // Attempt to route
     let output = Command::new("cargo")
         .args(&[
-            "run", "--",
+            "run",
+            "--",
             "generate-route",
-            "--tiles", TEST_TILES_DIR,
-            "--routing-mode", "start-finish",
-            "--start", "42.45785,18.50767",
-            "--finish", "41.92802,19.22959",
-            "--output", "test_data/route_fail.gpx",
+            "--tiles",
+            TEST_TILES_DIR,
+            "--routing-mode",
+            "start-finish",
+            "--start",
+            "42.45785,18.50767",
+            "--finish",
+            "41.92802,19.22959",
+            "--output",
+            "test_data/route_fail.gpx",
         ])
         .output()
         .expect("Failed to execute routing");
@@ -246,13 +265,20 @@ fn test_05_performance_baseline() {
 
     let output = Command::new("cargo")
         .args(&[
-            "run", "--release", "--",
+            "run",
+            "--release",
+            "--",
             "generate-route",
-            "--tiles", TEST_TILES_DIR,
-            "--routing-mode", "start-finish",
-            "--start", "42.45785,18.50767",
-            "--finish", "41.92802,19.22959",
-            "--output", "test_data/route_perf.gpx",
+            "--tiles",
+            TEST_TILES_DIR,
+            "--routing-mode",
+            "start-finish",
+            "--start",
+            "42.45785,18.50767",
+            "--finish",
+            "41.92802,19.22959",
+            "--output",
+            "test_data/route_perf.gpx",
         ])
         .output()
         .expect("Failed to execute routing");

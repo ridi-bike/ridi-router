@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
@@ -162,15 +162,15 @@ impl ManifestGenerator {
     }
 
     fn compute_neighbors(&self, tile_id: TileId, all_tiles: &[TileId]) -> TileNeighbors {
-        let tile_set: HashMap<(u16, u16), TileId> = all_tiles.iter()
-            .map(|t| ((t.col, t.row), *t))
-            .collect();
+        let tile_set: HashMap<(u16, u16), TileId> =
+            all_tiles.iter().map(|t| ((t.col, t.row), *t)).collect();
 
         let get_neighbor = |col: i32, row: i32| -> Option<String> {
             if col < 0 || col > 359 || row < 0 || row > 179 {
                 return None;
             }
-            tile_set.get(&(col as u16, row as u16))
+            tile_set
+                .get(&(col as u16, row as u16))
                 .map(|t| t.to_filename())
         };
 
