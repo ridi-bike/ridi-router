@@ -11,8 +11,10 @@ use std::sync::Arc;
 
 use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType};
 use crate::map_data::proximity::AreaGrid;
+use crate::map_data::generation_graph::GenerationGraph;
 use crate::osm_data::pbf_area_reader::PbfAreaReader;
 use crate::rmdf::format::TileId;
+use std::collections::HashMap;
 // TODO: Move this constant somewhere accessible or re-export from osm_data
 // use crate::osm_data::data_reader::ALLOWED_HIGHWAY_VALUES;
 
@@ -41,6 +43,25 @@ const NODE_COORDS_TABLE: TableDefinition<u64, (f32, f32, bool, bool)> = TableDef
 
 // Flush tile buffers to disk every N ways to prevent memory accumulation
 const FLUSH_INTERVAL: usize = 10_000;
+
+/// Data extracted from PBF for a single tile
+struct TileData {
+    tile_id: TileId,
+    nodes: HashMap<u64, OsmNode>,      // OSM ID -> Node with coordinates
+    ways: Vec<OsmWay>,
+    relations: Vec<OsmRelation>,
+}
+
+impl TileData {
+    fn new(tile_id: TileId) -> Self {
+        Self {
+            tile_id,
+            nodes: HashMap::new(),
+            ways: Vec::new(),
+            relations: Vec::new(),
+        }
+    }
+}
 
 pub struct PbfStreamer {
     input_file: PathBuf,
@@ -196,15 +217,38 @@ impl PbfStreamer {
         Ok(())
     }
 
-    /// Process a single tile (stub for now)
+    /// Process a single tile
     fn process_tile(&self, tile_id: TileId) -> Result<()> {
-        // Calculate bounds
+        // Step 1: Calculate bounds
         let core_bounds = self.calculate_tile_bounds(tile_id);
         let buffered_bounds = self.add_buffer_to_bounds(core_bounds);
 
-        info!("Processing tile {:?} (bounds: {:?})", tile_id, buffered_bounds);
+        // Step 2: Extract PBF data for this tile (stub)
+        let tile_data = self.extract_tile_data(tile_id, buffered_bounds)
+            .context("Failed to extract tile data from PBF")?;
 
-        // TODO: Implement tile processing in subsequent phases
+        // Step 3: Build area grids for proximity computation (stub)
+        let (residential_grid, military_grid) = self.build_area_grids(&tile_data, buffered_bounds)
+            .context("Failed to build area grids")?;
+
+        // Step 4: Compute proximity flags for nodes in core bounds (stub)
+        let nodes_with_flags = self.compute_proximity_flags(
+            tile_data.nodes,
+            core_bounds,
+            &residential_grid,
+            &military_grid,
+        ).context("Failed to compute proximity flags")?;
+
+        // Step 5: Build generation graph (stub)
+        let graph = self.build_generation_graph(
+            nodes_with_flags,
+            tile_data.ways,
+            tile_data.relations,
+        ).context("Failed to build generation graph")?;
+
+        // Step 6: Write RMDF tile file (stub)
+        self.write_rmdf_tile(tile_id, graph)
+            .context("Failed to write RMDF tile")?;
 
         Ok(())
     }
@@ -592,6 +636,76 @@ impl PbfStreamer {
             lon_min: (bounds.lon_min - buffer_degrees).max(-180.0),
             lon_max: (bounds.lon_max + buffer_degrees).min(180.0),
         }
+    }
+
+    /// Extract nodes, ways, and relations within buffered bounds
+    /// TODO: Implement in Phase 3
+    fn extract_tile_data(
+        &self,
+        tile_id: TileId,
+        buffered_bounds: crate::rmdf::format::TileBounds,
+    ) -> Result<TileData> {
+        // Stub: Return empty tile data
+        info!("Extracting PBF data for tile {:?} (bounds: {:?})", tile_id, buffered_bounds);
+        Ok(TileData::new(tile_id))
+    }
+
+    /// Build residential and military AreaGrids from tile data
+    /// TODO: Implement in Phase 4
+    fn build_area_grids(
+        &self,
+        tile_data: &TileData,
+        buffered_bounds: crate::rmdf::format::TileBounds,
+    ) -> Result<(AreaGrid, AreaGrid)> {
+        // Stub: Return empty grids
+        info!("Building area grids for tile {:?}", tile_data.tile_id);
+        Ok((AreaGrid::new(), AreaGrid::new()))
+    }
+
+    /// Compute proximity and nogo flags for nodes in core bounds
+    /// TODO: Implement in Phase 4
+    fn compute_proximity_flags(
+        &self,
+        nodes: HashMap<u64, OsmNode>,
+        core_bounds: crate::rmdf::format::TileBounds,
+        residential_grid: &AreaGrid,
+        military_grid: &AreaGrid,
+    ) -> Result<HashMap<u64, OsmNode>> {
+        // Stub: Return nodes unchanged (flags will be false)
+        info!("Computing proximity flags for {} nodes", nodes.len());
+        Ok(nodes)
+    }
+
+    /// Build GenerationGraph from tile data with proximity flags
+    /// TODO: Implement in Phase 5
+    fn build_generation_graph(
+        &self,
+        nodes: HashMap<u64, OsmNode>,
+        ways: Vec<OsmWay>,
+        relations: Vec<OsmRelation>,
+    ) -> Result<GenerationGraph> {
+        // Stub: Return empty graph
+        info!("Building generation graph from {} nodes, {} ways, {} relations",
+              nodes.len(), ways.len(), relations.len());
+        Ok(GenerationGraph::new())
+    }
+
+    /// Write RMDF tile file from generation graph
+    /// TODO: Implement in Phase 5
+    fn write_rmdf_tile(
+        &self,
+        tile_id: TileId,
+        graph: GenerationGraph,
+    ) -> Result<()> {
+        // Stub: Create empty file to verify tile writing works
+        let output_path = self.output_dir.join(tile_id.to_filename());
+        info!("Writing RMDF tile to {:?}", output_path);
+
+        // Create empty file as placeholder
+        std::fs::File::create(&output_path)
+            .context("Failed to create RMDF tile file")?;
+
+        Ok(())
     }
 }
 
