@@ -133,10 +133,8 @@ impl IntermediateTile {
         Ok(())
     }
 
-    /// Load tile data from redb database
-    pub fn load_from_redb(db: &Database, tile_id: TileId) -> anyhow::Result<Self> {
-        let read_txn = db.begin_read()?;
-
+    /// Load tile data from redb database with an existing read transaction
+    pub fn load_from_redb_with_txn(read_txn: &redb::ReadTransaction, tile_id: TileId) -> anyhow::Result<Self> {
         let mut tile = IntermediateTile::new(tile_id);
 
         // Load nodes
@@ -180,6 +178,12 @@ impl IntermediateTile {
         }
 
         Ok(tile)
+    }
+
+    /// Load tile data from redb database
+    pub fn load_from_redb(db: &Database, tile_id: TileId) -> anyhow::Result<Self> {
+        let read_txn = db.begin_read()?;
+        Self::load_from_redb_with_txn(&read_txn, tile_id)
     }
 }
 

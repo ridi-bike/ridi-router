@@ -57,11 +57,19 @@ impl TileGenerator {
         let writer = RmdfWriter::new(self.tile_size_degrees);
 
         info!("Writing RMDF files for {} tiles", tile_ids.len());
+
+        // Create a single read transaction to reuse for all tile loads
+        let read_txn = tiles_db.begin_read()
+            .context("Failed to begin read transaction for tile loading")?;
+
         for tile_id in &tile_ids {
-            let intermediate = IntermediateTile::load_from_redb(&tiles_db, *tile_id)?;  // Load from redb
+            let intermediate = IntermediateTile::load_from_redb_with_txn(&read_txn, *tile_id)?;  // Load from redb with shared transaction
             let output_path = self.output_dir.join(tile_id.to_filename());
             writer.write_tile(&intermediate, &output_path)?;
         }
+
+        // Drop read transaction before closing database
+        drop(read_txn);
 
         // Phase 4: Generate manifest
         let manifest_gen = ManifestGenerator::new(self.tile_size_degrees);
