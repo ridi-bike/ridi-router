@@ -229,9 +229,43 @@ impl TileBuffers {
 
     /// Flush tiles to redb database and clear memory (incremental saving)
     pub fn flush_to_redb(&mut self, db: &Database) -> anyhow::Result<()> {
-        for (_tile_id, tile) in self.tiles.drain() {
-            tile.save_to_redb(db)?;
+        if self.tiles.is_empty() {
+            return Ok(());
         }
+
+        // Create a single write transaction for all tiles to avoid creating hundreds of transactions
+        let write_txn = db.begin_write()?;
+
+        {
+            let mut nodes_table = write_txn.open_table(TILE_NODES)?;
+            let mut ways_table = write_txn.open_table(TILE_WAYS)?;
+            let mut relations_table = write_txn.open_table(TILE_RELATIONS)?;
+
+            for (_tile_id, tile) in self.tiles.drain() {
+                // Insert nodes
+                for (osm_id, node) in &tile.nodes {
+                    let key = (tile.tile_id.col, tile.tile_id.row, *osm_id);
+                    let value = bincode::serialize(node)?;
+                    nodes_table.insert(key, value.as_slice())?;
+                }
+
+                // Insert ways
+                for way in &tile.ways {
+                    let key = (tile.tile_id.col, tile.tile_id.row, way.id);
+                    let value = bincode::serialize(way)?;
+                    ways_table.insert(key, value.as_slice())?;
+                }
+
+                // Insert relations
+                for relation in &tile.relations {
+                    let key = (tile.tile_id.col, tile.tile_id.row, relation.id);
+                    let value = bincode::serialize(relation)?;
+                    relations_table.insert(key, value.as_slice())?;
+                }
+            }
+        }
+
+        write_txn.commit()?;
         Ok(())
     }
 
