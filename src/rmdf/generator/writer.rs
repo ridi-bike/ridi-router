@@ -26,18 +26,26 @@ impl RmdfWriter {
         debug!("Writing RMDF file: {:?}", output_path);
 
         // Step 1: Build GenerationGraph from intermediate data
-        let graph = self.build_graph(intermediate)?;
+        let graph = self.build_graph(intermediate)
+            .context("Failed to build GenerationGraph")?;
 
         // Step 2: Build spatial index
-        let spatial_index = self.build_spatial_index(&graph)?;
+        let spatial_index = self.build_spatial_index(&graph)
+            .context("Failed to build spatial index")?;
 
         // Step 3: Prepare all sections
-        let points = self.serialize_points(&graph)?;
-        let lines = self.serialize_lines(&graph)?;
-        let line_refs = self.serialize_line_refs(&graph)?;
-        let (tag_values, tag_strings) = self.serialize_tag_values(&graph)?;
-        let tag_sets = self.serialize_tag_sets(&graph)?;
-        let rules = self.serialize_rules(&graph)?;
+        let points = self.serialize_points(&graph)
+            .context("Failed to serialize points")?;
+        let lines = self.serialize_lines(&graph)
+            .context("Failed to serialize lines")?;
+        let line_refs = self.serialize_line_refs(&graph)
+            .context("Failed to serialize line refs")?;
+        let (tag_values, tag_strings) = self.serialize_tag_values(&graph)
+            .context("Failed to serialize tag values")?;
+        let tag_sets = self.serialize_tag_sets(&graph)
+            .context("Failed to serialize tag sets")?;
+        let rules = self.serialize_rules(&graph)
+            .context("Failed to serialize rules")?;
 
         // Step 4: Calculate section offsets
         let mut offset = RmdfHeader::SIZE;
@@ -80,27 +88,43 @@ impl RmdfWriter {
         };
 
         // Step 6: Write all data to file
-        let mut file = File::create(output_path)?;
+        let mut file = File::create(output_path)
+            .context("Failed to create output file")?;
 
-        file.write_all(bytes_of(&header))?;
-        file.write_all(&spatial_index)?;
-        file.write_all(&points)?;
-        file.write_all(&lines)?;
-        file.write_all(&line_refs)?;
-        file.write_all(&tag_values)?;
-        file.write_all(&tag_strings)?;
-        file.write_all(&tag_sets)?;
-        file.write_all(&rules)?;
+        file.write_all(bytes_of(&header))
+            .context("Failed to write header")?;
+        file.write_all(&spatial_index)
+            .context("Failed to write spatial index")?;
+        file.write_all(&points)
+            .context("Failed to write points")?;
+        file.write_all(&lines)
+            .context("Failed to write lines")?;
+        file.write_all(&line_refs)
+            .context("Failed to write line refs")?;
+        file.write_all(&tag_values)
+            .context("Failed to write tag values")?;
+        file.write_all(&tag_strings)
+            .context("Failed to write tag strings")?;
+        file.write_all(&tag_sets)
+            .context("Failed to write tag sets")?;
+        file.write_all(&rules)
+            .context("Failed to write rules")?;
 
         // Step 7: Compute and append checksum
-        file.seek(SeekFrom::Start(0))?;
+        file.seek(SeekFrom::Start(0))
+            .context("Failed to seek to start for checksum")?;
         let mut hasher = Sha256::new();
-        std::io::copy(&mut file, &mut hasher)?;
+        std::io::copy(&mut file, &mut hasher)
+            .context("Failed to copy file for checksum")?;
         let checksum = hasher.finalize();
 
-        file.write_all(&checksum)?;
+        file.write_all(&checksum)
+            .context("Failed to write checksum")?;
 
-        debug!("RMDF file written: {} bytes", file.metadata()?.len());
+        let file_size = file.metadata()
+            .context("Failed to get file metadata")?
+            .len();
+        debug!("RMDF file written: {} bytes", file_size);
 
         Ok(())
     }
