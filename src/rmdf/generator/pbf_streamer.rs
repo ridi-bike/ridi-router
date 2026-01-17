@@ -86,6 +86,53 @@ impl TileData {
     }
 }
 
+/// Geographic bounds discovered from scanning a PBF file
+#[derive(Debug, Clone, Copy)]
+pub struct PbfBounds {
+    pub lat_min: Option<f64>,
+    pub lat_max: Option<f64>,
+    pub lon_min: Option<f64>,
+    pub lon_max: Option<f64>,
+}
+
+impl PbfBounds {
+    /// Create empty bounds (no coordinates discovered yet)
+    fn new_empty() -> Self {
+        Self {
+            lat_min: None,
+            lat_max: None,
+            lon_min: None,
+            lon_max: None,
+        }
+    }
+
+    /// Update bounds with a new coordinate
+    fn update(&mut self, lat: f64, lon: f64) {
+        self.lat_min = Some(self.lat_min.map_or(lat, |v| v.min(lat)));
+        self.lat_max = Some(self.lat_max.map_or(lat, |v| v.max(lat)));
+        self.lon_min = Some(self.lon_min.map_or(lon, |v| v.min(lon)));
+        self.lon_max = Some(self.lon_max.map_or(lon, |v| v.max(lon)));
+    }
+
+    /// Check if all bounds are valid (all fields are Some)
+    fn is_valid(&self) -> bool {
+        self.lat_min.is_some()
+            && self.lat_max.is_some()
+            && self.lon_min.is_some()
+            && self.lon_max.is_some()
+    }
+
+    /// Unwrap bounds to concrete values (must check is_valid() first)
+    fn unwrap(&self) -> (f64, f64, f64, f64) {
+        (
+            self.lat_min.unwrap(),
+            self.lat_max.unwrap(),
+            self.lon_min.unwrap(),
+            self.lon_max.unwrap(),
+        )
+    }
+}
+
 pub struct PbfStreamer {
     input_file: PathBuf,
     output_dir: PathBuf,
@@ -115,8 +162,12 @@ impl PbfStreamer {
         let start_time = Instant::now();
         info!("Starting tile-based parallel partitioning");
 
-        // Calculate all tile boundaries upfront
-        let tiles = self.calculate_all_tiles();
+        // Scan PBF to discover geographic bounds
+        let pbf_bounds = self.scan_pbf_bounds()
+            .context("Failed to scan PBF bounds")?;
+
+        // Calculate tiles that intersect with bounds
+        let tiles = self.calculate_all_tiles(pbf_bounds);
         let total_tiles = tiles.len();
         info!("Processing {} tiles in parallel", total_tiles);
 
@@ -281,20 +332,120 @@ impl PbfStreamer {
         }
     }
 
-    /// Calculate all tiles that cover the world for the given tile size
-    fn calculate_all_tiles(&self) -> Vec<TileId> {
+    /// Scan PBF file to discover geographic bounds
+    ///
+    /// This performs a single pass through all nodes in the PBF file to determine
+    /// the min/max latitude and longitude. This allows us to generate only tiles
+    /// that intersect with the actual data, instead of processing all possible tiles.
+    ///
+    /// # Performance
+    ///
+    /// For regional PBF files (e.g., Montenegro 30MB), this scan takes 2-5 seconds
+    /// but eliminates checking millions of empty tiles during generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if PBF contains no valid nodes (empty file).
+    fn scan_pbf_bounds(&self) -> Result<PbfBounds> {
+        info!("Scanning PBF file to discover geographic bounds...");
+        let start_time = Instant::now();
+
+        let mut bounds = PbfBounds::new_empty();
+        let mut node_count = 0u64;
+
+        let file = File::open(&self.input_file)
+            .context("Failed to open PBF file for bounds scanning")?;
+        let mut pbf = OsmPbfReader::new(file);
+
+        for obj_result in pbf.iter() {
+            let obj = obj_result.context("Failed to read PBF object during bounds scan")?;
+
+            if let OsmObj::Node(node) = obj {
+                let lat = node.lat();
+                let lon = node.lon();
+
+                bounds.update(lat, lon);
+                node_count += 1;
+
+                // Log progress every 1M nodes
+                if node_count % 1_000_000 == 0 {
+                    info!("Scanned {} million nodes...", node_count / 1_000_000);
+                }
+            }
+        }
+
+        if !bounds.is_valid() {
+            anyhow::bail!("PBF file contains no valid nodes");
+        }
+
+        let (lat_min, lat_max, lon_min, lon_max) = bounds.unwrap();
+        let elapsed = start_time.elapsed();
+
+        info!(
+            "PBF bounds scan complete: scanned {} nodes in {:.1}s",
+            node_count,
+            elapsed.as_secs_f64()
+        );
+        info!(
+            "Discovered bounds: lat=[{:.3}, {:.3}], lon=[{:.3}, {:.3}]",
+            lat_min, lat_max, lon_min, lon_max
+        );
+
+        Ok(bounds)
+    }
+
+    /// Calculate tiles that intersect with PBF bounds
+    ///
+    /// Only generates tiles that overlap with the discovered geographic bounds,
+    /// plus a buffer to ensure edge tiles are included.
+    ///
+    /// # Arguments
+    ///
+    /// * `pbf_bounds` - Geographic bounds discovered from PBF scan
+    ///
+    /// # Performance Impact
+    ///
+    /// For Montenegro (0.1° grid): generates ~400 tiles instead of 6.48M tiles
+    fn calculate_all_tiles(&self, pbf_bounds: PbfBounds) -> Vec<TileId> {
+        let (lat_min, lat_max, lon_min, lon_max) = pbf_bounds.unwrap();
+
+        // Add buffer to ensure edge tiles are included
+        // Use 0.01° buffer (2x the per-tile buffer of 0.005°)
+        let buffer = 0.01f64;
+        let lat_min_buffered = (lat_min - buffer).max(-90.0);
+        let lat_max_buffered = (lat_max + buffer).min(90.0);
+        let lon_min_buffered = (lon_min - buffer).max(-180.0);
+        let lon_max_buffered = (lon_max + buffer).min(180.0);
+
+        // Calculate tile indices for buffered bounds
+        // Tile formula: col = floor((lon + 180) / tile_size), row = floor((lat + 90) / tile_size)
+        let col_min = ((lon_min_buffered + 180.0) / self.tile_size_degrees as f64).floor() as u16;
+        let col_max = ((lon_max_buffered + 180.0) / self.tile_size_degrees as f64).ceil() as u16;
+        let row_min = ((lat_min_buffered + 90.0) / self.tile_size_degrees as f64).floor() as u16;
+        let row_max = ((lat_max_buffered + 90.0) / self.tile_size_degrees as f64).ceil() as u16;
+
         let mut tiles = Vec::new();
-
-        // Longitude: -180 to +180 (360 degrees)
-        // Latitude: -90 to +90 (180 degrees)
-        let cols = (360.0 / self.tile_size_degrees).ceil() as u16;
-        let rows = (180.0 / self.tile_size_degrees).ceil() as u16;
-
-        for col in 0..cols {
-            for row in 0..rows {
+        for col in col_min..col_max {
+            for row in row_min..row_max {
                 tiles.push(TileId { col, row });
             }
         }
+
+        // Calculate what world coverage would be for comparison
+        let world_cols = (360.0 / self.tile_size_degrees).ceil() as u64;
+        let world_rows = (180.0 / self.tile_size_degrees).ceil() as u64;
+        let world_total = world_cols * world_rows;
+
+        info!(
+            "Generated {} tiles for bounded region (lat=[{:.3}, {:.3}], lon=[{:.3}, {:.3}]) vs {} world tiles ({:.1}% coverage)",
+            tiles.len(),
+            lat_min_buffered,
+            lat_max_buffered,
+            lon_min_buffered,
+            lon_max_buffered,
+            world_total,
+            (tiles.len() as f64 / world_total as f64) * 100.0
+        );
 
         tiles
     }
@@ -740,6 +891,71 @@ mod tests {
     use crate::rmdf::format::TileBounds;
 
     #[test]
+    fn test_pbf_bounds_new_empty() {
+        let bounds = PbfBounds::new_empty();
+        assert!(bounds.lat_min.is_none());
+        assert!(bounds.lat_max.is_none());
+        assert!(bounds.lon_min.is_none());
+        assert!(bounds.lon_max.is_none());
+        assert!(!bounds.is_valid());
+    }
+
+    #[test]
+    fn test_pbf_bounds_update() {
+        let mut bounds = PbfBounds::new_empty();
+
+        // First update
+        bounds.update(50.0, 10.0);
+        assert_eq!(bounds.lat_min, Some(50.0));
+        assert_eq!(bounds.lat_max, Some(50.0));
+        assert_eq!(bounds.lon_min, Some(10.0));
+        assert_eq!(bounds.lon_max, Some(10.0));
+
+        // Second update (expand bounds)
+        bounds.update(51.0, 11.0);
+        assert_eq!(bounds.lat_min, Some(50.0));
+        assert_eq!(bounds.lat_max, Some(51.0));
+        assert_eq!(bounds.lon_min, Some(10.0));
+        assert_eq!(bounds.lon_max, Some(11.0));
+
+        // Third update (within existing bounds)
+        bounds.update(50.5, 10.5);
+        assert_eq!(bounds.lat_min, Some(50.0));
+        assert_eq!(bounds.lat_max, Some(51.0));
+        assert_eq!(bounds.lon_min, Some(10.0));
+        assert_eq!(bounds.lon_max, Some(11.0));
+
+        // Fourth update (expand in opposite direction)
+        bounds.update(49.0, 9.0);
+        assert_eq!(bounds.lat_min, Some(49.0));
+        assert_eq!(bounds.lat_max, Some(51.0));
+        assert_eq!(bounds.lon_min, Some(9.0));
+        assert_eq!(bounds.lon_max, Some(11.0));
+    }
+
+    #[test]
+    fn test_pbf_bounds_is_valid() {
+        let mut bounds = PbfBounds::new_empty();
+        assert!(!bounds.is_valid());
+
+        bounds.update(50.0, 10.0);
+        assert!(bounds.is_valid());
+    }
+
+    #[test]
+    fn test_pbf_bounds_unwrap() {
+        let mut bounds = PbfBounds::new_empty();
+        bounds.update(50.0, 10.0);
+        bounds.update(51.0, 11.0);
+
+        let (lat_min, lat_max, lon_min, lon_max) = bounds.unwrap();
+        assert_eq!(lat_min, 50.0);
+        assert_eq!(lat_max, 51.0);
+        assert_eq!(lon_min, 10.0);
+        assert_eq!(lon_max, 11.0);
+    }
+
+    #[test]
     fn test_buffer_zone_calculation() {
         let streamer = PbfStreamer {
             input_file: PathBuf::from("dummy.pbf"),
@@ -862,14 +1078,22 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_all_tiles() {
+    fn test_calculate_all_tiles_world_bounds() {
         let streamer = PbfStreamer {
             input_file: PathBuf::from("dummy.pbf"),
             output_dir: PathBuf::from("output"),
             tile_size_degrees: 1.0,
         };
 
-        let tiles = streamer.calculate_all_tiles();
+        // World-spanning bounds (entire planet)
+        let world_bounds = PbfBounds {
+            lat_min: Some(-90.0),
+            lat_max: Some(90.0),
+            lon_min: Some(-180.0),
+            lon_max: Some(180.0),
+        };
+
+        let tiles = streamer.calculate_all_tiles(world_bounds);
 
         // With 1.0 degree tiles: 360 cols × 180 rows = 64,800 tiles
         assert_eq!(tiles.len(), 64_800);
@@ -877,6 +1101,53 @@ mod tests {
         // Verify first and last tiles
         assert_eq!(tiles[0], TileId { col: 0, row: 0 });
         assert_eq!(tiles[tiles.len() - 1], TileId { col: 359, row: 179 });
+    }
+
+    #[test]
+    fn test_calculate_all_tiles_regional_bounds() {
+        let streamer = PbfStreamer {
+            input_file: PathBuf::from("dummy.pbf"),
+            output_dir: PathBuf::from("output"),
+            tile_size_degrees: 0.1,
+        };
+
+        // Montenegro-like bounds (roughly 42-43.5°N, 18.5-20.5°E)
+        let montenegro_bounds = PbfBounds {
+            lat_min: Some(42.0),
+            lat_max: Some(43.5),
+            lon_min: Some(18.5),
+            lon_max: Some(20.5),
+        };
+
+        let tiles = streamer.calculate_all_tiles(montenegro_bounds);
+
+        // Should generate significantly fewer tiles than world coverage
+        // World coverage with 0.1° tiles: 3600 × 1800 = 6,480,000 tiles
+        // Regional coverage: roughly (20.5-18.5+0.02)/0.1 × (43.5-42.0+0.02)/0.1 ≈ 21 × 16 ≈ 336 tiles
+        assert!(tiles.len() < 1000, "Expected < 1000 tiles, got {}", tiles.len());
+        assert!(tiles.len() > 100, "Expected > 100 tiles, got {}", tiles.len());
+    }
+
+    #[test]
+    fn test_calculate_all_tiles_single_point() {
+        let streamer = PbfStreamer {
+            input_file: PathBuf::from("dummy.pbf"),
+            output_dir: PathBuf::from("output"),
+            tile_size_degrees: 1.0,
+        };
+
+        // Single point (with buffer, should generate one tile)
+        let single_point = PbfBounds {
+            lat_min: Some(50.5),
+            lat_max: Some(50.5),
+            lon_min: Some(10.5),
+            lon_max: Some(10.5),
+        };
+
+        let tiles = streamer.calculate_all_tiles(single_point);
+
+        // Should generate exactly 1 tile
+        assert_eq!(tiles.len(), 1);
     }
 
     #[test]
