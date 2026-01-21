@@ -4,9 +4,11 @@ use std::{
     u16,
 };
 
-use geo::{Contains, Coord, CoordsIter, MultiPolygon, Point};
+use geo::{Contains, Coord, CoordsIter, LineString, MultiPolygon, Point, Polygon};
 use serde::{Deserialize, Serialize};
 use wkt::ToWkt;
+
+use super::osm::{OsmNode, OsmRelation, OsmRelationMemberRole, OsmRelationMemberType, OsmWay};
 
 type GpsCellId = (i16, i16);
 
@@ -69,6 +71,151 @@ impl AreaGrid {
             point_grid: PointGrid::new(),
         }
     }
+
+    /// Build AreaGrid from OSM ways and relations
+    ///
+    /// Processes both simple closed ways (representing single polygons) and relations
+    /// (representing multipolygons with outer/inner rings).
+    ///
+    /// # Arguments
+    ///
+    /// * `ways` - OSM ways that form area boundaries
+    /// * `relations` - OSM relations representing multipolygons (outer/inner roles reused as From/To)
+    /// * `nodes` - Node lookup by ID for coordinate resolution
+    ///
+    /// # Returns
+    ///
+    /// A new AreaGrid with all polygons inserted
+    pub fn from_osm_data(
+        ways: &[OsmWay],
+        relations: &[OsmRelation],
+        nodes: &HashMap<u64, OsmNode>,
+    ) -> Self {
+        let mut area_grid = Self::new();
+
+        // Process simple ways (closed ways representing areas)
+        for way in ways {
+            // Check if way is closed (first node == last node)
+            if way.point_ids.is_empty() || way.point_ids.first() != way.point_ids.last() {
+                continue;
+            }
+
+            // Convert nodes to coordinates
+            let coords: Vec<Coord> = way
+                .point_ids
+                .iter()
+                .filter_map(|node_id| nodes.get(node_id))
+                .map(|node| Coord {
+                    x: node.lon,
+                    y: node.lat,
+                })
+                .collect();
+
+            if coords.len() < 3 {
+                continue;
+            }
+
+            let line_string = LineString::new(coords);
+            let polygon = Polygon::new(line_string, vec![]);
+            let multi_polygon = MultiPolygon::new(vec![polygon]);
+            area_grid.insert_multi_polygon(&multi_polygon);
+        }
+
+        // Process relations (multipolygons with outer/inner rings)
+        for relation in relations {
+            // Extract way IDs for outer and inner rings
+            // Note: From=outer, To=inner (reused roles from restriction relations)
+            let outer_way_ids: Vec<u64> = relation
+                .members
+                .iter()
+                .filter(|m| {
+                    m.role == OsmRelationMemberRole::From
+                        && m.member_type == OsmRelationMemberType::Way
+                })
+                .map(|m| m.member_ref)
+                .collect();
+
+            let inner_way_ids: Vec<u64> = relation
+                .members
+                .iter()
+                .filter(|m| {
+                    m.role == OsmRelationMemberRole::To
+                        && m.member_type == OsmRelationMemberType::Way
+                })
+                .map(|m| m.member_ref)
+                .collect();
+
+            // Convert way IDs to LineStrings
+            let outer_line_strings: Vec<LineString> = outer_way_ids
+                .iter()
+                .filter_map(|way_id| {
+                    ways.iter()
+                        .find(|w| w.id == *way_id)
+                        .and_then(|way| {
+                            let coords: Vec<Coord> = way
+                                .point_ids
+                                .iter()
+                                .filter_map(|node_id| nodes.get(node_id))
+                                .map(|node| Coord {
+                                    x: node.lon,
+                                    y: node.lat,
+                                })
+                                .collect();
+                            if coords.len() >= 2 {
+                                Some(LineString::new(coords))
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .collect();
+
+            let inner_line_strings: Vec<LineString> = inner_way_ids
+                .iter()
+                .filter_map(|way_id| {
+                    ways.iter()
+                        .find(|w| w.id == *way_id)
+                        .and_then(|way| {
+                            let coords: Vec<Coord> = way
+                                .point_ids
+                                .iter()
+                                .filter_map(|node_id| nodes.get(node_id))
+                                .map(|node| Coord {
+                                    x: node.lon,
+                                    y: node.lat,
+                                })
+                                .collect();
+                            if coords.len() >= 2 {
+                                Some(LineString::new(coords))
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .collect();
+
+            // Match holes to outer polygons
+            for outer_line in &outer_line_strings {
+                let outer_polygon = Polygon::new(outer_line.clone(), vec![]);
+                let mut matching_holes = Vec::new();
+
+                for inner_line in &inner_line_strings {
+                    if let Some(point) = inner_line.points().next() {
+                        if outer_polygon.contains(&point) {
+                            matching_holes.push(inner_line.clone());
+                        }
+                    }
+                }
+
+                let polygon = Polygon::new(outer_line.clone(), matching_holes);
+                let multi_polygon = MultiPolygon::new(vec![polygon]);
+                area_grid.insert_multi_polygon(&multi_polygon);
+            }
+        }
+
+        area_grid
+    }
+
     pub fn insert_multi_polygon(&mut self, multi_polygon: &MultiPolygon) -> Vec<AdjustedCoord> {
         let mut adjusted_coords = HashSet::new();
 
