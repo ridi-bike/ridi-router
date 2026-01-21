@@ -565,7 +565,14 @@ impl PbfStreamer {
                         false
                     }
                     OsmObj::Way(way) => {
-                        // Select highway ways that reference at least one node in bounds
+                        // Check if way has any nodes in bounds
+                        let has_nodes_in_bounds = way.nodes.iter().any(|n| nodes_in_bounds_ids.contains(&n.0));
+
+                        if !has_nodes_in_bounds {
+                            return false;
+                        }
+
+                        // Select highway ways
                         let is_highway = way.tags.iter().any(|(k, v)| {
                             k == "highway"
                                 && (ALLOWED_HIGHWAY_VALUES.contains(&v.as_str())
@@ -583,11 +590,10 @@ impl PbfStreamer {
                                 .any(|(k, v)| k == area_type.tag_key && v == area_type.tag_value)
                         });
 
-                        (is_highway && way.nodes.iter().any(|n| nodes_in_bounds_ids.contains(&n.0)))
-                            || is_area
+                        is_highway || is_area
                     }
                     OsmObj::Relation(relation) => {
-                        // Select restriction relations that reference at least one node in bounds
+                        // Select restriction relations
                         let is_restriction = relation
                             .tags
                             .iter()
@@ -601,15 +607,17 @@ impl PbfStreamer {
                                 .any(|(k, v)| k == area_type.tag_key && v == area_type.tag_value)
                         });
 
-                        (is_restriction
-                            && relation.refs.iter().any(|r| {
-                                if let osmpbfreader::OsmId::Node(node_id) = r.member {
-                                    nodes_in_bounds_ids.contains(&node_id.0)
-                                } else {
-                                    false
-                                }
-                            }))
-                            || is_area
+                        // For both restriction and area relations, check if any members exist
+                        // We can't fully validate bounds here because:
+                        // - Way members: need to check if way's nodes are in bounds (don't have way data yet)
+                        // - Relation members: need to recursively check nested relations
+                        // So we tentatively include all typed relations and filter in post-processing
+                        if is_restriction || is_area {
+                            // Include if it has any members (way, node, or relation)
+                            !relation.refs.is_empty()
+                        } else {
+                            false
+                        }
                     }
                 }
             })
@@ -707,8 +715,8 @@ impl PbfStreamer {
                                                     osmpbfreader::OsmId::Node(id) => {
                                                         (id.0 as u64, OsmRelationMemberType::Node)
                                                     }
-                                                    osmpbfreader::OsmId::Relation(_) => {
-                                                        return None
+                                                    osmpbfreader::OsmId::Relation(id) => {
+                                                        (id.0 as u64, OsmRelationMemberType::Relation)
                                                     }
                                                 };
 
@@ -755,7 +763,9 @@ impl PbfStreamer {
                                                 osmpbfreader::OsmId::Node(id) => {
                                                     (id.0 as u64, OsmRelationMemberType::Node)
                                                 }
-                                                osmpbfreader::OsmId::Relation(_) => return None,
+                                                osmpbfreader::OsmId::Relation(id) => {
+                                                    (id.0 as u64, OsmRelationMemberType::Relation)
+                                                }
                                             };
 
                                             Some(OsmRelationMember {
@@ -808,6 +818,109 @@ impl PbfStreamer {
                     (nodes1, ways1, relations1, area_ways1, area_relations1)
                 },
             );
+
+        // Filter relations to only include those whose member ways actually exist in our extracted data
+        // This handles nested relations (relation -> relation -> way -> nodes) properly
+
+        // Build a set of all extracted way IDs (both highway and area ways)
+        let mut extracted_way_ids: std::collections::HashSet<u64> = ways.iter().map(|w| w.id).collect();
+        for area_way_list in area_ways.values() {
+            extracted_way_ids.extend(area_way_list.iter().map(|w| w.id));
+        }
+
+        // Build a map of all relations (restriction + area) for nested lookup
+        // Clone relations to build an owned map we can use for recursive lookups
+        let mut all_relations_map: HashMap<u64, OsmRelation> = HashMap::new();
+        for relation in &relations {
+            all_relations_map.insert(relation.id, relation.clone());
+        }
+        for relations_list in area_relations.values() {
+            for relation in relations_list {
+                all_relations_map.insert(relation.id, relation.clone());
+            }
+        }
+
+        // Helper function to recursively check if a relation references any extracted ways
+        // Handles nested relations: relation -> relation -> way
+        fn check_relation_references(
+            relation_id: u64,
+            all_relations: &HashMap<u64, OsmRelation>,
+            extracted_way_ids: &std::collections::HashSet<u64>,
+            visited: &mut std::collections::HashSet<u64>,
+        ) -> bool {
+            // Prevent infinite loops in circular relation references
+            if !visited.insert(relation_id) {
+                return false;
+            }
+
+            let relation = match all_relations.get(&relation_id) {
+                Some(r) => r,
+                None => return false,
+            };
+
+            for member in &relation.members {
+                match member.member_type {
+                    OsmRelationMemberType::Way => {
+                        // Direct way member - check if it's in our extracted ways
+                        if extracted_way_ids.contains(&member.member_ref) {
+                            return true;
+                        }
+                    }
+                    OsmRelationMemberType::Node => {
+                        // Node members don't help us determine if this is in bounds
+                        // (nodes were already used to determine which ways to extract)
+                        continue;
+                    }
+                    OsmRelationMemberType::Relation => {
+                        // Relation member - recursively check
+                        if check_relation_references(
+                            member.member_ref,
+                            all_relations,
+                            extracted_way_ids,
+                            visited,
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            false
+        }
+
+        // Filter restriction relations
+        let relations: Vec<OsmRelation> = relations
+            .into_iter()
+            .filter(|relation| {
+                let mut visited = std::collections::HashSet::new();
+                check_relation_references(
+                    relation.id,
+                    &all_relations_map,
+                    &extracted_way_ids,
+                    &mut visited,
+                )
+            })
+            .collect();
+
+        // Filter area relations
+        let area_relations: HashMap<String, Vec<OsmRelation>> = area_relations
+            .into_iter()
+            .map(|(area_type, relations_list)| {
+                let filtered: Vec<OsmRelation> = relations_list
+                    .into_iter()
+                    .filter(|relation| {
+                        let mut visited = std::collections::HashSet::new();
+                        check_relation_references(
+                            relation.id,
+                            &all_relations_map,
+                            &extracted_way_ids,
+                            &mut visited,
+                        )
+                    })
+                    .collect();
+                (area_type, filtered)
+            })
+            .collect();
 
         tile_data.nodes = nodes;
         tile_data.ways = ways;

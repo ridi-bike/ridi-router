@@ -43,6 +43,7 @@ impl OsmWay {
 pub enum OsmRelationMemberType {
     Way,
     Node,
+    Relation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
