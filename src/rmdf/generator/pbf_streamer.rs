@@ -903,34 +903,39 @@ impl PbfStreamer {
         Ok((residential_grid, military_grid))
     }
 
-    /// Compute proximity and nogo flags for nodes in core bounds
+    /// Compute proximity and nogo flags for nodes in core bounds (parallelized)
     fn compute_proximity_flags(
         &self,
-        mut nodes: HashMap<u64, OsmNode>,
+        nodes: HashMap<u64, OsmNode>,
         core_bounds: crate::rmdf::format::TileBounds,
         residential_grid: &AreaGrid,
         military_grid: &AreaGrid,
     ) -> Result<HashMap<u64, OsmNode>> {
-        let mut computed_count = 0;
+        // Parallelize proximity computation across nodes
+        let nodes: HashMap<u64, OsmNode> = nodes
+            .into_par_iter()
+            .map(|(node_id, mut node)| {
+                // Only compute for nodes in core bounds (not buffer zone)
+                if self.point_in_bounds(node.lat, node.lon, core_bounds) {
+                    // Compute residential proximity flag
+                    node.residential_in_proximity =
+                        Self::compute_residential_proximity(node.lat, node.lon, residential_grid);
 
-        for (_node_id, node) in nodes.iter_mut() {
-            // Only compute for nodes in core bounds (not buffer zone)
-            if !self.point_in_bounds(node.lat, node.lon, core_bounds) {
-                continue;
-            }
+                    // Compute nogo area flag
+                    node.nogo_area = Self::compute_nogo_area(node.lat, node.lon, military_grid);
+                }
 
-            // Compute residential proximity flag
-            node.residential_in_proximity =
-                Self::compute_residential_proximity(node.lat, node.lon, residential_grid);
+                (node_id, node)
+            })
+            .collect();
 
-            // Compute nogo area flag
-            node.nogo_area = Self::compute_nogo_area(node.lat, node.lon, military_grid);
-
-            computed_count += 1;
-        }
+        let computed_count = nodes
+            .values()
+            .filter(|node| self.point_in_bounds(node.lat, node.lon, core_bounds))
+            .count();
 
         info!(
-            "Computed proximity flags for {} nodes in core bounds",
+            "Computed proximity flags for {} nodes in core bounds (parallelized)",
             computed_count
         );
 
