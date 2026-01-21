@@ -549,8 +549,60 @@ impl PbfStreamer {
             return Ok(tile_data);
         }
 
+        // Pass 1.5: Collect way IDs that are in bounds (for efficient relation filtering)
+        // This prevents loading millions of out-of-bounds area relations into memory
+        let ways_in_bounds_ids: std::collections::HashSet<i64> = {
+            let file = File::open(&self.input_file)
+                .with_context(|| format!("Failed to open PBF file for way scanning for tile {:?}", tile_id))?;
+            let mut pbf = OsmPbfReader::new(file);
+
+            pbf.par_iter()
+                .filter_map(|obj_result| {
+                    let obj = obj_result.ok()?;
+                    if let OsmObj::Way(way) = obj {
+                        // Check if way has any nodes in bounds
+                        let has_nodes_in_bounds = way.nodes.iter().any(|n| nodes_in_bounds_ids.contains(&n.0));
+
+                        if !has_nodes_in_bounds {
+                            return None;
+                        }
+
+                        // Check if this is a highway or area way
+                        let is_highway = way.tags.iter().any(|(k, v)| {
+                            k == "highway"
+                                && (ALLOWED_HIGHWAY_VALUES.contains(&v.as_str())
+                                    || (v == "path"
+                                        && way.tags.iter().any(|(k2, v2)| k2 == "motorcycle" && v2 == "yes")))
+                        });
+
+                        let is_area = PROXIMITY_AREA_TYPES.iter().any(|area_type| {
+                            way.tags.iter().any(|(k, v)| {
+                                k == area_type.tag_key && v == area_type.tag_value
+                            })
+                        });
+
+                        if is_highway || is_area {
+                            return Some(way.id.0);
+                        }
+                    }
+                    None
+                })
+                .collect()
+        };
+
+        info!(
+            "Found {} ways in bounds for tile {:?}",
+            ways_in_bounds_ids.len(),
+            tile_id
+        );
+
+        // Early exit if no ways in bounds
+        if ways_in_bounds_ids.is_empty() {
+            return Ok(tile_data);
+        }
+
         // Pass 2: Use get_objs_and_deps to fetch ways/relations referencing these nodes (parallel)
-        // The predicate captures nodes_in_bounds_ids and only selects relevant ways/relations
+        // The predicate captures nodes_in_bounds_ids and ways_in_bounds_ids for efficient filtering
         let all_objs = {
             let file = File::open(&self.input_file)
                 .with_context(|| format!("Failed to reopen PBF file for tile {:?}", tile_id))?;
@@ -565,32 +617,8 @@ impl PbfStreamer {
                         false
                     }
                     OsmObj::Way(way) => {
-                        // Check if way has any nodes in bounds
-                        let has_nodes_in_bounds = way.nodes.iter().any(|n| nodes_in_bounds_ids.contains(&n.0));
-
-                        if !has_nodes_in_bounds {
-                            return false;
-                        }
-
-                        // Select highway ways
-                        let is_highway = way.tags.iter().any(|(k, v)| {
-                            k == "highway"
-                                && (ALLOWED_HIGHWAY_VALUES.contains(&v.as_str())
-                                    || (v == "path"
-                                        && way
-                                            .tags
-                                            .iter()
-                                            .any(|(k2, v2)| k2 == "motorcycle" && v2 == "yes")))
-                        });
-
-                        // Select area ways (residential, military, etc.)
-                        let is_area = PROXIMITY_AREA_TYPES.iter().any(|area_type| {
-                            way.tags
-                                .iter()
-                                .any(|(k, v)| k == area_type.tag_key && v == area_type.tag_value)
-                        });
-
-                        is_highway || is_area
+                        // Use pre-computed set of ways in bounds for efficiency
+                        ways_in_bounds_ids.contains(&way.id.0)
                     }
                     OsmObj::Relation(relation) => {
                         // Select restriction relations
@@ -607,14 +635,28 @@ impl PbfStreamer {
                                 .any(|(k, v)| k == area_type.tag_key && v == area_type.tag_value)
                         });
 
-                        // For both restriction and area relations, check if any members exist
-                        // We can't fully validate bounds here because:
-                        // - Way members: need to check if way's nodes are in bounds (don't have way data yet)
-                        // - Relation members: need to recursively check nested relations
-                        // So we tentatively include all typed relations and filter in post-processing
+                        // Filter relations by checking if they reference ways/nodes in bounds
+                        // This is CRITICAL for performance - without this check, we'd load
+                        // millions of out-of-bounds residential relations into memory
                         if is_restriction || is_area {
-                            // Include if it has any members (way, node, or relation)
-                            !relation.refs.is_empty()
+                            relation.refs.iter().any(|r| {
+                                match r.member {
+                                    osmpbfreader::OsmId::Node(node_id) => {
+                                        // Check if node is in bounds
+                                        nodes_in_bounds_ids.contains(&node_id.0)
+                                    }
+                                    osmpbfreader::OsmId::Way(way_id) => {
+                                        // Check if way is in bounds (this is the key optimization!)
+                                        ways_in_bounds_ids.contains(&way_id.0)
+                                    }
+                                    osmpbfreader::OsmId::Relation(_) => {
+                                        // For nested relations, we can't check efficiently here
+                                        // Include tentatively and filter in post-processing
+                                        // This is rare compared to way members
+                                        true
+                                    }
+                                }
+                            })
                         } else {
                             false
                         }
