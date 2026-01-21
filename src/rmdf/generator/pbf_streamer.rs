@@ -573,84 +573,92 @@ impl PbfStreamer {
             .with_context(|| format!("Failed to read PBF objects for tile {:?}", tile_id))?
         };
 
-        // Build set of node IDs in bounds (for filtering post-processing)
-        let nodes_in_bounds: std::collections::HashSet<u64> =
-            nodes_in_bounds_ids.iter().map(|&id| id as u64).collect();
+        let (nodes, ways, relations): (HashMap<u64, OsmNode>, Vec<OsmWay>, Vec<OsmRelation>) =
+            all_objs
+                .par_iter()
+                .fold(
+                    || (HashMap::new(), Vec::new(), Vec::new()),
+                    |(mut nodes, mut ways, mut relations), (_, obj)| {
+                        match obj {
+                            OsmObj::Node(node) => {
+                                let osm_node = OsmNode {
+                                    id: node.id.0 as u64,
+                                    lat: node.lat(),
+                                    lon: node.lon(),
+                                    residential_in_proximity: false, // Will be computed later
+                                    nogo_area: false,                // Will be computed later
+                                };
+                                nodes.insert(osm_node.id, osm_node);
+                            }
+                            OsmObj::Way(way) => {
+                                let osm_way = OsmWay {
+                                    id: way.id.0 as u64,
+                                    point_ids: way.nodes.iter().map(|n| n.0 as u64).collect(),
+                                    tags: Some(
+                                        way.tags
+                                            .iter()
+                                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                                            .collect(),
+                                    ),
+                                };
+                                ways.push(osm_way);
+                            }
+                            OsmObj::Relation(relation) => {
+                                let osm_relation = OsmRelation {
+                                    id: relation.id.0 as u64,
+                                    members: relation
+                                        .refs
+                                        .iter()
+                                        .filter_map(|r| {
+                                            let role = match r.role.as_str() {
+                                                "from" => OsmRelationMemberRole::From,
+                                                "to" => OsmRelationMemberRole::To,
+                                                "via" => OsmRelationMemberRole::Via,
+                                                _ => return None,
+                                            };
 
-        // Extract ALL nodes from get_objs_and_deps
-        // These include: nodes in bounds + dependency nodes outside bounds (for way completeness)
-        for (_, obj) in &all_objs {
-            if let OsmObj::Node(node) = obj {
-                let osm_node = OsmNode {
-                    id: node.id.0 as u64,
-                    lat: node.lat(),
-                    lon: node.lon(),
-                    residential_in_proximity: false, // Will be computed later
-                    nogo_area: false,                // Will be computed later
-                };
-                tile_data.nodes.insert(osm_node.id, osm_node);
-            }
-        }
+                                            let (member_ref, member_type) = match r.member {
+                                                osmpbfreader::OsmId::Way(id) => {
+                                                    (id.0 as u64, OsmRelationMemberType::Way)
+                                                }
+                                                osmpbfreader::OsmId::Node(id) => {
+                                                    (id.0 as u64, OsmRelationMemberType::Node)
+                                                }
+                                                osmpbfreader::OsmId::Relation(_) => return None, // Skip nested relations
+                                            };
 
-        // Extract all ways (already filtered by predicate to those referencing nodes in bounds)
-        for (_, obj) in &all_objs {
-            if let OsmObj::Way(way) = obj {
-                let osm_way = OsmWay {
-                    id: way.id.0 as u64,
-                    point_ids: way.nodes.iter().map(|n| n.0 as u64).collect(),
-                    tags: Some(
-                        way.tags
-                            .iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
-                            .collect(),
-                    ),
-                };
-                tile_data.ways.push(osm_way);
-            }
-        }
+                                            Some(OsmRelationMember {
+                                                member_ref,
+                                                role,
+                                                member_type,
+                                            })
+                                        })
+                                        .collect(),
+                                    tags: relation
+                                        .tags
+                                        .iter()
+                                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                                        .collect(),
+                                };
+                                relations.push(osm_relation);
+                            }
+                        }
+                        (nodes, ways, relations)
+                    },
+                )
+                .reduce(
+                    || (HashMap::new(), Vec::new(), Vec::new()),
+                    |(mut nodes1, mut ways1, mut relations1), (nodes2, ways2, relations2)| {
+                        nodes1.extend(nodes2);
+                        ways1.extend(ways2);
+                        relations1.extend(relations2);
+                        (nodes1, ways1, relations1)
+                    },
+                );
 
-        // Extract all relations (already filtered by predicate to those referencing nodes in bounds)
-        for (_, obj) in &all_objs {
-            if let OsmObj::Relation(relation) = obj {
-                let osm_relation = OsmRelation {
-                    id: relation.id.0 as u64,
-                    members: relation
-                        .refs
-                        .iter()
-                        .filter_map(|r| {
-                            let role = match r.role.as_str() {
-                                "from" => OsmRelationMemberRole::From,
-                                "to" => OsmRelationMemberRole::To,
-                                "via" => OsmRelationMemberRole::Via,
-                                _ => return None,
-                            };
-
-                            let (member_ref, member_type) = match r.member {
-                                osmpbfreader::OsmId::Way(id) => {
-                                    (id.0 as u64, OsmRelationMemberType::Way)
-                                }
-                                osmpbfreader::OsmId::Node(id) => {
-                                    (id.0 as u64, OsmRelationMemberType::Node)
-                                }
-                                osmpbfreader::OsmId::Relation(_) => return None, // Skip nested relations
-                            };
-
-                            Some(OsmRelationMember {
-                                member_ref,
-                                role,
-                                member_type,
-                            })
-                        })
-                        .collect(),
-                    tags: relation
-                        .tags
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect(),
-                };
-                tile_data.relations.push(osm_relation);
-            }
-        }
+        tile_data.nodes = nodes;
+        tile_data.ways = ways;
+        tile_data.relations = relations;
 
         // Log warning for empty tiles (common for ocean tiles)
         if tile_data.nodes.is_empty() && tile_data.ways.is_empty() {
