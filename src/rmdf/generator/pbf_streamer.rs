@@ -123,7 +123,7 @@ impl PbfBounds {
     }
 
     /// Unwrap bounds to concrete values (must check is_valid() first)
-    fn unwrap(&self) -> (f64, f64, f64, f64) {
+    fn extract(&self) -> (f64, f64, f64, f64) {
         (
             self.lat_min.unwrap(),
             self.lat_max.unwrap(),
@@ -163,7 +163,8 @@ impl PbfStreamer {
         info!("Starting tile-based parallel partitioning");
 
         // Scan PBF to discover geographic bounds
-        let pbf_bounds = self.scan_pbf_bounds()
+        let pbf_bounds = self
+            .scan_pbf_bounds()
             .context("Failed to scan PBF bounds")?;
 
         // Calculate tiles that intersect with bounds
@@ -350,35 +351,35 @@ impl PbfStreamer {
         info!("Scanning PBF file to discover geographic bounds...");
         let start_time = Instant::now();
 
-        let mut bounds = PbfBounds::new_empty();
         let mut node_count = 0u64;
 
-        let file = File::open(&self.input_file)
-            .context("Failed to open PBF file for bounds scanning")?;
+        let file =
+            File::open(&self.input_file).context("Failed to open PBF file for bounds scanning")?;
         let mut pbf = OsmPbfReader::new(file);
 
-        for obj_result in pbf.iter() {
-            let obj = obj_result.context("Failed to read PBF object during bounds scan")?;
-
-            if let OsmObj::Node(node) = obj {
-                let lat = node.lat();
-                let lon = node.lon();
-
-                bounds.update(lat, lon);
+        let bounds = pbf
+            .par_iter()
+            .filter_map(|element| {
+                element.map_or(None, |obj| {
+                    if let OsmObj::Node(node) = obj {
+                        let lat = node.lat();
+                        let lon = node.lon();
+                        return Some((lat, lon));
+                    }
+                    None
+                })
+            })
+            .fold(PbfBounds::new_empty(), |mut bounds, (lat, lon)| {
                 node_count += 1;
-
-                // Log progress every 1M nodes
-                if node_count % 1_000_000 == 0 {
-                    info!("Scanned {} million nodes...", node_count / 1_000_000);
-                }
-            }
-        }
+                bounds.update(lat, lon);
+                bounds
+            });
 
         if !bounds.is_valid() {
             anyhow::bail!("PBF file contains no valid nodes");
         }
 
-        let (lat_min, lat_max, lon_min, lon_max) = bounds.unwrap();
+        let (lat_min, lat_max, lon_min, lon_max) = bounds.extract();
         let elapsed = start_time.elapsed();
 
         info!(
@@ -407,7 +408,7 @@ impl PbfStreamer {
     ///
     /// For Montenegro (0.1° grid): generates ~400 tiles instead of 6.48M tiles
     fn calculate_all_tiles(&self, pbf_bounds: PbfBounds) -> Vec<TileId> {
-        let (lat_min, lat_max, lon_min, lon_max) = pbf_bounds.unwrap();
+        let (lat_min, lat_max, lon_min, lon_max) = pbf_bounds.extract();
 
         // Add buffer to ensure edge tiles are included
         // Use 0.01° buffer (2x the per-tile buffer of 0.005°)
@@ -431,20 +432,13 @@ impl PbfStreamer {
             }
         }
 
-        // Calculate what world coverage would be for comparison
-        let world_cols = (360.0 / self.tile_size_degrees).ceil() as u64;
-        let world_rows = (180.0 / self.tile_size_degrees).ceil() as u64;
-        let world_total = world_cols * world_rows;
-
         info!(
-            "Generated {} tiles for bounded region (lat=[{:.3}, {:.3}], lon=[{:.3}, {:.3}]) vs {} world tiles ({:.1}% coverage)",
+            "Calculated {} tiles for bounded region (lat=[{:.3}, {:.3}], lon=[{:.3}, {:.3}])",
             tiles.len(),
             lat_min_buffered,
             lat_max_buffered,
             lon_min_buffered,
             lon_max_buffered,
-            world_total,
-            (tiles.len() as f64 / world_total as f64) * 100.0
         );
 
         tiles
@@ -948,7 +942,7 @@ mod tests {
         bounds.update(50.0, 10.0);
         bounds.update(51.0, 11.0);
 
-        let (lat_min, lat_max, lon_min, lon_max) = bounds.unwrap();
+        let (lat_min, lat_max, lon_min, lon_max) = bounds.extract();
         assert_eq!(lat_min, 50.0);
         assert_eq!(lat_max, 51.0);
         assert_eq!(lon_min, 10.0);
@@ -1124,8 +1118,16 @@ mod tests {
         // Should generate significantly fewer tiles than world coverage
         // World coverage with 0.1° tiles: 3600 × 1800 = 6,480,000 tiles
         // Regional coverage: roughly (20.5-18.5+0.02)/0.1 × (43.5-42.0+0.02)/0.1 ≈ 21 × 16 ≈ 336 tiles
-        assert!(tiles.len() < 1000, "Expected < 1000 tiles, got {}", tiles.len());
-        assert!(tiles.len() > 100, "Expected > 100 tiles, got {}", tiles.len());
+        assert!(
+            tiles.len() < 1000,
+            "Expected < 1000 tiles, got {}",
+            tiles.len()
+        );
+        assert!(
+            tiles.len() > 100,
+            "Expected > 100 tiles, got {}",
+            tiles.len()
+        );
     }
 
     #[test]
