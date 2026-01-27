@@ -16,7 +16,6 @@
 //! - Ensures correct border node classification via buffer zones
 
 use anyhow::{Context, Result};
-use geo::{CoordsIter, Distance, GeodesicArea, Haversine, HaversineClosestPoint, Point};
 use rayon::prelude::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,14 +25,11 @@ use tracing::info;
 
 use crate::map_data::generation_graph::GenerationGraph;
 use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
-use crate::map_data::proximity::AreaGrid;
 use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
 use crate::rmdf::format::TileId;
 use std::collections::HashMap;
-// TODO: Move this constant somewhere accessible or re-export from osm_data
-// use crate::osm_data::data_reader::ALLOWED_HIGHWAY_VALUES;
 
-// Temporarily define locally until we re-organize modules
+// Allowed highway values for routing
 const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
     "motorway",
     "trunk",
@@ -54,45 +50,12 @@ const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
     "road",
 ];
 
-// Constants from src/osm_data/pbf_reader.rs
-const RESIDENTIAL_PROXIMITY_THRESHOLD_METERS: f64 = 500.0;
-const RESIDENTIAL_PART_COVERED: f64 = 0.10;
-const THRESHOLD_AREA: f64 = (RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
-    * RESIDENTIAL_PROXIMITY_THRESHOLD_METERS
-    * std::f64::consts::PI)
-    * RESIDENTIAL_PART_COVERED;
-const MILITARY_ENTRY_MAX_M: f64 = 100.0;
-
-/// Configuration for proximity area types (residential, military, etc.)
-#[derive(Clone)]
-struct ProximityAreaType {
-    name: &'static str,
-    tag_key: &'static str,
-    tag_value: &'static str,
-}
-
-/// Area types used for proximity computation
-const PROXIMITY_AREA_TYPES: &[ProximityAreaType] = &[
-    ProximityAreaType {
-        name: "residential",
-        tag_key: "landuse",
-        tag_value: "residential",
-    },
-    ProximityAreaType {
-        name: "military",
-        tag_key: "landuse",
-        tag_value: "military",
-    },
-];
-
 /// Data extracted from PBF for a single tile
 struct TileData {
     tile_id: TileId,
-    nodes: HashMap<u64, OsmNode>, // OSM ID -> Node with coordinates
+    nodes: HashMap<u64, OsmNode>, // OSM ID -> Node with coordinates (flags pre-computed)
     ways: Vec<OsmWay>,
     relations: Vec<OsmRelation>,
-    area_ways: HashMap<String, Vec<OsmWay>>, // Area ways by type (residential, military, etc.)
-    area_relations: HashMap<String, Vec<OsmRelation>>, // Area relations by type
 }
 
 impl TileData {
@@ -102,8 +65,6 @@ impl TileData {
             nodes: HashMap::new(),
             ways: Vec::new(),
             relations: Vec::new(),
-            area_ways: HashMap::new(),
-            area_relations: HashMap::new(),
         }
     }
 }
@@ -191,6 +152,12 @@ impl<'a> PbfStreamer<'a> {
     }
 
     /// Process a single tile
+    ///
+    /// With pre-computed flags, this method is simplified:
+    /// 1. Calculate bounds
+    /// 2. Extract PBF data (nodes already have correct flags)
+    /// 3. Build generation graph
+    /// 4. Write RMDF tile
     fn process_tile(&self, tile_id: TileId) -> Result<()> {
         // Wrap entire tile processing in context for better error messages
         (|| -> Result<()> {
@@ -199,7 +166,8 @@ impl<'a> PbfStreamer<'a> {
             let buffered_bounds = self.add_buffer_to_bounds(core_bounds);
 
             // Step 2: Extract PBF data for this tile
-            let mut tile_data = self.extract_tile_data(tile_id, buffered_bounds)
+            // Nodes already have residential_in_proximity and nogo_area flags pre-computed
+            let tile_data = self.extract_tile_data(tile_id, buffered_bounds)
                 .with_context(|| format!(
                     "Failed to extract PBF data for tile {:?} (bounds: lat={:.3}..{:.3}, lon={:.3}..{:.3})",
                     tile_id, buffered_bounds.lat_min, buffered_bounds.lat_max,
@@ -212,31 +180,10 @@ impl<'a> PbfStreamer<'a> {
                 return Ok(());
             }
 
-            // Step 3: Build area grids for proximity computation
-            let (residential_grid, military_grid) = self.build_area_grids(&tile_data, buffered_bounds)
-                .with_context(|| format!(
-                    "Failed to build area grids for tile {:?} ({} nodes, {} ways, {} relations)",
-                    tile_id, tile_data.nodes.len(), tile_data.ways.len(), tile_data.relations.len()
-                ))?;
-
-            // Drop area data after building grids to free memory
-            tile_data.area_ways.clear();
-            tile_data.area_relations.clear();
-
-            // Step 4: Compute proximity flags for nodes in core bounds
-            let nodes_with_flags = self.compute_proximity_flags(
-                tile_data.nodes,
-                core_bounds,
-                &residential_grid,
-                &military_grid,
-            ).with_context(|| format!(
-                "Failed to compute proximity flags for tile {:?}",
-                tile_id
-            ))?;
-
-            // Step 5: Build generation graph
+            // Step 3: Build generation graph
+            // Nodes already have correct flags from pre-computation
             let graph = self.build_generation_graph(
-                nodes_with_flags,
+                tile_data.nodes,
                 tile_data.ways,
                 tile_data.relations,
             ).with_context(|| format!(
@@ -244,7 +191,7 @@ impl<'a> PbfStreamer<'a> {
                 tile_id
             ))?;
 
-            // Step 6: Write RMDF tile file
+            // Step 4: Write RMDF tile file
             self.write_rmdf_tile(tile_id, graph)
                 .with_context(|| format!(
                     "Failed to write RMDF tile {:?} to disk",
@@ -253,58 +200,6 @@ impl<'a> PbfStreamer<'a> {
 
             Ok(())
         })().with_context(|| format!("Failed to process tile {:?}", tile_id))
-    }
-
-    /// Compute residential proximity flag (from src/osm_data/pbf_reader.rs:90-126)
-    fn compute_residential_proximity(lat: f64, lon: f64, residential_areas: &AreaGrid) -> bool {
-        let tot_area = match residential_areas.find_closest_areas_refs(
-            lat as f32, lon as f32, 1, // Search 1 grid step (~1.1km)
-        ) {
-            Some(areas) => areas.iter().fold(0., |tot, multi_polygon| {
-                let geo_point = Point::new(lon, lat);
-                let distance = match multi_polygon.haversine_closest_point(&geo_point) {
-                    geo::Closest::Intersection(_) => 0.,
-                    geo::Closest::SinglePoint(p) => Haversine.distance(p, geo_point),
-                    geo::Closest::Indeterminate => {
-                        multi_polygon.coords_iter().fold(10000., |min, coords| {
-                            let dist = Haversine.distance(geo_point, Point::from(coords));
-                            if dist < min {
-                                dist
-                            } else {
-                                min
-                            }
-                        })
-                    }
-                };
-
-                if distance <= RESIDENTIAL_PROXIMITY_THRESHOLD_METERS {
-                    let area = multi_polygon.geodesic_area_signed().abs();
-                    return tot + area;
-                }
-                tot
-            }),
-            None => 0.,
-        };
-
-        tot_area > THRESHOLD_AREA
-    }
-
-    /// Compute nogo area flag (from src/osm_data/pbf_reader.rs:128-149)
-    fn compute_nogo_area(lat: f64, lon: f64, military_areas: &AreaGrid) -> bool {
-        match military_areas.find_closest_areas_refs(lat as f32, lon as f32, 1) {
-            None => false,
-            Some(areas) => areas.iter().any(|multi_polygon| {
-                let geo_point = Point::new(lon, lat);
-                match multi_polygon.haversine_closest_point(&geo_point) {
-                    geo::Closest::Intersection(p) => {
-                        // Only mark as nogo if inside military area >100m from boundary
-                        Haversine.distance(geo_point, p) > MILITARY_ENTRY_MAX_M
-                    }
-                    geo::Closest::SinglePoint(_) => false,
-                    geo::Closest::Indeterminate => false,
-                }
-            }),
-        }
     }
 
     /// Calculate tiles that intersect with PBF bounds
@@ -428,7 +323,7 @@ impl<'a> PbfStreamer<'a> {
         // Build set of node IDs for way filtering
         let node_ids: std::collections::HashSet<u64> = tile_data.nodes.keys().copied().collect();
 
-        // Process ways - separate highways from areas
+        // Process ways - only collect highway ways (area ways handled during PBF load)
         for way_with_bounds in ways_in_bounds {
             let way = &way_with_bounds.way;
 
@@ -438,43 +333,23 @@ impl<'a> PbfStreamer<'a> {
                 continue;
             }
 
-            // Check if this is an area way (residential, military)
-            let mut is_area = false;
+            // Check if this is a highway way (area ways no longer needed per-tile)
             if let Some(ref tags) = way.tags {
-                for area_type in PROXIMITY_AREA_TYPES {
-                    if tags.get(area_type.tag_key).map(|v| v.as_str()) == Some(area_type.tag_value) {
-                        tile_data
-                            .area_ways
-                            .entry(area_type.name.to_string())
-                            .or_insert_with(Vec::new)
-                            .push(way.clone());
-                        is_area = true;
-                    }
-                }
-            }
+                if let Some(highway_value) = tags.get("highway") {
+                    let is_highway = ALLOWED_HIGHWAY_VALUES.contains(&highway_value.as_str())
+                        || (highway_value == "path" && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
 
-            // If not an area way, check if it's a highway way
-            if !is_area {
-                if let Some(ref tags) = way.tags {
-                    if let Some(highway_value) = tags.get("highway") {
-                        let is_highway = ALLOWED_HIGHWAY_VALUES.contains(&highway_value.as_str())
-                            || (highway_value == "path" && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
-
-                        if is_highway {
-                            tile_data.ways.push(way.clone());
-                        }
+                    if is_highway {
+                        tile_data.ways.push(way.clone());
                     }
                 }
             }
         }
 
         // Build set of way IDs for relation filtering
-        let mut way_ids: std::collections::HashSet<u64> = tile_data.ways.iter().map(|w| w.id).collect();
-        for area_way_list in tile_data.area_ways.values() {
-            way_ids.extend(area_way_list.iter().map(|w| w.id));
-        }
+        let way_ids: std::collections::HashSet<u64> = tile_data.ways.iter().map(|w| w.id).collect();
 
-        // Process relations - separate restrictions from areas
+        // Process relations - only collect restriction relations (area relations handled during PBF load)
         for rel_with_bounds in relations_in_bounds {
             let relation = &rel_with_bounds.relation;
 
@@ -483,7 +358,7 @@ impl<'a> PbfStreamer<'a> {
                 match member.member_type {
                     crate::map_data::osm::OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
                     crate::map_data::osm::OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
-                    crate::map_data::osm::OsmRelationMemberType::Relation => true, // Can't check efficiently, include tentatively
+                    crate::map_data::osm::OsmRelationMemberType::Relation => true,
                 }
             });
 
@@ -491,24 +366,9 @@ impl<'a> PbfStreamer<'a> {
                 continue;
             }
 
-            // Check if this is an area relation (residential, military)
-            let mut is_area = false;
-            for area_type in PROXIMITY_AREA_TYPES {
-                if relation.tags.get(area_type.tag_key).map(|v| v.as_str()) == Some(area_type.tag_value) {
-                    tile_data
-                        .area_relations
-                        .entry(area_type.name.to_string())
-                        .or_insert_with(Vec::new)
-                        .push(relation.clone());
-                    is_area = true;
-                }
-            }
-
-            // If not an area relation, check if it's a restriction relation
-            if !is_area {
-                if relation.tags.get("type").map(|v| v.starts_with("restriction")).unwrap_or(false) {
-                    tile_data.relations.push(relation.clone());
-                }
+            // Only collect restriction relations (area relations handled during PBF load)
+            if relation.tags.get("type").map(|v| v.starts_with("restriction")).unwrap_or(false) {
+                tile_data.relations.push(relation.clone());
             }
         }
 
@@ -519,127 +379,20 @@ impl<'a> PbfStreamer<'a> {
                 tile_id
             );
         } else {
-            let area_counts: Vec<String> = tile_data
-                .area_ways
-                .iter()
-                .map(|(area_type, ways)| {
-                    let relations_count = tile_data
-                        .area_relations
-                        .get(area_type)
-                        .map_or(0, |r| r.len());
-                    format!(
-                        "{}: {} ways, {} relations",
-                        area_type,
-                        ways.len(),
-                        relations_count
-                    )
-                })
-                .collect();
             info!(
-                "Extracted tile {:?}: {} nodes, {} ways, {} relations, area data: [{}]",
+                "Extracted tile {:?}: {} nodes, {} ways, {} relations (flags pre-computed)",
                 tile_id,
                 tile_data.nodes.len(),
                 tile_data.ways.len(),
-                tile_data.relations.len(),
-                area_counts.join("; ")
+                tile_data.relations.len()
             );
         }
 
         Ok(tile_data)
     }
 
-    /// Build residential and military AreaGrids from tile data
-    fn build_area_grids(
-        &self,
-        tile_data: &TileData,
-        _buffered_bounds: crate::rmdf::format::TileBounds,
-    ) -> Result<(AreaGrid, AreaGrid)> {
-        // Build residential grid from extracted data
-        let residential_grid = if let Some(residential_ways) =
-            tile_data.area_ways.get("residential")
-        {
-            let residential_relations = tile_data
-                .area_relations
-                .get("residential")
-                .map(|r| r.as_slice())
-                .unwrap_or(&[]);
-            let grid =
-                AreaGrid::from_osm_data(residential_ways, residential_relations, &tile_data.nodes);
-            info!(
-                "Built residential grid for tile {:?}: {} cells from {} ways, {} relations",
-                tile_data.tile_id,
-                grid.len(),
-                residential_ways.len(),
-                residential_relations.len()
-            );
-            grid
-        } else {
-            AreaGrid::new()
-        };
-
-        // Build military grid from extracted data
-        let military_grid = if let Some(military_ways) = tile_data.area_ways.get("military") {
-            let military_relations = tile_data
-                .area_relations
-                .get("military")
-                .map(|r| r.as_slice())
-                .unwrap_or(&[]);
-            let grid = AreaGrid::from_osm_data(military_ways, military_relations, &tile_data.nodes);
-            info!(
-                "Built military grid for tile {:?}: {} cells from {} ways, {} relations",
-                tile_data.tile_id,
-                grid.len(),
-                military_ways.len(),
-                military_relations.len()
-            );
-            grid
-        } else {
-            AreaGrid::new()
-        };
-
-        Ok((residential_grid, military_grid))
-    }
-
-    /// Compute proximity and nogo flags for nodes in core bounds (parallelized)
-    fn compute_proximity_flags(
-        &self,
-        nodes: HashMap<u64, OsmNode>,
-        core_bounds: crate::rmdf::format::TileBounds,
-        residential_grid: &AreaGrid,
-        military_grid: &AreaGrid,
-    ) -> Result<HashMap<u64, OsmNode>> {
-        // Parallelize proximity computation across nodes
-        let nodes: HashMap<u64, OsmNode> = nodes
-            .into_par_iter()
-            .map(|(node_id, mut node)| {
-                // Only compute for nodes in core bounds (not buffer zone)
-                if self.point_in_bounds(node.lat, node.lon, core_bounds) {
-                    // Compute residential proximity flag
-                    node.residential_in_proximity =
-                        Self::compute_residential_proximity(node.lat, node.lon, residential_grid);
-
-                    // Compute nogo area flag
-                    node.nogo_area = Self::compute_nogo_area(node.lat, node.lon, military_grid);
-                }
-
-                (node_id, node)
-            })
-            .collect();
-
-        let computed_count = nodes
-            .values()
-            .filter(|node| self.point_in_bounds(node.lat, node.lon, core_bounds))
-            .count();
-
-        info!(
-            "Computed proximity flags for {} nodes in core bounds (parallelized)",
-            computed_count
-        );
-
-        Ok(nodes)
-    }
-
-    /// Build GenerationGraph from tile data with proximity flags
+    /// Build GenerationGraph from tile data
+    /// Nodes already have correct residential_in_proximity and nogo_area flags from pre-computation
     fn build_generation_graph(
         &self,
         nodes: HashMap<u64, OsmNode>,

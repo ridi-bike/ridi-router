@@ -1,11 +1,9 @@
 pub mod manifest;
 mod pbf_streamer;
-mod proximity;
 mod writer;
 
 pub use manifest::{ManifestGenerator, TileManifest};
 pub use pbf_streamer::PbfStreamer;
-pub use proximity::ProximityComputer;
 pub use writer::RmdfWriter;
 
 use anyhow::{Context, Result};
@@ -39,10 +37,11 @@ impl TileGenerator {
     pub fn generate(&self) -> Result<()> {
         info!("Starting RMDF tile generation");
 
-        // Build in-memory PBF representation ONCE
-        info!("Loading PBF file into memory with spatial indexing...");
-        let pbf_data = InMemoryPbf::from_pbf_file(&self.input_file)
-            .context("Failed to load PBF file into memory")?;
+        // Build in-memory PBF representation with pre-computed proximity flags
+        // This uses SIMD-accelerated rasterized grid for O(1) flag lookups
+        info!("Loading PBF file into memory with pre-computed proximity flags...");
+        let pbf_data = InMemoryPbf::from_pbf_file_with_flags(&self.input_file)
+            .context("Failed to load PBF file into memory with flags")?;
 
         // Create PBF streamer with reference to in-memory data
         let streamer = PbfStreamer::new(&pbf_data, &self.output_dir, self.tile_size_degrees);

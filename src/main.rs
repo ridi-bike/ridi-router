@@ -11,10 +11,12 @@ mod gpx_writer;
 mod ipc_handler;
 mod map_data;
 mod osm_data;
+mod proximity;
 mod result_writer;
 mod rmdf;
 mod router;
 mod router_runner;
+mod simd;
 #[cfg(test)]
 mod test_utils;
 
