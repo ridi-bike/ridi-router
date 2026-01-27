@@ -1,6 +1,7 @@
 use crate::map_data::MapDataError;
 use std::{io, path::PathBuf};
 
+pub mod in_memory_pbf;
 pub mod pbf_area_reader;
 
 #[derive(Debug, thiserror::Error)]

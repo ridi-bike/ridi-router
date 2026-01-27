@@ -2047,6 +2047,7 @@ dependencies = [
  "qstring",
  "rayon",
  "redb",
+ "rstar",
  "rusty-fork",
  "schemars",
  "serde",

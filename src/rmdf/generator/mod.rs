@@ -9,6 +9,7 @@ pub use proximity::ProximityComputer;
 pub use writer::RmdfWriter;
 
 use anyhow::{Context, Result};
+use crate::osm_data::in_memory_pbf::InMemoryPbf;
 use std::path::PathBuf;
 use tracing::info;
 
@@ -38,11 +39,15 @@ impl TileGenerator {
     pub fn generate(&self) -> Result<()> {
         info!("Starting RMDF tile generation");
 
-        // Create PBF streamer
-        let streamer =
-            PbfStreamer::new(&self.input_file, &self.output_dir, self.tile_size_degrees)?;
+        // Build in-memory PBF representation ONCE
+        info!("Loading PBF file into memory with spatial indexing...");
+        let pbf_data = InMemoryPbf::from_pbf_file(&self.input_file)
+            .context("Failed to load PBF file into memory")?;
 
-        // Process all tiles in parallel
+        // Create PBF streamer with reference to in-memory data
+        let streamer = PbfStreamer::new(&pbf_data, &self.output_dir, self.tile_size_degrees);
+
+        // Process all tiles in parallel (queries in-memory data)
         streamer.partition_parallel()?;
 
         // Generate manifest by discovering tiles from filesystem

@@ -17,20 +17,17 @@
 
 use anyhow::{Context, Result};
 use geo::{CoordsIter, Distance, GeodesicArea, Haversine, HaversineClosestPoint, Point};
-use osmpbfreader::{OsmObj, OsmPbfReader};
 use rayon::prelude::*;
-use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 
 use crate::map_data::generation_graph::GenerationGraph;
-use crate::map_data::osm::{
-    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
-};
+use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
 use crate::map_data::proximity::AreaGrid;
+use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
 use crate::rmdf::format::TileId;
 use std::collections::HashMap;
 // TODO: Move this constant somewhere accessible or re-export from osm_data
@@ -111,66 +108,19 @@ impl TileData {
     }
 }
 
-/// Geographic bounds discovered from scanning a PBF file
-#[derive(Debug, Clone, Copy)]
-pub struct PbfBounds {
-    pub lat_min: Option<f64>,
-    pub lat_max: Option<f64>,
-    pub lon_min: Option<f64>,
-    pub lon_max: Option<f64>,
-}
-
-impl PbfBounds {
-    /// Create empty bounds (no coordinates discovered yet)
-    fn new_empty() -> Self {
-        Self {
-            lat_min: None,
-            lat_max: None,
-            lon_min: None,
-            lon_max: None,
-        }
-    }
-
-    /// Update bounds with a new coordinate
-    fn update(&mut self, lat: f64, lon: f64) {
-        self.lat_min = Some(self.lat_min.map_or(lat, |v| v.min(lat)));
-        self.lat_max = Some(self.lat_max.map_or(lat, |v| v.max(lat)));
-        self.lon_min = Some(self.lon_min.map_or(lon, |v| v.min(lon)));
-        self.lon_max = Some(self.lon_max.map_or(lon, |v| v.max(lon)));
-    }
-
-    /// Check if all bounds are valid (all fields are Some)
-    fn is_valid(&self) -> bool {
-        self.lat_min.is_some()
-            && self.lat_max.is_some()
-            && self.lon_min.is_some()
-            && self.lon_max.is_some()
-    }
-
-    /// Unwrap bounds to concrete values (must check is_valid() first)
-    fn extract(&self) -> (f64, f64, f64, f64) {
-        (
-            self.lat_min.unwrap(),
-            self.lat_max.unwrap(),
-            self.lon_min.unwrap(),
-            self.lon_max.unwrap(),
-        )
-    }
-}
-
-pub struct PbfStreamer {
-    input_file: PathBuf,
+pub struct PbfStreamer<'a> {
+    pbf_data: &'a InMemoryPbf,
     output_dir: PathBuf,
     tile_size_degrees: f32,
 }
 
-impl PbfStreamer {
-    pub fn new(input_file: &Path, output_dir: &Path, tile_size_degrees: f32) -> Result<Self> {
-        Ok(Self {
-            input_file: input_file.to_path_buf(),
-            output_dir: output_dir.to_path_buf(),
+impl<'a> PbfStreamer<'a> {
+    pub fn new(pbf_data: &'a InMemoryPbf, output_dir: &PathBuf, tile_size_degrees: f32) -> Self {
+        Self {
+            pbf_data,
+            output_dir: output_dir.clone(),
             tile_size_degrees,
-        })
+        }
     }
 
     /// Process all tiles in parallel using Rayon.
@@ -187,10 +137,8 @@ impl PbfStreamer {
         let start_time = Instant::now();
         info!("Starting tile-based parallel partitioning");
 
-        // Scan PBF to discover geographic bounds
-        let pbf_bounds = self
-            .scan_pbf_bounds()
-            .context("Failed to scan PBF bounds")?;
+        // Use pre-computed bounds from in-memory PBF (no scan needed!)
+        let pbf_bounds = self.pbf_data.bounds;
 
         // Calculate tiles that intersect with bounds
         let tiles = self.calculate_all_tiles(pbf_bounds);
@@ -359,68 +307,6 @@ impl PbfStreamer {
         }
     }
 
-    /// Scan PBF file to discover geographic bounds
-    ///
-    /// This performs a single pass through all nodes in the PBF file to determine
-    /// the min/max latitude and longitude. This allows us to generate only tiles
-    /// that intersect with the actual data, instead of processing all possible tiles.
-    ///
-    /// # Performance
-    ///
-    /// For regional PBF files (e.g., Montenegro 30MB), this scan takes 2-5 seconds
-    /// but eliminates checking millions of empty tiles during generation.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if PBF contains no valid nodes (empty file).
-    fn scan_pbf_bounds(&self) -> Result<PbfBounds> {
-        info!("Scanning PBF file to discover geographic bounds...");
-        let start_time = Instant::now();
-
-        let mut node_count = 0u64;
-
-        let file =
-            File::open(&self.input_file).context("Failed to open PBF file for bounds scanning")?;
-        let mut pbf = OsmPbfReader::new(file);
-
-        let bounds = pbf
-            .par_iter()
-            .filter_map(|element| {
-                element.map_or(None, |obj| {
-                    if let OsmObj::Node(node) = obj {
-                        let lat = node.lat();
-                        let lon = node.lon();
-                        return Some((lat, lon));
-                    }
-                    None
-                })
-            })
-            .fold(PbfBounds::new_empty(), |mut bounds, (lat, lon)| {
-                node_count += 1;
-                bounds.update(lat, lon);
-                bounds
-            });
-
-        if !bounds.is_valid() {
-            anyhow::bail!("PBF file contains no valid nodes");
-        }
-
-        let (lat_min, lat_max, lon_min, lon_max) = bounds.extract();
-        let elapsed = start_time.elapsed();
-
-        info!(
-            "PBF bounds scan complete: scanned {} nodes in {:.1}s",
-            node_count,
-            elapsed.as_secs_f64()
-        );
-        info!(
-            "Discovered bounds: lat=[{:.3}, {:.3}], lon=[{:.3}, {:.3}]",
-            lat_min, lat_max, lon_min, lon_max
-        );
-
-        Ok(bounds)
-    }
-
     /// Calculate tiles that intersect with PBF bounds
     ///
     /// Only generates tiles that overlap with the discovered geographic bounds,
@@ -434,7 +320,10 @@ impl PbfStreamer {
     ///
     /// For Montenegro (0.1° grid): generates ~400 tiles instead of 6.48M tiles
     fn calculate_all_tiles(&self, pbf_bounds: PbfBounds) -> Vec<TileId> {
-        let (lat_min, lat_max, lon_min, lon_max) = pbf_bounds.extract();
+        let lat_min = pbf_bounds.lat_min.expect("PBF bounds should have lat_min");
+        let lat_max = pbf_bounds.lat_max.expect("PBF bounds should have lat_max");
+        let lon_min = pbf_bounds.lon_min.expect("PBF bounds should have lon_min");
+        let lon_max = pbf_bounds.lon_max.expect("PBF bounds should have lon_max");
 
         // Add buffer to ensure edge tiles are included
         // Use 0.01° buffer (2x the per-tile buffer of 0.005°)
@@ -511,11 +400,9 @@ impl PbfStreamer {
             && lon < bounds.lon_max as f64
     }
 
-    /// Extract nodes, ways, and relations within buffered bounds
+    /// Extract nodes, ways, and relations within buffered bounds using in-memory PBF
     ///
-    /// Two-pass approach:
-    /// 1. Pass 1 (parallel): Find node IDs within buffered bounds
-    /// 2. Pass 2 (parallel): Use get_objs_and_deps to fetch only ways/relations referencing those nodes
+    /// Queries the pre-loaded in-memory data structure (NO PBF READS!)
     fn extract_tile_data(
         &self,
         tile_id: TileId,
@@ -523,454 +410,109 @@ impl PbfStreamer {
     ) -> Result<TileData> {
         let mut tile_data = TileData::new(tile_id);
 
-        // Pass 1: Collect node IDs that are in buffered bounds (parallel scan)
-        let nodes_in_bounds_ids: std::collections::HashSet<i64> = {
-            let file = File::open(&self.input_file)
-                .with_context(|| format!("Failed to open PBF file for tile {:?}", tile_id))?;
-            let mut pbf = OsmPbfReader::new(file);
-
-            pbf.par_iter()
-                .filter_map(|obj_result| {
-                    let obj = obj_result.ok()?;
-                    if let OsmObj::Node(node) = obj {
-                        let lat = node.lat();
-                        let lon = node.lon();
-                        if self.point_in_bounds(lat, lon, buffered_bounds) {
-                            return Some(node.id.0);
-                        }
-                    }
-                    None
-                })
-                .collect()
-        };
+        // Query in-memory structure (O(log n) spatial lookups - FAST!)
+        let nodes_in_bounds = self.pbf_data.query_nodes_in_bounds(&buffered_bounds);
+        let ways_in_bounds = self.pbf_data.query_ways_in_bounds(&buffered_bounds);
+        let relations_in_bounds = self.pbf_data.query_relations_in_bounds(&buffered_bounds);
 
         // Early exit if no nodes in bounds
-        if nodes_in_bounds_ids.is_empty() {
+        if nodes_in_bounds.is_empty() {
             return Ok(tile_data);
         }
 
-        // Pass 1.5: Collect way IDs that are in bounds (for efficient relation filtering)
-        // This prevents loading millions of out-of-bounds area relations into memory
-        let ways_in_bounds_ids: std::collections::HashSet<i64> = {
-            let file = File::open(&self.input_file)
-                .with_context(|| format!("Failed to open PBF file for way scanning for tile {:?}", tile_id))?;
-            let mut pbf = OsmPbfReader::new(file);
-
-            pbf.par_iter()
-                .filter_map(|obj_result| {
-                    let obj = obj_result.ok()?;
-                    if let OsmObj::Way(way) = obj {
-                        // Check if way has any nodes in bounds
-                        let has_nodes_in_bounds = way.nodes.iter().any(|n| nodes_in_bounds_ids.contains(&n.0));
-
-                        if !has_nodes_in_bounds {
-                            return None;
-                        }
-
-                        // Check if this is a highway or area way
-                        let is_highway = way.tags.iter().any(|(k, v)| {
-                            k == "highway"
-                                && (ALLOWED_HIGHWAY_VALUES.contains(&v.as_str())
-                                    || (v == "path"
-                                        && way.tags.iter().any(|(k2, v2)| k2 == "motorcycle" && v2 == "yes")))
-                        });
-
-                        let is_area = PROXIMITY_AREA_TYPES.iter().any(|area_type| {
-                            way.tags.iter().any(|(k, v)| {
-                                k == area_type.tag_key && v == area_type.tag_value
-                            })
-                        });
-
-                        if is_highway || is_area {
-                            return Some(way.id.0);
-                        }
-                    }
-                    None
-                })
-                .collect()
-        };
-
-        info!(
-            "Found {} ways in bounds for tile {:?}",
-            ways_in_bounds_ids.len(),
-            tile_id
-        );
-
-        // Early exit if no ways in bounds
-        if ways_in_bounds_ids.is_empty() {
-            return Ok(tile_data);
+        // Build node map
+        for node in nodes_in_bounds {
+            tile_data.nodes.insert(node.id, node.clone());
         }
 
-        // Pass 2: Use get_objs_and_deps to fetch ways/relations referencing these nodes (parallel)
-        // The predicate captures nodes_in_bounds_ids and ways_in_bounds_ids for efficient filtering
-        let all_objs = {
-            let file = File::open(&self.input_file)
-                .with_context(|| format!("Failed to reopen PBF file for tile {:?}", tile_id))?;
-            let mut pbf = OsmPbfReader::new(file);
+        // Build set of node IDs for way filtering
+        let node_ids: std::collections::HashSet<u64> = tile_data.nodes.keys().copied().collect();
 
-            // Predicate: Select ways/relations for highways, restrictions, and proximity areas
-            // get_objs_and_deps will automatically fetch dependencies (nodes)
-            pbf.get_objs_and_deps(|obj| {
-                match obj {
-                    OsmObj::Node(_) => {
-                        // Don't select nodes directly - let get_objs_and_deps fetch them as dependencies
-                        false
+        // Process ways - separate highways from areas
+        for way_with_bounds in ways_in_bounds {
+            let way = &way_with_bounds.way;
+
+            // Skip ways that don't have nodes in the tile
+            let has_nodes_in_tile = way.point_ids.iter().any(|id| node_ids.contains(id));
+            if !has_nodes_in_tile {
+                continue;
+            }
+
+            // Check if this is an area way (residential, military)
+            let mut is_area = false;
+            if let Some(ref tags) = way.tags {
+                for area_type in PROXIMITY_AREA_TYPES {
+                    if tags.get(area_type.tag_key).map(|v| v.as_str()) == Some(area_type.tag_value) {
+                        tile_data
+                            .area_ways
+                            .entry(area_type.name.to_string())
+                            .or_insert_with(Vec::new)
+                            .push(way.clone());
+                        is_area = true;
                     }
-                    OsmObj::Way(way) => {
-                        // Use pre-computed set of ways in bounds for efficiency
-                        ways_in_bounds_ids.contains(&way.id.0)
-                    }
-                    OsmObj::Relation(relation) => {
-                        // Select restriction relations
-                        let is_restriction = relation
-                            .tags
-                            .iter()
-                            .any(|(k, v)| k == "type" && v.starts_with("restriction"));
+                }
+            }
 
-                        // Select area relations (residential, military, etc.)
-                        let is_area = PROXIMITY_AREA_TYPES.iter().any(|area_type| {
-                            relation
-                                .tags
-                                .iter()
-                                .any(|(k, v)| k == area_type.tag_key && v == area_type.tag_value)
-                        });
+            // If not an area way, check if it's a highway way
+            if !is_area {
+                if let Some(ref tags) = way.tags {
+                    if let Some(highway_value) = tags.get("highway") {
+                        let is_highway = ALLOWED_HIGHWAY_VALUES.contains(&highway_value.as_str())
+                            || (highway_value == "path" && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
 
-                        // Filter relations by checking if they reference ways/nodes in bounds
-                        // This is CRITICAL for performance - without this check, we'd load
-                        // millions of out-of-bounds residential relations into memory
-                        if is_restriction || is_area {
-                            relation.refs.iter().any(|r| {
-                                match r.member {
-                                    osmpbfreader::OsmId::Node(node_id) => {
-                                        // Check if node is in bounds
-                                        nodes_in_bounds_ids.contains(&node_id.0)
-                                    }
-                                    osmpbfreader::OsmId::Way(way_id) => {
-                                        // Check if way is in bounds (this is the key optimization!)
-                                        ways_in_bounds_ids.contains(&way_id.0)
-                                    }
-                                    osmpbfreader::OsmId::Relation(_) => {
-                                        // For nested relations, we can't check efficiently here
-                                        // Include tentatively and filter in post-processing
-                                        // This is rare compared to way members
-                                        true
-                                    }
-                                }
-                            })
-                        } else {
-                            false
+                        if is_highway {
+                            tile_data.ways.push(way.clone());
                         }
                     }
                 }
-            })
-            .with_context(|| format!("Failed to read PBF objects for tile {:?}", tile_id))?
-        };
-
-        type ProcessedData = (
-            HashMap<u64, OsmNode>,
-            Vec<OsmWay>,
-            Vec<OsmRelation>,
-            HashMap<String, Vec<OsmWay>>,
-            HashMap<String, Vec<OsmRelation>>,
-        );
-
-        let (nodes, ways, relations, area_ways, area_relations): ProcessedData = all_objs
-            .par_iter()
-            .fold(
-                || {
-                    (
-                        HashMap::new(),
-                        Vec::new(),
-                        Vec::new(),
-                        HashMap::new(),
-                        HashMap::new(),
-                    )
-                },
-                |(mut nodes, mut ways, mut relations, mut area_ways, mut area_relations),
-                 (_, obj)| {
-                    match obj {
-                        OsmObj::Node(node) => {
-                            let osm_node = OsmNode {
-                                id: node.id.0 as u64,
-                                lat: node.lat(),
-                                lon: node.lon(),
-                                residential_in_proximity: false, // Will be computed later
-                                nogo_area: false,                // Will be computed later
-                            };
-                            nodes.insert(osm_node.id, osm_node);
-                        }
-                        OsmObj::Way(way) => {
-                            let osm_way = OsmWay {
-                                id: way.id.0 as u64,
-                                point_ids: way.nodes.iter().map(|n| n.0 as u64).collect(),
-                                tags: Some(
-                                    way.tags
-                                        .iter()
-                                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                                        .collect(),
-                                ),
-                            };
-
-                            // Check if this is an area way (residential, military, etc.)
-                            let mut is_area = false;
-                            for area_type in PROXIMITY_AREA_TYPES {
-                                if way.tags.iter().any(|(k, v)| {
-                                    k == area_type.tag_key && v == area_type.tag_value
-                                }) {
-                                    area_ways
-                                        .entry(area_type.name.to_string())
-                                        .or_insert_with(Vec::new)
-                                        .push(osm_way.clone());
-                                    is_area = true;
-                                }
-                            }
-
-                            // If not an area way, it's a highway way
-                            if !is_area {
-                                ways.push(osm_way);
-                            }
-                        }
-                        OsmObj::Relation(relation) => {
-                            // Check if this is an area relation
-                            let mut is_area = false;
-                            for area_type in PROXIMITY_AREA_TYPES {
-                                if relation.tags.iter().any(|(k, v)| {
-                                    k == area_type.tag_key && v == area_type.tag_value
-                                }) {
-                                    let osm_relation = OsmRelation {
-                                        id: relation.id.0 as u64,
-                                        members: relation
-                                            .refs
-                                            .iter()
-                                            .filter_map(|r| {
-                                                // For area relations, keep outer/inner roles
-                                                let role = match r.role.as_str() {
-                                                    "outer" => OsmRelationMemberRole::From, // Reuse From for outer
-                                                    "inner" => OsmRelationMemberRole::To, // Reuse To for inner
-                                                    _ => return None,
-                                                };
-
-                                                let (member_ref, member_type) = match r.member {
-                                                    osmpbfreader::OsmId::Way(id) => {
-                                                        (id.0 as u64, OsmRelationMemberType::Way)
-                                                    }
-                                                    osmpbfreader::OsmId::Node(id) => {
-                                                        (id.0 as u64, OsmRelationMemberType::Node)
-                                                    }
-                                                    osmpbfreader::OsmId::Relation(id) => {
-                                                        (id.0 as u64, OsmRelationMemberType::Relation)
-                                                    }
-                                                };
-
-                                                Some(OsmRelationMember {
-                                                    member_ref,
-                                                    role,
-                                                    member_type,
-                                                })
-                                            })
-                                            .collect(),
-                                        tags: relation
-                                            .tags
-                                            .iter()
-                                            .map(|(k, v)| (k.to_string(), v.to_string()))
-                                            .collect(),
-                                    };
-                                    area_relations
-                                        .entry(area_type.name.to_string())
-                                        .or_insert_with(Vec::new)
-                                        .push(osm_relation);
-                                    is_area = true;
-                                }
-                            }
-
-                            // If not an area relation, it's a restriction relation
-                            if !is_area {
-                                let osm_relation = OsmRelation {
-                                    id: relation.id.0 as u64,
-                                    members: relation
-                                        .refs
-                                        .iter()
-                                        .filter_map(|r| {
-                                            let role = match r.role.as_str() {
-                                                "from" => OsmRelationMemberRole::From,
-                                                "to" => OsmRelationMemberRole::To,
-                                                "via" => OsmRelationMemberRole::Via,
-                                                _ => return None,
-                                            };
-
-                                            let (member_ref, member_type) = match r.member {
-                                                osmpbfreader::OsmId::Way(id) => {
-                                                    (id.0 as u64, OsmRelationMemberType::Way)
-                                                }
-                                                osmpbfreader::OsmId::Node(id) => {
-                                                    (id.0 as u64, OsmRelationMemberType::Node)
-                                                }
-                                                osmpbfreader::OsmId::Relation(id) => {
-                                                    (id.0 as u64, OsmRelationMemberType::Relation)
-                                                }
-                                            };
-
-                                            Some(OsmRelationMember {
-                                                member_ref,
-                                                role,
-                                                member_type,
-                                            })
-                                        })
-                                        .collect(),
-                                    tags: relation
-                                        .tags
-                                        .iter()
-                                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                                        .collect(),
-                                };
-                                relations.push(osm_relation);
-                            }
-                        }
-                    }
-                    (nodes, ways, relations, area_ways, area_relations)
-                },
-            )
-            .reduce(
-                || {
-                    (
-                        HashMap::new(),
-                        Vec::new(),
-                        Vec::new(),
-                        HashMap::new(),
-                        HashMap::new(),
-                    )
-                },
-                |(mut nodes1, mut ways1, mut relations1, mut area_ways1, mut area_relations1),
-                 (nodes2, ways2, relations2, area_ways2, area_relations2)| {
-                    nodes1.extend(nodes2);
-                    ways1.extend(ways2);
-                    relations1.extend(relations2);
-                    for (area_type, ways) in area_ways2 {
-                        area_ways1
-                            .entry(area_type)
-                            .or_insert_with(Vec::new)
-                            .extend(ways);
-                    }
-                    for (area_type, relations) in area_relations2 {
-                        area_relations1
-                            .entry(area_type)
-                            .or_insert_with(Vec::new)
-                            .extend(relations);
-                    }
-                    (nodes1, ways1, relations1, area_ways1, area_relations1)
-                },
-            );
-
-        // Filter relations to only include those whose member ways actually exist in our extracted data
-        // This handles nested relations (relation -> relation -> way -> nodes) properly
-
-        // Build a set of all extracted way IDs (both highway and area ways)
-        let mut extracted_way_ids: std::collections::HashSet<u64> = ways.iter().map(|w| w.id).collect();
-        for area_way_list in area_ways.values() {
-            extracted_way_ids.extend(area_way_list.iter().map(|w| w.id));
-        }
-
-        // Build a map of all relations (restriction + area) for nested lookup
-        // Clone relations to build an owned map we can use for recursive lookups
-        let mut all_relations_map: HashMap<u64, OsmRelation> = HashMap::new();
-        for relation in &relations {
-            all_relations_map.insert(relation.id, relation.clone());
-        }
-        for relations_list in area_relations.values() {
-            for relation in relations_list {
-                all_relations_map.insert(relation.id, relation.clone());
             }
         }
 
-        // Helper function to recursively check if a relation references any extracted ways
-        // Handles nested relations: relation -> relation -> way
-        fn check_relation_references(
-            relation_id: u64,
-            all_relations: &HashMap<u64, OsmRelation>,
-            extracted_way_ids: &std::collections::HashSet<u64>,
-            visited: &mut std::collections::HashSet<u64>,
-        ) -> bool {
-            // Prevent infinite loops in circular relation references
-            if !visited.insert(relation_id) {
-                return false;
-            }
+        // Build set of way IDs for relation filtering
+        let mut way_ids: std::collections::HashSet<u64> = tile_data.ways.iter().map(|w| w.id).collect();
+        for area_way_list in tile_data.area_ways.values() {
+            way_ids.extend(area_way_list.iter().map(|w| w.id));
+        }
 
-            let relation = match all_relations.get(&relation_id) {
-                Some(r) => r,
-                None => return false,
-            };
+        // Process relations - separate restrictions from areas
+        for rel_with_bounds in relations_in_bounds {
+            let relation = &rel_with_bounds.relation;
 
-            for member in &relation.members {
+            // Check if relation has any members in the tile
+            let has_members_in_tile = relation.members.iter().any(|member| {
                 match member.member_type {
-                    OsmRelationMemberType::Way => {
-                        // Direct way member - check if it's in our extracted ways
-                        if extracted_way_ids.contains(&member.member_ref) {
-                            return true;
-                        }
-                    }
-                    OsmRelationMemberType::Node => {
-                        // Node members don't help us determine if this is in bounds
-                        // (nodes were already used to determine which ways to extract)
-                        continue;
-                    }
-                    OsmRelationMemberType::Relation => {
-                        // Relation member - recursively check
-                        if check_relation_references(
-                            member.member_ref,
-                            all_relations,
-                            extracted_way_ids,
-                            visited,
-                        ) {
-                            return true;
-                        }
-                    }
+                    crate::map_data::osm::OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
+                    crate::map_data::osm::OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
+                    crate::map_data::osm::OsmRelationMemberType::Relation => true, // Can't check efficiently, include tentatively
+                }
+            });
+
+            if !has_members_in_tile {
+                continue;
+            }
+
+            // Check if this is an area relation (residential, military)
+            let mut is_area = false;
+            for area_type in PROXIMITY_AREA_TYPES {
+                if relation.tags.get(area_type.tag_key).map(|v| v.as_str()) == Some(area_type.tag_value) {
+                    tile_data
+                        .area_relations
+                        .entry(area_type.name.to_string())
+                        .or_insert_with(Vec::new)
+                        .push(relation.clone());
+                    is_area = true;
                 }
             }
 
-            false
+            // If not an area relation, check if it's a restriction relation
+            if !is_area {
+                if relation.tags.get("type").map(|v| v.starts_with("restriction")).unwrap_or(false) {
+                    tile_data.relations.push(relation.clone());
+                }
+            }
         }
 
-        // Filter restriction relations
-        let relations: Vec<OsmRelation> = relations
-            .into_iter()
-            .filter(|relation| {
-                let mut visited = std::collections::HashSet::new();
-                check_relation_references(
-                    relation.id,
-                    &all_relations_map,
-                    &extracted_way_ids,
-                    &mut visited,
-                )
-            })
-            .collect();
-
-        // Filter area relations
-        let area_relations: HashMap<String, Vec<OsmRelation>> = area_relations
-            .into_iter()
-            .map(|(area_type, relations_list)| {
-                let filtered: Vec<OsmRelation> = relations_list
-                    .into_iter()
-                    .filter(|relation| {
-                        let mut visited = std::collections::HashSet::new();
-                        check_relation_references(
-                            relation.id,
-                            &all_relations_map,
-                            &extracted_way_ids,
-                            &mut visited,
-                        )
-                    })
-                    .collect();
-                (area_type, filtered)
-            })
-            .collect();
-
-        tile_data.nodes = nodes;
-        tile_data.ways = ways;
-        tile_data.relations = relations;
-        tile_data.area_ways = area_ways;
-        tile_data.area_relations = area_relations;
-
-        // Log warning for empty tiles (common for ocean tiles)
+        // Log tile statistics
         if tile_data.nodes.is_empty() && tile_data.ways.is_empty() {
             info!(
                 "Tile {:?} is empty (likely ocean or unpopulated area)",
