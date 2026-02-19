@@ -163,6 +163,22 @@ impl PbfBounds {
         self.lon_min = Some(self.lon_min.map_or(lon, |v| v.min(lon)));
         self.lon_max = Some(self.lon_max.map_or(lon, |v| v.max(lon)));
     }
+
+    pub fn is_valid(&self) -> bool {
+        self.lat_min.is_some()
+            && self.lat_max.is_some()
+            && self.lon_min.is_some()
+            && self.lon_max.is_some()
+    }
+
+    pub fn extract(&self) -> (f64, f64, f64, f64) {
+        (
+            self.lat_min.unwrap_or(0.0),
+            self.lat_max.unwrap_or(0.0),
+            self.lon_min.unwrap_or(0.0),
+            self.lon_max.unwrap_or(0.0),
+        )
+    }
 }
 
 /// In-memory PBF representation with spatial indexing
@@ -185,6 +201,24 @@ pub struct InMemoryPbf {
 
     // Metadata
     pub bounds: PbfBounds,
+}
+
+impl Default for InMemoryPbf {
+    fn default() -> Self {
+        Self {
+            nodes_by_id: HashMap::new(),
+            ways_by_id: HashMap::new(),
+            relations_by_id: HashMap::new(),
+            nodes_spatial: RTree::new(),
+            ways_spatial: RTree::new(),
+            relations_spatial: RTree::new(),
+            residential_ways: Vec::new(),
+            residential_relations: Vec::new(),
+            military_ways: Vec::new(),
+            military_relations: Vec::new(),
+            bounds: PbfBounds::empty(),
+        }
+    }
 }
 
 impl InMemoryPbf {

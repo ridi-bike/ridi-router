@@ -267,7 +267,7 @@ impl<T: MapDataElement + 'static> Display for MapDataElementRef<T> {
 }
 
 impl<T: MapDataElement> MapDataElementRef<T> {
-    fn new(tile_id: crate::rmdf::TileId, element_id: u64) -> Self {
+    pub fn new(tile_id: crate::rmdf::TileId, element_id: u64) -> Self {
         Self {
             tile_id,
             element_id,
@@ -327,6 +327,11 @@ pub struct MapDataGraph {
     // TODO: Implement proper tag loading from tiles
     // For now, keeping tags in memory for compatibility
     tags: std::sync::RwLock<ElementTags>,
+    // Test-only: in-memory storage for unit tests
+    #[cfg(test)]
+    test_points: std::sync::RwLock<HashMap<u64, MapDataPoint>>,
+    #[cfg(test)]
+    test_lines: std::sync::RwLock<HashMap<u64, MapDataLine>>,
 }
 
 impl MapDataGraph {
@@ -334,11 +339,88 @@ impl MapDataGraph {
         Self {
             tile_manager: std::sync::RwLock::new(tile_manager),
             tags: std::sync::RwLock::new(ElementTags::new()),
+            #[cfg(test)]
+            test_points: std::sync::RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            test_lines: std::sync::RwLock::new(HashMap::new()),
         }
     }
 
-    // Get point data from tiles
+    /// Test-only: Create a MapDataGraph with dummy TileManager for unit tests
+    #[cfg(test)]
+    pub fn new_test() -> Self {
+        // Create a minimal TileManager with an empty manifest
+        use crate::rmdf::generator::manifest::TileManifest;
+        let manifest = TileManifest {
+            version: "test".to_string(),
+            tile_size_degrees: 1.0,
+            format_version: 1,
+            generated_at: "test".to_string(),
+            source_files: Vec::new(),
+            tiles: Vec::new(),
+        };
+        let tile_manager = crate::rmdf::TileManager::from_manifest(manifest, std::path::PathBuf::from("test"));
+        Self {
+            tile_manager: std::sync::RwLock::new(tile_manager),
+            tags: std::sync::RwLock::new(ElementTags::new()),
+            test_points: std::sync::RwLock::new(HashMap::new()),
+            test_lines: std::sync::RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Test-only: Insert a point for testing
+    #[cfg(test)]
+    pub fn test_insert_point(&self, point: MapDataPoint) {
+        self.test_points.write().unwrap().insert(point.id, point);
+    }
+
+    /// Test-only: Insert a line for testing
+    #[cfg(test)]
+    pub fn test_insert_line(&self, line: MapDataLine, line_id: u64) {
+        self.test_lines.write().unwrap().insert(line_id, line);
+    }
+
+    /// Test-only: Add line reference to a point
+    #[cfg(test)]
+    pub fn test_add_line_to_point(&self, point_id: u64, line_ref: MapDataLineRef) {
+        let mut points = self.test_points.write().unwrap();
+        if let Some(point) = points.get_mut(&point_id) {
+            point.lines.push(line_ref);
+        }
+    }
+
+    /// Test-only: Get a MapDataPointRef by OSM ID for testing
+    #[cfg(test)]
+    pub fn test_get_point_ref_by_id(&self, id: &u64) -> Option<MapDataPointRef> {
+        let points = self.test_points.read().unwrap();
+        if points.contains_key(id) {
+            // Use a dummy tile ID (0, 0) for test points
+            Some(MapDataPointRef::new(crate::rmdf::TileId { col: 0, row: 0 }, *id))
+        } else {
+            None
+        }
+    }
+
+    /// Test-only: Get point from test storage (used by MapDataElement trait impl)
+    #[cfg(test)]
+    fn get_test_point(&self, osm_id: u64) -> Option<MapDataPoint> {
+        self.test_points.read().unwrap().get(&osm_id).cloned()
+    }
+
+    /// Test-only: Get line from test storage
+    #[cfg(test)]
+    fn get_test_line(&self, line_id: u64) -> Option<MapDataLine> {
+        self.test_lines.read().unwrap().get(&line_id).cloned()
+    }
+
+    // Get point data from tiles (or test storage in test mode)
     pub fn get_point_from_tiles(&self, tile_id: crate::rmdf::TileId, osm_id: u64) -> MapDataPoint {
+        // In test mode, check test storage first
+        #[cfg(test)]
+        if let Some(point) = self.get_test_point(osm_id) {
+            return point;
+        }
+
         let mut tm = self.tile_manager.write().unwrap();
 
         // Get point data
@@ -370,19 +452,22 @@ impl MapDataGraph {
         }
     }
 
-    // Get line data from tiles
+    // Get line data from tiles (or test storage in test mode)
     pub fn get_line_from_tiles(
         &self,
         tile_id: crate::rmdf::TileId,
         line_index: usize,
     ) -> MapDataLine {
-        let mut tm = self.tile_manager.write().unwrap();
+        // In test mode, check test storage first
+        #[cfg(test)]
+        if let Some(line) = self.get_test_line(line_index as u64) {
+            return line;
+        }
 
+        let mut tm = self.tile_manager.write().unwrap();
         let line_record = tm
             .get_line_by_index(tile_id, line_index)
             .expect("Failed to get line from tile");
-
-        // Convert to MapDataLine
         MapDataLine {
             points: (
                 MapDataPointRef::new(tile_id, line_record.point_a_osm_id),
@@ -408,12 +493,33 @@ impl MapDataGraph {
         &self,
         center_point: MapDataPointRef,
     ) -> Vec<(MapDataLineRef, MapDataPointRef)> {
-        let mut tm = self.tile_manager.write().unwrap();
+        // In test mode, check test storage first
+        #[cfg(test)]
+        {
+            if let Some(point) = self.get_test_point(center_point.get_element_id()) {
+                let mut adjacent = Vec::new();
+                for line_ref in &point.lines {
+                    let line = line_ref.get();
+                    // Determine which endpoint is not the center point
+                    let other_point = if line.points.0.get_element_id() == center_point.get_element_id() {
+                        line.points.1.clone()
+                    } else {
+                        line.points.0.clone()
+                    };
+                    adjacent.push((line_ref.clone(), other_point));
+                }
+                return adjacent;
+            }
+        }
 
+        let mut tm = self.tile_manager.write().unwrap();
         let adjacent = tm
             .get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
             .expect("Failed to get adjacent points");
 
+        let adjacent = tm
+            .get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
+            .expect("Failed to get adjacent points");
         adjacent
             .iter()
             .map(|(line_tile_id, line_index, other_tile_id, other_osm_id)| {

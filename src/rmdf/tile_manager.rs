@@ -34,6 +34,18 @@ impl TileManager {
         })
     }
 
+    /// Create TileManager from manifest directly (for tests)
+    #[cfg(test)]
+    pub fn from_manifest(manifest: TileManifest, tile_dir: PathBuf) -> Self {
+        let tile_size_degrees = manifest.tile_size_degrees;
+        Self {
+            tile_dir,
+            manifest,
+            loaded_tiles: HashMap::new(),
+            tile_size_degrees,
+        }
+    }
+
     /// Ensure tile is loaded (load if not already)
     fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()> {
         if self.loaded_tiles.contains_key(&tile_id) {
@@ -278,6 +290,7 @@ impl TileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::router::rules::RouterRules;
 
     #[test]
     fn test_load_manifest() {
@@ -308,7 +321,7 @@ mod tests {
         let mut manager = TileManager::new(tile_dir).unwrap();
 
         // Query for a point known to exist in Montenegro
-        let point = manager.get_closest_to_coords(42.5, 18.5).unwrap();
+        let point = manager.get_closest_to_coords(42.5, 18.5, &RouterRules::default(), false, None).unwrap();
         assert!(point.is_some());
     }
 
@@ -325,16 +338,16 @@ mod tests {
         let mut manager = TileManager::new(tile_dir).unwrap();
 
         // Get a point near a tile boundary
-        let point = manager.get_closest_to_coords(42.1, 18.9).unwrap().unwrap();
+        let point = manager.get_closest_to_coords(42.1, 18.9, &RouterRules::default(), false, None).unwrap().unwrap();
 
         // Get adjacent points (may cross tile boundary)
-        let adjacent = manager.get_adjacent(&point).unwrap();
+        let adjacent = manager.get_adjacent_by_id(point.0, point.1).unwrap();
 
         // Should have at least one adjacent point
         assert!(adjacent.len() > 0);
 
         // Check if any cross tile boundary
-        let crosses_boundary = adjacent.iter().any(|(_, p)| p.tile_id != point.tile_id);
+        let crosses_boundary = adjacent.iter().any(|(line_tile_id, _, other_tile_id, _)| *line_tile_id != *other_tile_id);
         // May or may not cross depending on location
         let _ = crosses_boundary;
     }

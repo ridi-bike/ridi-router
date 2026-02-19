@@ -455,11 +455,17 @@ impl<'a> PbfStreamer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::osm_data::in_memory_pbf::InMemoryPbf;
     use crate::rmdf::format::TileBounds;
 
+    fn create_test_streamer(tile_size: f32) -> PbfStreamer<'static> {
+        static DUMMY_PBF: std::sync::OnceLock<InMemoryPbf> = std::sync::OnceLock::new();
+        let pbf = DUMMY_PBF.get_or_init(InMemoryPbf::default);
+        PbfStreamer::new(pbf, &PathBuf::from("output"), tile_size)
+    }
     #[test]
     fn test_pbf_bounds_new_empty() {
-        let bounds = PbfBounds::new_empty();
+        let bounds = PbfBounds::empty();
         assert!(bounds.lat_min.is_none());
         assert!(bounds.lat_max.is_none());
         assert!(bounds.lon_min.is_none());
@@ -469,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_pbf_bounds_update() {
-        let mut bounds = PbfBounds::new_empty();
+        let mut bounds = PbfBounds::empty();
 
         // First update
         bounds.update(50.0, 10.0);
@@ -502,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_pbf_bounds_is_valid() {
-        let mut bounds = PbfBounds::new_empty();
+        let mut bounds = PbfBounds::empty();
         assert!(!bounds.is_valid());
 
         bounds.update(50.0, 10.0);
@@ -511,7 +517,7 @@ mod tests {
 
     #[test]
     fn test_pbf_bounds_unwrap() {
-        let mut bounds = PbfBounds::new_empty();
+        let mut bounds = PbfBounds::empty();
         bounds.update(50.0, 10.0);
         bounds.update(51.0, 11.0);
 
@@ -524,11 +530,7 @@ mod tests {
 
     #[test]
     fn test_buffer_zone_calculation() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 1.0,
-        };
+        let streamer = create_test_streamer(1.0);
 
         let core_bounds = TileBounds {
             lat_min: 50.0,
@@ -548,11 +550,7 @@ mod tests {
 
     #[test]
     fn test_buffer_zone_at_poles() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 1.0,
-        };
+        let streamer = create_test_streamer(1.0);
 
         // Test at north pole
         let north_pole_bounds = TileBounds {
@@ -585,11 +583,7 @@ mod tests {
 
     #[test]
     fn test_buffer_zone_at_dateline() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 1.0,
-        };
+        let streamer = create_test_streamer(1.0);
 
         // Test at date line (east)
         let dateline_east = TileBounds {
@@ -622,11 +616,7 @@ mod tests {
 
     #[test]
     fn test_tile_boundary_calculation() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 1.0,
-        };
+        let streamer = create_test_streamer(1.0);
 
         // Test tile at origin
         let tile_0_0 = streamer.calculate_tile_bounds(TileId { col: 0, row: 0 });
@@ -646,11 +636,7 @@ mod tests {
 
     #[test]
     fn test_calculate_all_tiles_world_bounds() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 1.0,
-        };
+        let streamer = create_test_streamer(1.0);
 
         // World-spanning bounds (entire planet)
         let world_bounds = PbfBounds {
@@ -672,11 +658,7 @@ mod tests {
 
     #[test]
     fn test_calculate_all_tiles_regional_bounds() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 0.1,
-        };
+        let streamer = create_test_streamer(0.1);
 
         // Montenegro-like bounds (roughly 42-43.5°N, 18.5-20.5°E)
         let montenegro_bounds = PbfBounds {
@@ -705,11 +687,7 @@ mod tests {
 
     #[test]
     fn test_calculate_all_tiles_single_point() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 1.0,
-        };
+        let streamer = create_test_streamer(1.0);
 
         // Single point (with buffer, should generate one tile)
         let single_point = PbfBounds {
@@ -727,11 +705,7 @@ mod tests {
 
     #[test]
     fn test_point_in_bounds() {
-        let streamer = PbfStreamer {
-            input_file: PathBuf::from("dummy.pbf"),
-            output_dir: PathBuf::from("output"),
-            tile_size_degrees: 1.0,
-        };
+        let streamer = create_test_streamer(1.0);
 
         let bounds = TileBounds {
             lat_min: 50.0,

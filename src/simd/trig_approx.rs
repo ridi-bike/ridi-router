@@ -230,6 +230,7 @@ pub use avx512::{asin_f32x16, cos_f32x16, sin_f32x16};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_traits::Float;
 
     /// Maximum allowed relative error for trig functions
     const MAX_RELATIVE_ERROR: f32 = 0.0001; // 0.01%

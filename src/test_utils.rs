@@ -1,9 +1,11 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use crate::{
     map_data::{
-        graph::{MapDataGraph, MapDataLineRef, MAP_DATA_GRAPH},
+        graph::{ElementTagSetRef, MapDataGraph, MapDataLineRef, MapDataPointRef, MAP_DATA_GRAPH},
+        line::{LineDirection, MapDataLine},
         osm::{OsmNode, OsmRelation, OsmWay},
+        point::MapDataPoint,
     },
     router::route::Route,
 };
@@ -360,20 +362,58 @@ pub fn test_dataset_3() -> OsmTestData {
 // }
 
 pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
-    let mut map_data = MapDataGraph::new();
-    let (test_nodes, test_ways, test_relations) = &test_data;
+    let map_data = MapDataGraph::new_test();
+    let (test_nodes, test_ways, _test_relations) = &test_data;
+
+    // First pass: Create MapDataPoints without lines (we'll add lines after)
+    let test_tile_id = crate::rmdf::TileId { col: 0, row: 0 };
     for test_node in test_nodes {
-        map_data.insert_node(test_node.clone());
+        let point = MapDataPoint {
+            id: test_node.id,
+            lat: test_node.lat as f32,
+            lon: test_node.lon as f32,
+            lines: Vec::new(), // Will be populated in second pass
+            rules: Vec::new(),
+            residential_in_proximity: test_node.residential_in_proximity,
+            nogo_area: test_node.nogo_area,
+        };
+        map_data.test_insert_point(point);
     }
-    for test_way in test_ways {
-        map_data
-            .insert_way(test_way.clone())
-            .expect("failed to insert way");
-    }
-    for test_relation in test_relations {
-        map_data
-            .insert_relation(test_relation.clone())
-            .expect("failed to insert relation");
+
+    // Second pass: Create lines and update point line references
+    for (way_idx, test_way) in test_ways.iter().enumerate() {
+        let is_one_way = test_way.is_one_way();
+        let is_roundabout = test_way.is_roundabout();
+
+        let direction = if is_roundabout {
+            LineDirection::Roundabout
+        } else if is_one_way {
+            LineDirection::OneWay
+        } else {
+            LineDirection::BothWays
+        };
+
+        // Create lines between consecutive points in the way
+        for i in 0..test_way.point_ids.len() - 1 {
+            let point_a_id = test_way.point_ids[i];
+            let point_b_id = test_way.point_ids[i + 1];
+            let line_id = (way_idx * 1000 + i) as u64; // Generate a unique line ID
+
+            let line = MapDataLine {
+                points: (
+                    MapDataPointRef::new(test_tile_id, point_a_id),
+                    MapDataPointRef::new(test_tile_id, point_b_id),
+                ),
+                direction: direction.clone(),
+                tags: ElementTagSetRef::new(test_tile_id, 0), // Dummy tag ref
+            };
+
+            map_data.test_insert_line(line, line_id);
+
+            // Update point line references
+            map_data.test_add_line_to_point(point_a_id, MapDataLineRef::new(test_tile_id, line_id));
+            map_data.test_add_line_to_point(point_b_id, MapDataLineRef::new(test_tile_id, line_id));
+        }
     }
 
     map_data
@@ -385,19 +425,18 @@ pub fn set_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
 
 pub fn line_is_between_point_ids(line: &MapDataLineRef, id1: u64, id2: u64) -> bool {
     let point_ids = [
-        line.borrow().points.0.borrow().id,
-        line.borrow().points.1.borrow().id,
+        line.get().points.0.get().id,
+        line.get().points.1.get().id,
     ];
     point_ids.contains(&id1) && point_ids.contains(&id2)
 }
-
 pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {
     ids.iter()
         .enumerate()
         .map(|(idx, &id)| {
             let route_segment = route.get_segment_by_index(idx);
             if let Some(route_segment) = route_segment {
-                if route_segment.get_end_point().borrow().id == id {
+                if route_segment.get_end_point().get().id == id {
                     return true;
                 }
             }

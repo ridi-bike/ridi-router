@@ -2042,6 +2042,7 @@ dependencies = [
  "interprocess",
  "json-tools",
  "memmap2",
+ "num-traits",
  "osmpbfreader",
  "postgres",
  "qstring",
