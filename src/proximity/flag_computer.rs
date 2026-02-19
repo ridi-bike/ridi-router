@@ -55,7 +55,54 @@ pub fn compute_proximity_flags(
 
     // Step 5: Apply flags to nodes
     apply_flags_to_nodes(nodes, &grid);
+
+    apply_flags_to_nodes(nodes, &grid);
 }
+
+/// Build proximity grid and apply flags to nodes, returning the grid for storage.
+///
+/// This is like `compute_proximity_flags` but returns the grid for multi-PBF scenarios
+/// where grids need to be combined and re-applied in overlap zones.
+pub fn compute_proximity_flags_with_grid(
+    nodes: &mut HashMap<u64, OsmNode>,
+    residential_polygons: &[MultiPolygon<f64>],
+    military_polygons: &[MultiPolygon<f64>],
+    bounds: &PbfBounds,
+) -> RasterizedProximityGrid {
+    info!(
+        "Computing proximity flags for {} nodes ({} residential, {} military polygons)",
+        nodes.len(),
+        residential_polygons.len(),
+        military_polygons.len()
+    );
+
+    // Step 1: Build rasterized grid
+    let mut rasterizer = AreaRasterizer::new(bounds);
+
+    // Step 2: Rasterize residential polygons
+    rasterizer.rasterize_residential(residential_polygons);
+
+    // Step 3: Rasterize military polygons
+    rasterizer.rasterize_military(military_polygons);
+
+    // Step 4: Get completed grid
+    let grid = rasterizer.into_grid();
+
+    // Step 5: Apply flags to nodes
+    apply_flags_to_nodes(nodes, &grid);
+
+    grid
+}
+
+/// Apply a grid to a subset of nodes (for re-evaluating overlap zones).
+///
+/// This is used during multi-PBF processing to update flags for nodes
+/// that fall within overlap zones using combined grids.
+pub fn apply_grid_to_nodes(nodes: &mut HashMap<u64, OsmNode>, grid: &RasterizedProximityGrid) {
+    apply_flags_to_nodes(nodes, grid);
+}
+
+/// Apply pre-computed grid flags to nodes.
 
 /// Apply pre-computed grid flags to nodes.
 ///

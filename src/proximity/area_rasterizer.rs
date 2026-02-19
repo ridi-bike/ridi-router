@@ -1,9 +1,9 @@
 //! Polygon to grid rasterization with SIMD acceleration.
 //!
 //! Converts residential and military polygons into the rasterized proximity grid
-//! by computing values for each grid cell.
+//! by computing values for each grid cell using directional sectors.
 
-use geo::{Coord, Distance, GeodesicArea, Haversine, HaversineClosestPoint, MultiPolygon, Point};
+use geo::{Distance, GeodesicArea, Haversine, HaversineClosestPoint, MultiPolygon, Point};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
@@ -12,7 +12,8 @@ use crate::osm_data::in_memory_pbf::PbfBounds;
 use crate::simd::haversine::haversine_batch;
 
 use super::rasterized_grid::{
-    RasterizedProximityGrid, MILITARY_INTERIOR_M, RESIDENTIAL_PROXIMITY_THRESHOLD_M,
+    bearing_to_sector, RasterizedProximityGrid, MILITARY_INTERIOR_M,
+    RESIDENTIAL_PROXIMITY_THRESHOLD_M,
 };
 
 /// Rasterizer that converts area polygons into grid cell values.
@@ -31,7 +32,8 @@ impl AreaRasterizer {
     /// Rasterize residential polygons into the grid.
     ///
     /// For each grid cell, computes the total area of residential polygons
-    /// that are within `RESIDENTIAL_PROXIMITY_THRESHOLD_M` meters of the cell center.
+    /// that are within `RESIDENTIAL_PROXIMITY_THRESHOLD_M` meters of the cell center,
+    /// distributed into 8 directional sectors.
     ///
     /// Uses SIMD for distance calculations and parallel processing across cells.
     pub fn rasterize_residential(&mut self, polygons: &[MultiPolygon<f64>]) {
@@ -50,29 +52,31 @@ impl AreaRasterizer {
         let progress_counter = AtomicUsize::new(0);
         let progress_interval = (cell_count / 20).max(10000); // Report every 5% or 10k cells
 
-        // Pre-compute polygon centroids and bounding boxes for quick filtering
+        // Pre-compute polygon centroids, areas, and bounding boxes for quick filtering
         let polygon_data: Vec<PolygonData> = polygons
             .iter()
             .map(|mp| {
                 let area = mp.geodesic_area_signed().abs() as f32;
                 let bbox = compute_multipolygon_bbox(mp);
+                let centroid = compute_multipolygon_centroid(mp);
                 PolygonData {
                     polygon: mp,
                     area,
                     bbox,
+                    centroid,
                 }
             })
             .collect();
 
         // Process cells in parallel
-        // We need to collect results and then apply them since we can't mutate grid in parallel
-        let cell_results: Vec<(usize, f32)> = (0..cell_count)
+        // Returns sector data for each cell that has residential area
+        let cell_results: Vec<(usize, [f32; 8])> = (0..cell_count)
             .into_par_iter()
             .filter_map(|cell_idx| {
                 let (lat, lon) = self.grid.cell_center(cell_idx);
 
-                // Compute total residential area within threshold distance
-                let total_area = compute_residential_area_for_cell(
+                // Compute residential area by sector
+                let sectors = compute_residential_sectors_for_cell(
                     lat,
                     lon,
                     &polygon_data,
@@ -88,8 +92,9 @@ impl AreaRasterizer {
                     );
                 }
 
-                if total_area > 0.0 {
-                    Some((cell_idx, total_area))
+                // Only return if any sector has data
+                if sectors.iter().any(|&a| a > 0.0) {
+                    Some((cell_idx, sectors))
                 } else {
                     None
                 }
@@ -98,8 +103,8 @@ impl AreaRasterizer {
 
         // Apply results to grid
         let cells = self.grid.cells_mut();
-        for (idx, area) in cell_results {
-            cells[idx].residential_area_m2 = area;
+        for (idx, sectors) in cell_results {
+            cells[idx].residential_sectors = sectors;
         }
 
         info!(
@@ -188,6 +193,7 @@ struct PolygonData<'a> {
     polygon: &'a MultiPolygon<f64>,
     area: f32,
     bbox: BBox,
+    centroid: (f64, f64), // (lat, lon)
 }
 
 /// Simple bounding box for quick spatial filtering.
@@ -238,15 +244,55 @@ fn compute_multipolygon_bbox(mp: &MultiPolygon<f64>) -> BBox {
     }
 }
 
-/// Compute total residential area within threshold distance of a cell center.
-fn compute_residential_area_for_cell(
+/// Compute centroid of a multipolygon (simple average of all polygon centroids).
+fn compute_multipolygon_centroid(mp: &MultiPolygon<f64>) -> (f64, f64) {
+    let mut total_lat = 0.0;
+    let mut total_lon = 0.0;
+    let mut count = 0;
+
+    for polygon in mp.iter() {
+        for coord in polygon.exterior().coords() {
+            total_lat += coord.y;
+            total_lon += coord.x;
+            count += 1;
+        }
+    }
+
+    if count > 0 {
+        (total_lat / count as f64, total_lon / count as f64)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+/// Calculate bearing from one point to another (in degrees).
+/// Returns angle where 0° = North, 90° = East, 180° = South, 270° = West.
+fn calculate_bearing(from_lat: f32, from_lon: f32, to_lat: f64, to_lon: f64) -> f32 {
+    let from_lat = from_lat as f64;
+    let from_lon = from_lon as f64;
+
+    let delta_lon = (to_lon - from_lon).to_radians();
+    let from_lat_rad = from_lat.to_radians();
+    let to_lat_rad = to_lat.to_radians();
+
+    let x = delta_lon.sin() * to_lat_rad.cos();
+    let y = from_lat_rad.cos() * to_lat_rad.sin()
+        - from_lat_rad.sin() * to_lat_rad.cos() * delta_lon.cos();
+
+    let bearing = y.atan2(x).to_degrees();
+    // Convert to compass bearing (0° = North)
+    (((bearing % 360.0) + 360.0) % 360.0) as f32
+}
+
+/// Compute residential area by directional sector within threshold distance of a cell center.
+fn compute_residential_sectors_for_cell(
     cell_lat: f32,
     cell_lon: f32,
     polygons: &[PolygonData],
     threshold_m: f32,
-) -> f32 {
+) -> [f32; 8] {
     let geo_point = Point::new(cell_lon as f64, cell_lat as f64);
-    let mut total_area = 0.0f32;
+    let mut sectors = [0.0f32; 8];
 
     for poly_data in polygons {
         // Quick bbox check first
@@ -283,11 +329,21 @@ fn compute_residential_area_for_cell(
         };
 
         if distance <= threshold_m as f64 {
-            total_area += poly_data.area;
+            // Calculate bearing from cell to polygon centroid
+            let bearing = calculate_bearing(
+                cell_lat,
+                cell_lon,
+                poly_data.centroid.0,
+                poly_data.centroid.1,
+            );
+
+            // Assign to appropriate sector
+            let sector_idx = bearing_to_sector(bearing);
+            sectors[sector_idx] += poly_data.area;
         }
     }
 
-    total_area
+    sectors
 }
 
 /// Check if a point is inside a military polygon >100m from the boundary.
@@ -329,7 +385,7 @@ fn is_military_interior(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::{LineString, Polygon};
+    use geo::{Coord, LineString, Polygon};
 
     fn make_test_bounds() -> PbfBounds {
         PbfBounds {
@@ -442,11 +498,113 @@ mod tests {
     }
 
     #[test]
+    fn test_rasterize_sector_assignment() {
+        // Create a small grid with polygons in specific directions
+        let bounds = PbfBounds {
+            lat_min: Some(50.0),
+            lat_max: Some(50.01),
+            lon_min: Some(10.0),
+            lon_max: Some(10.01),
+        };
+
+        let mut rasterizer = AreaRasterizer::new(&bounds);
+
+        // Create polygon NORTH of center (higher latitude)
+        // Center is at 50.005, 10.005
+        let polygon_north = make_square_polygon(50.008, 10.005, 0.001);
+        rasterizer.rasterize_residential(&[polygon_north]);
+
+        let grid = rasterizer.into_grid();
+
+        // Find cells that have residential area and check sectors
+        let mut found_north_sector = false;
+        for cell in grid.cells().iter() {
+            let total: f32 = cell.residential_sectors.iter().sum();
+            if total > 0.0 {
+                // Check that sector 0 (N) has the most area
+                if cell.residential_sectors[0] > 0.0 {
+                    found_north_sector = true;
+                    break;
+                }
+            }
+        }
+
+        assert!(found_north_sector, "Expected some cells with data in North sector");
+    }
+
+    #[test]
     fn test_into_grid() {
         let bounds = make_test_bounds();
         let rasterizer = AreaRasterizer::new(&bounds);
 
         let grid = rasterizer.into_grid();
         assert!(grid.cell_count() > 0);
+    }
+
+    #[test]
+    fn test_calculate_bearing() {
+        // Test cardinal directions from (50.0, 10.0)
+        let lat = 50.0f32;
+        let lon = 10.0f32;
+
+        // North: higher latitude
+        let bearing_n = calculate_bearing(lat, lon, 51.0, 10.0);
+        assert!(bearing_n < 10.0 || bearing_n > 350.0, "North bearing should be ~0°, got {}", bearing_n);
+
+        // East: higher longitude
+        let bearing_e = calculate_bearing(lat, lon, 50.0, 11.0);
+        assert!((bearing_e - 90.0).abs() < 10.0, "East bearing should be ~90°, got {}", bearing_e);
+
+        // South: lower latitude
+        let bearing_s = calculate_bearing(lat, lon, 49.0, 10.0);
+        assert!((bearing_s - 180.0).abs() < 10.0, "South bearing should be ~180°, got {}", bearing_s);
+
+        // West: lower longitude
+        let bearing_w = calculate_bearing(lat, lon, 50.0, 9.0);
+        assert!((bearing_w - 270.0).abs() < 10.0, "West bearing should be ~270°, got {}", bearing_w);
+    }
+
+    #[test]
+    fn test_calculate_bearing_diagonals() {
+        let lat = 50.0f32;
+        let lon = 10.0f32;
+        
+        // NE: higher lat and lon
+        let bearing_ne = calculate_bearing(lat, lon, 51.0, 11.0);
+        assert!((bearing_ne - 45.0).abs() < 5.0, "NE bearing should be ~45°, got {}", bearing_ne);
+        
+        // SE: lower lat, higher lon
+        let bearing_se = calculate_bearing(lat, lon, 49.0, 11.0);
+        assert!((bearing_se - 135.0).abs() < 5.0, "SE bearing should be ~135°, got {}", bearing_se);
+        
+        // SW: lower lat and lon
+        let bearing_sw = calculate_bearing(lat, lon, 49.0, 9.0);
+        assert!((bearing_sw - 225.0).abs() < 5.0, "SW bearing should be ~225°, got {}", bearing_sw);
+        
+        // NW: higher lat, lower lon
+        let bearing_nw = calculate_bearing(lat, lon, 51.0, 9.0);
+        assert!((bearing_nw - 315.0).abs() < 5.0, "NW bearing should be ~315°, got {}", bearing_nw);
+    }
+
+    #[test]
+    fn test_calculate_bearing_same_point() {
+        // Same point should still give a result (degenerate case)
+        let bearing = calculate_bearing(50.0, 10.0, 50.0, 10.0);
+        // Result is undefined but shouldn't panic
+        assert!(bearing >= 0.0 && bearing < 360.0);
+    }
+
+    #[test]
+    fn test_calculate_bearing_across_antimeridian() {
+        // Test bearing calculation across the antimeridian
+        // From 179°E to 179°W (crossing 180°)
+        let bearing = calculate_bearing(0.0, 179.0, 0.0, -179.0);
+        // Should be ~90° (east)
+        assert!((bearing - 90.0).abs() < 10.0, "Bearing east across antimeridian should be ~90°, got {}", bearing);
+        
+        // From 179°W to 179°E
+        let bearing = calculate_bearing(0.0, -179.0, 0.0, 179.0);
+        // Should be ~270° (west)
+        assert!((bearing - 270.0).abs() < 10.0, "Bearing west across antimeridian should be ~270°, got {}", bearing);
     }
 }

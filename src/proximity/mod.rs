@@ -14,5 +14,5 @@ pub mod flag_computer;
 pub mod rasterized_grid;
 
 pub use area_rasterizer::AreaRasterizer;
-pub use flag_computer::compute_proximity_flags;
-pub use rasterized_grid::{GridCell, RasterizedProximityGrid};
+pub use flag_computer::{compute_proximity_flags, compute_proximity_flags_with_grid, apply_grid_to_nodes};
+pub use rasterized_grid::{bearing_to_sector, GridCell, RasterizedProximityGrid, GRID_CELL_SIZE_DEG};
