@@ -6,10 +6,10 @@ use crate::{
         line::{LineDirection, MapDataLine},
         osm::{OsmNode, OsmRelation, OsmWay},
         point::MapDataPoint,
+        rule::{MapDataRule, MapDataRuleType},
     },
     router::route::Route,
 };
-
 pub type OsmTestData = (Vec<OsmNode>, Vec<OsmWay>, Vec<OsmRelation>);
 
 fn make_osm_point_with_id(id: u64) -> OsmNode {
@@ -363,16 +363,20 @@ pub fn test_dataset_3() -> OsmTestData {
 
 pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
     let map_data = MapDataGraph::new_test();
-    let (test_nodes, test_ways, _test_relations) = &test_data;
+    let (test_nodes, test_ways, test_relations) = &test_data;
 
-    // First pass: Create MapDataPoints without lines (we'll add lines after)
     let test_tile_id = crate::rmdf::TileId { col: 0, row: 0 };
+
+    // Build a map from way ID to the lines it contains
+    let mut way_to_lines: HashMap<u64, Vec<MapDataLineRef>> = HashMap::new();
+
+    // First pass: Create MapDataPoints without lines
     for test_node in test_nodes {
         let point = MapDataPoint {
             id: test_node.id,
             lat: test_node.lat as f32,
             lon: test_node.lon as f32,
-            lines: Vec::new(), // Will be populated in second pass
+            lines: Vec::new(),
             rules: Vec::new(),
             residential_in_proximity: test_node.residential_in_proximity,
             nogo_area: test_node.nogo_area,
@@ -380,7 +384,7 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
         map_data.test_insert_point(point);
     }
 
-    // Second pass: Create lines and update point line references
+    // Second pass: Create lines and track way->lines mapping
     for (way_idx, test_way) in test_ways.iter().enumerate() {
         let is_one_way = test_way.is_one_way();
         let is_roundabout = test_way.is_roundabout();
@@ -393,11 +397,13 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
             LineDirection::BothWays
         };
 
+        let mut way_lines = Vec::new();
+
         // Create lines between consecutive points in the way
         for i in 0..test_way.point_ids.len() - 1 {
             let point_a_id = test_way.point_ids[i];
             let point_b_id = test_way.point_ids[i + 1];
-            let line_id = (way_idx * 1000 + i) as u64; // Generate a unique line ID
+            let line_id = (way_idx * 1000 + i) as u64;
 
             let line = MapDataLine {
                 points: (
@@ -405,20 +411,99 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
                     MapDataPointRef::new(test_tile_id, point_b_id),
                 ),
                 direction: direction.clone(),
-                tags: ElementTagSetRef::new(test_tile_id, 0), // Dummy tag ref
+                tags: ElementTagSetRef::new(test_tile_id, 0),
             };
 
             map_data.test_insert_line(line, line_id);
 
+            let line_ref = MapDataLineRef::new(test_tile_id, line_id);
+            way_lines.push(line_ref.clone());
+
             // Update point line references
-            map_data.test_add_line_to_point(point_a_id, MapDataLineRef::new(test_tile_id, line_id));
-            map_data.test_add_line_to_point(point_b_id, MapDataLineRef::new(test_tile_id, line_id));
+            map_data.test_add_line_to_point(point_a_id, line_ref.clone());
+            map_data.test_add_line_to_point(point_b_id, line_ref);
         }
+
+        way_to_lines.insert(test_way.id, way_lines);
     }
 
+    // Third pass: Process relations and add rules to points
+    for relation in test_relations {
+        // Only process restriction relations
+        if relation.tags.get("type").map(|t| t.as_str()) != Some("restriction") {
+            continue;
+        }
+
+        let restriction_type = relation.tags.get("restriction").map(|t| t.as_str());
+        let rule_type = match restriction_type {
+            Some("no_left_turn") | Some("no_right_turn") | Some("no_straight_on") | Some("no_u_turn") | Some("no_entry") | Some("no_exit") => {
+                MapDataRuleType::NotAllowed
+            }
+            Some("only_left_turn") | Some("only_right_turn") | Some("only_straight_on") | Some("only_u_turn") => {
+                MapDataRuleType::OnlyAllowed
+            }
+            _ => continue,
+        };
+
+        // Find from, via, and to members
+        let mut from_way_id: Option<u64> = None;
+        let mut via_node_id: Option<u64> = None;
+        let mut to_way_ids: Vec<u64> = Vec::new();
+
+        for member in &relation.members {
+            match member.role {
+                crate::map_data::osm::OsmRelationMemberRole::From => {
+                    if member.member_type == crate::map_data::osm::OsmRelationMemberType::Way {
+                        from_way_id = Some(member.member_ref);
+                    }
+                }
+                crate::map_data::osm::OsmRelationMemberRole::Via => {
+                    if member.member_type == crate::map_data::osm::OsmRelationMemberType::Node {
+                        via_node_id = Some(member.member_ref);
+                    }
+                }
+                crate::map_data::osm::OsmRelationMemberRole::To => {
+                    if member.member_type == crate::map_data::osm::OsmRelationMemberType::Way {
+                        to_way_ids.push(member.member_ref);
+                    }
+                }
+                crate::map_data::osm::OsmRelationMemberRole::Other(_) => {}
+            }
+        }
+
+        let (Some(from_way), Some(via_node)) = (from_way_id, via_node_id) else {
+            continue;
+        };
+
+        if to_way_ids.is_empty() {
+            continue;
+        }
+
+        // Get the line refs for the from way
+        let Some(from_lines) = way_to_lines.get(&from_way) else { continue };
+
+        // Collect all to_lines from all to_ways
+        let mut all_to_lines = Vec::new();
+        for to_way in &to_way_ids {
+            if let Some(to_lines) = way_to_lines.get(to_way) {
+                all_to_lines.extend(to_lines.iter().cloned());
+            }
+        }
+
+        if all_to_lines.is_empty() {
+            continue;
+        }
+
+        // Create the rule and add it to the via point
+        let rule = MapDataRule {
+            from_lines: from_lines.clone(),
+            to_lines: all_to_lines,
+            rule_type,
+        };
+        map_data.test_add_rule_to_point(via_node, rule);
+    }
     map_data
 }
-
 pub fn set_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
     MAP_DATA_GRAPH.get_or_init(|| map_data)
 }

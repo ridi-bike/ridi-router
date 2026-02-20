@@ -413,6 +413,15 @@ impl MapDataGraph {
         self.test_lines.read().unwrap().get(&line_id).cloned()
     }
 
+    /// Test-only: Add rule to a point
+    #[cfg(test)]
+    pub fn test_add_rule_to_point(&self, point_id: u64, rule: crate::map_data::rule::MapDataRule) {
+        let mut points = self.test_points.write().unwrap();
+        if let Some(point) = points.get_mut(&point_id) {
+            point.rules.push(rule);
+        }
+    }
+
     // Get point data from tiles (or test storage in test mode)
     pub fn get_point_from_tiles(&self, tile_id: crate::rmdf::TileId, osm_id: u64) -> MapDataPoint {
         // In test mode, check test storage first
