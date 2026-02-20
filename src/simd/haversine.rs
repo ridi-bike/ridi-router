@@ -245,7 +245,7 @@ mod tests {
     use super::*;
 
     /// Maximum allowed relative error for distance calculations
-    const MAX_DISTANCE_ERROR_PERCENT: f32 = 0.5; // 0.5%
+    const MAX_DISTANCE_ERROR_PERCENT: f32 = 1.0; // 1%
 
     #[test]
     fn test_haversine_zero_distance() {

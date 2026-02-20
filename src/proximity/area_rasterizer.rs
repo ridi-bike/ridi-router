@@ -279,11 +279,12 @@ fn calculate_bearing(from_lat: f32, from_lon: f32, to_lat: f64, to_lon: f64) -> 
     let y = from_lat_rad.cos() * to_lat_rad.sin()
         - from_lat_rad.sin() * to_lat_rad.cos() * delta_lon.cos();
 
-    let bearing = y.atan2(x).to_degrees();
-    // Convert to compass bearing (0° = North)
+    let bearing = x.atan2(y).to_degrees();  // Note: x, y order for compass bearing (0° = North)
+    // Normalize to [0, 360)
     (((bearing % 360.0) + 360.0) % 360.0) as f32
 }
 
+/// Compute residential area by directional sector within threshold distance of a cell center.
 /// Compute residential area by directional sector within threshold distance of a cell center.
 fn compute_residential_sectors_for_cell(
     cell_lat: f32,
@@ -571,19 +572,19 @@ mod tests {
         
         // NE: higher lat and lon
         let bearing_ne = calculate_bearing(lat, lon, 51.0, 11.0);
-        assert!((bearing_ne - 45.0).abs() < 5.0, "NE bearing should be ~45°, got {}", bearing_ne);
+        assert!((bearing_ne - 32.0).abs() < 5.0, "NE bearing should be ~32°, got {}", bearing_ne);
         
         // SE: lower lat, higher lon
         let bearing_se = calculate_bearing(lat, lon, 49.0, 11.0);
-        assert!((bearing_se - 135.0).abs() < 5.0, "SE bearing should be ~135°, got {}", bearing_se);
+        assert!((bearing_se - 148.0).abs() < 5.0, "SE bearing should be ~148°, got {}", bearing_se);
         
         // SW: lower lat and lon
         let bearing_sw = calculate_bearing(lat, lon, 49.0, 9.0);
-        assert!((bearing_sw - 225.0).abs() < 5.0, "SW bearing should be ~225°, got {}", bearing_sw);
+        assert!((bearing_sw - 212.0).abs() < 5.0, "SW bearing should be ~212°, got {}", bearing_sw);
         
         // NW: higher lat, lower lon
         let bearing_nw = calculate_bearing(lat, lon, 51.0, 9.0);
-        assert!((bearing_nw - 315.0).abs() < 5.0, "NW bearing should be ~315°, got {}", bearing_nw);
+        assert!((bearing_nw - 328.0).abs() < 5.0, "NW bearing should be ~328°, got {}", bearing_nw);
     }
 
     #[test]

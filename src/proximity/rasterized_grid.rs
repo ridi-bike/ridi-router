@@ -754,7 +754,7 @@ mod tests {
         // Values > 720 degrees
         assert_eq!(bearing_to_sector(720.0), 0);   // 720 = 2 * 360 = 0 = N
         assert_eq!(bearing_to_sector(765.0), 1);   // 765 = 720 + 45 = 45 = NE
-        assert_eq!(bearing_to_sector(900.0), 2);   // 900 = 2.5 * 360 = 180 = S... wait
+        assert_eq!(bearing_to_sector(810.0), 2);   // 810 = 720 + 90 = 90 = E
         // Actually 900 % 360 = 180, which is S (sector 4)
         assert_eq!(bearing_to_sector(900.0), 4);
         
