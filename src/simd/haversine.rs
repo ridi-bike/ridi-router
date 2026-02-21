@@ -221,8 +221,8 @@ pub fn min_distance_to_vertices(lat: f32, lon: f32, vertices: &[(f32, f32)]) -> 
         .fold(f32::MAX, |min, d| if d < min { d } else { min })
 }
 
-/// Scalar haversine for single distance calculation (used for testing/fallback).
-#[inline]
+/// Scalar haversine for single distance calculation (used for testing).
+#[cfg(test)]
 pub fn haversine_scalar(lat1: f32, lon1: f32, lat2: f32, lon2: f32) -> f32 {
     let lat1_rad = lat1 * DEG_TO_RAD;
     let lon1_rad = lon1 * DEG_TO_RAD;

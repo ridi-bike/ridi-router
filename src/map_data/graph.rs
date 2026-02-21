@@ -15,6 +15,7 @@ use crate::map_data::debug_writer::MapDebugWriter;
 use geo::{Coord, LineString};
 
 use crate::{
+    map_data::line::LineDirection,
     rmdf::format::{TagSetRecord, TileId},
     router::rules::RouterRules,
 };
