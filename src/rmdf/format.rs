@@ -16,9 +16,9 @@ pub struct TileId {
 }
 
 impl TileId {
-    pub fn from_coords(lat: f32, lon: f32) -> Self {
-        let col = ((lon + 180.0).floor() as u16).min(359);
-        let row = ((lat + 90.0).floor() as u16).min(179);
+    pub fn from_coords(lat: f32, lon: f32, tile_size_degrees: f32) -> Self {
+        let col = ((lon + 180.0) / tile_size_degrees).floor() as u16;
+        let row = ((lat + 90.0) / tile_size_degrees).floor() as u16;
         Self { col, row }
     }
 

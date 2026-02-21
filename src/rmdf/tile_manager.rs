@@ -8,7 +8,6 @@ use super::io::MappedTile;
 
 pub struct TileManager {
     tile_dir: PathBuf,
-    manifest: TileManifest,
     loaded_tiles: HashMap<TileId, MappedTile>,
     tile_size_degrees: f32,
 }
@@ -28,7 +27,6 @@ impl TileManager {
 
         Ok(Self {
             tile_dir,
-            manifest,
             loaded_tiles: HashMap::new(),
             tile_size_degrees,
         })
@@ -40,12 +38,16 @@ impl TileManager {
         let tile_size_degrees = manifest.tile_size_degrees;
         Self {
             tile_dir,
-            manifest,
             loaded_tiles: HashMap::new(),
             tile_size_degrees,
         }
     }
 
+
+    /// Compute TileId for given coordinates
+    pub fn tile_id_for_coords(&self, lat: f32, lon: f32) -> TileId {
+        TileId::from_coords(lat, lon, self.tile_size_degrees)
+    }
     /// Ensure tile is loaded (load if not already)
     fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()> {
         if self.loaded_tiles.contains_key(&tile_id) {
@@ -109,7 +111,7 @@ impl TileManager {
         _limit_to_hw_tags: Option<&[&'static str]>,
     ) -> Result<Option<(TileId, u64)>> {
         // Determine which tile contains these coordinates
-        let tile_id = TileId::from_coords(lat, lon);
+        let tile_id = TileId::from_coords(lat, lon, self.tile_size_degrees);
 
         self.ensure_tile_loaded(tile_id)?;
 
@@ -217,7 +219,7 @@ impl TileManager {
             };
 
             // Determine which tile contains the other point
-            let other_tile_id = TileId::from_coords(other_lat, other_lon);
+            let other_tile_id = TileId::from_coords(other_lat, other_lon, self.tile_size_degrees);
 
             // Check if we need to load a different tile
             if other_tile_id != tile_id {
@@ -305,7 +307,6 @@ mod tests {
 
         let manager = TileManager::new(tile_dir).expect("Failed to load TileManager");
 
-        assert!(manager.manifest.tiles.len() > 0);
     }
 
     #[test]
