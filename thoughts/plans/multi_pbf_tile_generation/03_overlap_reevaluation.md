@@ -164,15 +164,15 @@ pub fn update_nodes_in_tile(
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] Unit test: `query_nodes_in_bounds()` returns correct nodes
-- [ ] Unit test: `update_node()` correctly updates node in redb
-- [ ] Unit test: Node flags change after re-evaluation with different grid
-- [ ] Integration test: Two overlapping grids, node in overlap gets combined flag
+ [x] Unit test: `query_nodes_in_bounds()` returns correct nodes
+ [x] Unit test: `update_node()` correctly updates node in redb
+ [x] Unit test: Node flags change after re-evaluation with different grid
+ [x] Integration test: Two overlapping grids, node in overlap gets combined flag
 
 ### Manual Verification:
-- [ ] Create test PBFs with known overlap
-- [ ] Verify nodes in overlap zone have flags from combined grid
-- [ ] Verify nodes outside overlap zone unchanged
+ [x] Create test PBFs with known overlap
+ [x] Verify nodes in overlap zone have flags from combined grid
+ [x] Verify nodes outside overlap zone unchanged
 
 ## Dependencies
 

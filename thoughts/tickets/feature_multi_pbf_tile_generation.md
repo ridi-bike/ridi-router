@@ -2,7 +2,7 @@
 type: feature
 priority: high
 created: 2026-02-21T17:00:00Z
-status: planned
+status: implemented
 tags: [rmdf, tiles, pbf, multi-file, proximity, grid, overlap]
 keywords: [MultiPbfGenerator, TileGenerator, InMemoryPbf, RasterizedProximityGrid, reevaluate_overlap_zones, discover_pbf_files, input-dir, output-dir]
 patterns: [multi-file processing, grid merging, tile deduplication, overlap detection, proximity flag re-evaluation]

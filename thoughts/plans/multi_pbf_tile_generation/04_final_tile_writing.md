@@ -190,18 +190,18 @@ fn cleanup_intermediate_storage(&self) -> Result<()> {
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] Unit test: `list_all_tile_positions()` returns correct positions
-- [ ] Unit test: Merged tile contains nodes from multiple sources
-- [ ] Unit test: Deduplication removes duplicate ways/relations
-- [ ] Integration test: Two PBFs generate single set of RMDF tiles
-- [ ] Manifest validation: All source files listed, bounds are correct
+ [x] Unit test: `list_all_tile_positions()` returns correct positions
+ [x] Unit test: Merged tile contains nodes from multiple sources
+ [x] Unit test: Deduplication removes duplicate ways/relations
+ [x] Integration test: Two PBFs generate single set of RMDF tiles
+ [x] Manifest validation: All source files listed, bounds are correct
 
 ### Manual Verification:
-- [ ] Process two overlapping PBFs
-- [ ] Verify no duplicate OSM IDs in any tile
-- [ ] Verify tile count matches expected (not double)
-- [ ] Verify manifest.json lists both source files
-- [ ] Verify combined bounds cover both PBFs
+ [x] Process two overlapping PBFs
+ [x] Verify no duplicate OSM IDs in any tile
+ [x] Verify tile count matches expected (not double)
+ [x] Verify manifest.json lists both source files
+ [x] Verify combined bounds cover both PBFs
 
 ## Dependencies
 

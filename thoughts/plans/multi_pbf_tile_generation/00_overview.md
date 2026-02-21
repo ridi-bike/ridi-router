@@ -121,3 +121,13 @@ No migration needed - this is a new feature. Existing single-PBF mode unchanged.
 - Grid serialization: `src/proximity/rasterized_grid.rs:277-345`
 - Grid storage: `src/rmdf/generator/intermediate.rs:374-438`
 - Tile merging: `src/rmdf/generator/intermediate.rs:102-138`
+
+## Implementation Status
+
+All phases completed successfully:
+
+ [x] **Phase 1**: Grid Exposure from InMemoryPbf - Added `from_pbf_file_with_grid()` method
+ [x] **Phase 2**: Intermediate Storage - Stores grid bytes and tiles to redb
+ [x] **Phase 3**: Overlap Re-evaluation - Implements `reevaluate_overlap_zones()`
+ [x] **Phase 4**: Final Tile Writing - Implements `write_final_tiles()`
+ [x] **Phase 5**: CLI Update - Added `--input-dir` and `--db-path` options

@@ -32,13 +32,13 @@ The import likely exists already (from `compute_proximity_flags`), just need to 
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] New method compiles: `cargo check`
-- [ ] Unit test passes: Create PBF, call new method, verify both return values are valid
-- [ ] Grid matches what `compute_proximity_flags_with_grid()` returns independently
+ [x] New method compiles: `cargo check`
+ [x] Unit test passes: Create PBF, call new method, verify both return values are valid
+ [x] Grid matches what `compute_proximity_flags_with_grid()` returns independently
 
 ### Manual Verification:
-- [ ] Code review: Method signature is clean and follows existing patterns
-- [ ] No changes to existing `from_pbf_file_with_flags()` behavior
+ [x] Code review: Method signature is clean and follows existing patterns
+ [x] No changes to existing `from_pbf_file_with_flags()` behavior
 
 ## Dependencies
 

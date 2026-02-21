@@ -395,6 +395,128 @@ impl InMemoryPbf {
         })
     }
 
+    /// Load PBF file with pre-computed proximity flags and return the proximity grid.
+    ///
+    /// This is like `from_pbf_file_with_flags` but also returns the `RasterizedProximityGrid`
+    /// for multi-PBF scenarios where grids need to be combined and re-applied in overlap zones.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(InMemoryPbf, RasterizedProximityGrid)` containing the loaded PBF data
+    /// and the computed proximity grid.
+    pub fn from_pbf_file_with_grid(
+        path: &Path,
+    ) -> Result<(Self, crate::proximity::RasterizedProximityGrid)> {
+        let start = Instant::now();
+        info!("Loading PBF file with pre-computed flags and grid: {:?}", path);
+
+        // Pass 1: Load all nodes
+        info!("Pass 1: Loading nodes...");
+        let (mut nodes_by_id, nodes_spatial, bounds) = Self::load_nodes(path)?;
+        info!(
+            "Loaded {} nodes in {:.2}s",
+            nodes_by_id.len(),
+            start.elapsed().as_secs_f64()
+        );
+
+        // Pass 2: Load all ways + compute bounding boxes
+        info!("Pass 2: Loading ways...");
+        let pass2_start = Instant::now();
+        let (ways_by_id, ways_spatial, residential_ways, military_ways) =
+            Self::load_ways(path, &nodes_by_id)?;
+        info!(
+            "Loaded {} ways ({} residential, {} military) in {:.2}s",
+            ways_by_id.len(),
+            residential_ways.len(),
+            military_ways.len(),
+            pass2_start.elapsed().as_secs_f64()
+        );
+
+        // Pass 3: Load all relations + compute bounding boxes (iterative)
+        info!("Pass 3: Loading relations...");
+        let pass3_start = Instant::now();
+        let (relations_by_id, relations_spatial, residential_relations, military_relations) =
+            Self::load_relations(path, &nodes_by_id, &ways_by_id)?;
+        info!(
+            "Loaded {} relations ({} residential, {} military) in {:.2}s",
+            relations_by_id.len(),
+            residential_relations.len(),
+            military_relations.len(),
+            pass3_start.elapsed().as_secs_f64()
+        );
+
+        // Step 4: Extract area polygons
+        info!("Extracting area polygons...");
+        let polygons_start = Instant::now();
+        let residential_polygons = Self::extract_area_polygons(
+            &residential_ways,
+            &residential_relations,
+            &ways_by_id,
+            &relations_by_id,
+            &nodes_by_id,
+        );
+        let military_polygons = Self::extract_area_polygons(
+            &military_ways,
+            &military_relations,
+            &ways_by_id,
+            &relations_by_id,
+            &nodes_by_id,
+        );
+        info!(
+            "Extracted {} residential and {} military polygons in {:.2}s",
+            residential_polygons.len(),
+            military_polygons.len(),
+            polygons_start.elapsed().as_secs_f64()
+        );
+
+        // Step 5: Compute and apply proximity flags, returning the grid
+        info!("Computing proximity flags...");
+        let flags_start = Instant::now();
+        let grid = crate::proximity::compute_proximity_flags_with_grid(
+            &mut nodes_by_id,
+            &residential_polygons,
+            &military_polygons,
+            &bounds,
+        );
+        info!(
+            "Proximity flags computed in {:.2}s",
+            flags_start.elapsed().as_secs_f64()
+        );
+
+        // Rebuild node spatial index with updated flags (nodes changed in place)
+        info!("Rebuilding spatial indexes...");
+        let spatial_entries: Vec<NodeSpatialEntry> = nodes_by_id
+            .values()
+            .map(|node| NodeSpatialEntry {
+                id: node.id,
+                point: [node.lon, node.lat],
+            })
+            .collect();
+        let nodes_spatial = RTree::bulk_load(spatial_entries);
+
+        info!(
+            "PBF loading with flags and grid complete in {:.2}s",
+            start.elapsed().as_secs_f64()
+        );
+
+        Ok((
+            Self {
+                nodes_by_id,
+                ways_by_id,
+                relations_by_id,
+                nodes_spatial,
+                ways_spatial,
+                relations_spatial,
+                residential_ways,
+                residential_relations,
+                military_ways,
+                military_relations,
+                bounds,
+            },
+            grid,
+        ))
+    }
+
     /// Extract MultiPolygon geometries from area ways and relations
     fn extract_area_polygons(
         way_ids: &[u64],

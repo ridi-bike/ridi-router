@@ -192,17 +192,17 @@ GenerateTiles {
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `--input file.pbf` works (existing single-PBF mode unchanged)
-- [ ] `--input-dir ./dir` works (new multi-PBF mode)
-- [ ] Using both `--input` and `--input-dir` returns error
-- [ ] Using neither returns error
-- [ ] `--help` shows new options correctly
+ [x] `--input file.pbf` works (existing single-PBF mode unchanged)
+ [x] `--input-dir ./dir` works (new multi-PBF mode)
+ [x] Using both `--input` and `--input-dir` returns error
+ [x] Using neither returns error
+ [x] `--help` shows new options correctly
 
 ### Manual Verification:
-- [ ] Single PBF mode produces same output as before
-- [ ] Multi-PBF mode processes all PBF files in directory
-- [ ] Error messages are clear and helpful
-- [ ] Help text is accurate
+ [x] Single PBF mode produces same output as before
+ [x] Multi-PBF mode processes all PBF files in directory
+ [x] Error messages are clear and helpful
+ [x] Help text is accurate
 
 ## Dependencies
 

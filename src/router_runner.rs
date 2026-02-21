@@ -210,11 +210,18 @@ enum CliMode {
         /// mode to generate a route with the same start and finish coordinates
         routing_mode: RoutingMode,
     },
-    /// Generate RMDF tiles from OSM PBF file
+    /// Generate RMDF tiles from OSM PBF file(s)
+    ///
+    /// Single file mode: --input FILE
+    /// Multi-file mode: --input-dir DIR
     GenerateTiles {
-        #[arg(short, long, value_name = "FILE")]
-        /// Input OSM PBF file
-        input: PathBuf,
+        #[arg(short, long, value_name = "FILE", conflicts_with = "input_dir")]
+        /// Input OSM PBF file (single file mode)
+        input: Option<PathBuf>,
+
+        #[arg(long, value_name = "DIR", conflicts_with = "input")]
+        /// Input directory containing OSM PBF files (multi-file mode)
+        input_dir: Option<PathBuf>,
 
         #[arg(short, long, value_name = "DIR")]
         /// Output directory for tiles and manifest
@@ -223,6 +230,11 @@ enum CliMode {
         #[arg(long, default_value = "1.0")]
         /// Tile size in degrees (e.g., 0.1, 1.0)
         tile_size: f32,
+
+        #[arg(long, value_name = "FILE")]
+        /// Path for intermediate database (multi-file mode only)
+        /// Default: temp file in output directory
+        db_path: Option<PathBuf>,
     },
     /// Run Debug viewer
     #[cfg(feature = "debug-viewer")]
@@ -448,20 +460,58 @@ impl RouterRunner {
             ),
             CliMode::GenerateTiles {
                 input,
+                input_dir,
                 output,
                 tile_size,
+                db_path,
             } => {
-                use crate::rmdf::generator::TileGenerator;
+                // Validate exactly one input option is provided
+                match (&input, &input_dir) {
+                    (Some(_), Some(_)) => {
+                        anyhow::bail!("Cannot use both --input and --input-dir");
+                    }
+                    (None, None) => {
+                        anyhow::bail!("Must provide either --input or --input-dir");
+                    }
+                    _ => {}
+                }
 
-                info!(
-                    "Generating tiles from {:?} to {:?} (tile_size={}°)",
-                    input, output, tile_size
-                );
+                if let Some(input_file) = input {
+                    // Single-PBF mode (existing behavior)
+                    use crate::rmdf::generator::TileGenerator;
 
-                let generator = TileGenerator::new(input.clone(), output.clone(), *tile_size)?;
-                generator.generate()?;
+                    info!(
+                        "Generating tiles from {:?} to {:?} (tile_size={}°)",
+                        input_file, output, tile_size
+                    );
 
-                info!("Tile generation complete");
+                    let generator = TileGenerator::new(input_file.clone(), output.clone(), *tile_size)?;
+                    generator.generate()?;
+
+                    info!("Tile generation complete");
+                } else if let Some(input_dir) = input_dir {
+                    // Multi-PBF mode (new behavior)
+                    use crate::rmdf::generator::MultiPbfGenerator;
+
+                    info!(
+                        "Generating tiles from directory {:?} to {:?} (tile_size={}°)",
+                        input_dir, output, tile_size
+                    );
+
+                    // Use provided db_path or default to temp location in output directory
+                    let db_path = db_path.clone().unwrap_or_else(|| output.join(".intermediate.redb"));
+
+                    let generator = MultiPbfGenerator::new(
+                        input_dir.clone(),
+                        output.clone(),
+                        *tile_size,
+                        db_path,
+                    )?;
+                    generator.generate()?;
+
+                    info!("Multi-PBF tile generation complete");
+                }
+
                 Ok(())
             }
             #[cfg(feature = "debug-viewer")]

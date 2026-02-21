@@ -124,15 +124,15 @@ Note: For parallelism, we can use Rayon similar to `PbfStreamer::partition_paral
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] Unit test: Store and retrieve grid via `GridStorage::store_grid()` and `load_grid()`
-- [ ] Unit test: Store and retrieve tile via `IntermediateTile::save_to_redb()` and `load_from_redb()`
-- [ ] Integration test: Process single PBF, verify redb contains expected data
+ [x] Unit test: Store and retrieve grid via `GridStorage::store_grid()` and `load_grid()`
+ [x] Unit test: Store and retrieve tile via `IntermediateTile::save_to_redb()` and `load_from_redb()`
+ [x] Integration test: Process single PBF, verify redb contains expected data
 
 ### Manual Verification:
-- [ ] Process PBF with multi-PBF generator
-- [ ] Verify redb file contains grid data (not empty)
-- [ ] Verify redb file contains tile nodes/ways/relations
-- [ ] Verify tile count matches expected from PBF bounds
+ [x] Process PBF with multi-PBF generator
+ [x] Verify redb file contains grid data (not empty)
+ [x] Verify redb file contains tile nodes/ways/relations
+ [x] Verify tile count matches expected from PBF bounds
 
 ## Dependencies
 
