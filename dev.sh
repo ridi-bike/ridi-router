@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+export RUST_BACKTRACE=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PBF_DIR="$SCRIPT_DIR/map-data/pbf"
 INPUT_DIR="$SCRIPT_DIR/map-data/input"
@@ -94,7 +96,7 @@ cmd_generate_tiles() {
 
     # Run tile generation
     echo "Generating tiles..."
-    cargo run -- generate-tiles --input "$INPUT_DIR" --output "$OUTPUT_DIR" --size 0.1
+    cargo run -- generate-tiles --input "$INPUT_DIR" --output "$OUTPUT_DIR" --tile-size-deg 0.1
 }
 
 cmd_build() {

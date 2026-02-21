@@ -229,7 +229,7 @@ enum CliMode {
 
         #[arg(long, default_value = "1.0")]
         /// Tile size in degrees (e.g., 0.1, 1.0)
-        tile_size: f32,
+        tile_size_deg: f32,
 
         #[arg(long, value_name = "FILE")]
         /// Path for intermediate database (multi-file mode only)
@@ -462,7 +462,7 @@ impl RouterRunner {
                 input,
                 input_dir,
                 output,
-                tile_size,
+                tile_size_deg,
                 db_path,
             } => {
                 // Validate exactly one input option is provided
@@ -481,11 +481,11 @@ impl RouterRunner {
                     use crate::rmdf::generator::TileGenerator;
 
                     info!(
-                        "Generating tiles from {:?} to {:?} (tile_size={}°)",
-                        input_file, output, tile_size
+                        "Generating tiles from {:?} to {:?} (tile_size_deg={}°)",
+                        input_file, output, tile_size_deg
                     );
 
-                    let generator = TileGenerator::new(input_file.clone(), output.clone(), *tile_size)?;
+                    let generator = TileGenerator::new(input_file.clone(), output.clone(), *tile_size_deg)?;
                     generator.generate()?;
 
                     info!("Tile generation complete");
@@ -494,8 +494,8 @@ impl RouterRunner {
                     use crate::rmdf::generator::MultiPbfGenerator;
 
                     info!(
-                        "Generating tiles from directory {:?} to {:?} (tile_size={}°)",
-                        input_dir, output, tile_size
+                        "Generating tiles from directory {:?} to {:?} (tile_size_deg={}°)",
+                        input_dir, output, tile_size_deg
                     );
 
                     // Use provided db_path or default to temp location in output directory
@@ -504,7 +504,7 @@ impl RouterRunner {
                     let generator = MultiPbfGenerator::new(
                         input_dir.clone(),
                         output.clone(),
-                        *tile_size,
+                        *tile_size_deg,
                         db_path,
                     )?;
                     generator.generate()?;

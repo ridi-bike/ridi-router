@@ -1,17 +1,13 @@
 use std::{
-    cmp::{Eq, Ordering},
-    collections::{HashMap, HashSet},
+    cmp::Eq,
+    collections::HashMap,
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
     sync::OnceLock,
-    time::Instant,
 };
 
-use anyhow::Context;
-use geo::{Distance, Haversine, Point};
 use serde::{Deserialize, Serialize};
-use tracing::trace;
 
 #[cfg(feature = "debug-with-postgres")]
 use crate::map_data::debug_writer::MapDebugWriter;
@@ -19,27 +15,11 @@ use crate::map_data::debug_writer::MapDebugWriter;
 use geo::{Coord, LineString};
 
 use crate::{
-    map_data::{
-        osm::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType},
-        rule::MapDataRule,
-    },
-    osm_data::{
-        // TODO: Old data loading system - commented out
-        // data_reader::{OsmDataReader, ALLOWED_ACCESS_VALUES, ALLOWED_HIGHWAY_VALUES},
-        DataSource,
-    },
     rmdf::format::{TagSetRecord, TileId},
-    router::rules::{RouterRules, RulesTagValueAction},
+    router::rules::RouterRules,
 };
 
-use super::{
-    line::{LineDirection, MapDataLine},
-    osm::{OsmNode, OsmRelation, OsmWay},
-    point::MapDataPoint,
-    proximity::PointGrid,
-    rule::MapDataRuleType,
-    MapDataError,
-};
+use super::{line::MapDataLine, point::MapDataPoint};
 
 #[derive(PartialEq, Eq, Hash)]
 enum AvoidTag {
@@ -359,7 +339,8 @@ impl MapDataGraph {
             source_files: Vec::new(),
             tiles: Vec::new(),
         };
-        let tile_manager = crate::rmdf::TileManager::from_manifest(manifest, std::path::PathBuf::from("test"));
+        let tile_manager =
+            crate::rmdf::TileManager::from_manifest(manifest, std::path::PathBuf::from("test"));
         Self {
             tile_manager: std::sync::RwLock::new(tile_manager),
             tags: std::sync::RwLock::new(ElementTags::new()),
@@ -395,7 +376,10 @@ impl MapDataGraph {
         let points = self.test_points.read().unwrap();
         if points.contains_key(id) {
             // Use a dummy tile ID (0, 0) for test points
-            Some(MapDataPointRef::new(crate::rmdf::TileId { col: 0, row: 0 }, *id))
+            Some(MapDataPointRef::new(
+                crate::rmdf::TileId { col: 0, row: 0 },
+                *id,
+            ))
         } else {
             None
         }
@@ -510,11 +494,12 @@ impl MapDataGraph {
                 for line_ref in &point.lines {
                     let line = line_ref.get();
                     // Determine which endpoint is not the center point
-                    let other_point = if line.points.0.get_element_id() == center_point.get_element_id() {
-                        line.points.1.clone()
-                    } else {
-                        line.points.0.clone()
-                    };
+                    let other_point =
+                        if line.points.0.get_element_id() == center_point.get_element_id() {
+                            line.points.1.clone()
+                        } else {
+                            line.points.0.clone()
+                        };
                     adjacent.push((line_ref.clone(), other_point));
                 }
                 return adjacent;
