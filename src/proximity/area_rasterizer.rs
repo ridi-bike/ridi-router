@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
 
 use crate::osm_data::in_memory_pbf::PbfBounds;
-use crate::simd::haversine::haversine_batch;
+use crate::simd::haversine::min_distance_to_vertices;
 
 use super::rasterized_grid::{
     bearing_to_sector, RasterizedProximityGrid, MILITARY_INTERIOR_M,
@@ -307,6 +307,7 @@ fn compute_residential_sectors_for_cell(
             geo::Closest::SinglePoint(p) => Haversine.distance(geo_point, p),
             geo::Closest::Indeterminate => {
                 // Fall back to SIMD vertex distance
+                // Fall back to SIMD vertex distance
                 let vertices: Vec<(f32, f32)> = poly_data
                     .polygon
                     .iter()
@@ -314,18 +315,7 @@ fn compute_residential_sectors_for_cell(
                     .map(|c| (c.y as f32, c.x as f32))
                     .collect();
 
-                if vertices.is_empty() {
-                    continue;
-                }
-
-                let distances = haversine_batch(cell_lat, cell_lon, &vertices);
-                distances.into_iter().fold(f64::MAX, |min, d| {
-                    if (d as f64) < min {
-                        d as f64
-                    } else {
-                        min
-                    }
-                })
+                min_distance_to_vertices(cell_lat, cell_lon, &vertices) as f64
             }
         };
 
