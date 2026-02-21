@@ -2,7 +2,7 @@
 type: feature
 priority: high
 created: 2026-02-21T00:00:00Z
-status: created
+status: researched
 tags: [tile-generation, multi-pbf, cli, rmdf]
 keywords: [generate-tiles, MultiPbfGenerator, PbfStreamer, TileGenerator, input-dir, redb, overlap]
 patterns: [cli argument parsing, parallel processing, proximity grid merge, tile deduplication]
