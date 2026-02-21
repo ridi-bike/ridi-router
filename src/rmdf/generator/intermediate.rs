@@ -471,20 +471,6 @@ impl GridStorage {
         Ok(overlapping)
     }
 
-    /// Get all PBF file IDs
-    pub fn get_all_pbf_ids(db: &Database) -> anyhow::Result<Vec<u64>> {
-        let read_txn = db.begin_read()?;
-        let files_table = read_txn.open_table(PBF_FILES)?;
-
-        let mut result = Vec::new();
-        for entry in files_table.iter()? {
-            let (key_guard, _value_guard) = entry?;
-            result.push(key_guard.value());
-        }
-
-        Ok(result)
-    }
-
     /// Load multiple grids and return them with their bounds
     pub fn load_grids_for_region(
         db: &Database,
