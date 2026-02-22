@@ -105,14 +105,6 @@ impl GridCell {
         self.is_military_interior |= other.is_military_interior;
     }
 
-    /// Add residential area to a specific sector
-    #[inline]
-    pub fn add_to_sector(&mut self, sector_idx: usize, area: f32) {
-        if sector_idx < 8 {
-            self.residential_sectors[sector_idx] += area;
-        }
-    }
-
     /// Get total residential area across all sectors
     #[inline]
     pub fn total_residential_area(&self) -> f32 {
@@ -601,26 +593,6 @@ mod tests {
             assert_eq!(original.residential_sectors, restored_cell.residential_sectors);
             assert_eq!(original.is_military_interior, restored_cell.is_military_interior);
         }
-    }
-
-    #[test]
-    fn test_gridcell_add_to_sector() {
-        let mut cell = GridCell::new();
-        
-        // Add to valid sectors
-        cell.add_to_sector(0, 100.0);
-        assert_eq!(cell.residential_sectors[0], 100.0);
-        
-        cell.add_to_sector(0, 50.0); // Add more to same sector
-        assert_eq!(cell.residential_sectors[0], 150.0);
-        
-        cell.add_to_sector(7, 200.0);
-        assert_eq!(cell.residential_sectors[7], 200.0);
-        
-        // Invalid sector index should be ignored
-        cell.add_to_sector(8, 999.0);
-        cell.add_to_sector(100, 999.0);
-        assert_eq!(cell.residential_sectors[0], 150.0); // Unchanged
     }
 
     #[test]
