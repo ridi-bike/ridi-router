@@ -125,8 +125,7 @@ debug-viewer:
       --debug-dir ./map-data/debug
 
 run:
-  cargo run --features=debug-split-gpx,debug-with-postgres -- \
-    generate-route \
+  cargo run --features=debug-split-gpx -- \
       --input ./map-data/brandenburg-latest.osm.pbf \
       --output ./map-data/output.gpx \
       --debug-dir ./map-data/debug/ \

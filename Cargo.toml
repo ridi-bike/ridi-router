@@ -14,7 +14,6 @@ opt-level = 3
 default = []
 debug-viewer = ["dep:duckdb", "dep:qstring", "dep:sql-builder", "dep:tiny_http"]
 rule-schema-writer = []
-debug-with-postgres = []
 debug-split-gpx = []
 
 [dependencies]
@@ -36,7 +35,6 @@ interprocess = "2.2.2"
 json-tools = "1.1.3"
 memmap2 = "0.9"
 osmpbfreader = "0.16.1"
-postgres = "0.19.10"
 qstring = { version = "0.7.2", optional = true }
 rayon = "1.10.0"
 redb = "2.3"

@@ -1,7 +1,6 @@
 use std::{collections::HashMap, ops::Sub, time::Instant};
 
 use crate::{
-    debug::writer::DebugWriter,
     map_data::graph::{MapDataGraph, MapDataPointRef},
     router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
 };
@@ -330,8 +329,6 @@ impl Generator {
                 let itineraries = self.generate_itineraries(*avoid_residential, Some(adjustment));
                 let itineraries = self.dedupe_itineraries(itineraries)?;
                 let itinerary_count = itineraries.len();
-
-                DebugWriter::write_itineraries(&itineraries);
 
                 let route_gen_start_instant = Instant::now();
 

@@ -8,7 +8,6 @@ use tracing::{info, trace};
 
 use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
-    debug::writer::DebugWriter,
     ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
@@ -183,11 +182,6 @@ enum CliMode {
         /// JSON file with specified rules for route generation. Default values used if file not
         /// specified
         rule_file: Option<PathBuf>,
-
-        #[arg(long, value_name = "DIR")]
-        /// Write debug files to a directory. Will slow down the route generation. Used for
-        /// examining route generation rules. Can be viewed with the 'debug-viewer' binary
-        debug_dir: Option<PathBuf>,
 
         #[command(subcommand)]
         /// Routing mode to generate a route between start and finish coordinates or a round trip
@@ -372,9 +366,7 @@ impl RouterRunner {
         routing_mode: &RoutingMode,
         data_destination: &DataDestination,
         rule_file: Option<PathBuf>,
-        debug_dir: Option<PathBuf>,
     ) -> Result<()> {
-        DebugWriter::init(debug_dir).context("Failed to init debug writer")?;
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
 
         info!("Using RMDF tiles from {:?}", tiles_dir);
@@ -434,13 +426,11 @@ impl RouterRunner {
                 tiles,
                 rule_file,
                 output,
-                debug_dir,
             } => RouterRunner::run_generate_route(
                 tiles.clone(),
                 routing_mode,
                 output,
                 rule_file.clone(),
-                debug_dir.clone(),
             ),
             CliMode::GenerateTiles {
                 input,

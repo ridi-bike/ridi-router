@@ -9,11 +9,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "debug-with-postgres")]
-use crate::map_data::debug_writer::MapDebugWriter;
-#[cfg(feature = "debug-with-postgres")]
-use geo::{Coord, LineString};
-
 use crate::{
     map_data::line::LineDirection,
     rmdf::format::{TagSetRecord, TileId},

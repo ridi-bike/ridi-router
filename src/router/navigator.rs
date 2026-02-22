@@ -6,7 +6,7 @@ use std::{
 use tracing::trace;
 
 use crate::{
-    debug::writer::DebugWriter, map_data::graph::MapDataPointRef, router::rules::RouterRules,
+    map_data::graph::MapDataPointRef, router::rules::RouterRules,
 };
 
 use super::{
@@ -207,13 +207,6 @@ impl Navigator {
                 .walker
                 .move_forward_to_next_fork(|p| self.itinerary.is_finished(p));
 
-            DebugWriter::write_step(
-                self.itinerary.id(),
-                loop_counter,
-                &move_result,
-                self.walker.get_route(),
-            );
-
             if move_result == Ok(WalkerMoveResult::Finish) {
                 return NavigationResult::Finished(self.walker.get_route().clone());
             }
@@ -223,12 +216,6 @@ impl Navigator {
                     .discarded_fork_choices
                     .get_discarded_choices_for_point(last_point)
                     .map_or(Vec::new(), |d| d);
-                DebugWriter::write_fork_choices(
-                    self.itinerary.id(),
-                    loop_counter,
-                    &fork_choices,
-                    discarded_choices,
-                );
                 let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
 
                 if self.itinerary.check_set_next(last_point.clone()) {
@@ -252,13 +239,6 @@ impl Navigator {
                                         ),
                                         rules: &self.rules,
                                     });
-                                    DebugWriter::write_fork_choice_weight(
-                                        self.itinerary.id(),
-                                        loop_counter,
-                                        &fork_route_segment.get_end_point().get().id,
-                                        &weight_calc.name,
-                                        &weight_calc_result,
-                                    );
                                     weight_calc_result
                                 })
                                 .collect::<Vec<_>>();
@@ -278,12 +258,6 @@ impl Navigator {
                 if let Some(chosen_fork_point) = chosen_fork_point {
                     self.discarded_fork_choices
                         .add_discarded_choice(last_point, &chosen_fork_point);
-                    DebugWriter::write_step_result(
-                        self.itinerary.id(),
-                        loop_counter,
-                        "ForkChoice",
-                        Some(chosen_fork_point.get().id),
-                    );
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     if self
@@ -293,12 +267,6 @@ impl Navigator {
                         .is_none()
                     {
                         trace!("Stuck");
-                        DebugWriter::write_step_result(
-                            self.itinerary.id(),
-                            loop_counter,
-                            "Stuck",
-                            None,
-                        );
                         return NavigationResult::Stuck;
                     }
                     if self
@@ -308,15 +276,8 @@ impl Navigator {
                         self.discarded_fork_choices.set_prev_next();
                     }
                     self.walker.move_backwards_to_prev_fork();
-                    DebugWriter::write_step_result(
-                        self.itinerary.id(),
-                        loop_counter,
-                        "MoveBack",
-                        None,
-                    );
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
-                DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "MoveBack", None);
                 if self
                     .itinerary
                     .check_set_back(self.walker.get_last_point().clone())
@@ -328,8 +289,6 @@ impl Navigator {
 
             if loop_counter >= self.rules.basic.step_limit.0 {
                 trace!("Reached loop {loop_counter}, stopping");
-                DebugWriter::write_step_result(self.itinerary.id(), loop_counter, "Stopped", None);
-                return NavigationResult::Stopped;
             }
         }
     }

@@ -201,9 +201,8 @@ impl DebugViewer {
     }
 
     fn prep_data(debug_dir: PathBuf, db_con: &Connection) -> Result<(), DebugViewerError> {
-        let metadata_file_path =
-            crate::debug::writer::DebugWriter::get_metadata_file_path(&debug_dir);
-        let mut metadata_file = File::open(metadata_file_path)
+        let mut metadata_file_path = debug_dir.clone();
+        metadata_file_path.push("metadata.json");
             .map_err(|error| DebugViewerError::MetadataRead { error })?;
         let metadata: DebugMetadata = serde_json::from_reader(metadata_file)
             .map_err(|error| DebugViewerError::Deserialize { error })?;
