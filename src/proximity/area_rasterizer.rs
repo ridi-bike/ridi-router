@@ -182,10 +182,6 @@ impl AreaRasterizer {
         self.grid
     }
 
-    /// Get a reference to the grid for inspection.
-    pub fn grid(&self) -> &RasterizedProximityGrid {
-        &self.grid
-    }
 }
 
 /// Pre-computed data for efficient polygon processing.
