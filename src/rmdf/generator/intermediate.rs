@@ -196,19 +196,10 @@ impl IntermediateTile {
     }
 }
 
-/// Collection of all intermediate tiles
-pub struct TileBuffers {
-    pub tiles: HashMap<TileId, IntermediateTile>,
-}
+/// Utility functions for tile discovery
+pub struct TileBuffers;
 
 impl TileBuffers {
-    pub fn new() -> Self {
-        Self {
-            tiles: HashMap::new(),
-        }
-    }
-
-
     /// Discover all tile IDs from redb database
     pub fn discover_tiles_from_redb(db: &Database) -> anyhow::Result<Vec<TileId>> {
         let read_txn = db.begin_read()?;
@@ -230,12 +221,6 @@ impl TileBuffers {
     }
 }
 
-
-impl Default for TileBuffers {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 
 /// Grid bounds stored in PBF_BOUNDS table
