@@ -52,16 +52,14 @@ const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
 
 /// Data extracted from PBF for a single tile
 struct TileData {
-    tile_id: TileId,
     nodes: HashMap<u64, OsmNode>, // OSM ID -> Node with coordinates (flags pre-computed)
     ways: Vec<OsmWay>,
     relations: Vec<OsmRelation>,
 }
 
 impl TileData {
-    fn new(tile_id: TileId) -> Self {
+    fn new() -> Self {
         Self {
-            tile_id,
             nodes: HashMap::new(),
             ways: Vec::new(),
             relations: Vec::new(),
@@ -294,7 +292,7 @@ impl<'a> PbfStreamer<'a> {
         tile_id: TileId,
         buffered_bounds: crate::rmdf::format::TileBounds,
     ) -> Result<TileData> {
-        let mut tile_data = TileData::new(tile_id);
+        let mut tile_data = TileData::new();
 
         // Query in-memory structure (O(log n) spatial lookups - FAST!)
         let nodes_in_bounds = self.pbf_data.query_nodes_in_bounds(&buffered_bounds);
@@ -697,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_tile_data_validation_no_orphaned_ways() {
-        let mut tile_data = TileData::new(TileId { col: 0, row: 0 });
+        let mut tile_data = TileData::new();
 
         // Add nodes
         tile_data.nodes.insert(
@@ -748,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_tile_data_validation_detects_orphaned_ways() {
-        let mut tile_data = TileData::new(TileId { col: 0, row: 0 });
+        let mut tile_data = TileData::new();
 
         // Add only node 1
         tile_data.nodes.insert(
