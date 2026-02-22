@@ -286,15 +286,6 @@ impl<'a> PbfStreamer<'a> {
             lon_max: (bounds.lon_max + buffer_degrees).min(180.0),
         }
     }
-
-    /// Check if a point is within geographic bounds
-    fn point_in_bounds(&self, lat: f64, lon: f64, bounds: crate::rmdf::format::TileBounds) -> bool {
-        lat >= bounds.lat_min as f64
-            && lat < bounds.lat_max as f64
-            && lon >= bounds.lon_min as f64
-            && lon < bounds.lon_max as f64
-    }
-
     /// Extract nodes, ways, and relations within buffered bounds using in-memory PBF
     ///
     /// Queries the pre-loaded in-memory data structure (NO PBF READS!)
@@ -703,32 +694,6 @@ mod tests {
         assert_eq!(tiles.len(), 1);
     }
 
-    #[test]
-    fn test_point_in_bounds() {
-        let streamer = create_test_streamer(1.0);
-
-        let bounds = TileBounds {
-            lat_min: 50.0,
-            lat_max: 51.0,
-            lon_min: 10.0,
-            lon_max: 11.0,
-        };
-
-        // Inside bounds
-        assert!(streamer.point_in_bounds(50.5, 10.5, bounds));
-
-        // On min edge (inclusive)
-        assert!(streamer.point_in_bounds(50.0, 10.0, bounds));
-
-        // On max edge (exclusive)
-        assert!(!streamer.point_in_bounds(51.0, 11.0, bounds));
-
-        // Outside bounds
-        assert!(!streamer.point_in_bounds(49.0, 10.5, bounds));
-        assert!(!streamer.point_in_bounds(50.5, 9.0, bounds));
-        assert!(!streamer.point_in_bounds(52.0, 10.5, bounds));
-        assert!(!streamer.point_in_bounds(50.5, 12.0, bounds));
-    }
 
     #[test]
     fn test_tile_data_validation_no_orphaned_ways() {
