@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use std::panic::catch_unwind;
-use std::{num::ParseFloatError, path::PathBuf, str::FromStr, time::Instant};
+use std::{num::ParseFloatError, path::PathBuf, str::FromStr};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -8,7 +7,7 @@ use tracing::{info, trace};
 
 use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
-    ipc_handler::{IpcHandler, IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
+    ipc_handler::{IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
     map_data::graph::MapDataGraph,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
     router::{

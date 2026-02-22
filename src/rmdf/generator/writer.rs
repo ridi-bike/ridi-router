@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use bytemuck::bytes_of;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::debug;

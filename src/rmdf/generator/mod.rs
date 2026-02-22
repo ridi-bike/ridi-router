@@ -3,9 +3,8 @@ mod pbf_streamer;
 mod writer;
 pub mod intermediate;
 
-pub use manifest::{ManifestGenerator, TileManifest};
+pub use manifest::ManifestGenerator;
 pub use pbf_streamer::PbfStreamer;
-pub use writer::RmdfWriter;
 
 use crate::proximity::RasterizedProximityGrid;
 

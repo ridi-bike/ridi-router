@@ -9,8 +9,6 @@
 pub mod haversine;
 pub mod trig_approx;
 
-pub use haversine::{haversine_batch, haversine_f32x8, min_distance_to_vertices};
-pub use trig_approx::{asin_f32x8, cos_f32x8, sin_f32x8};
 
 #[cfg(target_feature = "avx512f")]
 pub use haversine::haversine_f32x16;
