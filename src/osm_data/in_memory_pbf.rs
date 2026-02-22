@@ -222,66 +222,6 @@ impl Default for InMemoryPbf {
 }
 
 impl InMemoryPbf {
-    /// Load PBF file into memory with spatial indexing
-    pub fn from_pbf_file(path: &Path) -> Result<Self> {
-        let start = Instant::now();
-        info!("Loading PBF file into memory: {:?}", path);
-
-        // Pass 1: Load all nodes
-        info!("Pass 1: Loading nodes...");
-        let (nodes_by_id, nodes_spatial, bounds) = Self::load_nodes(path)?;
-        info!(
-            "Loaded {} nodes in {:.2}s",
-            nodes_by_id.len(),
-            start.elapsed().as_secs_f64()
-        );
-
-        // Pass 2: Load all ways + compute bounding boxes
-        info!("Pass 2: Loading ways...");
-        let pass2_start = Instant::now();
-        let (ways_by_id, ways_spatial, residential_ways, military_ways) =
-            Self::load_ways(path, &nodes_by_id)?;
-        info!(
-            "Loaded {} ways ({} residential, {} military) in {:.2}s",
-            ways_by_id.len(),
-            residential_ways.len(),
-            military_ways.len(),
-            pass2_start.elapsed().as_secs_f64()
-        );
-
-        // Pass 3: Load all relations + compute bounding boxes (iterative)
-        info!("Pass 3: Loading relations...");
-        let pass3_start = Instant::now();
-        let (relations_by_id, relations_spatial, residential_relations, military_relations) =
-            Self::load_relations(path, &nodes_by_id, &ways_by_id)?;
-        info!(
-            "Loaded {} relations ({} residential, {} military) in {:.2}s",
-            relations_by_id.len(),
-            residential_relations.len(),
-            military_relations.len(),
-            pass3_start.elapsed().as_secs_f64()
-        );
-
-        info!(
-            "PBF loading complete in {:.2}s",
-            start.elapsed().as_secs_f64()
-        );
-
-        Ok(Self {
-            nodes_by_id,
-            ways_by_id,
-            relations_by_id,
-            nodes_spatial,
-            ways_spatial,
-            relations_spatial,
-            residential_ways,
-            residential_relations,
-            military_ways,
-            military_relations,
-            bounds,
-        })
-    }
-
     /// Load PBF file with pre-computed proximity flags (optimized single-pass approach)
     ///
     /// This method pre-computes residential_in_proximity and nogo_area flags during
@@ -1109,52 +1049,4 @@ impl InMemoryPbf {
             .collect()
     }
 
-    /// Query area ways by type (residential, military) within bounds
-    pub fn query_area_ways(&self, area_type: &str, bounds: &TileBounds) -> Vec<&WayWithBounds> {
-        let way_ids = match area_type {
-            "residential" => &self.residential_ways,
-            "military" => &self.military_ways,
-            _ => return Vec::new(),
-        };
-
-        way_ids
-            .iter()
-            .filter_map(|id| self.ways_by_id.get(id))
-            .filter(|way| way.bbox.intersects_tile_bounds(bounds))
-            .collect()
-    }
-
-    /// Query area relations by type (residential, military) within bounds
-    pub fn query_area_relations(
-        &self,
-        area_type: &str,
-        bounds: &TileBounds,
-    ) -> Vec<&RelationWithBounds> {
-        let relation_ids = match area_type {
-            "residential" => &self.residential_relations,
-            "military" => &self.military_relations,
-            _ => return Vec::new(),
-        };
-
-        relation_ids
-            .iter()
-            .filter_map(|id| self.relations_by_id.get(id))
-            .filter(|rel| rel.bbox.intersects_tile_bounds(bounds))
-            .collect()
-    }
-
-    /// Get a node by ID
-    pub fn get_node(&self, id: u64) -> Option<&OsmNode> {
-        self.nodes_by_id.get(&id)
-    }
-
-    /// Get a way by ID
-    pub fn get_way(&self, id: u64) -> Option<&WayWithBounds> {
-        self.ways_by_id.get(&id)
-    }
-
-    /// Get a relation by ID
-    pub fn get_relation(&self, id: u64) -> Option<&RelationWithBounds> {
-        self.relations_by_id.get(&id)
-    }
 }
