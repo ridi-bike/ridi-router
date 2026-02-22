@@ -193,11 +193,6 @@ pub struct InMemoryPbf {
     ways_spatial: RTree<WaySpatialEntry>,
     relations_spatial: RTree<RelationSpatialEntry>,
 
-    // Area type tracking (residential, military)
-    residential_ways: Vec<u64>,
-    residential_relations: Vec<u64>,
-    military_ways: Vec<u64>,
-    military_relations: Vec<u64>,
 
     // Metadata
     pub bounds: PbfBounds,
@@ -212,10 +207,6 @@ impl Default for InMemoryPbf {
             nodes_spatial: RTree::new(),
             ways_spatial: RTree::new(),
             relations_spatial: RTree::new(),
-            residential_ways: Vec::new(),
-            residential_relations: Vec::new(),
-            military_ways: Vec::new(),
-            military_relations: Vec::new(),
             bounds: PbfBounds::empty(),
         }
     }
@@ -327,10 +318,6 @@ impl InMemoryPbf {
             nodes_spatial,
             ways_spatial,
             relations_spatial,
-            residential_ways,
-            residential_relations,
-            military_ways,
-            military_relations,
             bounds,
         })
     }
@@ -447,10 +434,6 @@ impl InMemoryPbf {
                 nodes_spatial,
                 ways_spatial,
                 relations_spatial,
-                residential_ways,
-                residential_relations,
-                military_ways,
-                military_relations,
                 bounds,
             },
             grid,
