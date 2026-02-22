@@ -254,11 +254,6 @@ impl RasterizedProximityGrid {
         self.cell_index(lat, lon).map(|idx| &mut self.cells[idx])
     }
 
-    /// Get a mutable reference to a cell by index.
-    #[inline]
-    pub fn get_cell_by_index_mut(&mut self, index: usize) -> Option<&mut GridCell> {
-        self.cells.get_mut(index)
-    }
 
     /// O(1) lookup for residential proximity flag.
     #[inline]
@@ -280,25 +275,6 @@ impl RasterizedProximityGrid {
         self.cells.len()
     }
 
-    /// Get grid dimensions (cols, rows).
-    #[inline]
-    pub fn dimensions(&self) -> (u32, u32) {
-        (self.cols, self.rows)
-    }
-
-    /// Get grid bounds (lon_min, lat_min, lon_max, lat_max).
-    #[inline]
-    pub fn bounds(&self) -> (f32, f32, f32, f32) {
-        let lon_max = self.lon_min + (self.cols as f32) * GRID_CELL_SIZE_DEG;
-        let lat_max = self.lat_min + (self.rows as f32) * GRID_CELL_SIZE_DEG;
-        (self.lon_min, self.lat_min, lon_max, lat_max)
-    }
-
-    /// Iterate over all cell indices for parallel processing.
-    #[inline]
-    pub fn cell_indices(&self) -> impl Iterator<Item = usize> {
-        0..self.cells.len()
-    }
 
     /// Get a slice of all cells for parallel processing.
     #[inline]
