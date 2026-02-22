@@ -96,6 +96,7 @@ impl IntermediateTile {
         self.nodes.is_empty() && self.ways.is_empty() && self.relations.is_empty()
     }
 
+    #[cfg(test)]
     /// Get counts of elements in this tile
     pub fn counts(&self) -> (usize, usize, usize) {
         (self.nodes.len(), self.ways.len(), self.relations.len())
