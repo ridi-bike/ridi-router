@@ -6,7 +6,6 @@ use std::{
 use router_runner::RouterRunner;
 use tracing::{error_span, Level};
 
-mod debug;
 mod gpx_writer;
 mod ipc_handler;
 mod map_data;

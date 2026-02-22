@@ -51,12 +51,6 @@ pub enum RouterRunnerError {
 
     #[error("Failed to generate routes: {error}")]
     GenerateRoute { error: GeneratorError },
-
-    #[cfg(feature = "debug-viewer")]
-    #[error("Failed run debug viewer: {error}")]
-    DebugViewer {
-        error: crate::debug::viewer::DebugViewerError,
-    },
 }
 
 #[derive(Parser)]
@@ -213,13 +207,6 @@ enum CliMode {
         /// Path for intermediate database (multi-file mode only)
         /// Default: temp file in output directory
         db_path: Option<PathBuf>,
-    },
-    /// Run Debug viewer
-    #[cfg(feature = "debug-viewer")]
-    DebugViewer {
-        #[arg(long, value_name = "DIR")]
-        /// Load a directory with debug files generated when generating a route
-        debug_dir: PathBuf,
     },
     /// Generate JSON schema file for rule files
     #[cfg(feature = "rule-schema-writer")]
@@ -487,10 +474,6 @@ impl RouterRunner {
                 }
 
                 Ok(())
-            }
-            #[cfg(feature = "debug-viewer")]
-            CliMode::DebugViewer { debug_dir } => {
-                Ok(crate::debug::viewer::DebugViewer::run(debug_dir.clone())?)
             }
             #[cfg(feature = "rule-schema-writer")]
             CliMode::RuleSchemaWrite { destination } => {
