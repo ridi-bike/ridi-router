@@ -6,7 +6,6 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tracing::{info, trace};
 
-use crate::osm_data::DataSource;
 use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
     debug::writer::DebugWriter,
@@ -111,21 +110,6 @@ impl FromStr for Coords {
     }
 }
 
-impl FromStr for DataSource {
-    type Err = RouterRunnerError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let file = PathBuf::from_str(s).map_err(|_error| RouterRunnerError::InputFileInvalid {
-            filename: s.to_string(),
-        })?;
-        if let Some(ext) = file.extension() {
-            if ext == "pbf" {
-                return Ok(DataSource::PbfFile { file });
-            }
-        }
-        Err(RouterRunnerError::InputFileFormatIncorrect { filename: file })
-    }
-}
 
 impl FromStr for DataDestination {
     type Err = RouterRunnerError;
