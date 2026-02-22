@@ -29,15 +29,6 @@ impl BoundingBox {
         }
     }
 
-    /// Create a bounding box from a single point
-    pub fn from_point(lat: f64, lon: f64) -> Self {
-        Self {
-            lat_min: lat,
-            lat_max: lat,
-            lon_min: lon,
-            lon_max: lon,
-        }
-    }
 
     /// Check if the bounding box is empty (no points added)
     pub fn is_empty(&self) -> bool {
@@ -68,14 +59,6 @@ impl BoundingBox {
             [self.lon_min, self.lat_min],
             [self.lon_max, self.lat_max],
         )
-    }
-
-    /// Check if this bounding box intersects with tile bounds
-    pub fn intersects_tile_bounds(&self, bounds: &TileBounds) -> bool {
-        !(self.lat_max < bounds.lat_min as f64
-            || self.lat_min > bounds.lat_max as f64
-            || self.lon_max < bounds.lon_min as f64
-            || self.lon_min > bounds.lon_max as f64)
     }
 }
 
@@ -162,22 +145,6 @@ impl PbfBounds {
         self.lat_max = Some(self.lat_max.map_or(lat, |v| v.max(lat)));
         self.lon_min = Some(self.lon_min.map_or(lon, |v| v.min(lon)));
         self.lon_max = Some(self.lon_max.map_or(lon, |v| v.max(lon)));
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.lat_min.is_some()
-            && self.lat_max.is_some()
-            && self.lon_min.is_some()
-            && self.lon_max.is_some()
-    }
-
-    pub fn extract(&self) -> (f64, f64, f64, f64) {
-        (
-            self.lat_min.unwrap_or(0.0),
-            self.lat_max.unwrap_or(0.0),
-            self.lon_min.unwrap_or(0.0),
-            self.lon_max.unwrap_or(0.0),
-        )
     }
 }
 
