@@ -224,17 +224,19 @@ export default defineConfig({
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `bun run build` in ui/ creates dist/ directory
-- [ ] dist/ contains index.html
-- [ ] dist/ contains assets/ with .js and .css files
-- [ ] `cargo build --features rmdf-viewer` compiles without errors
-- [ ] Binary size is reasonable (<50MB for debug build)
+### Automated Verification:
+- [x] `bun run build` in ui/ creates dist/ directory
+- [x] dist/ contains index.html
+- [x] dist/ contains assets/ with .js and .css files
+- [x] `cargo build --features rmdf-viewer` compiles without errors
+- [x] Binary size is reasonable (<50MB for debug build)
 
 ### Manual Verification:
-- [ ] Build UI: `cd src/debug/rmdf_viewer/ui && bun run build`
-- [ ] Build binary: `cargo build --features rmdf-viewer`
-- [ ] Run: `./target/debug/ridi-router rmdf-viewer --input-dir <test-dir>`
-- [ ] Server logs: "Running RMDF Debug Viewer on http://127.0.0.1:1337"
+### Manual Verification:
+- [x] Build UI: `cd src/debug/rmdf_viewer/ui && bun run build`
+- [x] Build binary: `cargo build --features rmdf-viewer`
+- [x] Run: `./target/debug/ridi-router rmdf-viewer --input-dir <test-dir>`
+- [x] Server logs: "Running RMDF Debug Viewer on http://127.0.0.1:1337"
 - [ ] Open http://127.0.0.1:1337 in browser
 - [ ] Page loads with RMDF Debug Viewer title
 - [ ] Map appears with OpenStreetMap tiles

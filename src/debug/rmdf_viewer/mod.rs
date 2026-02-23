@@ -1,9 +1,13 @@
 mod api;
 use anyhow::Result;
+use include_directory::{include_directory, Dir};
+use std::io::Cursor;
 use std::path::PathBuf;
 use tiny_http::{Header, Method, Request, Response, Server};
 use tracing::info;
 
+// Embed built UI assets at compile time
+static UI_DIST: Dir = include_directory!("$CARGO_MANIFEST_DIR/src/debug/rmdf_viewer/ui/dist");
 #[derive(Debug, thiserror::Error)]
 pub enum RmdfViewerError {
     #[error("Could not start server: {0}")]
@@ -55,10 +59,27 @@ fn handle_request(request: Request, input_dir: &PathBuf) -> Result<(), RmdfViewe
         return Ok(());
     }
 
-    // Static files / SPA fallback (placeholder for now)
-    let response = Response::from_string("RMDF Debug Viewer - API ready, UI not built yet")
-        .with_status_code(503);
-    request.respond(response).map_err(RmdfViewerError::Respond)?;
+    // Static files / SPA fallback
+    match handle_file_request(&url) {
+        Ok(response) => {
+            request.respond(response).map_err(RmdfViewerError::Respond)?;
+        }
+        Err(RmdfViewerError::FileNotFound(_)) => {
+            // SPA fallback: serve index.html for client-side routing
+            if let Ok(index_response) = handle_file_request_for_path("index.html") {
+                request.respond(index_response).map_err(RmdfViewerError::Respond)?;
+            } else {
+                request
+                    .respond(Response::from_string("Not found").with_status_code(404))
+                    .map_err(RmdfViewerError::Respond)?;
+            }
+        }
+        Err(e) => {
+            request
+                .respond(Response::from_string(format!("Error: {}", e)).with_status_code(500))
+                .map_err(RmdfViewerError::Respond)?;
+        }
+    }
 
     Ok(())
 }
@@ -114,3 +135,51 @@ fn handle_api_request(url: &str, input_dir: &PathBuf) -> Result<Response<std::io
     }
 }
 
+
+
+/// Handle static file requests from embedded UI assets
+fn handle_file_request(url: &str) -> Result<Response<Cursor<Vec<u8>>>, RmdfViewerError> {
+    // Security: sanitize filename to prevent path traversal
+    let mut file_name = url.to_string();
+    loop {
+        let len = file_name.len();
+        file_name = file_name.replace("../", "");
+        file_name = file_name.replace("./", "");
+        if file_name.len() == len {
+            break;
+        }
+    }
+
+    // Remove leading slash
+    let file_name = if file_name.starts_with('/') {
+        &file_name[1..]
+    } else {
+        &file_name
+    };
+
+    // SPA fallback: serve index.html for root
+    let file_name = if file_name.is_empty() {
+        "index.html"
+    } else {
+        file_name
+    };
+
+    handle_file_request_for_path(file_name)
+}
+
+/// Handle file request for a specific path in the embedded assets
+fn handle_file_request_for_path(file_name: &str) -> Result<Response<Cursor<Vec<u8>>>, RmdfViewerError> {
+    // Try to get file from embedded dist
+    let file = UI_DIST
+        .get_file(file_name)
+        .ok_or_else(|| RmdfViewerError::FileNotFound(file_name.to_string()))?;
+
+    let mime_type = file.mimetype().to_string();
+    let contents = file.contents();
+
+    Ok(Response::from_data(contents)
+        .with_header(
+            Header::from_bytes(&b"Content-Type"[..], mime_type.as_bytes())
+                .map_err(|_| RmdfViewerError::HeaderCreate)?,
+        ))
+}
