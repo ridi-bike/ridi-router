@@ -436,9 +436,8 @@ export default App;
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `bun run build` compiles without errors
-- [ ] TypeScript: no type errors
-
+- [x] `bun run build` compiles without errors
+- [x] TypeScript: no type errors
 ### Manual Verification:
 - [ ] Load a tile - points appear as blue circles
 - [ ] Load a tile - lines appear as blue polylines

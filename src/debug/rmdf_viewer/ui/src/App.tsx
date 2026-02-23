@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
 import { useTiles } from './hooks/useTiles';
 import { TileList } from './components/TileList';
 import { TileBorders } from './components/TileBorders';
+import { TileElements } from './components/TileElements';
+import type { PointResponse, LineResponse } from './types';
 
 function App() {
   const { 
@@ -21,6 +23,13 @@ function App() {
     loadManifest();
   }, [loadManifest]);
 
+  // Selected element state - will be used in Phase 6 for popups
+  const [selectedPoint, setSelectedPoint] = useState<PointResponse | null>(null);
+  const [selectedLine, setSelectedLine] = useState<LineResponse | null>(null);
+  
+  // Suppress unused variable warnings - these will be used in Phase 6
+  void selectedPoint;
+  void selectedLine;
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
       <aside style={{ width: '300px', padding: '1rem', background: '#f5f5f5', overflow: 'hidden' }}>
@@ -57,6 +66,16 @@ function App() {
           />
           
           {manifest && <TileBorders tiles={manifest.tiles} />}
+          
+          {/* Render elements for each loaded tile */}
+          {Array.from(loadedTiles.values()).map(tile => (
+            <TileElements
+              key={tile.summary.filename}
+              tile={tile}
+              onPointClick={setSelectedPoint}
+              onLineClick={setSelectedLine}
+            />
+          ))}
         </MapContainer>
       </main>
     </div>
