@@ -83,8 +83,8 @@ impl RmdfWriter {
             magic: RmdfHeader::MAGIC,
             version: RmdfHeader::VERSION,
             tile_bounds: bounds,
-            point_count: graph.get_points().len() as u64,
-            line_count: graph.get_lines().len() as u64,
+            point_count: (points.len() / std::mem::size_of::<PointRecord>()) as u64,
+            line_count: (lines.len() / std::mem::size_of::<LineRecord>()) as u64,
             spatial_grid_cell_count: (spatial_index.len() / std::mem::size_of::<GridCellEntry>())
                 as u32,
             tag_value_count: (tag_values.len() / std::mem::size_of::<StringEntry>()) as u32,
