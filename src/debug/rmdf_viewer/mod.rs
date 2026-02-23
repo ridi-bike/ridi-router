@@ -1,3 +1,4 @@
+mod api;
 use anyhow::Result;
 use std::path::PathBuf;
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -16,6 +17,9 @@ pub enum RmdfViewerError {
 
     #[error("File not found: {0}")]
     FileNotFound(String),
+
+    #[error("Serialization error: {0}")]
+    Serialize(#[source] serde_json::Error),
 }
 
 pub fn run(input_dir: PathBuf) -> Result<()> {
@@ -59,28 +63,54 @@ fn handle_request(request: Request, input_dir: &PathBuf) -> Result<(), RmdfViewe
     Ok(())
 }
 
-fn handle_api_request(url: &str, _input_dir: &PathBuf) -> Result<Response<std::io::Cursor<Vec<u8>>>, RmdfViewerError> {
+fn handle_api_request(url: &str, input_dir: &PathBuf) -> Result<Response<std::io::Cursor<Vec<u8>>>, RmdfViewerError> {
     if url == "/api/manifest" {
-        // TODO: Implement in Phase 2
-        let response = Response::from_string("{\"error\": \"Not implemented yet\"}")
-            .with_status_code(501)
+        match api::get_manifest(input_dir) {
+            Ok(manifest) => {
+                let json = serde_json::to_string(&manifest)
+                    .map_err(RmdfViewerError::Serialize)?;
+                Ok(Response::from_string(json)
+                    .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                        .map_err(|_| RmdfViewerError::HeaderCreate)?))
+            }
+            Err(e) => {
+                let error_json = format!("{{\"error\": \"{}\"}}", e);
+                Ok(Response::from_string(error_json)
+                    .with_status_code(500)
+                    .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                        .map_err(|_| RmdfViewerError::HeaderCreate)?))
+            }
+        }
+
+    } else if let Some(filename) = url.strip_prefix("/api/tiles/") {
+        match api::get_tile(input_dir, filename) {
+            Ok(tile) => {
+                let json = serde_json::to_string(&tile)
+                    .map_err(RmdfViewerError::Serialize)?;
+                Ok(Response::from_string(json)
+                    .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                        .map_err(|_| RmdfViewerError::HeaderCreate)?))
+            }
+            Err(e) => {
+                // Check if file not found vs other errors
+                let status = if e.to_string().contains("Failed to open") || e.to_string().contains("Failed to load") {
+                    404
+                } else {
+                    500
+                };
+                let error_json = format!("{{\"error\": \"{}\"}}", e);
+                Ok(Response::from_string(error_json)
+                    .with_status_code(status)
+                    .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                        .map_err(|_| RmdfViewerError::HeaderCreate)?))
+            }
+        }
+    } else {
+        let response = Response::from_string("{\"error\": \"Not found\"}")
+            .with_status_code(404)
             .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
                 .map_err(|_| RmdfViewerError::HeaderCreate)?);
-        return Ok(response);
+        Ok(response)
     }
-
-    if let Some(_filename) = url.strip_prefix("/api/tiles/") {
-        // TODO: Implement in Phase 2
-        let response = Response::from_string("{\"error\": \"Not implemented yet\"}")
-            .with_status_code(501)
-            .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                .map_err(|_| RmdfViewerError::HeaderCreate)?);
-        return Ok(response);
-    }
-
-    let response = Response::from_string("{\"error\": \"Not found\"}")
-        .with_status_code(404)
-        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-            .map_err(|_| RmdfViewerError::HeaderCreate)?);
-    Ok(response)
 }
+

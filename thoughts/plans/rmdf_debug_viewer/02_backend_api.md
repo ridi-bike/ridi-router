@@ -354,8 +354,8 @@ pub enum RmdfViewerError {
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `cargo build --features rmdf-viewer` compiles without errors
-- [ ] `cargo test --features rmdf-viewer` passes all tests
+- [x] `cargo build --features rmdf-viewer` compiles without errors
+- [ ] `cargo test --features rmdf-viewer` passes all tests (NOTE: pre-existing test failures in rasterized_proximity_grid, unrelated to Phase 2)
 
 ### Manual Verification:
 - [ ] `curl http://127.0.0.1:1337/api/manifest` returns valid JSON with tiles array
@@ -402,3 +402,13 @@ pub enum RmdfViewerError {
 - The `resolve_tags()` function handles the case where tag indices are `0xFFFFFFFF` (NONE) by returning `None`.
 - Direction is encoded as: 0=BothWays, 1=OneWay, 2=Roundabout (from src/rmdf/format.rs:121)
 - Points include `connected_lines_count` derived from `lines_count` field (for popup display)
+
+## Deviations from Plan
+
+### Phase 2: Backend API
+- **Original Plan**: Used `const TS_EXPORT_DIR: &str = "..."` with `#[ts(export, export_to = TS_EXPORT_DIR)]`
+- **Actual Implementation**: Replaced all `export_to = TS_EXPORT_DIR` with string literal `export_to = "../ui/src/types/generated"`
+- **Reason for Deviation**: ts-rs proc macro requires a string literal for the `export_to` attribute, not a constant. Rust proc macros can only accept literals, not constant expressions.
+- **Impact Assessment**: No functional impact - the TypeScript export path is the same. The `TS_EXPORT_DIR` constant is now unused and can be removed.
+- **Date/Time**: 2026-02-23
+
