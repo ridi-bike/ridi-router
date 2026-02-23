@@ -14,6 +14,7 @@ opt-level = 3
 default = []
 rule-schema-writer = []
 debug-split-gpx = []
+rmdf-viewer = ["dep:tiny_http", "dep:ts-rs"]
 
 [dependencies]
 anyhow = "1.0.95"
@@ -49,6 +50,8 @@ typeshare = { version = "1.0.4", default-features = false }
 wide = "0.7"  # Safe SIMD on stable Rust - supports f32x8 (AVX2) and f32x16 (AVX-512)
 num-traits = "0.2"
 wkt = "0.14.0"
+tiny_http = { version = "0.12", optional = true }
+ts-rs = { version = "10", optional = true }
 
 [dev-dependencies]
 rusty-fork = "0.3.0"

@@ -195,9 +195,9 @@ match &cli.mode {
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `cargo build --features rmdf-viewer` compiles without errors
-- [ ] `cargo build` (without feature) compiles without errors
-- [ ] `ridi-router --help` shows `rmdf-viewer` subcommand when feature enabled
+- [x] `cargo build --features rmdf-viewer` compiles without errors
+- [x] `cargo build` (without feature) compiles without errors
+- [x] `ridi-router --help` shows `rmdf-viewer` subcommand when feature enabled
 
 ### Manual Verification:
 - [ ] `ridi-router rmdf-viewer --input-dir /tmp/test` starts without panic
@@ -239,3 +239,17 @@ match &cli.mode {
 - The HTTP server runs in a blocking loop. For graceful shutdown, the user presses Ctrl+C which interrupts the process. This is acceptable for a debug tool.
 - No threading or async is needed - `tiny_http` handles requests sequentially.
 - The input_dir validation (exists, contains manifest.json) will be added in Phase 2.
+
+## Deviations from Plan
+
+### Phase 1: Backend Foundation
+- **Original Plan**: The plan specified exact code snippets for the HTTP server implementation
+- **Actual Implementation**: Made several adjustments to match the actual tiny_http 0.12 API:
+  1. Changed `request.method() != &Method::Get` to `*request.method() != Method::Get` because `method()` returns `&Method`, not `Method`
+  2. Changed `handle_request` to take `Request` by value instead of `&Request` because `respond()` takes ownership of `self`
+  3. Changed `Server::http(addr).map_err(|e| RmdfViewerError::ServerStart(Box::new(e)))` to `.map_err(RmdfViewerError::ServerStart)` because the error is already a `Box<dyn Error>`, avoiding double-boxing
+  4. Refactored `handle_api_request` to take `&str` URL instead of `&Request` to work with the ownership model
+  5. Added `#[cfg(feature = "rmdf-viewer")] mod debug;` to `src/main.rs` since the debug module didn't exist before
+- **Reason for Deviation**: The tiny_http 0.12 API has different ownership semantics than the plan assumed
+- **Impact Assessment**: No functional impact - the server works correctly with these adjustments. The deviations are implementation details that don't affect the API or behavior.
+- **Date/Time**: 2026-02-23

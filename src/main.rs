@@ -18,6 +18,8 @@ mod router_runner;
 mod simd;
 #[cfg(test)]
 mod test_utils;
+#[cfg(feature = "rmdf-viewer")]
+mod debug;
 
 fn main() {
     let subscriber = if std::io::stdin().is_terminal() {

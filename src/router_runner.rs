@@ -214,6 +214,13 @@ enum CliMode {
         /// Destination location of the JSON schema file for the rule file
         destination: PathBuf,
     },
+    /// Start RMDF debug viewer web server
+    #[cfg(feature = "rmdf-viewer")]
+    RmdfViewer {
+        #[arg(long, value_name = "DIR")]
+        /// Directory containing manifest.json and RMDF tile files
+        input_dir: PathBuf,
+    },
 }
 
 pub struct RouterRunner;
@@ -485,6 +492,10 @@ impl RouterRunner {
             #[cfg(feature = "rule-schema-writer")]
             CliMode::RuleSchemaWrite { destination } => {
                 Ok(crate::router::rules::generate_json_schema(destination)?)
+            }
+            #[cfg(feature = "rmdf-viewer")]
+            CliMode::RmdfViewer { input_dir } => {
+                crate::debug::rmdf_viewer::run(input_dir.clone())
             }
         }
     }
