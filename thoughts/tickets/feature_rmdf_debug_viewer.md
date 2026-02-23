@@ -2,7 +2,7 @@
 type: feature
 priority: medium
 created: 2026-02-22T12:00:00Z
-status: created
+status: researched
 tags: [rmdf, debug, viewer, web, leaflet, react, vite]
 keywords: [rmdf-viewer, manifest.json, MappedTile, tiny_http, include_directory, Leaflet, React, Vite]
 patterns: [memory mapping, http server, spa bundling, clap subcommand, geo visualization]
