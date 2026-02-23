@@ -11,4 +11,9 @@ export default defineConfig({
     minify: 'esbuild',
   },
   base: '/',  // Relative paths for embedding
+  server: {
+    proxy: {
+      '/api': 'http://127.0.0.1:1337'
+    }
+  },
 })

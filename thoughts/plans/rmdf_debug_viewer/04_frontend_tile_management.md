@@ -350,8 +350,8 @@ Add a `.gitkeep` if needed for future hooks.
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `bun run build` compiles without errors
-- [ ] TypeScript: no type errors
+- [x] `bun run build` compiles without errors
+- [x] TypeScript: no type errors
 
 ### Manual Verification:
 - [ ] Start backend: `ridi-router rmdf-viewer --input-dir <test-dir>`
