@@ -251,10 +251,10 @@ src/debug/rmdf_viewer/ui/
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `bun install` completes without errors in ui/ directory
-- [ ] `bun run build` creates dist/ directory with index.html
-- [ ] `bun run dev` starts development server
-- [ ] TypeScript compiles without errors: `bun run build`
+- [x] `bun install` completes without errors in ui/ directory
+- [x] `bun run build` creates dist/ directory with index.html
+- [x] `bun run dev` starts development server
+- [x] TypeScript compiles without errors: `bun run build`
 
 ### Manual Verification:
 - [ ] Open development server URL in browser
@@ -299,3 +299,19 @@ src/debug/rmdf_viewer/ui/
 - Leaflet uses a global `L` object. With react-leaflet, we use React components instead.
 - The map center at [0, 0] with zoom 2 will be adjusted when tiles are loaded (Phase 4).
 - For development, `bun run dev` runs the Vite dev server on a different port than the backend. The backend serves the built UI (Phase 7). During development, we can proxy API requests or run both servers.
+
+
+## Deviations from Plan
+
+### Phase 3: Frontend Scaffolding
+- **Original Plan**: Use ts-rs crate to auto-generate TypeScript types from Rust structs during cargo build
+- **Actual Implementation**: Created TypeScript types manually based on Rust struct definitions
+- **Reason for Deviation**: ts-rs v10 did not automatically generate TypeScript files during compilation despite proper configuration. The `#[ts(export, export_to = "...")]` attribute was present but files were not written to disk.
+- **Impact Assessment**: No functional impact - the manually created types match the Rust struct definitions exactly. The types are type-safe and will work correctly with the API. Future maintainers should keep these types in sync with the Rust structs if they change.
+- **Date/Time**: 2026-02-23
+
+### Additional Note: ts-rs export_to path correction
+- **Original Plan**: The Phase 2 deviation already documented that export paths needed string literals
+- **Actual Implementation**: Also corrected the export_to path from `../ui/src/types/generated` to `ui/src/types/generated` in api.rs
+- **Reason**: The path was incorrect relative to CARGO_MANIFEST_DIR. However, even with the correct path, ts-rs still did not generate files.
+- **Date/Time**: 2026-02-23

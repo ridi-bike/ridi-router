@@ -9,7 +9,7 @@ use crate::rmdf::io::MappedTile;
 
 /// Response for GET /api/manifest
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct ManifestResponse {
     pub version: String,
     pub tile_size_degrees: f32,
@@ -19,7 +19,7 @@ pub struct ManifestResponse {
 }
 
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct TileSummary {
     pub filename: String,
     pub col: u16,
@@ -31,7 +31,7 @@ pub struct TileSummary {
 }
 
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct TileBoundsResponse {
     pub lat_min: f32,
     pub lat_max: f32,
@@ -41,7 +41,7 @@ pub struct TileBoundsResponse {
 
 /// Response for GET /api/tiles/:filename
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct TileResponse {
     pub filename: String,
     pub header: TileHeader,
@@ -50,14 +50,14 @@ pub struct TileResponse {
 }
 
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct TileHeader {
     pub point_count: u64,
     pub line_count: u64,
 }
 
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct PointResponse {
     pub osm_id: u64,
     pub lat: f32,
@@ -67,7 +67,7 @@ pub struct PointResponse {
 }
 
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct LineResponse {
     pub point_a_osm_id: u64,
     pub point_b_osm_id: u64,
@@ -78,7 +78,7 @@ pub struct LineResponse {
 }
 
 #[derive(Serialize, TS)]
-#[ts(export, export_to = "../ui/src/types/generated")]
+#[ts(export, export_to = "ui/src/types/generated")]
 pub struct TagResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
