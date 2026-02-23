@@ -23,6 +23,7 @@ cmd_help() {
     echo "  generate-tiles <countries> Generate tiles for comma-separated countries"
     echo "  build                      Build the project"
     echo "  run                        Run the project"
+    echo "  rmdf-view                  Run the RMDF debug viewer"
     echo "  test                       Run tests"
     echo ""
     echo "Available countries: ${!PBF_URLS[*]}"
@@ -108,10 +109,11 @@ cmd_run() {
 }
 
 cmd_test() {
+    cargo test
+}
+
 cmd_rmdf_view() {
     cargo run --features rmdf-viewer -- rmdf-viewer --input-dir "$OUTPUT_DIR"
-}
-    cargo test
 }
 
 # Main
@@ -131,6 +133,9 @@ case "${1:-}" in
         ;;
     test)
         cmd_test
+        ;;
+    rmdf-view)
+        cmd_rmdf_view
         ;;
     help|--help|-h)
         cmd_help
