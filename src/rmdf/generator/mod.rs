@@ -765,9 +765,6 @@ impl MultiPbfGenerator {
             .map(String::from)
             .collect();
 
-        // Calculate combined bounds from all PBFs
-        let all_bounds = GridStorage::load_all_bounds(db)?;
-        let combined_bounds = self.calculate_combined_bounds(&all_bounds);
 
         // Generate manifest using the existing generator
         let manifest_gen = ManifestGenerator::new(self.tile_size_degrees);
@@ -781,7 +778,6 @@ impl MultiPbfGenerator {
         }
 
         // Use the first source file as the primary source (for manifest compatibility)
-        // The manifest will include the combined bounds
         let primary_source = source_files.first().map(|s| s.as_str()).unwrap_or("unknown");
 
         manifest_gen
@@ -797,36 +793,6 @@ impl MultiPbfGenerator {
         Ok(())
     }
 
-    /// Calculate combined bounds from all PBF bounds
-    fn calculate_combined_bounds(&self, all_bounds: &[(u64, intermediate::GridBounds)]) -> intermediate::GridBounds {
-        if all_bounds.is_empty() {
-            return intermediate::GridBounds {
-                lon_min: 0.0,
-                lat_min: 0.0,
-                lon_max: 0.0,
-                lat_max: 0.0,
-            };
-        }
-
-        let mut lon_min = f32::MAX;
-        let mut lat_min = f32::MAX;
-        let mut lon_max = f32::MIN;
-        let mut lat_max = f32::MIN;
-
-        for (_, bounds) in all_bounds {
-            lon_min = lon_min.min(bounds.lon_min);
-            lat_min = lat_min.min(bounds.lat_min);
-            lon_max = lon_max.max(bounds.lon_max);
-            lat_max = lat_max.max(bounds.lat_max);
-        }
-
-        intermediate::GridBounds {
-            lon_min,
-            lat_min,
-            lon_max,
-            lat_max,
-        }
-    }
 
     /// Clean up intermediate storage
     fn cleanup_intermediate_storage(&self) -> Result<()> {

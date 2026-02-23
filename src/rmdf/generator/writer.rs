@@ -76,7 +76,6 @@ impl RmdfWriter {
         offset += tag_sets.len();
 
         section_offsets[section::RULES] = offset as u64;
-        offset += rules.len();
 
         // Build header
         let bounds = self.compute_tile_bounds(tile_id);
