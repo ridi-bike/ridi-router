@@ -146,6 +146,14 @@ impl PbfBounds {
         self.lon_min = Some(self.lon_min.map_or(lon, |v| v.min(lon)));
         self.lon_max = Some(self.lon_max.map_or(lon, |v| v.max(lon)));
     }
+
+    /// Check if bounds contain valid data (all fields are set)
+    pub fn is_valid(&self) -> bool {
+        self.lat_min.is_some()
+            && self.lat_max.is_some()
+            && self.lon_min.is_some()
+            && self.lon_max.is_some()
+    }
 }
 
 /// In-memory PBF representation with spatial indexing
@@ -197,6 +205,14 @@ impl InMemoryPbf {
             nodes_by_id.len(),
             start.elapsed().as_secs_f64()
         );
+
+        // Validate that we have valid bounds (non-empty PBF)
+        if !bounds.is_valid() {
+            anyhow::bail!(
+                "No valid geographic bounds found in PBF file. This usually means the file is empty, corrupted, or the path is not a valid PBF file. Path: {:?}",
+                path
+            );
+        }
 
         // Pass 2: Load all ways + compute bounding boxes
         info!("Pass 2: Loading ways...");

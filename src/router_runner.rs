@@ -194,7 +194,7 @@ enum CliMode {
         /// Input directory containing OSM PBF files (multi-file mode)
         input_dir: Option<PathBuf>,
 
-        #[arg(short, long, value_name = "DIR")]
+        #[arg(short, long, visible_alias = "output-dir", value_name = "DIR")]
         /// Output directory for tiles and manifest
         output: PathBuf,
 
@@ -439,6 +439,14 @@ impl RouterRunner {
                 if let Some(input_file) = input {
                     // Single-PBF mode (existing behavior)
                     use crate::rmdf::generator::TileGenerator;
+
+                    // Validate that input is a file, not a directory
+                    if input_file.is_dir() {
+                        anyhow::bail!(
+                            "--input expects a PBF file, but {:?} is a directory. Use --input-dir for multi-file mode.",
+                            input_file
+                        );
+                    }
 
                     info!(
                         "Generating tiles from {:?} to {:?} (tile_size_deg={}°)",

@@ -5,10 +5,10 @@
 
 use crate::osm_data::in_memory_pbf::PbfBounds;
 
-/// Grid cell size: ~50m (0.0005 degrees at equator)
-/// This provides a good balance between memory usage and accuracy.
-/// Maximum position error is ~35m (half diagonal of cell).
-pub const GRID_CELL_SIZE_DEG: f32 = 0.0005;
+/// Grid cell size: ~240m (0.0024 degrees at equator)
+/// This provides a good balance between memory usage and accuracy for larger regions.
+/// Maximum position error is ~170m (half diagonal of cell).
+pub const GRID_CELL_SIZE_DEG: f32 = 0.0024;
 
 /// Search radius for residential proximity check (meters)
 pub const RESIDENTIAL_PROXIMITY_THRESHOLD_M: f32 = 500.0;
