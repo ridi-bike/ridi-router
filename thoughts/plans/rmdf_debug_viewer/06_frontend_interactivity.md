@@ -516,8 +516,8 @@ export function Legend({ style }: LegendProps) {
 ## Success Criteria
 
 ### Automated Verification:
-- [ ] `bun run build` compiles without errors
-- [ ] TypeScript: no type errors
+- [x] `bun run build` compiles without errors
+- [x] TypeScript: no type errors
 
 ### Manual Verification:
 - [ ] Hover over point - point enlarges with black border
@@ -548,3 +548,12 @@ export function Legend({ style }: LegendProps) {
 - The popup uses Leaflet's built-in Popup component which auto-pans to stay visible
 - Line popup is positioned at the midpoint of the line segment
 - Highlighting state is separate from selection state - hover highlights, click selects
+
+## Deviations from Plan
+
+### Phase 6: Frontend Interactivity
+- **Original Plan**: Popup component using `onClose` prop for handling popup close events
+- **Actual Implementation**: Used `eventHandlers={{ remove: onClose }}` instead
+- **Reason for Deviation**: react-leaflet's Popup component does not have an `onClose` prop. The correct way to handle popup close events is through the `remove` event handler
+- **Impact Assessment**: None - functionality is identical, just uses the correct API
+- **Date/Time**: 2026-02-23

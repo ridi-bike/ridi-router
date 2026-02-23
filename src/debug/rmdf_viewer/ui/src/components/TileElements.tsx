@@ -7,11 +7,23 @@ import { DirectionArrows } from './DirectionArrows';
 
 interface TileElementsProps {
   tile: LoadedTile;
+  highlightedPointId: number | null;
+  highlightedLineKey: string | null;
   onPointClick?: (point: PointResponse) => void;
   onLineClick?: (line: LineResponse) => void;
+  onPointHover?: (pointId: number | null) => void;
+  onLineHover?: (lineKey: string | null) => void;
 }
 
-export function TileElements({ tile, onPointClick, onLineClick }: TileElementsProps) {
+export function TileElements({ 
+  tile, 
+  highlightedPointId,
+  highlightedLineKey,
+  onPointClick, 
+  onLineClick,
+  onPointHover,
+  onLineHover,
+}: TileElementsProps) {
   const { data, visible } = tile;
 
   return (
@@ -22,6 +34,8 @@ export function TileElements({ tile, onPointClick, onLineClick }: TileElementsPr
         points={data.points}
         visible={visible}
         onLineClick={onLineClick}
+        highlightedLineKey={highlightedLineKey}
+        onLineHover={onLineHover}
       />
       
       {/* Direction arrows for one-way lines */}
@@ -35,6 +49,8 @@ export function TileElements({ tile, onPointClick, onLineClick }: TileElementsPr
         points={data.points}
         visible={visible}
         onPointClick={onPointClick}
+        highlightedPointId={highlightedPointId}
+        onPointHover={onPointHover}
       />
     </LayerGroup>
   );

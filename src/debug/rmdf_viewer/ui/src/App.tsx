@@ -6,6 +6,9 @@ import { useTiles } from './hooks/useTiles';
 import { TileList } from './components/TileList';
 import { TileBorders } from './components/TileBorders';
 import { TileElements } from './components/TileElements';
+import { PointPopup } from './components/PointPopup';
+import { LinePopup } from './components/LinePopup';
+import { Legend } from './components/Legend';
 import type { PointResponse, LineResponse } from './types';
 
 function App() {
@@ -23,13 +26,18 @@ function App() {
     loadManifest();
   }, [loadManifest]);
 
-  // Selected element state - will be used in Phase 6 for popups
+  // Selected element state (for popups)
   const [selectedPoint, setSelectedPoint] = useState<PointResponse | null>(null);
   const [selectedLine, setSelectedLine] = useState<LineResponse | null>(null);
   
-  // Suppress unused variable warnings - these will be used in Phase 6
-  void selectedPoint;
-  void selectedLine;
+  // Highlighted element state (for hover effects)
+  const [highlightedPointId, setHighlightedPointId] = useState<number | null>(null);
+  const [highlightedLineKey, setHighlightedLineKey] = useState<string | null>(null);
+  
+  // Clear selection handlers
+  const handleClearPoint = () => setSelectedPoint(null);
+  const handleClearLine = () => setSelectedLine(null);
+
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
       <aside style={{ width: '300px', padding: '1rem', background: '#f5f5f5', overflow: 'hidden' }}>
@@ -72,10 +80,28 @@ function App() {
             <TileElements
               key={tile.summary.filename}
               tile={tile}
+              highlightedPointId={highlightedPointId}
+              highlightedLineKey={highlightedLineKey}
               onPointClick={setSelectedPoint}
               onLineClick={setSelectedLine}
+              onPointHover={setHighlightedPointId}
+              onLineHover={setHighlightedLineKey}
             />
           ))}
+          
+          {/* Popups */}
+          <PointPopup point={selectedPoint} onClose={handleClearPoint} />
+          <LinePopup line={selectedLine} onClose={handleClearLine} />
+          
+          {/* Legend - positioned in bottom-right corner */}
+          <Legend 
+            style={{ 
+              position: 'absolute',
+              bottom: '1rem',
+              right: '1rem',
+              zIndex: 1000,
+            }} 
+          />
         </MapContainer>
       </main>
     </div>

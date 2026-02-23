@@ -6,7 +6,9 @@ interface LineLayerProps {
   lines: LineResponse[];
   points: PointResponse[];  // For flag lookup
   visible: boolean;
+  highlightedLineKey: string | null;
   onLineClick?: (line: LineResponse) => void;
+  onLineHover?: (lineKey: string | null) => void;
 }
 
 /**
@@ -18,7 +20,18 @@ function buildPointFlagsMap(points: PointResponse[]): Map<number, string[]> {
   return map;
 }
 
-export function LineLayer({ lines, points, visible, onLineClick }: LineLayerProps) {
+function makeLineKey(line: LineResponse): string {
+  return `${line.point_a_osm_id}-${line.point_b_osm_id}`;
+}
+
+export function LineLayer({ 
+  lines, 
+  points, 
+  visible, 
+  highlightedLineKey,
+  onLineClick,
+  onLineHover,
+}: LineLayerProps) {
   if (!visible) return null;
 
   const pointFlagsMap = buildPointFlagsMap(points);
@@ -26,6 +39,9 @@ export function LineLayer({ lines, points, visible, onLineClick }: LineLayerProp
   return (
     <LayerGroup>
       {lines.map((line, index) => {
+        const lineKey = makeLineKey(line);
+        const isHighlighted = lineKey === highlightedLineKey;
+        
         // Get flags for endpoints (empty array if point not found)
         const pointAFlags = pointFlagsMap.get(line.point_a_osm_id) || [];
         const pointBFlags = pointFlagsMap.get(line.point_b_osm_id) || [];
@@ -39,17 +55,19 @@ export function LineLayer({ lines, points, visible, onLineClick }: LineLayerProp
         
         return (
           <Polyline
-            key={`${line.point_a_osm_id}-${line.point_b_osm_id}-${index}`}
+            key={`${lineKey}-${index}`}
             positions={positions}
             pathOptions={{
-              color,
-              weight: 3,
-              opacity: 0.8,
+              color: isHighlighted ? '#000' : color,
+              weight: isHighlighted ? 6 : 3,
+              opacity: isHighlighted ? 1 : 0.8,
               // Dashed line for one-way
               dashArray: line.direction === 'OneWay' ? '10, 5' : undefined,
             }}
             eventHandlers={{
               click: () => onLineClick?.(line),
+              mouseover: () => onLineHover?.(lineKey),
+              mouseout: () => onLineHover?.(null),
             }}
           />
         );
