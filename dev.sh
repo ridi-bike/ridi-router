@@ -108,6 +108,9 @@ cmd_run() {
 }
 
 cmd_test() {
+cmd_rmdf_view() {
+    cargo run --features rmdf-viewer -- rmdf-viewer --input-dir "$OUTPUT_DIR"
+}
     cargo test
 }
 
