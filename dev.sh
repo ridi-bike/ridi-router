@@ -97,7 +97,7 @@ cmd_generate_tiles() {
 
     # Run tile generation
     echo "Generating tiles..."
-    cargo run -- generate-tiles --input-dir "$INPUT_DIR" --output-dir "$OUTPUT_DIR" --tile-size-deg 0.1
+    cargo run --release -- generate-tiles --input-dir "$INPUT_DIR" --output-dir "$OUTPUT_DIR" --tile-size-deg 0.1
 }
 
 cmd_build() {
@@ -113,7 +113,7 @@ cmd_test() {
 }
 
 cmd_rmdf_view() {
-    cargo run --features rmdf-viewer -- rmdf-viewer --input-dir "$OUTPUT_DIR"
+    cargo run --features rmdf-viewer --release -- rmdf-viewer --input-dir "$OUTPUT_DIR"
 }
 
 # Main

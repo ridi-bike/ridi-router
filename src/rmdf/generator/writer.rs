@@ -7,6 +7,7 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::debug;
 
+
 use crate::map_data::GenerationGraph;
 use crate::rmdf::format::*;
 
@@ -17,6 +18,19 @@ pub struct RmdfWriter {
 impl RmdfWriter {
     pub fn new(tile_size_degrees: f32) -> Self {
         Self { tile_size_degrees }
+    }
+
+    /// Build a mapping from point OSM IDs to the indices of lines that connect to them.
+    /// This is needed because GenerationGraph doesn't populate point.lines during insertion.
+    fn build_point_lines_map(graph: &GenerationGraph) -> HashMap<u64, Vec<usize>> {
+        let mut map: HashMap<u64, Vec<usize>> = HashMap::new();
+        
+        for (line_idx, line) in graph.get_lines().iter().enumerate() {
+            map.entry(line.from_node_id).or_default().push(line_idx);
+            map.entry(line.to_node_id).or_default().push(line_idx);
+        }
+        
+        map
     }
 
     /// Write RMDF tile directly from GenerationGraph
@@ -138,12 +152,16 @@ impl RmdfWriter {
     }
 
     fn build_spatial_index(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
-        // Group points by grid cell
+        // Build point-to-lines mapping from the lines themselves
+        let point_lines_map = Self::build_point_lines_map(graph);
+
+        // Group points by grid cell - only include points that have lines connected
         let mut cells: HashMap<u32, Vec<usize>> = HashMap::new();
 
         for (idx, point) in graph.get_points().iter().enumerate() {
-            if point.lines.is_empty() {
-                continue; // Skip disconnected points
+            // Use the map instead of point.lines
+            if !point_lines_map.contains_key(&point.id) {
+                continue;
             }
 
             let cell_id = GridCellEntry::encode_cell_id(point.lat, point.lon, 100);
@@ -181,6 +199,8 @@ impl RmdfWriter {
     }
 
     fn serialize_points(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
+        // Build point-to-lines mapping from the lines themselves
+        let point_lines_map = Self::build_point_lines_map(graph);
         let mut bytes = Vec::new();
 
         // CRITICAL FIX: Group points by grid cell and sort by cell_id
@@ -188,8 +208,9 @@ impl RmdfWriter {
         let mut cells: HashMap<u32, Vec<&crate::map_data::point::MapDataPoint>> = HashMap::new();
 
         for point in graph.get_points() {
-            if point.lines.is_empty() {
-                continue; // Skip disconnected points (same as build_spatial_index)
+            // Use the map instead of point.lines
+            if !point_lines_map.contains_key(&point.id) {
+                continue;
             }
 
             let cell_id = GridCellEntry::encode_cell_id(point.lat, point.lon, 100);
@@ -203,12 +224,13 @@ impl RmdfWriter {
         // Serialize points in sorted cell order
         for (_, points_in_cell) in sorted_cells {
             for point in points_in_cell {
+                let line_count = point_lines_map.get(&point.id).map(|v| v.len()).unwrap_or(0) as u32;
                 let record = PointRecord {
                     osm_id: point.id,
                     lat: point.lat,
                     lon: point.lon,
                     lines_offset: 0, // TODO: Calculate from line refs
-                    lines_count: point.lines.len() as u32,
+                    lines_count: line_count,
                     _padding1: 0,
                     rules_offset: 0, // TODO: Calculate from rules
                     rules_count: point.rules.len() as u32,
@@ -274,6 +296,8 @@ impl RmdfWriter {
     }
 
     fn serialize_line_refs(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
+        // Build point-to-lines mapping from the lines themselves
+        let point_lines_map = Self::build_point_lines_map(graph);
         // CRITICAL FIX: Must use identical sorting as serialize_points()
         // Otherwise line_refs indices won't match point indices in the file
         let mut line_refs = Vec::new();
@@ -281,8 +305,9 @@ impl RmdfWriter {
         let mut cells: HashMap<u32, Vec<&crate::map_data::point::MapDataPoint>> = HashMap::new();
 
         for point in graph.get_points() {
-            if point.lines.is_empty() {
-                continue; // Skip disconnected points (same as serialize_points)
+            // Use the map instead of point.lines
+            if !point_lines_map.contains_key(&point.id) {
+                continue;
             }
 
             let cell_id = GridCellEntry::encode_cell_id(point.lat, point.lon, 100);
@@ -296,10 +321,10 @@ impl RmdfWriter {
         // Flatten line refs in same sorted order as points
         for (_, points_in_cell) in sorted_cells {
             for point in points_in_cell {
-                for line_ref in &point.lines {
-                    // For now, use line index as reference
-                    // TODO: Encode way ID + segment index into u64 when available
-                    line_refs.push(line_ref.get_element_id());
+                if let Some(line_indices) = point_lines_map.get(&point.id) {
+                    for &line_idx in line_indices {
+                        line_refs.push(line_idx as u64);
+                    }
                 }
             }
         }
@@ -335,11 +360,11 @@ impl RmdfWriter {
 
         for tag_set in &graph.get_tags().tag_sets {
             let record = TagSetRecord {
-                name_idx: tag_set.name.tag_value_idx.wrapping_sub(1),
-                hw_ref_idx: tag_set.hw_ref.tag_value_idx.wrapping_sub(1),
-                highway_idx: tag_set.highway.tag_value_idx.wrapping_sub(1),
-                surface_idx: tag_set.surface.tag_value_idx.wrapping_sub(1),
-                smoothness_idx: tag_set.smoothness.tag_value_idx.wrapping_sub(1),
+                name_idx: tag_set.name.tag_value_idx,
+                hw_ref_idx: tag_set.hw_ref.tag_value_idx,
+                highway_idx: tag_set.highway.tag_value_idx,
+                surface_idx: tag_set.surface.tag_value_idx,
+                smoothness_idx: tag_set.smoothness.tag_value_idx,
             };
 
             bytes.extend_from_slice(bytes_of(&record));
@@ -353,6 +378,7 @@ impl RmdfWriter {
         // TODO: Implement based on MapDataRule structure
         Ok(Vec::new())
     }
+
 
     fn compute_tile_bounds(&self, tile_id: TileId) -> TileBounds {
         let lon_min = (tile_id.col as f32 * self.tile_size_degrees) - 180.0;
