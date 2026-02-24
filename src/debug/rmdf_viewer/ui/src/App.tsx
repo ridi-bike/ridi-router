@@ -34,6 +34,9 @@ function App() {
   const [highlightedPointId, setHighlightedPointId] = useState<number | null>(null);
   const [highlightedLineKey, setHighlightedLineKey] = useState<string | null>(null);
   
+  // Focused tile state (for scroll-to behavior from map click)
+  const [focusedTileFilename, setFocusedTileFilename] = useState<string | null>(null);
+  
   // Clear selection handlers
   const handleClearPoint = () => setSelectedPoint(null);
   const handleClearLine = () => setSelectedLine(null);
@@ -56,6 +59,7 @@ function App() {
             onLoadTile={loadTile}
             onToggleVisibility={toggleVisibility}
             loading={loading}
+            focusedTileFilename={focusedTileFilename}
           />
         ) : (
           <p>{loading ? 'Loading manifest...' : 'No manifest loaded'}</p>
@@ -73,7 +77,8 @@ function App() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           
-          {manifest && <TileBorders tiles={manifest.tiles} />}
+          {manifest && <TileBorders tiles={manifest.tiles} onTileClick={setFocusedTileFilename} />}
+          
           
           {/* Render elements for each loaded tile */}
           {Array.from(loadedTiles.values()).map(tile => (

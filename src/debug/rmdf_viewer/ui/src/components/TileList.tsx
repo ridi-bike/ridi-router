@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { TileSummary } from '../types';
 import type { LoadedTile } from '../hooks/useTiles';
 
@@ -7,6 +8,7 @@ interface TileListProps {
   onLoadTile: (filename: string) => void;
   onToggleVisibility: (filename: string) => void;
   loading: boolean;
+  focusedTileFilename: string | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -20,8 +22,19 @@ export function TileList({
   loadedTiles, 
   onLoadTile, 
   onToggleVisibility,
-  loading 
+  loading,
+  focusedTileFilename,
 }: TileListProps) {
+  // Scroll to focused tile when it changes
+  useEffect(() => {
+    if (focusedTileFilename) {
+      const element = document.getElementById(`tile-${focusedTileFilename}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [focusedTileFilename]);
+
   return (
     <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 60px)' }}>
       <h3 style={{ margin: '0 0 1rem 0' }}>Available Tiles ({tiles.length})</h3>
@@ -35,13 +48,15 @@ export function TileList({
           
           return (
             <li 
+              id={`tile-${tile.filename}`}
               key={tile.filename}
               style={{ 
                 padding: '0.5rem', 
                 marginBottom: '0.5rem',
-                background: isLoaded ? '#e8f5e9' : '#fff',
-                border: '1px solid #ddd',
+                background: isLoaded ? '#e8f5e9' : focusedTileFilename === tile.filename ? '#fff3e0' : '#fff',
+                border: focusedTileFilename === tile.filename ? '2px solid #ff9800' : '1px solid #ddd',
                 borderRadius: '4px',
+                cursor: 'pointer',
               }}
             >
               <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
