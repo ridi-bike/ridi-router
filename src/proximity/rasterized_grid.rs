@@ -23,7 +23,7 @@ pub const THRESHOLD_AREA_M2: f32 = std::f32::consts::PI
     * RESIDENTIAL_PROXIMITY_THRESHOLD_M
     * RESIDENTIAL_PART_COVERED;
 
-/// Military interior threshold - must be >100m from boundary to be marked nogo
+/// Military interior threshold - temporarily set to 0 for debugging
 pub const MILITARY_INTERIOR_M: f32 = 100.0;
 
 /// Grid cell storing pre-computed proximity values with directional sectors.

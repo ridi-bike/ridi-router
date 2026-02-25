@@ -54,8 +54,7 @@ pub fn compute_proximity_flags(
     let grid = rasterizer.into_grid();
 
     // Step 5: Apply flags to nodes
-    apply_flags_to_nodes(nodes, &grid);
-
+    // Step 5: Apply flags to nodes
     apply_flags_to_nodes(nodes, &grid);
 }
 

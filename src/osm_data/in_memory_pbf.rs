@@ -2,6 +2,7 @@ use crate::map_data::osm::{OsmNode, OsmRelation, OsmRelationMember, OsmRelationM
 use crate::rmdf::format::TileBounds;
 use anyhow::{Context, Result};
 use geo::{Coord, LineString, MultiPolygon, Polygon};
+use geo::prelude::Contains;
 use osmpbfreader::{OsmObj, OsmPbfReader};
 use rstar::{RTree, RTreeObject, AABB};
 use std::collections::HashMap;
@@ -464,8 +465,13 @@ impl InMemoryPbf {
         }
 
         // Extract polygons from multipolygon relations
+        let mut relation_count = 0;
+        let mut multipolygon_count = 0;
+        let mut total_member_ways = 0;
+        let mut found_member_ways = 0;
         for relation_id in relation_ids {
             if let Some(rel_with_bounds) = relations_by_id.get(relation_id) {
+                relation_count += 1;
                 let relation = &rel_with_bounds.relation;
 
                 // Check if this is a multipolygon
@@ -500,6 +506,8 @@ impl InMemoryPbf {
                     continue;
                 }
 
+                multipolygon_count += 1;
+
                 // Collect outer and inner ways
                 let mut outer_rings: Vec<LineString<f64>> = Vec::new();
                 let mut inner_rings: Vec<LineString<f64>> = Vec::new();
@@ -508,8 +516,10 @@ impl InMemoryPbf {
                     if member.member_type != OsmRelationMemberType::Way {
                         continue;
                     }
+                    total_member_ways += 1;
 
                     if let Some(way_with_bounds) = ways_by_id.get(&member.member_ref) {
+                        found_member_ways += 1;
                         let way = &way_with_bounds.way;
                         let coords: Vec<Coord<f64>> = way
                             .point_ids
@@ -556,9 +566,9 @@ impl InMemoryPbf {
                     let outer_ls = LineString::new(outer_coords);
                     let polygon = Polygon::new(outer_ls, vec![]);
 
-                    // For simplicity, we add inner rings to the first polygon that contains them
-                    // A more sophisticated approach would match them properly
-                    let mut polygon_with_holes = polygon;
+                    // Only add inner rings that are actually inside this outer ring
+                    // Check if the first point of the inner ring is within the outer polygon
+                    let mut polygon_with_holes = polygon.clone();
                     for inner_ring in &inner_rings {
                         let mut inner_coords = inner_ring.clone().into_inner();
                         if !inner_coords.is_empty() && inner_coords.first() != inner_coords.last() {
@@ -566,23 +576,32 @@ impl InMemoryPbf {
                         }
                         if inner_coords.len() >= 4 {
                             // Check if first point of inner is within outer
-                            // This is a simplified check - proper containment would be better
-                            polygon_with_holes = Polygon::new(
-                                polygon_with_holes.exterior().clone(),
-                                polygon_with_holes
-                                    .interiors()
-                                    .iter()
-                                    .cloned()
-                                    .chain(std::iter::once(LineString::new(inner_coords)))
-                                    .collect(),
-                            );
+                            let inner_first = Coord {
+                                x: inner_coords[0].x,
+                                y: inner_coords[0].y,
+                            };
+                            if polygon.contains(&inner_first) {
+                                polygon_with_holes = Polygon::new(
+                                    polygon_with_holes.exterior().clone(),
+                                    polygon_with_holes
+                                        .interiors()
+                                        .iter()
+                                        .cloned()
+                                        .chain(std::iter::once(LineString::new(inner_coords)))
+                                        .collect(),
+                                );
+                            }
                         }
                     }
-
                     polygons.push(MultiPolygon::new(vec![polygon_with_holes]));
                 }
             }
         }
+
+        info!(
+            "Relation extraction: {} total relations, {} multipolygons, {} member ways, {} found in ways_by_id, {} polygons created",
+            relation_count, multipolygon_count, total_member_ways, found_member_ways, polygons.len()
+        );
 
         polygons
     }
@@ -662,9 +681,16 @@ impl InMemoryPbf {
                         // Check if this way has highway or area tags we care about
                         let has_highway = tags.contains_key("highway");
                         let is_residential = tags.get("landuse").map(|v| v.as_str()) == Some("residential");
-                        let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military");
+                        let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military")
+                            || tags.contains_key("military");
 
-                        if has_highway || is_residential || is_military {
+                        // Also include ways that could be multipolygon relation members:
+                        // - Closed loops (first == last) with >= 4 nodes
+                        // - Open non-highway ways with >= 2 nodes (potential boundary segments)
+                        let is_closed_loop = way.nodes.len() >= 4 && way.nodes.first() == way.nodes.last();
+                        let is_potential_boundary = !has_highway && way.nodes.len() >= 2;
+
+                        if has_highway || is_residential || is_military || is_closed_loop || is_potential_boundary {
                             let tags_map: HashMap<String, String> = tags
                                 .iter()
                                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -779,7 +805,8 @@ impl InMemoryPbf {
                         // Check if this is a multipolygon or area relation
                         let is_multipolygon = tags.get("type").map(|v| v.as_str()) == Some("multipolygon");
                         let is_residential = tags.get("landuse").map(|v| v.as_str()) == Some("residential");
-                        let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military");
+                        let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military")
+                            || tags.contains_key("military");
 
                         if is_multipolygon || is_residential || is_military {
                             let members: Vec<OsmRelationMember> = relation

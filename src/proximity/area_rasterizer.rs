@@ -138,6 +138,62 @@ impl AreaRasterizer {
             .map(|mp| (mp, compute_multipolygon_bbox(mp)))
             .collect();
 
+        // Debug: Test if a specific point inside polygon 334 returns true
+        // Polygon 334 bbox: lat 57.1847-57.2226, lon 24.4875-24.5443
+        let test_point = geo::Point::new(24.5, 57.2); // Should be inside polygon 334
+        use geo::prelude::{Contains, Centroid};
+        for (i, (mp, bbox)) in polygon_bboxes.iter().enumerate() {
+            if bbox.lat_min < 57.2 && bbox.lat_max > 57.2 && bbox.lon_min < 24.5 && bbox.lon_max > 24.5 {
+                let contains = mp.contains(&test_point);
+                let closest = mp.haversine_closest_point(&test_point);
+                
+                // Also test the centroid of the polygon
+                let centroid = mp.centroid();
+                let centroid_contains = centroid.map(|c| mp.contains(&c)).unwrap_or(false);
+                
+                // Count interior rings (holes)
+                let num_holes: usize = mp.iter().map(|p| p.interiors().len()).sum();
+                
+                info!(
+                    "Polygon {}: contains={}, closest={:?}, centroid_contains={}, holes={}, bbox: [{:.4},{:.4}] to [{:.4},{:.4}]",
+                    i, contains, matches!(closest, geo::Closest::Intersection(_)),
+                    centroid_contains, num_holes,
+                    bbox.lat_min, bbox.lon_min, bbox.lat_max, bbox.lon_max
+                );
+            }
+        }
+
+        // Debug: Log information about first few military polygons
+        for (i, (mp, bbox)) in polygon_bboxes.iter().enumerate().take(5) {
+            let total_coords: usize = mp.iter().map(|p| p.exterior().0.len()).sum();
+            let num_polygons = mp.0.len();
+            info!(
+                "Military polygon {}: {} constituent polygons, {} total coords, bbox: [{:.4}, {:.4}] to [{:.4}, {:.4}]",
+                i, num_polygons, total_coords, bbox.lat_min, bbox.lon_min, bbox.lat_max, bbox.lon_max
+            );
+        }
+        // Debug: Count polygons that overlap with tile_2044_1471 (lat 57.1-57.2, lon 24.4-24.5)
+        let tile_lat_min = 57.1f32;
+        let tile_lat_max = 57.2f32;
+        let tile_lon_min = 24.4f32;
+        let tile_lon_max = 24.5f32;
+        let mut overlapping_count = 0;
+        for (i, (mp, bbox)) in polygon_bboxes.iter().enumerate() {
+            if bbox.lat_max >= tile_lat_min && bbox.lat_min <= tile_lat_max &&
+               bbox.lon_max >= tile_lon_min && bbox.lon_min <= tile_lon_max {
+                overlapping_count += 1;
+                let total_coords: usize = mp.iter().map(|p| p.exterior().0.len()).sum();
+                info!(
+                    "Overlapping military polygon {}: {} coords, bbox: [{:.4}, {:.4}] to [{:.4}, {:.4}]",
+                    i, total_coords, bbox.lat_min, bbox.lon_min, bbox.lat_max, bbox.lon_max
+                );
+            }
+        }
+        info!(
+            "Military polygons overlapping tile_2044_1471 (lat 57.1-57.2, lon 24.4-24.5): {} of {}",
+            overlapping_count, polygon_bboxes.len()
+        );
+
         // Process cells in parallel
         let nogo_cells: Vec<usize> = (0..cell_count)
             .into_par_iter()
@@ -343,7 +399,7 @@ fn is_military_interior(
     let geo_point = Point::new(lon as f64, lat as f64);
 
     for (polygon, bbox) in polygon_bboxes {
-        // Quick bbox check - must be well inside for interior check
+        // Quick bbox check - temporarily adding 500m buffer for debugging
         if !bbox.could_be_within(lat, lon, 0.0) {
             continue;
         }
