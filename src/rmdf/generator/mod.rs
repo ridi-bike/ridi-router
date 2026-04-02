@@ -6,13 +6,17 @@ mod writer;
 pub use manifest::ManifestGenerator;
 pub use pbf_streamer::PbfStreamer;
 
-use crate::proximity::RasterizedProximityGrid;
-
 use crate::osm_data::in_memory_pbf::InMemoryPbf;
+use crate::proximity::RasterizedProximityGrid;
 use crate::rmdf::format::{TileBounds, TileId};
 use anyhow::{Context, Result};
+use geo::MultiPolygon;
+#[cfg(feature = "debug-polygons")]
+use geo::{Intersects, LineString, Polygon};
 use intermediate::GridStorage;
 use rayon::prelude::*;
+#[cfg(feature = "debug-polygons")]
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,6 +28,36 @@ pub struct TileGenerator {
     input_file: PathBuf,
     output_dir: PathBuf,
     tile_size_degrees: f32,
+}
+
+#[cfg(feature = "debug-polygons")]
+fn extract_debug_military_polygons(pbf_data: &InMemoryPbf) -> Vec<MultiPolygon<f64>> {
+    pbf_data.extract_military_polygons()
+}
+
+#[cfg(not(feature = "debug-polygons"))]
+fn extract_debug_military_polygons(_pbf_data: &InMemoryPbf) -> Vec<MultiPolygon<f64>> {
+    Vec::new()
+}
+
+#[cfg(feature = "debug-polygons")]
+fn maybe_export_military_geojson_tiles(
+    output_dir: &Path,
+    tile_size_degrees: f32,
+    tile_ids: &[TileId],
+    military_polygons: &[MultiPolygon<f64>],
+) -> Result<()> {
+    export_military_geojson_tiles(output_dir, tile_size_degrees, tile_ids, military_polygons)
+}
+
+#[cfg(not(feature = "debug-polygons"))]
+fn maybe_export_military_geojson_tiles(
+    _output_dir: &Path,
+    _tile_size_degrees: f32,
+    _tile_ids: &[TileId],
+    _military_polygons: &[MultiPolygon<f64>],
+) -> Result<()> {
+    Ok(())
 }
 
 impl TileGenerator {
@@ -51,6 +85,7 @@ impl TileGenerator {
         info!("Loading PBF file into memory with pre-computed proximity flags...");
         let pbf_data = InMemoryPbf::from_pbf_file_with_flags(&self.input_file)
             .context("Failed to load PBF file into memory with flags")?;
+        let military_polygons = extract_debug_military_polygons(&pbf_data);
 
         // Create PBF streamer with reference to in-memory data
         let streamer = PbfStreamer::new(&pbf_data, &self.output_dir, self.tile_size_degrees);
@@ -68,6 +103,14 @@ impl TileGenerator {
         if tile_ids.is_empty() {
             tracing::warn!("No tiles were generated - all tiles may have been empty");
         } else {
+            maybe_export_military_geojson_tiles(
+                &self.output_dir,
+                self.tile_size_degrees,
+                &tile_ids,
+                &military_polygons,
+            )
+            .context("Failed to export military GeoJSON tiles")?;
+
             manifest_gen
                 .generate(
                     &self.output_dir,
@@ -111,6 +154,113 @@ fn discover_pbf_files(directory: &Path) -> Result<Vec<PathBuf>> {
         directory
     );
     Ok(pbf_files)
+}
+
+#[cfg(feature = "debug-polygons")]
+fn compute_tile_bounds(tile_id: TileId, tile_size_degrees: f32) -> TileBounds {
+    let lon_min = (tile_id.col as f32 * tile_size_degrees) - 180.0;
+    let lon_max = lon_min + tile_size_degrees;
+    let lat_min = (tile_id.row as f32 * tile_size_degrees) - 90.0;
+    let lat_max = lat_min + tile_size_degrees;
+
+    TileBounds {
+        lat_min,
+        lat_max,
+        lon_min,
+        lon_max,
+    }
+}
+
+#[cfg(feature = "debug-polygons")]
+fn tile_bounds_polygon(bounds: TileBounds) -> Polygon<f64> {
+    Polygon::new(
+        LineString::from(vec![
+            (bounds.lon_min as f64, bounds.lat_min as f64),
+            (bounds.lon_max as f64, bounds.lat_min as f64),
+            (bounds.lon_max as f64, bounds.lat_max as f64),
+            (bounds.lon_min as f64, bounds.lat_max as f64),
+            (bounds.lon_min as f64, bounds.lat_min as f64),
+        ]),
+        vec![],
+    )
+}
+
+#[cfg(feature = "debug-polygons")]
+fn multi_polygon_to_geojson_coordinates(
+    multi_polygon: &MultiPolygon<f64>,
+) -> Vec<Vec<Vec<Vec<f64>>>> {
+    multi_polygon
+        .0
+        .iter()
+        .map(|polygon| {
+            std::iter::once(polygon.exterior())
+                .chain(polygon.interiors().iter())
+                .map(|ring| ring.0.iter().map(|coord| vec![coord.x, coord.y]).collect())
+                .collect()
+        })
+        .collect()
+}
+
+#[cfg(feature = "debug-polygons")]
+fn export_military_geojson_tiles(
+    output_dir: &Path,
+    tile_size_degrees: f32,
+    tile_ids: &[TileId],
+    military_polygons: &[MultiPolygon<f64>],
+) -> Result<()> {
+    let mut written_geojson_tiles = 0usize;
+
+    for tile_id in tile_ids {
+        let tile_bounds = compute_tile_bounds(*tile_id, tile_size_degrees);
+        let tile_polygon = tile_bounds_polygon(tile_bounds);
+        let geojson_filename = manifest::military_geojson_filename(*tile_id);
+        let geojson_path = output_dir.join(&geojson_filename);
+
+        let features: Vec<_> = military_polygons
+            .iter()
+            .enumerate()
+            .filter(|(_, polygon)| polygon.intersects(&tile_polygon))
+            .map(|(polygon_index, polygon)| {
+                json!({
+                    "type": "Feature",
+                    "properties": {
+                        "polygon_index": polygon_index,
+                        "source": "military"
+                    },
+                    "geometry": {
+                        "type": "MultiPolygon",
+                        "coordinates": multi_polygon_to_geojson_coordinates(polygon)
+                    }
+                })
+            })
+            .collect();
+
+        if features.is_empty() {
+            if geojson_path.exists() {
+                std::fs::remove_file(&geojson_path)?;
+            }
+            continue;
+        }
+
+        let feature_collection = json!({
+            "type": "FeatureCollection",
+            "features": features,
+        });
+
+        let file = std::fs::File::create(&geojson_path)
+            .with_context(|| format!("Failed to create GeoJSON file: {:?}", geojson_path))?;
+        serde_json::to_writer_pretty(file, &feature_collection)
+            .with_context(|| format!("Failed to write GeoJSON file: {:?}", geojson_path))?;
+        written_geojson_tiles += 1;
+    }
+
+    info!(
+        "Exported military GeoJSON for {} tiles from {} polygons",
+        written_geojson_tiles,
+        military_polygons.len()
+    );
+
+    Ok(())
 }
 
 /// Generator for processing multiple PBF files with tile stitching
@@ -173,8 +323,10 @@ impl MultiPbfGenerator {
             "Phase 1: Processing {} PBF files independently",
             pbf_files.len()
         );
+        let mut all_military_polygons = Vec::new();
         for (pbf_id, pbf_path) in pbf_files.iter().enumerate() {
-            self.process_single_pbf(&db, pbf_id as u64, pbf_path)?;
+            let military_polygons = self.process_single_pbf(&db, pbf_id as u64, pbf_path)?;
+            all_military_polygons.extend(military_polygons);
         }
 
         // Phase 2: Identify overlapping regions and affected zones
@@ -190,38 +342,25 @@ impl MultiPbfGenerator {
 
         // Phase 4: Deduplicate and write final tiles
         info!("Phase 4: Writing final RMDF tiles");
-        self.write_final_tiles(&db, &pbf_files)?;
-
-        // Generate manifest
-        info!("Generating manifest");
-        let manifest_gen = ManifestGenerator::new(self.tile_size_degrees);
-        let tile_ids = manifest_gen
-            .discover_tiles(&self.output_dir)
-            .context("Failed to discover tiles from filesystem")?;
-
-        if tile_ids.is_empty() {
-            tracing::warn!("No tiles were generated");
-        } else {
-            manifest_gen
-                .generate(
-                    &self.output_dir,
-                    &tile_ids,
-                    self.input_directory.to_str().unwrap_or("unknown"),
-                )
-                .context("Failed to generate manifest")?;
-        }
+        self.write_final_tiles(&db, &pbf_files, &all_military_polygons)?;
 
         info!("Multi-PBF tile generation complete");
         Ok(())
     }
 
     /// Process a single PBF file and store results in redb
-    fn process_single_pbf(&self, db: &redb::Database, pbf_id: u64, pbf_path: &Path) -> Result<()> {
+    fn process_single_pbf(
+        &self,
+        db: &redb::Database,
+        pbf_id: u64,
+        pbf_path: &Path,
+    ) -> Result<Vec<MultiPolygon<f64>>> {
         info!("Processing PBF {} ({:?})", pbf_id, pbf_path);
 
         // Load PBF with pre-computed flags AND get the proximity grid
         let (pbf_data, proximity_grid) = InMemoryPbf::from_pbf_file_with_grid(pbf_path)
             .with_context(|| format!("Failed to load PBF file: {:?}", pbf_path))?;
+        let military_polygons = extract_debug_military_polygons(&pbf_data);
 
         // Store grid bounds
         let bounds = &pbf_data.bounds;
@@ -246,7 +385,7 @@ impl MultiPbfGenerator {
         self.save_tiles_to_redb(db, &pbf_data)?;
 
         info!("Completed processing PBF {}", pbf_id);
-        Ok(())
+        Ok(military_polygons)
     }
 
     /// Save tiles from PBF data to redb for intermediate storage
@@ -694,7 +833,12 @@ impl MultiPbfGenerator {
     /// 1. Discovers all tile positions from redb
     /// 2. For each tile: loads, deduplicates, builds graph, writes RMDF
     /// 3. Generates manifest with all source filenames
-    fn write_final_tiles(&self, db: &redb::Database, pbf_files: &[PathBuf]) -> Result<()> {
+    fn write_final_tiles(
+        &self,
+        db: &redb::Database,
+        pbf_files: &[PathBuf],
+        military_polygons: &[MultiPolygon<f64>],
+    ) -> Result<()> {
         info!("Writing final RMDF tiles");
 
         // Discover all tile positions from redb
@@ -747,7 +891,12 @@ impl MultiPbfGenerator {
         info!("Wrote {} RMDF tiles", completed.load(Ordering::Relaxed));
 
         // Generate manifest
-        self.generate_manifest(db, pbf_files, completed.load(Ordering::Relaxed))?;
+        self.generate_manifest(
+            db,
+            pbf_files,
+            completed.load(Ordering::Relaxed),
+            military_polygons,
+        )?;
 
         // Clean up intermediate storage
         self.cleanup_intermediate_storage()?;
@@ -814,9 +963,10 @@ impl MultiPbfGenerator {
     /// Generate manifest for the output tiles
     fn generate_manifest(
         &self,
-        db: &redb::Database,
+        _db: &redb::Database,
         pbf_files: &[PathBuf],
         tile_count: usize,
+        military_polygons: &[MultiPolygon<f64>],
     ) -> Result<()> {
         // Load all PBF filenames from storage
         let source_files: Vec<String> = pbf_files
@@ -835,6 +985,14 @@ impl MultiPbfGenerator {
             tracing::warn!("No tiles discovered for manifest");
             return Ok(());
         }
+
+        maybe_export_military_geojson_tiles(
+            &self.output_dir,
+            self.tile_size_degrees,
+            &tile_ids,
+            military_polygons,
+        )
+        .context("Failed to export military GeoJSON tiles")?;
 
         // Use the first source file as the primary source (for manifest compatibility)
         let primary_source = source_files

@@ -15,6 +15,7 @@ default = []
 rule-schema-writer = []
 debug-split-gpx = []
 rmdf-viewer = ["dep:tiny_http", "dep:ts-rs", "dep:include_directory"]
+debug-polygons = []
 
 [dependencies]
 anyhow = "1.0.95"

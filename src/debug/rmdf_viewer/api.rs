@@ -28,6 +28,9 @@ pub struct TileSummary {
     pub size_bytes: u64,
     pub point_count: u64,
     pub line_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub military_geojson_filename: Option<String>,
 }
 
 #[derive(Serialize, TS)]
@@ -135,6 +138,7 @@ pub fn get_manifest(input_dir: &PathBuf) -> Result<ManifestResponse> {
                 size_bytes: t.size_bytes,
                 point_count: t.point_count,
                 line_count: t.line_count,
+                military_geojson_filename: t.military_geojson_filename,
             })
             .collect(),
     };
@@ -216,6 +220,20 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
         points,
         lines,
     })
+}
+
+pub fn get_geojson(input_dir: &PathBuf, filename: &str) -> Result<String> {
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+        anyhow::bail!("Invalid filename");
+    }
+
+    if !filename.ends_with(".geojson") {
+        anyhow::bail!("Filename must end with .geojson");
+    }
+
+    let geojson_path = input_dir.join(filename);
+    std::fs::read_to_string(&geojson_path)
+        .with_context(|| format!("Failed to load GeoJSON: {:?}", geojson_path))
 }
 
 fn resolve_tags(tile: &MappedTile, tag_set_index: u32) -> Result<TagResponse> {

@@ -17,10 +17,10 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function TileList({ 
-  tiles, 
-  loadedTiles, 
-  onLoadTile, 
+export function TileList({
+  tiles,
+  loadedTiles,
+  onLoadTile,
   onToggleVisibility,
   loading,
   focusedTileFilename,
@@ -38,20 +38,20 @@ export function TileList({
   return (
     <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 60px)' }}>
       <h3 style={{ margin: '0 0 1rem 0' }}>Available Tiles ({tiles.length})</h3>
-      
+
       {loading && <p style={{ color: '#666' }}>Loading...</p>}
-      
+
       <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
         {tiles.map(tile => {
           const loaded = loadedTiles.get(tile.filename);
           const isLoaded = !!loaded;
-          
+
           return (
-            <li 
+            <li
               id={`tile-${tile.filename}`}
               key={tile.filename}
-              style={{ 
-                padding: '0.5rem', 
+              style={{
+                padding: '0.5rem',
                 marginBottom: '0.5rem',
                 background: isLoaded ? '#e8f5e9' : focusedTileFilename === tile.filename ? '#fff3e0' : '#fff',
                 border: focusedTileFilename === tile.filename ? '2px solid #ff9800' : '1px solid #ddd',
@@ -62,16 +62,17 @@ export function TileList({
               <div style={{ fontWeight: 'bold', marginBottom: '0.25rem' }}>
                 {tile.filename}
               </div>
-              
+
               <div style={{ fontSize: '0.85rem', color: '#666' }}>
                 <div>Points: {tile.point_count.toLocaleString()}</div>
                 <div>Lines: {tile.line_count.toLocaleString()}</div>
                 <div>Size: {formatBytes(tile.size_bytes)}</div>
+                <div>Military GeoJSON: {tile.military_geojson_filename ? 'Available' : 'None'}</div>
               </div>
-              
+
               <div style={{ marginTop: '0.5rem' }}>
                 {!isLoaded ? (
-                  <button 
+                  <button
                     onClick={() => onLoadTile(tile.filename)}
                     disabled={loading}
                     style={{ padding: '0.25rem 0.5rem' }}

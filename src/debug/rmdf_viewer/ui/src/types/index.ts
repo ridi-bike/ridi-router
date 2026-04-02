@@ -14,3 +14,23 @@ export type {
 export type { PointResponse } from './generated/PointResponse';
 export type { LineResponse } from './generated/LineResponse';
 export type { TagResponse } from './generated/TagResponse';
+
+export interface MilitaryGeoJsonFeatureCollection {
+  type: 'FeatureCollection';
+  features: MilitaryGeoJsonFeature[];
+}
+
+export interface MilitaryGeoJsonFeature {
+  type: 'Feature';
+  geometry: MilitaryGeoJsonGeometry;
+  properties?: {
+    polygon_index?: number;
+    source?: string;
+  };
+}
+
+export interface MilitaryGeoJsonGeometry {
+  type: 'MultiPolygon';
+  coordinates: number[][][][];
+}
+

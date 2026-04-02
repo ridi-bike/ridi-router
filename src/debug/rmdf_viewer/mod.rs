@@ -140,6 +140,27 @@ fn handle_api_request(
                     ))
             }
         }
+    } else if let Some(filename) = url.strip_prefix("/api/geojson/") {
+        match api::get_geojson(input_dir, filename) {
+            Ok(geojson) => Ok(Response::from_string(geojson).with_header(
+                Header::from_bytes(&b"Content-Type"[..], &b"application/geo+json"[..])
+                    .map_err(|_| RmdfViewerError::HeaderCreate)?,
+            )),
+            Err(e) => {
+                let status = if e.to_string().contains("Failed to load") {
+                    404
+                } else {
+                    500
+                };
+                let error_json = format!("{{\"error\": \"{}\"}}", e);
+                Ok(Response::from_string(error_json)
+                    .with_status_code(status)
+                    .with_header(
+                        Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                            .map_err(|_| RmdfViewerError::HeaderCreate)?,
+                    ))
+            }
+        }
     } else {
         let response = Response::from_string("{\"error\": \"Not found\"}")
             .with_status_code(404)

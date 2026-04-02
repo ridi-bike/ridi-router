@@ -16,4 +16,5 @@ export interface TileSummary {
   size_bytes: number;
   point_count: number;
   line_count: number;
+  military_geojson_filename?: string;
 }

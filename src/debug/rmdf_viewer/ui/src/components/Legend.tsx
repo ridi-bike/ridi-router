@@ -8,6 +8,10 @@ const LEGEND_ITEMS = [
   { color: '#f44336', label: 'No-go area' },
 ];
 
+const OVERLAY_ITEMS = [
+  { color: '#c2185b', label: 'Military polygon GeoJSON overlay' },
+];
+
 const DIRECTION_ITEMS = [
   { symbol: '——', label: 'Both ways' },
   { symbol: '- -', label: 'One way (dashed)' },
@@ -16,8 +20,8 @@ const DIRECTION_ITEMS = [
 
 export function Legend({ style }: LegendProps) {
   return (
-    <div 
-      style={{ 
+    <div
+      style={{
         padding: '0.75rem',
         background: 'rgba(255, 255, 255, 0.95)',
         borderRadius: '4px',
@@ -27,41 +31,62 @@ export function Legend({ style }: LegendProps) {
       }}
     >
       <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>Color Legend</h4>
-      
+
       <div style={{ marginBottom: '0.75rem' }}>
         {LEGEND_ITEMS.map(item => (
-          <div 
+          <div
             key={item.label}
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}
           >
-            <span 
-              style={{ 
-                width: '16px', 
-                height: '16px', 
-                background: item.color, 
+            <span
+              style={{
+                width: '16px',
+                height: '16px',
+                background: item.color,
                 borderRadius: '50%',
                 border: '1px solid #333',
-              }} 
+              }}
             />
             <span>{item.label}</span>
           </div>
         ))}
       </div>
-      
-      <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>Line Styles</h4>
-      <div>
-        {DIRECTION_ITEMS.map(item => (
-          <div 
+
+      <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>Overlays</h4>
+      <div style={{ marginBottom: '0.75rem' }}>
+        {OVERLAY_ITEMS.map(item => (
+          <div
             key={item.label}
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}
           >
-            <span 
-              style={{ 
-                width: '16px', 
+            <span
+              style={{
+                width: '16px',
+                height: '16px',
+                background: 'rgba(233, 30, 99, 0.12)',
+                border: `2px solid ${item.color}`,
+                boxSizing: 'border-box',
+              }}
+            />
+            <span>{item.label}</span>
+          </div>
+        ))}
+      </div>
+
+      <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem' }}>Line Styles</h4>
+      <div>
+        {DIRECTION_ITEMS.map(item => (
+          <div
+            key={item.label}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}
+          >
+            <span
+              style={{
+                width: '16px',
                 textAlign: 'center',
                 fontFamily: 'monospace',
                 fontSize: '0.8rem',
-              }} 
+              }}
             >
               {item.symbol}
             </span>

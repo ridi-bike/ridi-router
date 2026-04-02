@@ -27,6 +27,8 @@ pub struct TileMetadata {
     pub point_count: u64,
     pub line_count: u64,
     pub checksum: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub military_geojson_filename: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,6 +49,21 @@ pub struct TileNeighbors {
     pub northwest: Option<String>,
     pub southeast: Option<String>,
     pub southwest: Option<String>,
+}
+
+pub fn military_geojson_filename(tile_id: TileId) -> String {
+    format!("tile_{}_{}.military.geojson", tile_id.col, tile_id.row)
+}
+
+#[cfg(feature = "debug-polygons")]
+fn discover_military_geojson_filename(output_dir: &Path, tile_id: TileId) -> Option<String> {
+    let candidate = military_geojson_filename(tile_id);
+    output_dir.join(&candidate).exists().then_some(candidate)
+}
+
+#[cfg(not(feature = "debug-polygons"))]
+fn discover_military_geojson_filename(_output_dir: &Path, _tile_id: TileId) -> Option<String> {
+    None
 }
 
 pub struct ManifestGenerator {
@@ -123,6 +140,8 @@ impl ManifestGenerator {
 
             // Compute neighbors
             let neighbors = self.compute_neighbors(*tile_id, tile_ids);
+            let military_geojson_filename =
+                discover_military_geojson_filename(output_dir, *tile_id);
 
             let tile_meta = TileMetadata {
                 filename,
@@ -139,6 +158,7 @@ impl ManifestGenerator {
                 point_count: header.point_count,
                 line_count: header.line_count,
                 checksum,
+                military_geojson_filename,
             };
 
             tiles.push(tile_meta);

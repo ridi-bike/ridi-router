@@ -1,10 +1,16 @@
 import { useState, useCallback } from 'react';
-import type { ManifestResponse, TileSummary, TileResponse } from '../types';
-import { fetchManifest, fetchTile } from '../api/client';
+import type {
+  ManifestResponse,
+  MilitaryGeoJsonFeatureCollection,
+  TileSummary,
+  TileResponse,
+} from '../types';
+import { fetchManifest, fetchMilitaryGeoJson, fetchTile } from '../api/client';
 
 export interface LoadedTile {
   summary: TileSummary;
   data: TileResponse;
+  militaryGeoJson: MilitaryGeoJsonFeatureCollection | null;
   visible: boolean;
 }
 
@@ -29,17 +35,23 @@ export function useTiles() {
 
   const loadTile = useCallback(async (filename: string) => {
     if (loadedTiles.has(filename)) return; // Already loaded
-    
+
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchTile(filename);
       const summary = manifest?.tiles.find(t => t.filename === filename);
       if (!summary) throw new Error('Tile not found in manifest');
-      
+
+      const [data, militaryGeoJson] = await Promise.all([
+        fetchTile(filename),
+        summary.military_geojson_filename
+          ? fetchMilitaryGeoJson(summary.military_geojson_filename)
+          : Promise.resolve(null),
+      ]);
+
       setLoadedTiles(prev => {
         const next = new Map(prev);
-        next.set(filename, { summary, data, visible: true });
+        next.set(filename, { summary, data, militaryGeoJson, visible: true });
         return next;
       });
     } catch (e) {
@@ -53,7 +65,7 @@ export function useTiles() {
     setLoadedTiles(prev => {
       const tile = prev.get(filename);
       if (!tile) return prev;
-      
+
       const next = new Map(prev);
       next.set(filename, { ...tile, visible: !tile.visible });
       return next;

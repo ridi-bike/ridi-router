@@ -1017,6 +1017,42 @@ impl InMemoryPbf {
         }
     }
 
+    fn has_military_tags(tags: &HashMap<String, String>) -> bool {
+        tags.get("landuse").map(|v| v.as_str()) == Some("military") || tags.contains_key("military")
+    }
+
+    pub fn extract_military_polygons(&self) -> Vec<MultiPolygon<f64>> {
+        let military_way_ids: Vec<u64> = self
+            .ways_by_id
+            .values()
+            .filter_map(|way_with_bounds| {
+                way_with_bounds
+                    .way
+                    .tags
+                    .as_ref()
+                    .filter(|tags| Self::has_military_tags(tags))
+                    .map(|_| way_with_bounds.way.id)
+            })
+            .collect();
+
+        let military_relation_ids: Vec<u64> = self
+            .relations_by_id
+            .values()
+            .filter(|relation_with_bounds| {
+                Self::has_military_tags(&relation_with_bounds.relation.tags)
+            })
+            .map(|relation_with_bounds| relation_with_bounds.relation.id)
+            .collect();
+
+        Self::extract_area_polygons(
+            &military_way_ids,
+            &military_relation_ids,
+            &self.ways_by_id,
+            &self.relations_by_id,
+            &self.nodes_by_id,
+        )
+    }
+
     /// Query all nodes within tile bounds
     pub fn query_nodes_in_bounds(&self, bounds: &TileBounds) -> Vec<&OsmNode> {
         let envelope = AABB::from_corners(
