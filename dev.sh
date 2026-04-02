@@ -97,7 +97,7 @@ cmd_generate_tiles() {
 
     # Run tile generation
     echo "Generating tiles..."
-    cargo run --release -- generate-tiles --input-dir "$INPUT_DIR" --output-dir "$OUTPUT_DIR" --tile-size-deg 0.1
+    cargo run --release --features=debug-polygons -- generate-tiles --input-dir "$INPUT_DIR" --output-dir "$OUTPUT_DIR" --tile-size-deg 0.1
 }
 
 cmd_build() {
