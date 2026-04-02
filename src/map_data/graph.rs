@@ -461,10 +461,7 @@ impl MapDataGraph {
             points: (
                 MapDataPointRef::new(tile_id, line_record.point_a_osm_id),
                 MapDataPointRef::new(
-                    tm.tile_id_for_coords(
-                        line_record.point_b_lat,
-                        line_record.point_b_lon,
-                    ),
+                    tm.tile_id_for_coords(line_record.point_b_lat, line_record.point_b_lon),
                     line_record.point_b_osm_id,
                 ),
             ),

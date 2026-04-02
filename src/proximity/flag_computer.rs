@@ -287,8 +287,8 @@ mod tests {
             1,
             OsmNode {
                 id: 1,
-                lat: 60.0, // Far outside 50.0-50.1 range
-                lon: 20.0, // Far outside 10.0-10.1 range
+                lat: 60.0,                      // Far outside 50.0-50.1 range
+                lon: 20.0,                      // Far outside 10.0-10.1 range
                 residential_in_proximity: true, // Pre-set to true
                 nogo_area: true,
             },

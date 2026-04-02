@@ -436,12 +436,16 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
 
         let restriction_type = relation.tags.get("restriction").map(|t| t.as_str());
         let rule_type = match restriction_type {
-            Some("no_left_turn") | Some("no_right_turn") | Some("no_straight_on") | Some("no_u_turn") | Some("no_entry") | Some("no_exit") => {
-                MapDataRuleType::NotAllowed
-            }
-            Some("only_left_turn") | Some("only_right_turn") | Some("only_straight_on") | Some("only_u_turn") => {
-                MapDataRuleType::OnlyAllowed
-            }
+            Some("no_left_turn")
+            | Some("no_right_turn")
+            | Some("no_straight_on")
+            | Some("no_u_turn")
+            | Some("no_entry")
+            | Some("no_exit") => MapDataRuleType::NotAllowed,
+            Some("only_left_turn")
+            | Some("only_right_turn")
+            | Some("only_straight_on")
+            | Some("only_u_turn") => MapDataRuleType::OnlyAllowed,
             _ => continue,
         };
 
@@ -480,7 +484,9 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
         }
 
         // Get the line refs for the from way
-        let Some(from_lines) = way_to_lines.get(&from_way) else { continue };
+        let Some(from_lines) = way_to_lines.get(&from_way) else {
+            continue;
+        };
 
         // Collect all to_lines from all to_ways
         let mut all_to_lines = Vec::new();
@@ -509,10 +515,7 @@ pub fn set_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
 }
 
 pub fn line_is_between_point_ids(line: &MapDataLineRef, id1: u64, id2: u64) -> bool {
-    let point_ids = [
-        line.get().points.0.get().id,
-        line.get().points.1.get().id,
-    ];
+    let point_ids = [line.get().points.0.get().id, line.get().points.1.get().id];
     point_ids.contains(&id1) && point_ids.contains(&id2)
 }
 pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {

@@ -1,8 +1,10 @@
-use crate::map_data::osm::{OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberType, OsmWay};
+use crate::map_data::osm::{
+    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberType, OsmWay,
+};
 use crate::rmdf::format::TileBounds;
 use anyhow::{Context, Result};
-use geo::{Coord, LineString, MultiPolygon, Polygon};
 use geo::prelude::Contains;
+use geo::{Coord, LineString, MultiPolygon, Point, Polygon};
 use osmpbfreader::{OsmObj, OsmPbfReader};
 use rstar::{RTree, RTreeObject, AABB};
 use std::collections::HashMap;
@@ -30,7 +32,6 @@ impl BoundingBox {
         }
     }
 
-
     /// Check if the bounding box is empty (no points added)
     pub fn is_empty(&self) -> bool {
         self.lat_min > self.lat_max || self.lon_min > self.lon_max
@@ -56,10 +57,7 @@ impl BoundingBox {
 
     /// Convert to RTree AABB for spatial queries
     pub fn to_aabb(&self) -> AABB<[f64; 2]> {
-        AABB::from_corners(
-            [self.lon_min, self.lat_min],
-            [self.lon_max, self.lat_max],
-        )
+        AABB::from_corners([self.lon_min, self.lat_min], [self.lon_max, self.lat_max])
     }
 }
 
@@ -155,6 +153,18 @@ impl PbfBounds {
             && self.lon_min.is_some()
             && self.lon_max.is_some()
     }
+
+    /// Extract bounds as (lat_min, lat_max, lon_min, lon_max)
+    /// # Panics
+    /// Panics if bounds are not valid
+    pub fn extract(&self) -> (f64, f64, f64, f64) {
+        (
+            self.lat_min.expect("lat_min not set"),
+            self.lat_max.expect("lat_max not set"),
+            self.lon_min.expect("lon_min not set"),
+            self.lon_max.expect("lon_max not set"),
+        )
+    }
 }
 
 /// In-memory PBF representation with spatial indexing
@@ -168,7 +178,6 @@ pub struct InMemoryPbf {
     nodes_spatial: RTree<NodeSpatialEntry>,
     ways_spatial: RTree<WaySpatialEntry>,
     relations_spatial: RTree<RelationSpatialEntry>,
-
 
     // Metadata
     pub bounds: PbfBounds,
@@ -319,7 +328,10 @@ impl InMemoryPbf {
         path: &Path,
     ) -> Result<(Self, crate::proximity::RasterizedProximityGrid)> {
         let start = Instant::now();
-        info!("Loading PBF file with pre-computed flags and grid: {:?}", path);
+        info!(
+            "Loading PBF file with pre-computed flags and grid: {:?}",
+            path
+        );
 
         // Pass 1: Load all nodes
         info!("Pass 1: Loading nodes...");
@@ -551,49 +563,34 @@ impl InMemoryPbf {
                     }
                 }
 
-                // Build polygons from outer rings with matching inner rings
-                for outer_ring in outer_rings {
-                    // Close the ring if necessary
-                    let mut outer_coords = outer_ring.into_inner();
-                    if !outer_coords.is_empty() && outer_coords.first() != outer_coords.last() {
-                        outer_coords.push(outer_coords[0]);
-                    }
+                // Main branch behavior: first assemble both outer and inner member ways
+                // into naturally closed rings, then match inner rings to the containing outer.
+                let connected_outer_rings = connect_ways_into_rings(outer_rings);
+                let connected_inner_rings = connect_ways_into_rings(inner_rings);
 
-                    if outer_coords.len() < 4 {
+                for outer_ring in connected_outer_rings {
+                    if outer_ring.0.len() < 4 {
                         continue;
                     }
 
-                    let outer_ls = LineString::new(outer_coords);
-                    let polygon = Polygon::new(outer_ls, vec![]);
+                    let outer_polygon = Polygon::new(outer_ring.clone(), vec![]);
+                    let matching_holes: Vec<LineString<f64>> = connected_inner_rings
+                        .iter()
+                        .filter(|inner_ring| inner_ring.0.len() >= 4)
+                        .filter(|inner_ring| {
+                            inner_ring
+                                .0
+                                .first()
+                                .map(|coord| outer_polygon.contains(&Point::new(coord.x, coord.y)))
+                                .unwrap_or(false)
+                        })
+                        .cloned()
+                        .collect();
 
-                    // Only add inner rings that are actually inside this outer ring
-                    // Check if the first point of the inner ring is within the outer polygon
-                    let mut polygon_with_holes = polygon.clone();
-                    for inner_ring in &inner_rings {
-                        let mut inner_coords = inner_ring.clone().into_inner();
-                        if !inner_coords.is_empty() && inner_coords.first() != inner_coords.last() {
-                            inner_coords.push(inner_coords[0]);
-                        }
-                        if inner_coords.len() >= 4 {
-                            // Check if first point of inner is within outer
-                            let inner_first = Coord {
-                                x: inner_coords[0].x,
-                                y: inner_coords[0].y,
-                            };
-                            if polygon.contains(&inner_first) {
-                                polygon_with_holes = Polygon::new(
-                                    polygon_with_holes.exterior().clone(),
-                                    polygon_with_holes
-                                        .interiors()
-                                        .iter()
-                                        .cloned()
-                                        .chain(std::iter::once(LineString::new(inner_coords)))
-                                        .collect(),
-                                );
-                            }
-                        }
-                    }
-                    polygons.push(MultiPolygon::new(vec![polygon_with_holes]));
+                    polygons.push(MultiPolygon::new(vec![Polygon::new(
+                        outer_ring,
+                        matching_holes,
+                    )]));
                 }
             }
         }
@@ -680,17 +677,25 @@ impl InMemoryPbf {
 
                         // Check if this way has highway or area tags we care about
                         let has_highway = tags.contains_key("highway");
-                        let is_residential = tags.get("landuse").map(|v| v.as_str()) == Some("residential");
-                        let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military")
+                        let is_residential =
+                            tags.get("landuse").map(|v| v.as_str()) == Some("residential");
+                        let is_military = tags.get("landuse").map(|v| v.as_str())
+                            == Some("military")
                             || tags.contains_key("military");
 
                         // Also include ways that could be multipolygon relation members:
                         // - Closed loops (first == last) with >= 4 nodes
                         // - Open non-highway ways with >= 2 nodes (potential boundary segments)
-                        let is_closed_loop = way.nodes.len() >= 4 && way.nodes.first() == way.nodes.last();
+                        let is_closed_loop =
+                            way.nodes.len() >= 4 && way.nodes.first() == way.nodes.last();
                         let is_potential_boundary = !has_highway && way.nodes.len() >= 2;
 
-                        if has_highway || is_residential || is_military || is_closed_loop || is_potential_boundary {
+                        if has_highway
+                            || is_residential
+                            || is_military
+                            || is_closed_loop
+                            || is_potential_boundary
+                        {
                             let tags_map: HashMap<String, String> = tags
                                 .iter()
                                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -699,7 +704,11 @@ impl InMemoryPbf {
                             let osm_way = OsmWay {
                                 id: way.id.0 as u64,
                                 point_ids: way.nodes.iter().map(|n| n.0 as u64).collect(),
-                                tags: if tags_map.is_empty() { None } else { Some(tags_map) },
+                                tags: if tags_map.is_empty() {
+                                    None
+                                } else {
+                                    Some(tags_map)
+                                },
                             };
                             return Some((osm_way, is_residential, is_military));
                         }
@@ -765,13 +774,7 @@ impl InMemoryPbf {
             });
 
             // Store in HashMap
-            ways_by_id.insert(
-                way_id,
-                WayWithBounds {
-                    way,
-                    bbox,
-                },
-            );
+            ways_by_id.insert(way_id, WayWithBounds { way, bbox });
         }
 
         let ways_spatial = RTree::bulk_load(spatial_entries);
@@ -803,9 +806,12 @@ impl InMemoryPbf {
                         let tags = relation.tags.clone();
 
                         // Check if this is a multipolygon or area relation
-                        let is_multipolygon = tags.get("type").map(|v| v.as_str()) == Some("multipolygon");
-                        let is_residential = tags.get("landuse").map(|v| v.as_str()) == Some("residential");
-                        let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military")
+                        let is_multipolygon =
+                            tags.get("type").map(|v| v.as_str()) == Some("multipolygon");
+                        let is_residential =
+                            tags.get("landuse").map(|v| v.as_str()) == Some("residential");
+                        let is_military = tags.get("landuse").map(|v| v.as_str())
+                            == Some("military")
                             || tags.contains_key("military");
 
                         if is_multipolygon || is_residential || is_military {
@@ -816,7 +822,9 @@ impl InMemoryPbf {
                                     let member_type = match r.member {
                                         osmpbfreader::OsmId::Node(_) => OsmRelationMemberType::Node,
                                         osmpbfreader::OsmId::Way(_) => OsmRelationMemberType::Way,
-                                        osmpbfreader::OsmId::Relation(_) => OsmRelationMemberType::Relation,
+                                        osmpbfreader::OsmId::Relation(_) => {
+                                            OsmRelationMemberType::Relation
+                                        }
                                     };
 
                                     let member_ref = match r.member {
@@ -827,7 +835,9 @@ impl InMemoryPbf {
 
                                     OsmRelationMember {
                                         member_type,
-                                        role: crate::map_data::osm::OsmRelationMemberRole::Other(r.role.to_string()),
+                                        role: crate::map_data::osm::OsmRelationMemberRole::Other(
+                                            r.role.to_string(),
+                                        ),
                                         member_ref,
                                     }
                                 })
@@ -852,7 +862,10 @@ impl InMemoryPbf {
             })
             .collect();
 
-        info!("Collected {} relations, computing bounding boxes...", relations.len());
+        info!(
+            "Collected {} relations, computing bounding boxes...",
+            relations.len()
+        );
 
         // Compute bounding boxes iteratively (handles nested relations)
         let (relations_with_bounds, residential_relations, military_relations) =
@@ -904,12 +917,9 @@ impl InMemoryPbf {
             let mut newly_resolved = Vec::new();
 
             for (rel_id, (relation, is_residential, is_military)) in &pending {
-                if let Some(bbox) = Self::try_compute_relation_bbox(
-                    relation,
-                    nodes_by_id,
-                    ways_by_id,
-                    &resolved,
-                ) {
+                if let Some(bbox) =
+                    Self::try_compute_relation_bbox(relation, nodes_by_id, ways_by_id, &resolved)
+                {
                     newly_resolved.push((
                         *rel_id,
                         RelationWithBounds {
@@ -956,7 +966,11 @@ impl InMemoryPbf {
 
         let relations_with_bounds: Vec<_> = resolved.into_values().collect();
 
-        (relations_with_bounds, residential_relations, military_relations)
+        (
+            relations_with_bounds,
+            residential_relations,
+            military_relations,
+        )
     }
 
     /// Try to compute a relation's bounding box from its members
@@ -1041,5 +1055,140 @@ impl InMemoryPbf {
             .filter_map(|entry| self.relations_by_id.get(&entry.id))
             .collect()
     }
+}
 
+/// Connect OSM ways into complete polygon rings.
+///
+/// Compared to the current broken implementation, we only keep *naturally closed*
+/// rings. Main branch does the same: incomplete chains are discarded instead of
+/// being force-closed into bogus polygons.
+fn connect_ways_into_rings(ways: Vec<LineString<f64>>) -> Vec<LineString<f64>> {
+    use std::collections::VecDeque;
+
+    let mut rings = Vec::new();
+    let mut remaining: VecDeque<LineString<f64>> = ways.into_iter().collect();
+
+    while let Some(first) = remaining.pop_front() {
+        let mut current_ring = first.into_inner();
+        if current_ring.len() < 2 {
+            continue;
+        }
+
+        let mut changed = true;
+        while changed {
+            changed = false;
+
+            let mut i = 0;
+            while i < remaining.len() {
+                let way_coords: Vec<Coord<f64>> = remaining[i].coords().cloned().collect();
+                if way_coords.len() < 2 {
+                    i += 1;
+                    continue;
+                }
+
+                let way_start = way_coords.first().unwrap();
+                let way_end = way_coords.last().unwrap();
+                let ring_start = current_ring.first().unwrap();
+                let ring_end = current_ring.last().unwrap();
+
+                if coords_match(way_start, ring_end) {
+                    current_ring.extend(way_coords.iter().skip(1).cloned());
+                    remaining.remove(i);
+                    changed = true;
+                } else if coords_match(way_end, ring_end) {
+                    current_ring.extend(way_coords.iter().rev().skip(1).cloned());
+                    remaining.remove(i);
+                    changed = true;
+                } else if coords_match(way_end, ring_start) {
+                    let mut new_ring: Vec<Coord<f64>> = way_coords
+                        .iter()
+                        .take(way_coords.len() - 1)
+                        .cloned()
+                        .collect();
+                    new_ring.extend(current_ring);
+                    current_ring = new_ring;
+                    remaining.remove(i);
+                    changed = true;
+                } else if coords_match(way_start, ring_start) {
+                    let mut new_ring: Vec<Coord<f64>> = way_coords
+                        .iter()
+                        .rev()
+                        .take(way_coords.len() - 1)
+                        .cloned()
+                        .collect();
+                    new_ring.extend(current_ring);
+                    current_ring = new_ring;
+                    remaining.remove(i);
+                    changed = true;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        if is_closed_ring(&current_ring) {
+            rings.push(LineString::new(current_ring));
+        }
+    }
+
+    rings
+}
+
+fn coords_match(a: &Coord<f64>, b: &Coord<f64>) -> bool {
+    (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9
+}
+
+fn is_closed_ring(coords: &[Coord<f64>]) -> bool {
+    coords.len() >= 4
+        && coords
+            .first()
+            .zip(coords.last())
+            .map(|(first, last)| coords_match(first, last))
+            .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ls(coords: &[(f64, f64)]) -> LineString<f64> {
+        LineString::new(coords.iter().map(|(x, y)| Coord { x: *x, y: *y }).collect())
+    }
+
+    #[test]
+    fn connect_ways_discards_incomplete_chains() {
+        let rings = connect_ways_into_rings(vec![
+            ls(&[(0.0, 0.0), (1.0, 0.0)]),
+            ls(&[(1.0, 0.0), (1.0, 1.0)]),
+            ls(&[(1.0, 1.0), (0.0, 1.0)]),
+        ]);
+
+        assert!(rings.is_empty());
+    }
+
+    #[test]
+    fn connect_ways_handles_prepend_reversed_case() {
+        let rings = connect_ways_into_rings(vec![
+            ls(&[(1.0, 0.0), (1.0, 1.0)]),
+            ls(&[(1.0, 0.0), (0.0, 0.0)]),
+            ls(&[(0.0, 1.0), (0.0, 0.0)]),
+            ls(&[(1.0, 1.0), (0.0, 1.0)]),
+        ]);
+
+        assert_eq!(rings.len(), 1);
+        let ring = &rings[0].0;
+        assert_eq!(ring.first(), ring.last());
+        assert!(ring
+            .iter()
+            .any(|coord| coords_match(coord, &Coord { x: 0.0, y: 0.0 })));
+        assert!(ring
+            .iter()
+            .any(|coord| coords_match(coord, &Coord { x: 1.0, y: 0.0 })));
+        assert!(ring
+            .iter()
+            .any(|coord| coords_match(coord, &Coord { x: 1.0, y: 1.0 })));
+        assert!(ring
+            .iter()
+            .any(|coord| coords_match(coord, &Coord { x: 0.0, y: 1.0 })));
+    }
 }

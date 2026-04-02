@@ -9,7 +9,6 @@
 pub mod haversine;
 pub mod trig_approx;
 
-
 #[cfg(target_feature = "avx512f")]
 pub use haversine::haversine_f32x16;
 #[cfg(target_feature = "avx512f")]

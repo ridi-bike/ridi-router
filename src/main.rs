@@ -6,6 +6,8 @@ use std::{
 use router_runner::RouterRunner;
 use tracing::{error_span, Level};
 
+#[cfg(feature = "rmdf-viewer")]
+mod debug;
 mod gpx_writer;
 mod ipc_handler;
 mod map_data;
@@ -18,8 +20,6 @@ mod router_runner;
 mod simd;
 #[cfg(test)]
 mod test_utils;
-#[cfg(feature = "rmdf-viewer")]
-mod debug;
 
 fn main() {
     let subscriber = if std::io::stdin().is_terminal() {

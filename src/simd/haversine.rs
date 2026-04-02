@@ -150,23 +150,11 @@ pub fn haversine_batch(ref_lat: f32, ref_lon: f32, targets: &[(f32, f32)]) -> Ve
 
     for chunk in chunks {
         let lats = f32x8::from([
-            chunk[0].0,
-            chunk[1].0,
-            chunk[2].0,
-            chunk[3].0,
-            chunk[4].0,
-            chunk[5].0,
-            chunk[6].0,
+            chunk[0].0, chunk[1].0, chunk[2].0, chunk[3].0, chunk[4].0, chunk[5].0, chunk[6].0,
             chunk[7].0,
         ]);
         let lons = f32x8::from([
-            chunk[0].1,
-            chunk[1].1,
-            chunk[2].1,
-            chunk[3].1,
-            chunk[4].1,
-            chunk[5].1,
-            chunk[6].1,
+            chunk[0].1, chunk[1].1, chunk[2].1, chunk[3].1, chunk[4].1, chunk[5].1, chunk[6].1,
             chunk[7].1,
         ]);
 
@@ -232,8 +220,8 @@ pub fn haversine_scalar(lat1: f32, lon1: f32, lat2: f32, lon2: f32) -> f32 {
     let dlat = lat2_rad - lat1_rad;
     let dlon = lon2_rad - lon1_rad;
 
-    let a = (dlat / 2.0).sin().powi(2)
-        + lat1_rad.cos() * lat2_rad.cos() * (dlon / 2.0).sin().powi(2);
+    let a =
+        (dlat / 2.0).sin().powi(2) + lat1_rad.cos() * lat2_rad.cos() * (dlon / 2.0).sin().powi(2);
 
     let c = 2.0 * a.sqrt().asin();
 
@@ -372,7 +360,7 @@ mod tests {
             (59.44, 24.75),
             (51.5, -0.12),
             (40.71, -74.01),
-            (35.68, 139.69), // Tokyo
+            (35.68, 139.69),  // Tokyo
             (-33.87, 151.21), // Sydney
             (48.86, 2.35),
             (55.75, 37.62), // Moscow
@@ -383,8 +371,7 @@ mod tests {
 
         for (i, &(lat, lon)) in targets.iter().enumerate() {
             let scalar_result = haversine_scalar(ref_lat, ref_lon, lat, lon);
-            let error_percent =
-                ((simd_results[i] - scalar_result) / scalar_result).abs() * 100.0;
+            let error_percent = ((simd_results[i] - scalar_result) / scalar_result).abs() * 100.0;
 
             assert!(
                 error_percent < 1.0, // Allow 1% error between implementations

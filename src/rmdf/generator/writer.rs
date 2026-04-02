@@ -7,7 +7,6 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::debug;
 
-
 use crate::map_data::GenerationGraph;
 use crate::rmdf::format::*;
 
@@ -24,12 +23,12 @@ impl RmdfWriter {
     /// This is needed because GenerationGraph doesn't populate point.lines during insertion.
     fn build_point_lines_map(graph: &GenerationGraph) -> HashMap<u64, Vec<usize>> {
         let mut map: HashMap<u64, Vec<usize>> = HashMap::new();
-        
+
         for (line_idx, line) in graph.get_lines().iter().enumerate() {
             map.entry(line.from_node_id).or_default().push(line_idx);
             map.entry(line.to_node_id).or_default().push(line_idx);
         }
-        
+
         map
     }
 
@@ -224,7 +223,8 @@ impl RmdfWriter {
         // Serialize points in sorted cell order
         for (_, points_in_cell) in sorted_cells {
             for point in points_in_cell {
-                let line_count = point_lines_map.get(&point.id).map(|v| v.len()).unwrap_or(0) as u32;
+                let line_count =
+                    point_lines_map.get(&point.id).map(|v| v.len()).unwrap_or(0) as u32;
                 let record = PointRecord {
                     osm_id: point.id,
                     lat: point.lat,
@@ -378,7 +378,6 @@ impl RmdfWriter {
         // TODO: Implement based on MapDataRule structure
         Ok(Vec::new())
     }
-
 
     fn compute_tile_bounds(&self, tile_id: TileId) -> TileBounds {
         let lon_min = (tile_id.col as f32 * self.tile_size_degrees) - 180.0;

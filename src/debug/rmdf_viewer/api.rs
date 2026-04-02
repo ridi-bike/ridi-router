@@ -3,8 +3,8 @@ use serde::Serialize;
 use std::path::PathBuf;
 use ts_rs::TS;
 
-use crate::rmdf::generator::manifest::TileManifest;
 use crate::rmdf::format::TagSetRecord;
+use crate::rmdf::generator::manifest::TileManifest;
 use crate::rmdf::io::MappedTile;
 
 /// Response for GET /api/manifest
@@ -71,8 +71,8 @@ pub struct PointResponse {
 pub struct LineResponse {
     pub point_a_osm_id: u64,
     pub point_b_osm_id: u64,
-    pub point_a: [f32; 2],  // [lat, lon]
-    pub point_b: [f32; 2],  // [lat, lon]
+    pub point_a: [f32; 2], // [lat, lon]
+    pub point_b: [f32; 2], // [lat, lon]
     pub direction: String,
     pub tags: TagResponse,
 }
@@ -107,34 +107,38 @@ impl Default for TagResponse {
 
 pub fn get_manifest(input_dir: &PathBuf) -> Result<ManifestResponse> {
     let manifest_path = input_dir.join("manifest.json");
-    
+
     let file = std::fs::File::open(&manifest_path)
         .with_context(|| format!("Failed to open manifest at {:?}", manifest_path))?;
-    
-    let manifest: TileManifest = serde_json::from_reader(file)
-        .context("Failed to parse manifest.json")?;
-    
+
+    let manifest: TileManifest =
+        serde_json::from_reader(file).context("Failed to parse manifest.json")?;
+
     let response = ManifestResponse {
         version: manifest.version,
         tile_size_degrees: manifest.tile_size_degrees,
         format_version: manifest.format_version,
         generated_at: manifest.generated_at,
-        tiles: manifest.tiles.into_iter().map(|t| TileSummary {
-            filename: t.filename,
-            col: t.col,
-            row: t.row,
-            bounds: TileBoundsResponse {
-                lat_min: t.bounds.lat_min,
-                lat_max: t.bounds.lat_max,
-                lon_min: t.bounds.lon_min,
-                lon_max: t.bounds.lon_max,
-            },
-            size_bytes: t.size_bytes,
-            point_count: t.point_count,
-            line_count: t.line_count,
-        }).collect(),
+        tiles: manifest
+            .tiles
+            .into_iter()
+            .map(|t| TileSummary {
+                filename: t.filename,
+                col: t.col,
+                row: t.row,
+                bounds: TileBoundsResponse {
+                    lat_min: t.bounds.lat_min,
+                    lat_max: t.bounds.lat_max,
+                    lon_min: t.bounds.lon_min,
+                    lon_max: t.bounds.lon_max,
+                },
+                size_bytes: t.size_bytes,
+                point_count: t.point_count,
+                line_count: t.line_count,
+            })
+            .collect(),
     };
-    
+
     Ok(response)
 }
 
@@ -143,18 +147,18 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
     if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
         anyhow::bail!("Invalid filename");
     }
-    
+
     // Security: Must be .rmdf file
     if !filename.ends_with(".rmdf") {
         anyhow::bail!("Filename must end with .rmdf");
     }
-    
+
     let tile_path = input_dir.join(filename);
     let mapped_tile = MappedTile::load(&tile_path)
         .with_context(|| format!("Failed to load tile: {:?}", tile_path))?;
-    
+
     let header = mapped_tile.header;
-    
+
     // Build points response
     let points: Vec<PointResponse> = mapped_tile
         .get_points()?
@@ -176,7 +180,7 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
             }
         })
         .collect();
-    
+
     // Build lines response
     let lines: Vec<LineResponse> = mapped_tile
         .get_lines()?
@@ -188,10 +192,10 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
                 2 => "Roundabout",
                 _ => "Unknown",
             };
-            
+
             // Resolve tags
             let tags = resolve_tags(&mapped_tile, l.tag_set_index).unwrap_or_default();
-            
+
             LineResponse {
                 point_a_osm_id: l.point_a_osm_id,
                 point_b_osm_id: l.point_b_osm_id,
@@ -202,7 +206,7 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
             }
         })
         .collect();
-    
+
     Ok(TileResponse {
         filename: filename.to_string(),
         header: TileHeader {
@@ -216,14 +220,14 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
 
 fn resolve_tags(tile: &MappedTile, tag_set_index: u32) -> Result<TagResponse> {
     let tag_set = tile.get_tag_set(tag_set_index)?;
-    
+
     let resolve = |idx: u32| -> Option<String> {
         if idx == TagSetRecord::NONE {
             return None;
         }
         tile.get_tag_value(idx).ok().map(|s| s.to_string())
     };
-    
+
     Ok(TagResponse {
         name: resolve(tag_set.name_idx),
         highway: resolve(tag_set.highway_idx),

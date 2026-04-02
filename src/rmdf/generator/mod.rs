@@ -1,24 +1,24 @@
+pub mod intermediate;
 pub mod manifest;
 mod pbf_streamer;
 mod writer;
-pub mod intermediate;
 
 pub use manifest::ManifestGenerator;
 pub use pbf_streamer::PbfStreamer;
 
 use crate::proximity::RasterizedProximityGrid;
 
+use crate::osm_data::in_memory_pbf::InMemoryPbf;
 use crate::rmdf::format::{TileBounds, TileId};
+use anyhow::{Context, Result};
+use intermediate::GridStorage;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use anyhow::{Context, Result};
-use crate::osm_data::in_memory_pbf::InMemoryPbf;
-use std::path::{Path, PathBuf};
 use tracing::info;
-use intermediate::GridStorage;
 
 pub struct TileGenerator {
     input_file: PathBuf,
@@ -82,7 +82,6 @@ impl TileGenerator {
     }
 }
 
-
 /// Discover all PBF files in a directory
 fn discover_pbf_files(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut pbf_files = Vec::new();
@@ -106,7 +105,11 @@ fn discover_pbf_files(directory: &Path) -> Result<Vec<PathBuf>> {
     // Sort for deterministic processing order
     pbf_files.sort();
 
-    info!("Discovered {} PBF files in {:?}", pbf_files.len(), directory);
+    info!(
+        "Discovered {} PBF files in {:?}",
+        pbf_files.len(),
+        directory
+    );
     Ok(pbf_files)
 }
 
@@ -150,7 +153,10 @@ impl MultiPbfGenerator {
     /// 4. Re-evaluate nodes in overlap zones with combined grids
     /// 5. Deduplicate and write final RMDF tiles
     pub fn generate(&self) -> Result<()> {
-        info!("Starting multi-PBF tile generation from {:?}", self.input_directory);
+        info!(
+            "Starting multi-PBF tile generation from {:?}",
+            self.input_directory
+        );
 
         // Discover all PBF files
         let pbf_files = discover_pbf_files(&self.input_directory)?;
@@ -159,11 +165,14 @@ impl MultiPbfGenerator {
         }
 
         // Open or create the redb database
-        let db = redb::Database::create(&self.db_path)
-            .context("Failed to create/open redb database")?;
+        let db =
+            redb::Database::create(&self.db_path).context("Failed to create/open redb database")?;
 
         // Phase 1: Process each PBF file independently
-        info!("Phase 1: Processing {} PBF files independently", pbf_files.len());
+        info!(
+            "Phase 1: Processing {} PBF files independently",
+            pbf_files.len()
+        );
         for (pbf_id, pbf_path) in pbf_files.iter().enumerate() {
             self.process_single_pbf(&db, pbf_id as u64, pbf_path)?;
         }
@@ -240,7 +249,6 @@ impl MultiPbfGenerator {
         Ok(())
     }
 
-
     /// Save tiles from PBF data to redb for intermediate storage
     ///
     /// This method extracts tile data and saves it to redb instead of writing RMDF files.
@@ -278,8 +286,12 @@ impl MultiPbfGenerator {
             // Update progress
             let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if count % 100 == 0 || count == total_tiles {
-                info!("Tile progress: {}/{} ({:.1}%)", count, total_tiles, 
-                    (count as f64 / total_tiles as f64) * 100.0);
+                info!(
+                    "Tile progress: {}/{} ({:.1}%)",
+                    count,
+                    total_tiles,
+                    (count as f64 / total_tiles as f64) * 100.0
+                );
             }
 
             Ok(())
@@ -295,7 +307,10 @@ impl MultiPbfGenerator {
     }
 
     /// Calculate tile positions from PBF bounds
-    fn calculate_tiles_from_bounds(&self, bounds: &crate::osm_data::in_memory_pbf::PbfBounds) -> Vec<TileId> {
+    fn calculate_tiles_from_bounds(
+        &self,
+        bounds: &crate::osm_data::in_memory_pbf::PbfBounds,
+    ) -> Vec<TileId> {
         let lat_min = bounds.lat_min.unwrap_or(0.0);
         let lat_max = bounds.lat_max.unwrap_or(0.0);
         let lon_min = bounds.lon_min.unwrap_or(0.0);
@@ -358,10 +373,23 @@ impl MultiPbfGenerator {
 
         // Add ways (highway ways only for routing)
         const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
-            "motorway", "trunk", "primary", "secondary", "tertiary",
-            "unclassified", "residential", "motorway_link", "trunk_link",
-            "primary_link", "secondary_link", "tertiary_link",
-            "living_street", "track", "escape", "raceway", "road",
+            "motorway",
+            "trunk",
+            "primary",
+            "secondary",
+            "tertiary",
+            "unclassified",
+            "residential",
+            "motorway_link",
+            "trunk_link",
+            "primary_link",
+            "secondary_link",
+            "tertiary_link",
+            "living_street",
+            "track",
+            "escape",
+            "raceway",
+            "road",
         ];
 
         for way_with_bounds in ways_in_bounds {
@@ -377,7 +405,8 @@ impl MultiPbfGenerator {
             if let Some(ref tags) = way.tags {
                 if let Some(highway_value) = tags.get("highway") {
                     let is_highway = ALLOWED_HIGHWAY_VALUES.contains(&highway_value.as_str())
-                        || (highway_value == "path" && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
+                        || (highway_value == "path"
+                            && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
 
                     if is_highway {
                         tile.add_way(way.clone());
@@ -394,20 +423,31 @@ impl MultiPbfGenerator {
             let relation = &rel_with_bounds.relation;
 
             // Check if relation has any members in the tile
-            let has_members_in_tile = relation.members.iter().any(|member| {
-                match member.member_type {
-                    crate::map_data::osm::OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
-                    crate::map_data::osm::OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
-                    crate::map_data::osm::OsmRelationMemberType::Relation => true,
-                }
-            });
+            let has_members_in_tile =
+                relation
+                    .members
+                    .iter()
+                    .any(|member| match member.member_type {
+                        crate::map_data::osm::OsmRelationMemberType::Node => {
+                            node_ids.contains(&member.member_ref)
+                        }
+                        crate::map_data::osm::OsmRelationMemberType::Way => {
+                            way_ids.contains(&member.member_ref)
+                        }
+                        crate::map_data::osm::OsmRelationMemberType::Relation => true,
+                    });
 
             if !has_members_in_tile {
                 continue;
             }
 
             // Only collect restriction relations
-            if relation.tags.get("type").map(|v| v.starts_with("restriction")).unwrap_or(false) {
+            if relation
+                .tags
+                .get("type")
+                .map(|v| v.starts_with("restriction"))
+                .unwrap_or(false)
+            {
                 tile.add_relation(relation.clone());
             }
         }
@@ -499,12 +539,20 @@ impl MultiPbfGenerator {
         info!("Re-evaluating {} overlap zones", overlap_zones.len());
 
         for (zone_idx, zone) in overlap_zones.iter().enumerate() {
-            info!("Processing overlap zone {}/{}", zone_idx + 1, overlap_zones.len());
+            info!(
+                "Processing overlap zone {}/{}",
+                zone_idx + 1,
+                overlap_zones.len()
+            );
 
             // Step 1: Load grids covering this zone
             let grid_data = GridStorage::load_grids_for_region(db, zone)?;
             if grid_data.len() < 2 {
-                info!("Zone {} has only {} overlapping PBF(s), skipping", zone_idx, grid_data.len());
+                info!(
+                    "Zone {} has only {} overlapping PBF(s), skipping",
+                    zone_idx,
+                    grid_data.len()
+                );
                 continue;
             }
 
@@ -519,7 +567,11 @@ impl MultiPbfGenerator {
                 .collect();
 
             if grids.len() < 2 {
-                info!("Zone {} has only {} valid grid(s), skipping", zone_idx, grids.len());
+                info!(
+                    "Zone {} has only {} valid grid(s), skipping",
+                    zone_idx,
+                    grids.len()
+                );
                 continue;
             }
 
@@ -532,7 +584,11 @@ impl MultiPbfGenerator {
 
             // Step 4: Calculate tile positions that intersect with this zone
             let tile_ids = self.tiles_intersecting_bounds(zone);
-            info!("Zone {}: Checking {} tiles for nodes to re-evaluate", zone_idx, tile_ids.len());
+            info!(
+                "Zone {}: Checking {} tiles for nodes to re-evaluate",
+                zone_idx,
+                tile_ids.len()
+            );
 
             // Step 5: Process each tile, update nodes in overlap zone
             for tile_id in tile_ids {
@@ -677,8 +733,12 @@ impl MultiPbfGenerator {
             // Update progress
             let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
             if count % 100 == 0 || count == total_tiles {
-                info!("Tile writing progress: {}/{} ({:.1}%)", count, total_tiles,
-                    (count as f64 / total_tiles as f64) * 100.0);
+                info!(
+                    "Tile writing progress: {}/{} ({:.1}%)",
+                    count,
+                    total_tiles,
+                    (count as f64 / total_tiles as f64) * 100.0
+                );
             }
 
             Ok(())
@@ -765,7 +825,6 @@ impl MultiPbfGenerator {
             .map(String::from)
             .collect();
 
-
         // Generate manifest using the existing generator
         let manifest_gen = ManifestGenerator::new(self.tile_size_degrees);
         let tile_ids = manifest_gen
@@ -778,7 +837,10 @@ impl MultiPbfGenerator {
         }
 
         // Use the first source file as the primary source (for manifest compatibility)
-        let primary_source = source_files.first().map(|s| s.as_str()).unwrap_or("unknown");
+        let primary_source = source_files
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("unknown");
 
         manifest_gen
             .generate(&self.output_dir, &tile_ids, primary_source)
@@ -792,7 +854,6 @@ impl MultiPbfGenerator {
 
         Ok(())
     }
-
 
     /// Clean up intermediate storage
     fn cleanup_intermediate_storage(&self) -> Result<()> {

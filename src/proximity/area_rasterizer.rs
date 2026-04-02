@@ -12,8 +12,8 @@ use crate::osm_data::in_memory_pbf::PbfBounds;
 use crate::simd::haversine::min_distance_to_vertices;
 
 use super::rasterized_grid::{
-    bearing_to_sector, RasterizedProximityGrid, MILITARY_INTERIOR_M,
-    RESIDENTIAL_PROXIMITY_THRESHOLD_M,
+    bearing_to_sector, MilitaryStatus, RasterizedProximityGrid, GRID_CELL_SIZE_DEG,
+    MILITARY_INTERIOR_M, RESIDENTIAL_PROXIMITY_THRESHOLD_M,
 };
 
 /// Rasterizer that converts area polygons into grid cell values.
@@ -141,19 +141,23 @@ impl AreaRasterizer {
         // Debug: Test if a specific point inside polygon 334 returns true
         // Polygon 334 bbox: lat 57.1847-57.2226, lon 24.4875-24.5443
         let test_point = geo::Point::new(24.5, 57.2); // Should be inside polygon 334
-        use geo::prelude::{Contains, Centroid};
+        use geo::prelude::{Centroid, Contains};
         for (i, (mp, bbox)) in polygon_bboxes.iter().enumerate() {
-            if bbox.lat_min < 57.2 && bbox.lat_max > 57.2 && bbox.lon_min < 24.5 && bbox.lon_max > 24.5 {
+            if bbox.lat_min < 57.2
+                && bbox.lat_max > 57.2
+                && bbox.lon_min < 24.5
+                && bbox.lon_max > 24.5
+            {
                 let contains = mp.contains(&test_point);
                 let closest = mp.haversine_closest_point(&test_point);
-                
+
                 // Also test the centroid of the polygon
                 let centroid = mp.centroid();
                 let centroid_contains = centroid.map(|c| mp.contains(&c)).unwrap_or(false);
-                
+
                 // Count interior rings (holes)
                 let num_holes: usize = mp.iter().map(|p| p.interiors().len()).sum();
-                
+
                 info!(
                     "Polygon {}: contains={}, closest={:?}, centroid_contains={}, holes={}, bbox: [{:.4},{:.4}] to [{:.4},{:.4}]",
                     i, contains, matches!(closest, geo::Closest::Intersection(_)),
@@ -179,8 +183,11 @@ impl AreaRasterizer {
         let tile_lon_max = 24.5f32;
         let mut overlapping_count = 0;
         for (i, (mp, bbox)) in polygon_bboxes.iter().enumerate() {
-            if bbox.lat_max >= tile_lat_min && bbox.lat_min <= tile_lat_max &&
-               bbox.lon_max >= tile_lon_min && bbox.lon_min <= tile_lon_max {
+            if bbox.lat_max >= tile_lat_min
+                && bbox.lat_min <= tile_lat_max
+                && bbox.lon_max >= tile_lon_min
+                && bbox.lon_min <= tile_lon_max
+            {
                 overlapping_count += 1;
                 let total_coords: usize = mp.iter().map(|p| p.exterior().0.len()).sum();
                 info!(
@@ -191,18 +198,21 @@ impl AreaRasterizer {
         }
         info!(
             "Military polygons overlapping tile_2044_1471 (lat 57.1-57.2, lon 24.4-24.5): {} of {}",
-            overlapping_count, polygon_bboxes.len()
+            overlapping_count,
+            polygon_bboxes.len()
         );
 
-        // Process cells in parallel
-        let nogo_cells: Vec<usize> = (0..cell_count)
+        // Process cells in parallel using 5-point sampling
+        let nogo_cells: Vec<(usize, MilitaryStatus)> = (0..cell_count)
             .into_par_iter()
             .filter_map(|cell_idx| {
-                let (lat, lon) = self.grid.cell_center(cell_idx);
-
-                // Check if this cell is inside a military area >100m from boundary
-                let is_interior =
-                    is_military_interior(lat, lon, &polygon_bboxes, MILITARY_INTERIOR_M);
+                // Check military status using 5-point sampling
+                let status = check_military_status(
+                    &self.grid,
+                    cell_idx,
+                    &polygon_bboxes,
+                    MILITARY_INTERIOR_M,
+                );
 
                 // Update progress
                 let count = progress_counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -213,8 +223,9 @@ impl AreaRasterizer {
                     );
                 }
 
-                if is_interior {
-                    Some(cell_idx)
+                // Only return Full status cells as nogo
+                if status == MilitaryStatus::Full {
+                    Some((cell_idx, status))
                 } else {
                     None
                 }
@@ -223,8 +234,8 @@ impl AreaRasterizer {
 
         // Apply results to grid
         let cells = self.grid.cells_mut();
-        for idx in nogo_cells {
-            cells[idx].is_military_interior = true;
+        for (idx, status) in nogo_cells {
+            cells[idx].military_status = status;
         }
 
         info!(
@@ -237,7 +248,6 @@ impl AreaRasterizer {
     pub fn into_grid(self) -> RasterizedProximityGrid {
         self.grid
     }
-
 }
 
 /// Pre-computed data for efficient polygon processing.
@@ -331,8 +341,8 @@ fn calculate_bearing(from_lat: f32, from_lon: f32, to_lat: f64, to_lon: f64) -> 
     let y = from_lat_rad.cos() * to_lat_rad.sin()
         - from_lat_rad.sin() * to_lat_rad.cos() * delta_lon.cos();
 
-    let bearing = x.atan2(y).to_degrees();  // Note: x, y order for compass bearing (0° = North)
-    // Normalize to [0, 360)
+    let bearing = x.atan2(y).to_degrees(); // Note: x, y order for compass bearing (0° = North)
+                                           // Normalize to [0, 360)
     (((bearing % 360.0) + 360.0) % 360.0) as f32
 }
 
@@ -349,7 +359,10 @@ fn compute_residential_sectors_for_cell(
 
     for poly_data in polygons {
         // Quick bbox check first
-        if !poly_data.bbox.could_be_within(cell_lat, cell_lon, threshold_m) {
+        if !poly_data
+            .bbox
+            .could_be_within(cell_lat, cell_lon, threshold_m)
+        {
             continue;
         }
 
@@ -387,6 +400,51 @@ fn compute_residential_sectors_for_cell(
     }
 
     sectors
+}
+
+/// Get 5 sample points for a cell (center + 4 corners)
+///
+/// Returns: [(lat, lon); 5] where indices are: 0=Center, 1=SW, 2=SE, 3=NW, 4=NE
+fn sample_cell_points(grid: &RasterizedProximityGrid, cell_idx: usize) -> [(f32, f32); 5] {
+    let (center_lat, center_lon) = grid.cell_center(cell_idx);
+    let half_size = GRID_CELL_SIZE_DEG / 2.0;
+
+    [
+        (center_lat, center_lon),                         // Center
+        (center_lat - half_size, center_lon - half_size), // SW
+        (center_lat - half_size, center_lon + half_size), // SE
+        (center_lat + half_size, center_lon - half_size), // NW
+        (center_lat + half_size, center_lon + half_size), // NE
+    ]
+}
+
+/// Check military status of a cell using 5-point sampling
+///
+/// Returns MilitaryStatus based on how many of the 5 sample points
+/// are >interior_threshold_m inside a military polygon:
+/// - 0 points: None
+/// - 1-4 points: Partial
+/// - 5 points: Full
+fn check_military_status(
+    grid: &RasterizedProximityGrid,
+    cell_idx: usize,
+    polygon_bboxes: &[(&MultiPolygon<f64>, BBox)],
+    interior_threshold_m: f32,
+) -> MilitaryStatus {
+    let points = sample_cell_points(grid, cell_idx);
+    let mut interior_count = 0;
+
+    for (lat, lon) in points {
+        if is_military_interior(lat, lon, polygon_bboxes, interior_threshold_m) {
+            interior_count += 1;
+        }
+    }
+
+    match interior_count {
+        0 => MilitaryStatus::None,
+        5 => MilitaryStatus::Full,
+        _ => MilitaryStatus::Partial,
+    }
 }
 
 /// Check if a point is inside a military polygon >100m from the boundary.
@@ -439,7 +497,11 @@ mod tests {
         }
     }
 
-    fn make_square_polygon(center_lat: f64, center_lon: f64, half_size_deg: f64) -> MultiPolygon<f64> {
+    fn make_square_polygon(
+        center_lat: f64,
+        center_lon: f64,
+        half_size_deg: f64,
+    ) -> MultiPolygon<f64> {
         let coords = vec![
             Coord {
                 x: center_lon - half_size_deg,
@@ -572,7 +634,10 @@ mod tests {
             }
         }
 
-        assert!(found_north_sector, "Expected some cells with data in North sector");
+        assert!(
+            found_north_sector,
+            "Expected some cells with data in North sector"
+        );
     }
 
     #[test]
@@ -592,41 +657,73 @@ mod tests {
 
         // North: higher latitude
         let bearing_n = calculate_bearing(lat, lon, 51.0, 10.0);
-        assert!(bearing_n < 10.0 || bearing_n > 350.0, "North bearing should be ~0°, got {}", bearing_n);
+        assert!(
+            bearing_n < 10.0 || bearing_n > 350.0,
+            "North bearing should be ~0°, got {}",
+            bearing_n
+        );
 
         // East: higher longitude
         let bearing_e = calculate_bearing(lat, lon, 50.0, 11.0);
-        assert!((bearing_e - 90.0).abs() < 10.0, "East bearing should be ~90°, got {}", bearing_e);
+        assert!(
+            (bearing_e - 90.0).abs() < 10.0,
+            "East bearing should be ~90°, got {}",
+            bearing_e
+        );
 
         // South: lower latitude
         let bearing_s = calculate_bearing(lat, lon, 49.0, 10.0);
-        assert!((bearing_s - 180.0).abs() < 10.0, "South bearing should be ~180°, got {}", bearing_s);
+        assert!(
+            (bearing_s - 180.0).abs() < 10.0,
+            "South bearing should be ~180°, got {}",
+            bearing_s
+        );
 
         // West: lower longitude
         let bearing_w = calculate_bearing(lat, lon, 50.0, 9.0);
-        assert!((bearing_w - 270.0).abs() < 10.0, "West bearing should be ~270°, got {}", bearing_w);
+        assert!(
+            (bearing_w - 270.0).abs() < 10.0,
+            "West bearing should be ~270°, got {}",
+            bearing_w
+        );
     }
 
     #[test]
     fn test_calculate_bearing_diagonals() {
         let lat = 50.0f32;
         let lon = 10.0f32;
-        
+
         // NE: higher lat and lon
         let bearing_ne = calculate_bearing(lat, lon, 51.0, 11.0);
-        assert!((bearing_ne - 32.0).abs() < 5.0, "NE bearing should be ~32°, got {}", bearing_ne);
-        
+        assert!(
+            (bearing_ne - 32.0).abs() < 5.0,
+            "NE bearing should be ~32°, got {}",
+            bearing_ne
+        );
+
         // SE: lower lat, higher lon
         let bearing_se = calculate_bearing(lat, lon, 49.0, 11.0);
-        assert!((bearing_se - 148.0).abs() < 5.0, "SE bearing should be ~148°, got {}", bearing_se);
-        
+        assert!(
+            (bearing_se - 148.0).abs() < 5.0,
+            "SE bearing should be ~148°, got {}",
+            bearing_se
+        );
+
         // SW: lower lat and lon
         let bearing_sw = calculate_bearing(lat, lon, 49.0, 9.0);
-        assert!((bearing_sw - 212.0).abs() < 5.0, "SW bearing should be ~212°, got {}", bearing_sw);
-        
+        assert!(
+            (bearing_sw - 212.0).abs() < 5.0,
+            "SW bearing should be ~212°, got {}",
+            bearing_sw
+        );
+
         // NW: higher lat, lower lon
         let bearing_nw = calculate_bearing(lat, lon, 51.0, 9.0);
-        assert!((bearing_nw - 328.0).abs() < 5.0, "NW bearing should be ~328°, got {}", bearing_nw);
+        assert!(
+            (bearing_nw - 328.0).abs() < 5.0,
+            "NW bearing should be ~328°, got {}",
+            bearing_nw
+        );
     }
 
     #[test]
@@ -643,11 +740,19 @@ mod tests {
         // From 179°E to 179°W (crossing 180°)
         let bearing = calculate_bearing(0.0, 179.0, 0.0, -179.0);
         // Should be ~90° (east)
-        assert!((bearing - 90.0).abs() < 10.0, "Bearing east across antimeridian should be ~90°, got {}", bearing);
-        
+        assert!(
+            (bearing - 90.0).abs() < 10.0,
+            "Bearing east across antimeridian should be ~90°, got {}",
+            bearing
+        );
+
         // From 179°W to 179°E
         let bearing = calculate_bearing(0.0, -179.0, 0.0, 179.0);
         // Should be ~270° (west)
-        assert!((bearing - 270.0).abs() < 10.0, "Bearing west across antimeridian should be ~270°, got {}", bearing);
+        assert!(
+            (bearing - 270.0).abs() < 10.0,
+            "Bearing west across antimeridian should be ~270°, got {}",
+            bearing
+        );
     }
 }

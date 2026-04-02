@@ -1,17 +1,18 @@
-use std::collections::HashMap;
-use anyhow::Context;
-use serde::{Serialize, Deserialize};
-use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation};
+use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
 use crate::rmdf::format::TileId;
-use redb::{Database, TableDefinition, ReadableTable};
+use anyhow::Context;
 use bincode;
+use redb::{Database, ReadableTable, TableDefinition};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // redb table definitions for intermediate tile data
 // Key: (col: u16, row: u16, osm_id: u64)
 // Value: Serialized node/way/relation data
 const TILE_NODES: TableDefinition<(u16, u16, u64), &[u8]> = TableDefinition::new("tile_nodes");
 const TILE_WAYS: TableDefinition<(u16, u16, u64), &[u8]> = TableDefinition::new("tile_ways");
-const TILE_RELATIONS: TableDefinition<(u16, u16, u64), &[u8]> = TableDefinition::new("tile_relations");
+const TILE_RELATIONS: TableDefinition<(u16, u16, u64), &[u8]> =
+    TableDefinition::new("tile_relations");
 
 // Grid storage tables for multi-PBF support
 // Key: PBF file ID (u64)
@@ -32,7 +33,7 @@ const PBF_BOUNDS: TableDefinition<u64, &[u8]> = TableDefinition::new("pbf_bounds
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct IntermediateTile {
     pub tile_id: TileId,
-    pub nodes: HashMap<u64, OsmNode>,      // OSM ID -> Node
+    pub nodes: HashMap<u64, OsmNode>, // OSM ID -> Node
     pub ways: Vec<OsmWay>,
     pub relations: Vec<OsmRelation>,
 }
@@ -61,7 +62,6 @@ impl IntermediateTile {
     pub fn add_relation(&mut self, relation: OsmRelation) {
         self.relations.push(relation);
     }
-
 
     /// Deduplicate ways and relations by OSM ID
     ///
@@ -138,20 +138,26 @@ impl IntermediateTile {
     }
 
     /// Load tile data from redb database with an existing read transaction
-    pub fn load_from_redb_with_txn(read_txn: &redb::ReadTransaction, tile_id: TileId) -> anyhow::Result<Self> {
+    pub fn load_from_redb_with_txn(
+        read_txn: &redb::ReadTransaction,
+        tile_id: TileId,
+    ) -> anyhow::Result<Self> {
         let mut tile = IntermediateTile::new(tile_id);
 
         // Load nodes
         {
-            let nodes_table = read_txn.open_table(TILE_NODES)
+            let nodes_table = read_txn
+                .open_table(TILE_NODES)
                 .context("Failed to open TILE_NODES table")?;
             let start_key = (tile_id.col, tile_id.row, 0u64);
             let end_key = (tile_id.col, tile_id.row, u64::MAX);
 
-            for entry in nodes_table.range(start_key..=end_key)
-                .context("Failed to create range iterator for nodes")? {
-                let (key_guard, value_guard) = entry
-                    .context("Failed to read node entry from database")?;
+            for entry in nodes_table
+                .range(start_key..=end_key)
+                .context("Failed to create range iterator for nodes")?
+            {
+                let (key_guard, value_guard) =
+                    entry.context("Failed to read node entry from database")?;
                 let (_col, _row, osm_id) = key_guard.value();
                 let node: OsmNode = bincode::deserialize(value_guard.value())
                     .context("Failed to deserialize node")?;
@@ -161,7 +167,8 @@ impl IntermediateTile {
 
         // Load ways
         {
-            let ways_table = read_txn.open_table(TILE_WAYS)
+            let ways_table = read_txn
+                .open_table(TILE_WAYS)
                 .context("Failed to open TILE_WAYS table")?;
             let start_key = (tile_id.col, tile_id.row, 0u64);
             let end_key = (tile_id.col, tile_id.row, u64::MAX);
@@ -175,7 +182,8 @@ impl IntermediateTile {
 
         // Load relations
         {
-            let relations_table = read_txn.open_table(TILE_RELATIONS)
+            let relations_table = read_txn
+                .open_table(TILE_RELATIONS)
                 .context("Failed to open TILE_RELATIONS table")?;
             let start_key = (tile_id.col, tile_id.row, 0u64);
             let end_key = (tile_id.col, tile_id.row, u64::MAX);
@@ -221,8 +229,6 @@ impl TileBuffers {
         Ok(tile_ids)
     }
 }
-
-
 
 /// Grid bounds stored in PBF_BOUNDS table
 #[derive(Debug, Clone, Copy)]
@@ -324,10 +330,7 @@ impl GridStorage {
     }
 
     /// Find PBF files whose bounds overlap with a given region
-    pub fn find_overlapping_pbfs(
-        db: &Database,
-        region: &GridBounds,
-    ) -> anyhow::Result<Vec<u64>> {
+    pub fn find_overlapping_pbfs(db: &Database, region: &GridBounds) -> anyhow::Result<Vec<u64>> {
         let all_bounds = Self::load_all_bounds(db)?;
         let overlapping: Vec<u64> = all_bounds
             .into_iter()
@@ -366,7 +369,8 @@ pub fn find_overlapping_cells(
 ) -> std::collections::HashMap<(i32, i32), Vec<(u64, usize)>> {
     use crate::proximity::GRID_CELL_SIZE_DEG;
 
-    let mut overlaps: std::collections::HashMap<(i32, i32), Vec<(u64, usize)>> = std::collections::HashMap::new();
+    let mut overlaps: std::collections::HashMap<(i32, i32), Vec<(u64, usize)>> =
+        std::collections::HashMap::new();
 
     for (grid_id, _bounds, grid) in grids {
         for local_idx in 0..grid.cell_count() {
@@ -384,7 +388,8 @@ pub fn find_overlapping_cells(
     }
 
     // Only return cells that appear in multiple grids
-    overlaps.into_iter()
+    overlaps
+        .into_iter()
         .filter(|(_, sources)| sources.len() > 1)
         .collect()
 }
@@ -396,8 +401,8 @@ pub fn build_combined_grid(
     grids: &[(u64, GridBounds, crate::proximity::RasterizedProximityGrid)],
     region: &GridBounds,
 ) -> crate::proximity::RasterizedProximityGrid {
-    use crate::proximity::RasterizedProximityGrid;
     use crate::osm_data::in_memory_pbf::PbfBounds;
+    use crate::proximity::RasterizedProximityGrid;
 
     // Create a new grid for the region
     let bounds = PbfBounds {
@@ -448,11 +453,10 @@ pub fn build_combined_grid(
     combined
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map_data::osm::{OsmNode, OsmWay, OsmRelation};
+    use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
     use crate::rmdf::format::TileId;
 
     fn make_test_tile() -> IntermediateTile {
@@ -515,7 +519,7 @@ mod tests {
     #[test]
     fn test_intermediate_tile_counts() {
         let mut tile = make_test_tile();
-        
+
         let (nodes, ways, relations) = tile.counts();
         assert_eq!((nodes, ways, relations), (0, 0, 0));
 
@@ -531,7 +535,7 @@ mod tests {
     #[test]
     fn test_intermediate_tile_deduplicate_ways() {
         let mut tile = make_test_tile();
-        
+
         // Add duplicate ways (same ID)
         tile.add_way(make_test_way(1));
         tile.add_way(make_test_way(1));
@@ -541,9 +545,9 @@ mod tests {
         tile.add_way(make_test_way(3));
 
         assert_eq!(tile.ways.len(), 6);
-        
+
         tile.deduplicate();
-        
+
         assert_eq!(tile.ways.len(), 3);
         let way_ids: std::collections::HashSet<u64> = tile.ways.iter().map(|w| w.id).collect();
         assert!(way_ids.contains(&1));
@@ -554,23 +558,23 @@ mod tests {
     #[test]
     fn test_intermediate_tile_deduplicate_relations() {
         let mut tile = make_test_tile();
-        
+
         // Add duplicate relations
         tile.add_relation(make_test_relation(1));
         tile.add_relation(make_test_relation(1));
         tile.add_relation(make_test_relation(2));
 
         assert_eq!(tile.relations.len(), 3);
-        
+
         tile.deduplicate();
-        
+
         assert_eq!(tile.relations.len(), 2);
     }
 
     #[test]
     fn test_intermediate_tile_deduplicate_no_duplicates() {
         let mut tile = make_test_tile();
-        
+
         tile.add_way(make_test_way(1));
         tile.add_way(make_test_way(2));
         tile.add_way(make_test_way(3));
@@ -620,24 +624,36 @@ mod tests {
     #[test]
     fn test_grid_bounds_overlaps_true() {
         let a = GridBounds {
-            lon_min: 0.0, lat_min: 0.0, lon_max: 10.0, lat_max: 10.0,
+            lon_min: 0.0,
+            lat_min: 0.0,
+            lon_max: 10.0,
+            lat_max: 10.0,
         };
         let b = GridBounds {
-            lon_min: 5.0, lat_min: 5.0, lon_max: 15.0, lat_max: 15.0,
+            lon_min: 5.0,
+            lat_min: 5.0,
+            lon_max: 15.0,
+            lat_max: 15.0,
         };
         assert!(a.overlaps(&b));
         assert!(b.overlaps(&a)); // Symmetric
 
         // One contains the other
         let c = GridBounds {
-            lon_min: 2.0, lat_min: 2.0, lon_max: 8.0, lat_max: 8.0,
+            lon_min: 2.0,
+            lat_min: 2.0,
+            lon_max: 8.0,
+            lat_max: 8.0,
         };
         assert!(a.overlaps(&c));
         assert!(c.overlaps(&a));
 
         // Edge touching (inclusive)
         let d = GridBounds {
-            lon_min: 10.0, lat_min: 10.0, lon_max: 20.0, lat_max: 20.0,
+            lon_min: 10.0,
+            lat_min: 10.0,
+            lon_max: 20.0,
+            lat_max: 20.0,
         };
         assert!(a.overlaps(&d)); // Touching at corner
     }
@@ -645,91 +661,122 @@ mod tests {
     #[test]
     fn test_grid_bounds_overlaps_false() {
         let a = GridBounds {
-            lon_min: 0.0, lat_min: 0.0, lon_max: 10.0, lat_max: 10.0,
+            lon_min: 0.0,
+            lat_min: 0.0,
+            lon_max: 10.0,
+            lat_max: 10.0,
         };
-        
+
         // Completely separate
         let b = GridBounds {
-            lon_min: 20.0, lat_min: 20.0, lon_max: 30.0, lat_max: 30.0,
+            lon_min: 20.0,
+            lat_min: 20.0,
+            lon_max: 30.0,
+            lat_max: 30.0,
         };
         assert!(!a.overlaps(&b));
-        
+
         // Adjacent but not touching (b just past a's max)
         let c = GridBounds {
-            lon_min: 10.1, lat_min: 0.0, lon_max: 20.0, lat_max: 10.0,
+            lon_min: 10.1,
+            lat_min: 0.0,
+            lon_max: 20.0,
+            lat_max: 10.0,
         };
         assert!(!a.overlaps(&c));
     }
 
     #[test]
     fn test_find_overlapping_cells_no_overlap() {
-        use crate::proximity::RasterizedProximityGrid;
         use crate::osm_data::in_memory_pbf::PbfBounds;
+        use crate::proximity::RasterizedProximityGrid;
 
         // Create two grids that don't overlap
         let bounds1 = PbfBounds {
-            lat_min: Some(50.0), lat_max: Some(50.01),
-            lon_min: Some(10.0), lon_max: Some(10.01),
+            lat_min: Some(50.0),
+            lat_max: Some(50.01),
+            lon_min: Some(10.0),
+            lon_max: Some(10.01),
         };
         let bounds2 = PbfBounds {
-            lat_min: Some(60.0), lat_max: Some(60.01),
-            lon_min: Some(20.0), lon_max: Some(20.01),
+            lat_min: Some(60.0),
+            lat_max: Some(60.01),
+            lon_min: Some(20.0),
+            lon_max: Some(20.01),
         };
 
         let grid1 = RasterizedProximityGrid::new(&bounds1);
         let grid2 = RasterizedProximityGrid::new(&bounds2);
 
         let grid_bounds1 = GridBounds {
-            lon_min: 10.0, lat_min: 50.0, lon_max: 10.01, lat_max: 50.01,
+            lon_min: 10.0,
+            lat_min: 50.0,
+            lon_max: 10.01,
+            lat_max: 50.01,
         };
         let grid_bounds2 = GridBounds {
-            lon_min: 20.0, lat_min: 60.0, lon_max: 20.01, lat_max: 60.01,
+            lon_min: 20.0,
+            lat_min: 60.0,
+            lon_max: 20.01,
+            lat_max: 60.01,
         };
 
-        let grids: Vec<(u64, GridBounds, RasterizedProximityGrid)> = vec![
-            (1, grid_bounds1, grid1),
-            (2, grid_bounds2, grid2),
-        ];
+        let grids: Vec<(u64, GridBounds, RasterizedProximityGrid)> =
+            vec![(1, grid_bounds1, grid1), (2, grid_bounds2, grid2)];
 
         let overlaps = find_overlapping_cells(&grids);
-        assert!(overlaps.is_empty(), "Non-overlapping grids should have no overlapping cells");
+        assert!(
+            overlaps.is_empty(),
+            "Non-overlapping grids should have no overlapping cells"
+        );
     }
 
     #[test]
     fn test_find_overlapping_cells_with_overlap() {
-        use crate::proximity::RasterizedProximityGrid;
         use crate::osm_data::in_memory_pbf::PbfBounds;
+        use crate::proximity::RasterizedProximityGrid;
 
         // Create two grids that overlap
         let bounds1 = PbfBounds {
-            lat_min: Some(50.0), lat_max: Some(50.02),
-            lon_min: Some(10.0), lon_max: Some(10.02),
+            lat_min: Some(50.0),
+            lat_max: Some(50.02),
+            lon_min: Some(10.0),
+            lon_max: Some(10.02),
         };
         let bounds2 = PbfBounds {
-            lat_min: Some(50.01), lat_max: Some(50.03),
-            lon_min: Some(10.01), lon_max: Some(10.03),
+            lat_min: Some(50.01),
+            lat_max: Some(50.03),
+            lon_min: Some(10.01),
+            lon_max: Some(10.03),
         };
 
         let grid1 = RasterizedProximityGrid::new(&bounds1);
         let grid2 = RasterizedProximityGrid::new(&bounds2);
 
         let grid_bounds1 = GridBounds {
-            lon_min: 10.0, lat_min: 50.0, lon_max: 10.02, lat_max: 50.02,
+            lon_min: 10.0,
+            lat_min: 50.0,
+            lon_max: 10.02,
+            lat_max: 50.02,
         };
         let grid_bounds2 = GridBounds {
-            lon_min: 10.01, lat_min: 50.01, lon_max: 10.03, lat_max: 50.03,
+            lon_min: 10.01,
+            lat_min: 50.01,
+            lon_max: 10.03,
+            lat_max: 50.03,
         };
 
-        let grids: Vec<(u64, GridBounds, RasterizedProximityGrid)> = vec![
-            (1, grid_bounds1, grid1),
-            (2, grid_bounds2, grid2),
-        ];
+        let grids: Vec<(u64, GridBounds, RasterizedProximityGrid)> =
+            vec![(1, grid_bounds1, grid1), (2, grid_bounds2, grid2)];
 
         let overlaps = find_overlapping_cells(&grids);
-        
+
         // There should be some overlapping cells in the intersection
-        assert!(!overlaps.is_empty(), "Overlapping grids should have overlapping cells");
-        
+        assert!(
+            !overlaps.is_empty(),
+            "Overlapping grids should have overlapping cells"
+        );
+
         // Each overlap should have exactly 2 sources (one from each grid)
         for (_, sources) in &overlaps {
             assert_eq!(sources.len(), 2);
@@ -738,44 +785,55 @@ mod tests {
 
     #[test]
     fn test_build_combined_grid() {
-        use crate::proximity::RasterizedProximityGrid;
         use crate::osm_data::in_memory_pbf::PbfBounds;
+        use crate::proximity::RasterizedProximityGrid;
 
         // Create two overlapping grids
         let bounds1 = PbfBounds {
-            lat_min: Some(50.0), lat_max: Some(50.02),
-            lon_min: Some(10.0), lon_max: Some(10.02),
+            lat_min: Some(50.0),
+            lat_max: Some(50.02),
+            lon_min: Some(10.0),
+            lon_max: Some(10.02),
         };
         let bounds2 = PbfBounds {
-            lat_min: Some(50.01), lat_max: Some(50.03),
-            lon_min: Some(10.01), lon_max: Some(10.03),
+            lat_min: Some(50.01),
+            lat_max: Some(50.03),
+            lon_min: Some(10.01),
+            lon_max: Some(10.03),
         };
 
         let rasterizer1 = crate::proximity::area_rasterizer::AreaRasterizer::new(&bounds1);
         let rasterizer2 = crate::proximity::area_rasterizer::AreaRasterizer::new(&bounds2);
-        
+
         let grid1 = rasterizer1.into_grid();
         let grid2 = rasterizer2.into_grid();
 
         let grid_bounds1 = GridBounds {
-            lon_min: 10.0, lat_min: 50.0, lon_max: 10.02, lat_max: 50.02,
+            lon_min: 10.0,
+            lat_min: 50.0,
+            lon_max: 10.02,
+            lat_max: 50.02,
         };
         let grid_bounds2 = GridBounds {
-            lon_min: 10.01, lat_min: 50.01, lon_max: 10.03, lat_max: 50.03,
+            lon_min: 10.01,
+            lat_min: 50.01,
+            lon_max: 10.03,
+            lat_max: 50.03,
         };
 
         // Region covering the overlap
         let region = GridBounds {
-            lon_min: 10.01, lat_min: 50.01, lon_max: 10.02, lat_max: 50.02,
+            lon_min: 10.01,
+            lat_min: 50.01,
+            lon_max: 10.02,
+            lat_max: 50.02,
         };
 
-        let grids: Vec<(u64, GridBounds, RasterizedProximityGrid)> = vec![
-            (1, grid_bounds1, grid1),
-            (2, grid_bounds2, grid2),
-        ];
+        let grids: Vec<(u64, GridBounds, RasterizedProximityGrid)> =
+            vec![(1, grid_bounds1, grid1), (2, grid_bounds2, grid2)];
 
         let combined = build_combined_grid(&grids, &region);
-        
+
         // Combined grid should cover the region
         let (lon_min, lat_min, lon_max, lat_max) = combined.bounds();
         assert!(lon_min <= region.lon_min);

@@ -326,7 +326,8 @@ impl<'a> PbfStreamer<'a> {
             if let Some(ref tags) = way.tags {
                 if let Some(highway_value) = tags.get("highway") {
                     let is_highway = ALLOWED_HIGHWAY_VALUES.contains(&highway_value.as_str())
-                        || (highway_value == "path" && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
+                        || (highway_value == "path"
+                            && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
 
                     if is_highway {
                         tile_data.ways.push(way.clone());
@@ -343,20 +344,31 @@ impl<'a> PbfStreamer<'a> {
             let relation = &rel_with_bounds.relation;
 
             // Check if relation has any members in the tile
-            let has_members_in_tile = relation.members.iter().any(|member| {
-                match member.member_type {
-                    crate::map_data::osm::OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
-                    crate::map_data::osm::OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
-                    crate::map_data::osm::OsmRelationMemberType::Relation => true,
-                }
-            });
+            let has_members_in_tile =
+                relation
+                    .members
+                    .iter()
+                    .any(|member| match member.member_type {
+                        crate::map_data::osm::OsmRelationMemberType::Node => {
+                            node_ids.contains(&member.member_ref)
+                        }
+                        crate::map_data::osm::OsmRelationMemberType::Way => {
+                            way_ids.contains(&member.member_ref)
+                        }
+                        crate::map_data::osm::OsmRelationMemberType::Relation => true,
+                    });
 
             if !has_members_in_tile {
                 continue;
             }
 
             // Only collect restriction relations (area relations handled during PBF load)
-            if relation.tags.get("type").map(|v| v.starts_with("restriction")).unwrap_or(false) {
+            if relation
+                .tags
+                .get("type")
+                .map(|v| v.starts_with("restriction"))
+                .unwrap_or(false)
+            {
                 tile_data.relations.push(relation.clone());
             }
         }
@@ -691,7 +703,6 @@ mod tests {
         // Should generate exactly 1 tile
         assert_eq!(tiles.len(), 1);
     }
-
 
     #[test]
     fn test_tile_data_validation_no_orphaned_ways() {

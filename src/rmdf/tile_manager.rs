@@ -43,7 +43,6 @@ impl TileManager {
         }
     }
 
-
     /// Compute TileId for given coordinates
     pub fn tile_id_for_coords(&self, lat: f32, lon: f32) -> TileId {
         TileId::from_coords(lat, lon, self.tile_size_degrees)
@@ -306,7 +305,6 @@ mod tests {
         }
 
         let manager = TileManager::new(tile_dir).expect("Failed to load TileManager");
-
     }
 
     #[test]
@@ -322,7 +320,9 @@ mod tests {
         let mut manager = TileManager::new(tile_dir).unwrap();
 
         // Query for a point known to exist in Montenegro
-        let point = manager.get_closest_to_coords(42.5, 18.5, &RouterRules::default(), false, None).unwrap();
+        let point = manager
+            .get_closest_to_coords(42.5, 18.5, &RouterRules::default(), false, None)
+            .unwrap();
         assert!(point.is_some());
     }
 
@@ -339,7 +339,10 @@ mod tests {
         let mut manager = TileManager::new(tile_dir).unwrap();
 
         // Get a point near a tile boundary
-        let point = manager.get_closest_to_coords(42.1, 18.9, &RouterRules::default(), false, None).unwrap().unwrap();
+        let point = manager
+            .get_closest_to_coords(42.1, 18.9, &RouterRules::default(), false, None)
+            .unwrap()
+            .unwrap();
 
         // Get adjacent points (may cross tile boundary)
         let adjacent = manager.get_adjacent_by_id(point.0, point.1).unwrap();
@@ -348,7 +351,9 @@ mod tests {
         assert!(adjacent.len() > 0);
 
         // Check if any cross tile boundary
-        let crosses_boundary = adjacent.iter().any(|(line_tile_id, _, other_tile_id, _)| *line_tile_id != *other_tile_id);
+        let crosses_boundary = adjacent
+            .iter()
+            .any(|(line_tile_id, _, other_tile_id, _)| *line_tile_id != *other_tile_id);
         // May or may not cross depending on location
         let _ = crosses_boundary;
     }

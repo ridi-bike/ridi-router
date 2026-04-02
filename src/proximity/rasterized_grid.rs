@@ -26,6 +26,23 @@ pub const THRESHOLD_AREA_M2: f32 = std::f32::consts::PI
 /// Military interior threshold - temporarily set to 0 for debugging
 pub const MILITARY_INTERIOR_M: f32 = 100.0;
 
+/// Military status of a grid cell based on 5-point sampling.
+///
+/// Each cell is classified as:
+/// - None: No sample points are >100m inside military polygon
+/// - Partial: Some but not all sample points are >100m inside
+/// - Full: All sample points are >100m inside military polygon (definitely nogo)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum MilitaryStatus {
+    /// No interior points found
+    #[default]
+    None,
+    /// Some interior points found
+    Partial,
+    /// All interior points found - definitely nogo
+    Full,
+}
+
 /// Grid cell storing pre-computed proximity values with directional sectors.
 ///
 /// Each cell stores residential area in 8 directional sectors (N, NE, E, SE, S, SW, W, NW)
@@ -50,15 +67,15 @@ pub const MILITARY_INTERIOR_M: f32 = 100.0;
 /// - W:  247.5° - 292.5°
 /// - NW: 292.5° - 337.5°
 ///
-/// Total size: 36 bytes (8 × 4 bytes for sectors + 1 byte bool + 3 bytes padding)
+/// Total size: 36 bytes (8 × 4 bytes for sectors + 1 byte enum + 3 bytes padding)
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct GridCell {
     /// Residential area (m²) in each directional sector within 500m
     /// Index: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW
     pub residential_sectors: [f32; 8],
-    /// True if cell center is >100m inside a military polygon boundary
-    pub is_military_interior: bool,
+    /// Military status based on 5-point sampling
+    pub military_status: MilitaryStatus,
     /// Padding for alignment
     _padding: [u8; 3],
 }
@@ -75,7 +92,7 @@ impl GridCell {
     pub fn new() -> Self {
         Self {
             residential_sectors: [0.0; 8],
-            is_military_interior: false,
+            military_status: MilitaryStatus::None,
             _padding: [0; 3],
         }
     }
@@ -89,9 +106,10 @@ impl GridCell {
     }
 
     /// Check if this cell indicates a nogo area
+    /// Only Full status is considered a nogo area
     #[inline]
     pub fn is_nogo_area(&self) -> bool {
-        self.is_military_interior
+        self.military_status == MilitaryStatus::Full
     }
 
     /// Merge another cell into this one (for combining overlapping grids)
@@ -100,9 +118,11 @@ impl GridCell {
     /// contain the same polygons, and OR for military flag.
     pub fn merge(&mut self, other: &GridCell) {
         for i in 0..8 {
-            self.residential_sectors[i] = self.residential_sectors[i].max(other.residential_sectors[i]);
+            self.residential_sectors[i] =
+                self.residential_sectors[i].max(other.residential_sectors[i]);
         }
-        self.is_military_interior |= other.is_military_interior;
+        // Merge military status: Full > Partial > None
+        self.military_status = self.military_status.max(other.military_status);
     }
 
     /// Get total residential area across all sectors
@@ -246,7 +266,6 @@ impl RasterizedProximityGrid {
         self.cell_index(lat, lon).map(|idx| &mut self.cells[idx])
     }
 
-
     /// O(1) lookup for residential proximity flag.
     #[inline]
     pub fn is_residential_proximity(&self, lat: f32, lon: f32) -> bool {
@@ -267,7 +286,6 @@ impl RasterizedProximityGrid {
         self.cells.len()
     }
 
-
     /// Get a slice of all cells for parallel processing.
     #[inline]
     pub fn cells_mut(&mut self) -> &mut [GridCell] {
@@ -286,6 +304,13 @@ impl RasterizedProximityGrid {
             .iter()
             .filter(|c| c.is_residential_proximity())
             .count()
+    }
+
+    /// Get grid bounds as (lon_min, lat_min, lon_max, lat_max)
+    pub fn bounds(&self) -> (f32, f32, f32, f32) {
+        let lon_max = self.lon_min + (self.cols as f32) * GRID_CELL_SIZE_DEG;
+        let lat_max = self.lat_min + (self.rows as f32) * GRID_CELL_SIZE_DEG;
+        (self.lon_min, self.lat_min, lon_max, lat_max)
     }
 
     /// Count cells with nogo flag set.
@@ -314,7 +339,12 @@ impl RasterizedProximityGrid {
             for sector in &cell.residential_sectors {
                 bytes.extend_from_slice(&sector.to_le_bytes());
             }
-            bytes.push(cell.is_military_interior as u8);
+            // Serialize MilitaryStatus as u8 (0=None, 1=Partial, 2=Full)
+            bytes.push(match cell.military_status {
+                MilitaryStatus::None => 0,
+                MilitaryStatus::Partial => 1,
+                MilitaryStatus::Full => 2,
+            });
             bytes.extend_from_slice(&[0, 0, 0]); // padding
         }
 
@@ -355,12 +385,18 @@ impl RasterizedProximityGrid {
             }
             offset += 32;
 
-            let is_military_interior = bytes[offset] != 0;
-            offset += 4; // 1 byte bool + 3 bytes padding
+            let military_status_val = bytes[offset];
+            let military_status = match military_status_val {
+                0 => MilitaryStatus::None,
+                1 => MilitaryStatus::Partial,
+                2 => MilitaryStatus::Full,
+                _ => MilitaryStatus::None,
+            };
+            offset += 4; // 1 byte enum + 3 bytes padding
 
             cells.push(GridCell {
                 residential_sectors,
-                is_military_interior,
+                military_status,
                 _padding: [0; 3],
             });
         }
@@ -396,7 +432,10 @@ mod tests {
         // 0.1 degrees / 0.0005 = 200 cells per dimension (plus buffer)
         assert!(grid.cols > 200);
         assert!(grid.rows > 200);
-        assert_eq!(grid.cell_count(), (grid.cols as usize) * (grid.rows as usize));
+        assert_eq!(
+            grid.cell_count(),
+            (grid.cols as usize) * (grid.rows as usize)
+        );
     }
 
     #[test]
@@ -440,7 +479,7 @@ mod tests {
         // Modify a cell using sector API
         if let Some(cell) = grid.get_cell_mut(50.05, 10.05) {
             cell.residential_sectors[0] = 100000.0; // North sector above threshold
-            cell.is_military_interior = true;
+            cell.military_status = MilitaryStatus::Full;
         }
 
         // Verify flags
@@ -491,7 +530,7 @@ mod tests {
         if cells.len() >= 3 {
             cells[0].residential_sectors[0] = 100000.0;
             cells[1].residential_sectors[0] = 100000.0;
-            cells[2].is_military_interior = true;
+            cells[2].military_status = MilitaryStatus::Full;
         }
 
         assert_eq!(grid.count_residential(), 2);
@@ -515,9 +554,9 @@ mod tests {
     #[test]
     fn test_bearing_to_sector() {
         // Test cardinal directions
-        assert_eq!(bearing_to_sector(0.0), 0);   // N
-        assert_eq!(bearing_to_sector(45.0), 1);  // NE
-        assert_eq!(bearing_to_sector(90.0), 2);  // E
+        assert_eq!(bearing_to_sector(0.0), 0); // N
+        assert_eq!(bearing_to_sector(45.0), 1); // NE
+        assert_eq!(bearing_to_sector(90.0), 2); // E
         assert_eq!(bearing_to_sector(135.0), 3); // SE
         assert_eq!(bearing_to_sector(180.0), 4); // S
         assert_eq!(bearing_to_sector(225.0), 5); // SW
@@ -525,8 +564,8 @@ mod tests {
         assert_eq!(bearing_to_sector(315.0), 7); // NW
 
         // Test boundary cases
-        assert_eq!(bearing_to_sector(22.4), 0);  // Just before N/NE boundary
-        assert_eq!(bearing_to_sector(22.6), 1);  // Just after N/NE boundary
+        assert_eq!(bearing_to_sector(22.4), 0); // Just before N/NE boundary
+        assert_eq!(bearing_to_sector(22.6), 1); // Just after N/NE boundary
         assert_eq!(bearing_to_sector(337.4), 7); // Just before NW/N boundary
         assert_eq!(bearing_to_sector(337.6), 0); // Just after NW/N boundary
 
@@ -542,12 +581,12 @@ mod tests {
 
         // Set different sectors
         cell1.residential_sectors[0] = 1000.0; // N
-        cell1.residential_sectors[1] = 500.0;  // NE
-        cell1.is_military_interior = true;
+        cell1.residential_sectors[1] = 500.0; // NE
+        cell1.military_status = MilitaryStatus::Full;
 
-        cell2.residential_sectors[1] = 800.0;  // NE (larger)
-        cell2.residential_sectors[2] = 600.0;  // E
-        cell2.is_military_interior = false;
+        cell2.residential_sectors[1] = 800.0; // NE (larger)
+        cell2.residential_sectors[2] = 600.0; // E
+        cell2.military_status = MilitaryStatus::None;
 
         cell1.merge(&cell2);
 
@@ -558,7 +597,7 @@ mod tests {
         // E should be from cell2
         assert_eq!(cell1.residential_sectors[2], 600.0);
         // Military should be OR'd
-        assert!(cell1.is_military_interior);
+        assert!(cell1.military_status == MilitaryStatus::Full);
     }
 
     #[test]
@@ -570,14 +609,15 @@ mod tests {
         if let Some(cell) = grid.get_cell_mut(50.005, 10.005) {
             cell.residential_sectors[0] = 50000.0;
             cell.residential_sectors[2] = 30000.0;
-            cell.is_military_interior = true;
+            cell.military_status = MilitaryStatus::Full;
         }
 
         // Serialize
         let bytes = grid.to_bytes();
 
         // Deserialize
-        let restored = RasterizedProximityGrid::from_bytes(&bytes).expect("Deserialization should succeed");
+        let restored =
+            RasterizedProximityGrid::from_bytes(&bytes).expect("Deserialization should succeed");
 
         // Verify dimensions match
         assert_eq!(grid.cols, restored.cols);
@@ -590,8 +630,11 @@ mod tests {
             grid.get_cell(50.005, 10.005),
             restored.get_cell(50.005, 10.005),
         ) {
-            assert_eq!(original.residential_sectors, restored_cell.residential_sectors);
-            assert_eq!(original.is_military_interior, restored_cell.is_military_interior);
+            assert_eq!(
+                original.residential_sectors,
+                restored_cell.residential_sectors
+            );
+            assert_eq!(original.military_status, restored_cell.military_status);
         }
     }
 
@@ -599,11 +642,11 @@ mod tests {
     fn test_gridcell_total_residential_area() {
         let mut cell = GridCell::new();
         assert_eq!(cell.total_residential_area(), 0.0);
-        
+
         cell.residential_sectors[0] = 100.0;
         cell.residential_sectors[2] = 200.0;
         cell.residential_sectors[5] = 300.0;
-        
+
         assert_eq!(cell.total_residential_area(), 600.0);
     }
 
@@ -611,13 +654,16 @@ mod tests {
     fn test_gridcell_new_vs_default() {
         let cell_new = GridCell::new();
         let cell_default = GridCell::default();
-        
-        assert_eq!(cell_new.residential_sectors, cell_default.residential_sectors);
-        assert_eq!(cell_new.is_military_interior, cell_default.is_military_interior);
-        
+
+        assert_eq!(
+            cell_new.residential_sectors,
+            cell_default.residential_sectors
+        );
+        assert_eq!(cell_new.military_status, cell_default.military_status);
+
         // Both should have all zeros
         assert_eq!(cell_new.residential_sectors, [0.0f32; 8]);
-        assert!(!cell_new.is_military_interior);
+        assert!(cell_new.military_status == MilitaryStatus::None);
     }
 
     #[test]
@@ -625,16 +671,16 @@ mod tests {
         // Empty buffer
         let result = RasterizedProximityGrid::from_bytes(&[]);
         assert!(result.is_err());
-        
+
         // Buffer with only partial header
         let result = RasterizedProximityGrid::from_bytes(&[0, 0, 0]);
         assert!(result.is_err());
-        
+
         // Buffer with header but no cells
         let bounds = make_test_bounds(50.0, 50.01, 10.0, 10.01);
         let grid = RasterizedProximityGrid::new(&bounds);
         let bytes = grid.to_bytes();
-        
+
         // Truncate to just header
         let result = RasterizedProximityGrid::from_bytes(&bytes[..16]);
         assert!(result.is_err());
@@ -644,54 +690,54 @@ mod tests {
     fn test_grid_serialization_empty_grid() {
         let bounds = make_test_bounds(50.0, 50.001, 10.0, 10.001);
         let grid = RasterizedProximityGrid::new(&bounds);
-        
+
         let bytes = grid.to_bytes();
         let restored = RasterizedProximityGrid::from_bytes(&bytes).expect("Should deserialize");
-        
+
         // All cells should be default
         for cell in restored.cells().iter() {
             assert_eq!(cell.residential_sectors, [0.0f32; 8]);
-            assert!(!cell.is_military_interior);
+            assert!(cell.military_status == MilitaryStatus::None);
         }
     }
 
     #[test]
     fn test_bearing_to_sector_all_ordinals() {
         // Test ordinal directions (NE, SE, SW, NW)
-        assert_eq!(bearing_to_sector(45.0), 1);   // NE
-        assert_eq!(bearing_to_sector(135.0), 3);  // SE
-        assert_eq!(bearing_to_sector(225.0), 5);  // SW
-        assert_eq!(bearing_to_sector(315.0), 7);  // NW
-        
+        assert_eq!(bearing_to_sector(45.0), 1); // NE
+        assert_eq!(bearing_to_sector(135.0), 3); // SE
+        assert_eq!(bearing_to_sector(225.0), 5); // SW
+        assert_eq!(bearing_to_sector(315.0), 7); // NW
+
         // Test boundaries between all sectors
         // N/NE boundary at 22.5
         assert_eq!(bearing_to_sector(22.49), 0);
         assert_eq!(bearing_to_sector(22.51), 1);
-        
+
         // NE/E boundary at 67.5
         assert_eq!(bearing_to_sector(67.49), 1);
         assert_eq!(bearing_to_sector(67.51), 2);
-        
+
         // E/SE boundary at 112.5
         assert_eq!(bearing_to_sector(112.49), 2);
         assert_eq!(bearing_to_sector(112.51), 3);
-        
+
         // SE/S boundary at 157.5
         assert_eq!(bearing_to_sector(157.49), 3);
         assert_eq!(bearing_to_sector(157.51), 4);
-        
+
         // S/SW boundary at 202.5
         assert_eq!(bearing_to_sector(202.49), 4);
         assert_eq!(bearing_to_sector(202.51), 5);
-        
+
         // SW/W boundary at 247.5
         assert_eq!(bearing_to_sector(247.49), 5);
         assert_eq!(bearing_to_sector(247.51), 6);
-        
+
         // W/NW boundary at 292.5
         assert_eq!(bearing_to_sector(292.49), 6);
         assert_eq!(bearing_to_sector(292.51), 7);
-        
+
         // NW/N boundary at 337.5
         assert_eq!(bearing_to_sector(337.49), 7);
         assert_eq!(bearing_to_sector(337.51), 0);
@@ -700,33 +746,33 @@ mod tests {
     #[test]
     fn test_bearing_to_sector_large_values() {
         // Values > 720 degrees
-        assert_eq!(bearing_to_sector(720.0), 0);   // 720 = 2 * 360 = 0 = N
-        assert_eq!(bearing_to_sector(765.0), 1);   // 765 = 720 + 45 = 45 = NE
-        assert_eq!(bearing_to_sector(810.0), 2);   // 810 = 720 + 90 = 90 = E
-        // Actually 900 % 360 = 180, which is S (sector 4)
+        assert_eq!(bearing_to_sector(720.0), 0); // 720 = 2 * 360 = 0 = N
+        assert_eq!(bearing_to_sector(765.0), 1); // 765 = 720 + 45 = 45 = NE
+        assert_eq!(bearing_to_sector(810.0), 2); // 810 = 720 + 90 = 90 = E
+                                                 // Actually 900 % 360 = 180, which is S (sector 4)
         assert_eq!(bearing_to_sector(900.0), 4);
-        
+
         // Very negative values
-        assert_eq!(bearing_to_sector(-360.0), 0);  // -360 = 0 = N
-        assert_eq!(bearing_to_sector(-405.0), 7);  // -405 = -360 - 45 = -45 -> 315 = NW
+        assert_eq!(bearing_to_sector(-360.0), 0); // -360 = 0 = N
+        assert_eq!(bearing_to_sector(-405.0), 7); // -405 = -360 - 45 = -45 -> 315 = NW
     }
 
     #[test]
     fn test_cell_merge_multiple_times() {
         let mut cell = GridCell::new();
-        
+
         // Merge cell with data in sector 0
         let mut other1 = GridCell::new();
         other1.residential_sectors[0] = 100.0;
         cell.merge(&other1);
         assert_eq!(cell.residential_sectors[0], 100.0);
-        
+
         // Merge again with larger value
         let mut other2 = GridCell::new();
         other2.residential_sectors[0] = 200.0;
         cell.merge(&other2);
         assert_eq!(cell.residential_sectors[0], 200.0); // MAX, not sum
-        
+
         // Merge again with smaller value
         let mut other3 = GridCell::new();
         other3.residential_sectors[0] = 50.0;
@@ -737,20 +783,20 @@ mod tests {
     #[test]
     fn test_cell_merge_military_accumulation() {
         let mut cell = GridCell::new();
-        
+
         // Start with military false
-        assert!(!cell.is_military_interior);
-        
+        assert!(cell.military_status == MilitaryStatus::None);
+
         // Merge with military true
         let mut other1 = GridCell::new();
-        other1.is_military_interior = true;
+        other1.military_status = MilitaryStatus::Full;
         cell.merge(&other1);
-        assert!(cell.is_military_interior);
-        
+        assert!(cell.military_status == MilitaryStatus::Full);
+
         // Merge with military false - should stay true
         let mut other2 = GridCell::new();
-        other2.is_military_interior = false;
+        other2.military_status = MilitaryStatus::None;
         cell.merge(&other2);
-        assert!(cell.is_military_interior);
+        assert!(cell.military_status == MilitaryStatus::Full);
     }
 }

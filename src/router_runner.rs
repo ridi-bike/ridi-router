@@ -102,7 +102,6 @@ impl FromStr for Coords {
     }
 }
 
-
 impl FromStr for DataDestination {
     type Err = RouterRunnerError;
 
@@ -460,7 +459,8 @@ impl RouterRunner {
                         input_file, output, tile_size_deg
                     );
 
-                    let generator = TileGenerator::new(input_file.clone(), output.clone(), *tile_size_deg)?;
+                    let generator =
+                        TileGenerator::new(input_file.clone(), output.clone(), *tile_size_deg)?;
                     generator.generate()?;
 
                     info!("Tile generation complete");
@@ -474,7 +474,9 @@ impl RouterRunner {
                     );
 
                     // Use provided db_path or default to temp location in output directory
-                    let db_path = db_path.clone().unwrap_or_else(|| output.join(".intermediate.redb"));
+                    let db_path = db_path
+                        .clone()
+                        .unwrap_or_else(|| output.join(".intermediate.redb"));
 
                     let generator = MultiPbfGenerator::new(
                         input_dir.clone(),
@@ -494,9 +496,7 @@ impl RouterRunner {
                 Ok(crate::router::rules::generate_json_schema(destination)?)
             }
             #[cfg(feature = "rmdf-viewer")]
-            CliMode::RmdfViewer { input_dir } => {
-                crate::debug::rmdf_viewer::run(input_dir.clone())
-            }
+            CliMode::RmdfViewer { input_dir } => crate::debug::rmdf_viewer::run(input_dir.clone()),
         }
     }
 }

@@ -5,9 +5,7 @@ use std::{
 
 use tracing::trace;
 
-use crate::{
-    map_data::graph::MapDataPointRef, router::rules::RouterRules,
-};
+use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
 
 use super::{
     itinerary::Itinerary,

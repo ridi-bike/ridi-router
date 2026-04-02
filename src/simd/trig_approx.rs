@@ -89,7 +89,8 @@ pub fn cos_f32x8(x: f32x8) -> f32x8 {
     let x8 = x6 * x2;
     let x10 = x8 * x2;
 
-    let result = f32x8::splat(1.0) - x2 * f32x8::splat(COS_COEFF_2) + x4 * f32x8::splat(COS_COEFF_4)
+    let result = f32x8::splat(1.0) - x2 * f32x8::splat(COS_COEFF_2)
+        + x4 * f32x8::splat(COS_COEFF_4)
         - x6 * f32x8::splat(COS_COEFF_6)
         + x8 * f32x8::splat(COS_COEFF_8)
         - x10 * f32x8::splat(COS_COEFF_10);
@@ -123,7 +124,9 @@ pub fn asin_f32x8(x: f32x8) -> f32x8 {
     let x7 = x5 * x2;
     let x9 = x7 * x2;
 
-    let small_result = x + x3 * f32x8::splat(ASIN_COEFF_3) + x5 * f32x8::splat(ASIN_COEFF_5)
+    let small_result = x
+        + x3 * f32x8::splat(ASIN_COEFF_3)
+        + x5 * f32x8::splat(ASIN_COEFF_5)
         + x7 * f32x8::splat(ASIN_COEFF_7)
         + x9 * f32x8::splat(ASIN_COEFF_9);
 
@@ -139,7 +142,9 @@ pub fn asin_f32x8(x: f32x8) -> f32x8 {
     let y7 = y5 * y2;
     let y9 = y7 * y2;
 
-    let asin_y = y + y3 * f32x8::splat(ASIN_COEFF_3) + y5 * f32x8::splat(ASIN_COEFF_5)
+    let asin_y = y
+        + y3 * f32x8::splat(ASIN_COEFF_3)
+        + y5 * f32x8::splat(ASIN_COEFF_5)
         + y7 * f32x8::splat(ASIN_COEFF_7)
         + y9 * f32x8::splat(ASIN_COEFF_9);
 
@@ -211,7 +216,9 @@ mod avx512 {
         let x7 = x5 * x2;
         let x9 = x7 * x2;
 
-        let small_result = x + x3 * f32x16::splat(ASIN_COEFF_3) + x5 * f32x16::splat(ASIN_COEFF_5)
+        let small_result = x
+            + x3 * f32x16::splat(ASIN_COEFF_3)
+            + x5 * f32x16::splat(ASIN_COEFF_5)
             + x7 * f32x16::splat(ASIN_COEFF_7)
             + x9 * f32x16::splat(ASIN_COEFF_9);
 
@@ -224,7 +231,9 @@ mod avx512 {
         let y7 = y5 * y2;
         let y9 = y7 * y2;
 
-        let asin_y = y + y3 * f32x16::splat(ASIN_COEFF_3) + y5 * f32x16::splat(ASIN_COEFF_5)
+        let asin_y = y
+            + y3 * f32x16::splat(ASIN_COEFF_3)
+            + y5 * f32x16::splat(ASIN_COEFF_5)
             + y7 * f32x16::splat(ASIN_COEFF_7)
             + y9 * f32x16::splat(ASIN_COEFF_9);
 
@@ -256,7 +265,16 @@ mod tests {
 
     #[test]
     fn test_sin_f32x8_basic_values() {
-        let inputs = f32x8::from([0.0, PI / 6.0, PI / 4.0, PI / 3.0, PI / 2.0, PI, -PI / 2.0, 0.1]);
+        let inputs = f32x8::from([
+            0.0,
+            PI / 6.0,
+            PI / 4.0,
+            PI / 3.0,
+            PI / 2.0,
+            PI,
+            -PI / 2.0,
+            0.1,
+        ]);
         let results: [f32; 8] = sin_f32x8(inputs).into();
 
         let expected = [
@@ -285,7 +303,16 @@ mod tests {
 
     #[test]
     fn test_cos_f32x8_basic_values() {
-        let inputs = f32x8::from([0.0, PI / 6.0, PI / 4.0, PI / 3.0, PI / 2.0, PI, -PI / 2.0, 0.1]);
+        let inputs = f32x8::from([
+            0.0,
+            PI / 6.0,
+            PI / 4.0,
+            PI / 3.0,
+            PI / 2.0,
+            PI,
+            -PI / 2.0,
+            0.1,
+        ]);
         let results: [f32; 8] = cos_f32x8(inputs).into();
 
         let expected = [
