@@ -433,7 +433,7 @@ pub fn build_combined_grid(
         }
     }
 
-    // Also copy non-overlapping cells from each grid
+    // Also copy non-overlapping residential cells from each grid
     for (_, _, source_grid) in grids {
         for local_idx in 0..source_grid.cell_count() {
             let (lat, lon) = source_grid.cell_center(local_idx);
@@ -447,6 +447,19 @@ pub fn build_combined_grid(
                     }
                 }
             }
+        }
+    }
+
+    // Merge military cells independently at their finer resolution.
+    for (_, _, source_grid) in grids {
+        for local_idx in 0..source_grid.military_cell_count() {
+            let status = source_grid.military_cells()[local_idx];
+            if status == crate::proximity::rasterized_grid::MilitaryStatus::None {
+                continue;
+            }
+
+            let (lat, lon) = source_grid.military_cell_center(local_idx);
+            combined.set_military_status(lat, lon, status);
         }
     }
 

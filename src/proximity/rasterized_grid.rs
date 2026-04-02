@@ -5,10 +5,13 @@
 
 use crate::osm_data::in_memory_pbf::PbfBounds;
 
-/// Grid cell size: ~240m (0.0024 degrees at equator)
-/// This provides a good balance between memory usage and accuracy for larger regions.
-/// Maximum position error is ~170m (half diagonal of cell).
+/// Residential grid cell size: ~240m (0.0024 degrees at equator)
+/// This preserves the original residential raster resolution and tile sizes.
 pub const GRID_CELL_SIZE_DEG: f32 = 0.0024;
+
+/// Military grid cell size: half the residential resolution.
+/// This improves military edge accuracy without inflating residential sector storage.
+pub const MILITARY_GRID_CELL_SIZE_DEG: f32 = 0.0012;
 
 /// Search radius for residential proximity check (meters)
 pub const RESIDENTIAL_PROXIMITY_THRESHOLD_M: f32 = 500.0;
@@ -23,15 +26,13 @@ pub const THRESHOLD_AREA_M2: f32 = std::f32::consts::PI
     * RESIDENTIAL_PROXIMITY_THRESHOLD_M
     * RESIDENTIAL_PART_COVERED;
 
-/// Military interior threshold - temporarily set to 0 for debugging
-pub const MILITARY_INTERIOR_M: f32 = 100.0;
-
 /// Military status of a grid cell based on 5-point sampling.
 ///
 /// Each cell is classified as:
-/// - None: No sample points are >100m inside military polygon
-/// - Partial: Some but not all sample points are >100m inside
-/// - Full: All sample points are >100m inside military polygon (definitely nogo)
+/// - None: No sample points are inside a military polygon
+/// - Partial: Some but not all sample points are inside
+/// - Full: All sample points are inside a military polygon (definitely nogo)
+#[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum MilitaryStatus {
     /// No interior points found
@@ -153,12 +154,18 @@ pub fn bearing_to_sector(bearing_deg: f32) -> usize {
 /// of size `GRID_CELL_SIZE_DEG` degrees (approximately 50m at equator).
 #[derive(Debug)]
 pub struct RasterizedProximityGrid {
-    /// Flat array of grid cells in row-major order
+    /// Flat array of residential grid cells in row-major order
     cells: Vec<GridCell>,
-    /// Number of columns (longitude direction)
+    /// Flat array of military grid cells in row-major order
+    military_cells: Vec<MilitaryStatus>,
+    /// Number of residential columns (longitude direction)
     cols: u32,
-    /// Number of rows (latitude direction)
+    /// Number of residential rows (latitude direction)
     rows: u32,
+    /// Number of military columns (longitude direction)
+    military_cols: u32,
+    /// Number of military rows (latitude direction)
+    military_rows: u32,
     /// Minimum longitude of grid
     lon_min: f32,
     /// Minimum latitude of grid
@@ -191,8 +198,11 @@ impl RasterizedProximityGrid {
         // Calculate grid dimensions
         let cols = ((lon_max - lon_min) / GRID_CELL_SIZE_DEG).ceil() as u32;
         let rows = ((lat_max - lat_min) / GRID_CELL_SIZE_DEG).ceil() as u32;
+        let military_cols = ((lon_max - lon_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
+        let military_rows = ((lat_max - lat_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
 
         let cell_count = (cols as u64) * (rows as u64);
+        let military_cell_count = (military_cols as u64) * (military_rows as u64);
 
         // Safety check for memory usage (each cell is 36 bytes)
         // Limit to ~4GB of grid data
@@ -208,10 +218,13 @@ impl RasterizedProximityGrid {
         }
 
         tracing::info!(
-            "Creating proximity grid: {}x{} cells ({:.1} MB), covering {:.3}°-{:.3}° lat, {:.3}°-{:.3}° lon",
+            "Creating proximity grid: residential {}x{} cells ({:.1} MB), military {}x{} cells ({:.1} MB), covering {:.3}°-{:.3}° lat, {:.3}°-{:.3}° lon",
             cols,
             rows,
             (cell_count * 36) as f64 / 1e6,
+            military_cols,
+            military_rows,
+            (military_cell_count) as f64 / 1e6,
             lat_min,
             lat_max,
             lon_min,
@@ -219,17 +232,21 @@ impl RasterizedProximityGrid {
         );
 
         let cells = vec![GridCell::default(); cell_count as usize];
+        let military_cells = vec![MilitaryStatus::None; military_cell_count as usize];
 
         Self {
             cells,
+            military_cells,
             cols,
             rows,
+            military_cols,
+            military_rows,
             lon_min,
             lat_min,
         }
     }
 
-    /// Get the cell index for a given coordinate, or None if out of bounds.
+    /// Get the residential cell index for a given coordinate, or None if out of bounds.
     #[inline]
     pub fn cell_index(&self, lat: f32, lon: f32) -> Option<usize> {
         let col = ((lon - self.lon_min) / GRID_CELL_SIZE_DEG) as i32;
@@ -242,7 +259,20 @@ impl RasterizedProximityGrid {
         Some((row as usize) * (self.cols as usize) + (col as usize))
     }
 
-    /// Get the center coordinates of a cell by index.
+    /// Get the military cell index for a given coordinate, or None if out of bounds.
+    #[inline]
+    pub fn military_cell_index(&self, lat: f32, lon: f32) -> Option<usize> {
+        let col = ((lon - self.lon_min) / MILITARY_GRID_CELL_SIZE_DEG) as i32;
+        let row = ((lat - self.lat_min) / MILITARY_GRID_CELL_SIZE_DEG) as i32;
+
+        if col < 0 || col >= self.military_cols as i32 || row < 0 || row >= self.military_rows as i32 {
+            return None;
+        }
+
+        Some((row as usize) * (self.military_cols as usize) + (col as usize))
+    }
+
+    /// Get the center coordinates of a residential cell by index.
     #[inline]
     pub fn cell_center(&self, index: usize) -> (f32, f32) {
         let row = (index / self.cols as usize) as f32;
@@ -250,6 +280,18 @@ impl RasterizedProximityGrid {
 
         let lat = self.lat_min + (row + 0.5) * GRID_CELL_SIZE_DEG;
         let lon = self.lon_min + (col + 0.5) * GRID_CELL_SIZE_DEG;
+
+        (lat, lon)
+    }
+
+    /// Get the center coordinates of a military cell by index.
+    #[inline]
+    pub fn military_cell_center(&self, index: usize) -> (f32, f32) {
+        let row = (index / self.military_cols as usize) as f32;
+        let col = (index % self.military_cols as usize) as f32;
+
+        let lat = self.lat_min + (row + 0.5) * MILITARY_GRID_CELL_SIZE_DEG;
+        let lon = self.lon_min + (col + 0.5) * MILITARY_GRID_CELL_SIZE_DEG;
 
         (lat, lon)
     }
@@ -276,26 +318,59 @@ impl RasterizedProximityGrid {
     /// O(1) lookup for nogo area flag.
     #[inline]
     pub fn is_nogo_area(&self, lat: f32, lon: f32) -> bool {
-        self.get_cell(lat, lon)
-            .map_or(false, |cell| cell.is_nogo_area())
+        let military = self
+            .military_cell_index(lat, lon)
+            .and_then(|idx| self.military_cells.get(idx))
+            .is_some_and(|status| *status == MilitaryStatus::Full);
+
+        military
+            || self
+                .get_cell(lat, lon)
+                .map_or(false, |cell| cell.is_nogo_area())
     }
 
-    /// Get total number of cells in the grid.
+    /// Get total number of residential cells in the grid.
     #[inline]
     pub fn cell_count(&self) -> usize {
         self.cells.len()
     }
 
-    /// Get a slice of all cells for parallel processing.
+    /// Get total number of military cells in the grid.
+    #[inline]
+    pub fn military_cell_count(&self) -> usize {
+        self.military_cells.len()
+    }
+
+    /// Get a slice of all residential cells for parallel processing.
     #[inline]
     pub fn cells_mut(&mut self) -> &mut [GridCell] {
         &mut self.cells
     }
 
-    /// Get a slice of all cells (read-only)
+    /// Get a slice of all residential cells (read-only)
     #[inline]
     pub fn cells(&self) -> &[GridCell] {
         &self.cells
+    }
+
+    /// Get a slice of all military cells (read-only)
+    #[inline]
+    pub fn military_cells(&self) -> &[MilitaryStatus] {
+        &self.military_cells
+    }
+
+    /// Get a slice of all military cells for parallel processing.
+    #[inline]
+    pub fn military_cells_mut(&mut self) -> &mut [MilitaryStatus] {
+        &mut self.military_cells
+    }
+
+    /// Set military status at a coordinate using max/OR semantics.
+    #[inline]
+    pub fn set_military_status(&mut self, lat: f32, lon: f32, status: MilitaryStatus) {
+        if let Some(idx) = self.military_cell_index(lat, lon) {
+            self.military_cells[idx] = self.military_cells[idx].max(status);
+        }
     }
 
     /// Count cells with residential proximity flag set.
@@ -313,20 +388,35 @@ impl RasterizedProximityGrid {
         (self.lon_min, self.lat_min, lon_max, lat_max)
     }
 
-    /// Count cells with nogo flag set.
+    /// Count military cells with nogo flag set.
     pub fn count_nogo(&self) -> usize {
-        self.cells.iter().filter(|c| c.is_nogo_area()).count()
+        let military_count = self
+            .military_cells
+            .iter()
+            .filter(|status| **status == MilitaryStatus::Full)
+            .count();
+
+        if military_count > 0 {
+            military_count
+        } else {
+            self.cells.iter().filter(|c| c.is_nogo_area()).count()
+        }
     }
 
     /// Serialize grid to bytes for storage
     ///
     /// Format:
-    /// - Header (16 bytes): cols (u32), rows (u32), lon_min (f32), lat_min (f32)
-    /// - Cells (36 bytes each): 8 × f32 sectors + 1 byte bool + 3 bytes padding
+    /// - Header (16 bytes): residential cols (u32), rows (u32), lon_min (f32), lat_min (f32)
+    /// - Residential cells (36 bytes each): 8 × f32 sectors + 1 byte military enum + 3 bytes padding
+    /// - Military header (8 bytes): military cols (u32), military rows (u32)
+    /// - Military cells (1 byte each): MilitaryStatus as u8 (0=None, 1=Partial, 2=Full)
     pub fn to_bytes(&self) -> Vec<u8> {
         let header_size = 16;
         let cell_size = 36;
-        let mut bytes = Vec::with_capacity(header_size + self.cells.len() * cell_size);
+        let military_header_size = 8;
+        let mut bytes = Vec::with_capacity(
+            header_size + self.cells.len() * cell_size + military_header_size + self.military_cells.len(),
+        );
 
         // Header
         bytes.extend_from_slice(&self.cols.to_le_bytes());
@@ -334,18 +424,20 @@ impl RasterizedProximityGrid {
         bytes.extend_from_slice(&self.lon_min.to_le_bytes());
         bytes.extend_from_slice(&self.lat_min.to_le_bytes());
 
-        // Cells
+        // Residential cells
         for cell in &self.cells {
             for sector in &cell.residential_sectors {
                 bytes.extend_from_slice(&sector.to_le_bytes());
             }
-            // Serialize MilitaryStatus as u8 (0=None, 1=Partial, 2=Full)
-            bytes.push(match cell.military_status {
-                MilitaryStatus::None => 0,
-                MilitaryStatus::Partial => 1,
-                MilitaryStatus::Full => 2,
-            });
+            bytes.push(cell.military_status as u8);
             bytes.extend_from_slice(&[0, 0, 0]); // padding
+        }
+
+        // Military header + cells
+        bytes.extend_from_slice(&self.military_cols.to_le_bytes());
+        bytes.extend_from_slice(&self.military_rows.to_le_bytes());
+        for status in &self.military_cells {
+            bytes.push(*status as u8);
         }
 
         bytes
@@ -369,7 +461,7 @@ impl RasterizedProximityGrid {
             return Err("Buffer too small for cells");
         }
 
-        // Parse cells
+        // Parse residential cells
         let mut cells = Vec::with_capacity(cell_count as usize);
         let mut offset = 16;
 
@@ -385,8 +477,7 @@ impl RasterizedProximityGrid {
             }
             offset += 32;
 
-            let military_status_val = bytes[offset];
-            let military_status = match military_status_val {
+            let military_status = match bytes[offset] {
                 0 => MilitaryStatus::None,
                 1 => MilitaryStatus::Partial,
                 2 => MilitaryStatus::Full,
@@ -401,10 +492,58 @@ impl RasterizedProximityGrid {
             });
         }
 
+        let lon_max = lon_min + (cols as f32) * GRID_CELL_SIZE_DEG;
+        let lat_max = lat_min + (rows as f32) * GRID_CELL_SIZE_DEG;
+        let default_military_cols = ((lon_max - lon_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
+        let default_military_rows = ((lat_max - lat_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
+        let default_military_len = (default_military_cols as usize) * (default_military_rows as usize);
+
+        let (military_cols, military_rows, military_cells) = if bytes.len() >= offset + 8 {
+            let military_cols = u32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]);
+            let military_rows = u32::from_le_bytes([
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
+            ]);
+            offset += 8;
+
+            let military_len = (military_cols as usize) * (military_rows as usize);
+            if bytes.len() < offset + military_len {
+                return Err("Buffer too small for military cells");
+            }
+
+            let military_cells = bytes[offset..offset + military_len]
+                .iter()
+                .map(|value| match value {
+                    0 => MilitaryStatus::None,
+                    1 => MilitaryStatus::Partial,
+                    2 => MilitaryStatus::Full,
+                    _ => MilitaryStatus::None,
+                })
+                .collect();
+
+            (military_cols, military_rows, military_cells)
+        } else {
+            (
+                default_military_cols,
+                default_military_rows,
+                vec![MilitaryStatus::None; default_military_len],
+            )
+        };
+
         Ok(Self {
             cells,
+            military_cells,
             cols,
             rows,
+            military_cols,
+            military_rows,
             lon_min,
             lat_min,
         })
@@ -429,9 +568,9 @@ mod tests {
         let bounds = make_test_bounds(50.0, 50.1, 10.0, 10.1);
         let grid = RasterizedProximityGrid::new(&bounds);
 
-        // 0.1 degrees / 0.0005 = 200 cells per dimension (plus buffer)
-        assert!(grid.cols > 200);
-        assert!(grid.rows > 200);
+        // 0.1 degrees / 0.0024 ≈ 42 cells per dimension (plus buffer)
+        assert!(grid.cols > 40);
+        assert!(grid.rows > 40);
         assert_eq!(
             grid.cell_count(),
             (grid.cols as usize) * (grid.rows as usize)

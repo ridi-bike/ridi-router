@@ -3,7 +3,7 @@
 //! Converts residential and military polygons into the rasterized proximity grid
 //! by computing values for each grid cell using directional sectors.
 
-use geo::{Distance, GeodesicArea, Haversine, HaversineClosestPoint, MultiPolygon, Point};
+use geo::{Contains, Distance, GeodesicArea, Haversine, HaversineClosestPoint, MultiPolygon, Point};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
@@ -12,8 +12,8 @@ use crate::osm_data::in_memory_pbf::PbfBounds;
 use crate::simd::haversine::min_distance_to_vertices;
 
 use super::rasterized_grid::{
-    bearing_to_sector, MilitaryStatus, RasterizedProximityGrid, GRID_CELL_SIZE_DEG,
-    MILITARY_INTERIOR_M, RESIDENTIAL_PROXIMITY_THRESHOLD_M,
+    bearing_to_sector, MilitaryStatus, RasterizedProximityGrid, MILITARY_GRID_CELL_SIZE_DEG,
+    RESIDENTIAL_PROXIMITY_THRESHOLD_M,
 };
 
 /// Rasterizer that converts area polygons into grid cell values.
@@ -115,7 +115,7 @@ impl AreaRasterizer {
 
     /// Rasterize military polygons into the grid.
     ///
-    /// Marks cells as nogo if their center is >100m inside a military polygon boundary.
+    /// Marks cells as nogo if all 5 sample points in the cell are inside a military polygon.
     pub fn rasterize_military(&mut self, polygons: &[MultiPolygon<f64>]) {
         if polygons.is_empty() {
             info!("No military polygons to rasterize");
@@ -125,10 +125,10 @@ impl AreaRasterizer {
         info!(
             "Rasterizing {} military polygons into {} grid cells",
             polygons.len(),
-            self.grid.cell_count()
+            self.grid.military_cell_count()
         );
 
-        let cell_count = self.grid.cell_count();
+        let cell_count = self.grid.military_cell_count();
         let progress_counter = AtomicUsize::new(0);
         let progress_interval = (cell_count / 20).max(10000);
 
@@ -207,12 +207,7 @@ impl AreaRasterizer {
             .into_par_iter()
             .filter_map(|cell_idx| {
                 // Check military status using 5-point sampling
-                let status = check_military_status(
-                    &self.grid,
-                    cell_idx,
-                    &polygon_bboxes,
-                    MILITARY_INTERIOR_M,
-                );
+                let status = check_military_status(&self.grid, cell_idx, &polygon_bboxes);
 
                 // Update progress
                 let count = progress_counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -232,10 +227,10 @@ impl AreaRasterizer {
             })
             .collect();
 
-        // Apply results to grid
-        let cells = self.grid.cells_mut();
+        // Apply results to military grid
+        let cells = self.grid.military_cells_mut();
         for (idx, status) in nogo_cells {
-            cells[idx].military_status = status;
+            cells[idx] = status;
         }
 
         info!(
@@ -402,12 +397,12 @@ fn compute_residential_sectors_for_cell(
     sectors
 }
 
-/// Get 5 sample points for a cell (center + 4 corners)
+/// Get 5 sample points for a military cell (center + 4 corners)
 ///
 /// Returns: [(lat, lon); 5] where indices are: 0=Center, 1=SW, 2=SE, 3=NW, 4=NE
 fn sample_cell_points(grid: &RasterizedProximityGrid, cell_idx: usize) -> [(f32, f32); 5] {
-    let (center_lat, center_lon) = grid.cell_center(cell_idx);
-    let half_size = GRID_CELL_SIZE_DEG / 2.0;
+    let (center_lat, center_lon) = grid.military_cell_center(cell_idx);
+    let half_size = MILITARY_GRID_CELL_SIZE_DEG / 2.0;
 
     [
         (center_lat, center_lon),                         // Center
@@ -421,7 +416,7 @@ fn sample_cell_points(grid: &RasterizedProximityGrid, cell_idx: usize) -> [(f32,
 /// Check military status of a cell using 5-point sampling
 ///
 /// Returns MilitaryStatus based on how many of the 5 sample points
-/// are >interior_threshold_m inside a military polygon:
+/// are inside a military polygon:
 /// - 0 points: None
 /// - 1-4 points: Partial
 /// - 5 points: Full
@@ -429,13 +424,12 @@ fn check_military_status(
     grid: &RasterizedProximityGrid,
     cell_idx: usize,
     polygon_bboxes: &[(&MultiPolygon<f64>, BBox)],
-    interior_threshold_m: f32,
 ) -> MilitaryStatus {
     let points = sample_cell_points(grid, cell_idx);
     let mut interior_count = 0;
 
     for (lat, lon) in points {
-        if is_military_interior(lat, lon, polygon_bboxes, interior_threshold_m) {
+        if is_military_interior(lat, lon, polygon_bboxes) {
             interior_count += 1;
         }
     }
@@ -447,36 +441,22 @@ fn check_military_status(
     }
 }
 
-/// Check if a point is inside a military polygon >100m from the boundary.
+/// Check if a point is inside a military polygon.
 fn is_military_interior(
     lat: f32,
     lon: f32,
     polygon_bboxes: &[(&MultiPolygon<f64>, BBox)],
-    interior_threshold_m: f32,
 ) -> bool {
     let geo_point = Point::new(lon as f64, lat as f64);
 
     for (polygon, bbox) in polygon_bboxes {
-        // Quick bbox check - temporarily adding 500m buffer for debugging
+        // Quick bbox check
         if !bbox.could_be_within(lat, lon, 0.0) {
             continue;
         }
 
-        // Check if point is inside and far enough from boundary
-        match polygon.haversine_closest_point(&geo_point) {
-            geo::Closest::Intersection(closest_boundary_point) => {
-                // Point is inside - check distance to boundary
-                let distance_to_boundary = Haversine.distance(geo_point, closest_boundary_point);
-                if distance_to_boundary > interior_threshold_m as f64 {
-                    return true;
-                }
-            }
-            geo::Closest::SinglePoint(_) => {
-                // Point is outside polygon
-            }
-            geo::Closest::Indeterminate => {
-                // Can't determine - be conservative and don't mark as nogo
-            }
+        if polygon.contains(&geo_point) {
+            return true;
         }
     }
 
