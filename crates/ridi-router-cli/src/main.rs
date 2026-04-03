@@ -12,7 +12,6 @@ mod rmdf;
 mod router;
 mod router_runner;
 mod simd;
-mod tiles_api;
 #[cfg(test)]
 mod test_utils;
 

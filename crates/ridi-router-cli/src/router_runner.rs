@@ -11,11 +11,13 @@ use crate::{
         rules::{generate_json_schema, read_router_rules, RuleFileError},
     },
     result_writer::{OutputFormat, ResultWriter, ResultWriterError, RouteOutputRequest},
-    tiles_api::{generate_tiles, TileGenerationError, TileGenerationRequest, TileInputSource},
 };
 use ridi_router_routing::{
     Coords as RoutingCoords, RouteComputation, RouteMode, RouteRequest, RouterRules, RoutingError,
     RoutingExecutor, RoutingExecutorConfig, RoutingGenerationError, RoutingOpenError,
+};
+use ridi_router_tiles::{
+    generate_tiles, TileGenerationError, TileGenerationRequest, TileInputSource,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -363,8 +365,8 @@ mod tests {
     use crate::{
         cli::output_dir::{prepare_empty_output_dir, OutputDirError},
         result_writer::{OutputFormat, RouteOutputRequest},
-        tiles_api::TileInputSource,
     };
+    use ridi_router_tiles::TileInputSource;
 
     use super::Coords;
 

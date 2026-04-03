@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use ts_rs::TS;
 
 use crate::rmdf::format::TagSetRecord;
-use crate::rmdf::generator::manifest::TileManifest;
 use crate::rmdf::io::MappedTile;
+use ridi_router_common::manifest::TileManifest;
 
 /// Response for GET /api/manifest
 #[derive(Serialize, TS)]

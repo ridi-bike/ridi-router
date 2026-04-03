@@ -1006,7 +1006,9 @@ dependencies = [
  "osmpbfreader",
  "rayon",
  "redb",
+ "ridi-router-common",
  "ridi-router-routing",
+ "ridi-router-tiles",
  "rstar",
  "rusty-fork",
  "schemars",
@@ -1028,6 +1030,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ridi-router-common"
+version = "0.8.6"
+dependencies = [
+ "bytemuck",
+ "chrono",
+ "hex",
+ "memmap2",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ridi-router-routing"
 version = "0.8.6"
 dependencies = [
@@ -1042,6 +1056,7 @@ dependencies = [
  "memmap2",
  "num-traits",
  "rayon",
+ "ridi-router-common",
  "rstar",
  "rusty-fork",
  "schemars",
@@ -1050,6 +1065,33 @@ dependencies = [
  "sha2",
  "smartstring",
  "struct-field-names-as-array",
+ "thiserror 2.0.18",
+ "tracing",
+ "wide",
+]
+
+[[package]]
+name = "ridi-router-tiles"
+version = "0.8.6"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "bytemuck",
+ "chrono",
+ "geo",
+ "hex",
+ "memmap2",
+ "num-traits",
+ "osmpbfreader",
+ "rayon",
+ "redb",
+ "ridi-router-common",
+ "rstar",
+ "rusty-fork",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smartstring",
  "thiserror 2.0.18",
  "tracing",
  "wide",

@@ -47,6 +47,8 @@ wide.workspace = true
 num-traits.workspace = true
 wkt.workspace = true
 ridi-router-routing = { path = "../ridi-router-routing" }
+ridi-router-common = { path = "../ridi-router-common" }
+ridi-router-tiles = { path = "../ridi-router-tiles" }
 
 [dev-dependencies]
 rusty-fork.workspace = true
