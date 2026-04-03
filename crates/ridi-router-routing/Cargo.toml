@@ -1,0 +1,35 @@
+[package]
+name = "ridi-router-routing"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = []
+rule-schema-writer = []
+debug-polygons = []
+
+[dependencies]
+anyhow.workspace = true
+bincode.workspace = true
+bytemuck.workspace = true
+chrono.workspace = true
+derive-name.workspace = true
+geo.workspace = true
+hdbscan.workspace = true
+hex.workspace = true
+memmap2.workspace = true
+num-traits.workspace = true
+rayon.workspace = true
+rstar.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+smartstring.workspace = true
+struct-field-names-as-array.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+wide.workspace = true
+
+[dev-dependencies]
+rusty-fork.workspace = true
