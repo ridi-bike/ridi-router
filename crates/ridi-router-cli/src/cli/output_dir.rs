@@ -6,7 +6,10 @@ use std::{
 #[derive(Debug, thiserror::Error)]
 pub enum OutputDirError {
     #[error("Failed to create output directory '{directory:?}': {error}")]
-    Create { directory: PathBuf, error: io::Error },
+    Create {
+        directory: PathBuf,
+        error: io::Error,
+    },
 
     #[error("Output directory invalid '{directory:?}': {reason}")]
     Invalid { directory: PathBuf, reason: String },

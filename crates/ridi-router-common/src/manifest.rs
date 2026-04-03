@@ -87,7 +87,10 @@ mod tests {
                 point_count: 10,
                 line_count: 9,
                 checksum: "sha256:test".to_string(),
-                military_geojson_filename: Some(military_geojson_filename(TileId { col: 200, row: 100 })),
+                military_geojson_filename: Some(military_geojson_filename(TileId {
+                    col: 200,
+                    row: 100,
+                })),
             }],
         };
 

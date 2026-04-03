@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -13,6 +16,15 @@ fn crate_root(crate_name: &str) -> PathBuf {
 
 fn cargo_toml(crate_name: &str) -> String {
     fs::read_to_string(crate_root(crate_name).join("Cargo.toml")).unwrap()
+}
+
+fn cargo_section<'a>(manifest: &'a str, section_header: &str) -> &'a str {
+    let start = manifest
+        .find(section_header)
+        .unwrap_or_else(|| panic!("missing section {section_header} in manifest:\n{manifest}"));
+    let section = &manifest[start + section_header.len()..];
+    let end = section.find("\n[").unwrap_or(section.len());
+    &section[..end]
 }
 
 fn read_rs_files(dir: &Path, buf: &mut String) {
@@ -72,12 +84,16 @@ fn cli_depends_on_routing_and_tiles_but_reverse_is_not_true() {
     let routing = cargo_toml("ridi-router-routing");
     let tiles = cargo_toml("ridi-router-tiles");
 
-    assert!(cli.contains("ridi-router-routing"));
-    assert!(cli.contains("ridi-router-tiles"));
+    let cli_deps = cargo_section(&cli, "[dependencies]");
+    let routing_deps = cargo_section(&routing, "[dependencies]");
+    let tiles_deps = cargo_section(&tiles, "[dependencies]");
 
-    assert!(!routing.contains("ridi-router-cli"));
-    assert!(!routing.contains("ridi-router-tiles"));
+    assert!(cli_deps.contains("ridi-router-routing"));
+    assert!(cli_deps.contains("ridi-router-tiles"));
 
-    assert!(!tiles.contains("ridi-router-cli"));
-    assert!(!tiles.contains("ridi-router-routing"));
+    assert!(!routing_deps.contains("ridi-router-cli"));
+    assert!(!routing_deps.contains("ridi-router-tiles"));
+
+    assert!(!tiles_deps.contains("ridi-router-cli"));
+    assert!(!tiles_deps.contains("ridi-router-routing"));
 }

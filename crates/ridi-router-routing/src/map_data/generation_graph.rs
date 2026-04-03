@@ -133,7 +133,6 @@ impl GenerationGraph {
                 continue;
             }
 
-
             // Create line using simple structure (no Refs)
             let line = GenerationLine {
                 from_node_id: from_id,

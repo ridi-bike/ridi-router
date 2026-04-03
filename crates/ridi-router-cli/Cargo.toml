@@ -6,48 +6,37 @@ build = "build.rs"
 
 [features]
 default = []
-rule-schema-writer = []
+rule-schema-writer = ["dep:anyhow", "dep:schemars"]
 debug-split-gpx = []
-rmdf-viewer = ["dep:tiny_http", "dep:ts-rs", "dep:include_directory"]
+rmdf-viewer = [
+  "dep:anyhow",
+  "dep:bytemuck",
+  "dep:include_directory",
+  "dep:memmap2",
+  "dep:ridi-router-common",
+  "dep:tiny_http",
+  "dep:ts-rs",
+]
 debug-polygons = []
 
 [dependencies]
-anyhow.workspace = true
-bincode.workspace = true
-bytemuck.workspace = true
-chrono.workspace = true
+anyhow = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
 clap.workspace = true
-csv.workspace = true
-derive-name.workspace = true
 geo.workspace = true
 gpx.workspace = true
-rstar.workspace = true
-hdbscan.workspace = true
-hex.workspace = true
 include_directory = { workspace = true, optional = true }
-json-tools.workspace = true
-memmap2.workspace = true
-osmpbfreader.workspace = true
-rayon.workspace = true
-redb.workspace = true
-schemars.workspace = true
+memmap2 = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-smartstring.workspace = true
-struct-field-names-as-array.workspace = true
 thiserror.workspace = true
 tiny_http = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 ts-rs = { workspace = true, optional = true }
-typeshare.workspace = true
-wide.workspace = true
-num-traits.workspace = true
-wkt.workspace = true
 ridi-router-routing = { path = "../ridi-router-routing" }
-ridi-router-common = { path = "../ridi-router-common" }
+ridi-router-common = { path = "../ridi-router-common", optional = true }
 ridi-router-tiles = { path = "../ridi-router-tiles" }
 
 [dev-dependencies]

@@ -108,7 +108,14 @@ impl GpxWriter {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs::{self, File}, io::BufReader, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        collections::HashMap,
+        fs::{self, File},
+        io::BufReader,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use ridi_router_routing::{ComputedRoute, RouteStatElement, RouteStats};
 
@@ -272,10 +279,7 @@ mod tests {
 
     #[test]
     fn cli_gpx_output_can_diverge_from_library_struct_shape() {
-        let gpx = GpxWriter::build_gpx(
-            test_route(vec![(48.1, 11.5), (48.2, 11.6)], 12_345.0),
-            0,
-        );
+        let gpx = GpxWriter::build_gpx(test_route(vec![(48.1, 11.5), (48.2, 11.6)], 12_345.0), 0);
 
         assert_eq!(gpx.routes.len(), 1);
         assert_eq!(gpx.routes[0].points.len(), 2);

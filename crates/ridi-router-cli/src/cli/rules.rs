@@ -32,7 +32,8 @@ pub fn read_router_rules(file: Option<PathBuf>) -> Result<RouterRules, RuleFileE
 
 pub fn read_router_rules_from_file(file: PathBuf) -> Result<RouterRules, RuleFileError> {
     let file = std::fs::read(file).map_err(|error| RuleFileError::FileRead { error })?;
-    let text = std::str::from_utf8(&file[..]).map_err(|error| RuleFileError::FileParse { error })?;
+    let text =
+        std::str::from_utf8(&file[..]).map_err(|error| RuleFileError::FileParse { error })?;
     let rules = serde_json::from_str(text).map_err(|error| RuleFileError::JsonParse { error })?;
 
     trace!(
@@ -68,7 +69,12 @@ pub fn generate_json_schema(dest: &std::path::PathBuf) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::{read_router_rules_from_file, RuleFileError};
     use ridi_router_routing::RulesTagValueAction;
@@ -86,9 +92,10 @@ mod tests {
 
     #[test]
     fn cli_rule_file_parser_stays_outside_routing_crate() {
-        let routing_lib_source = std::fs::read_to_string(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../ridi-router-routing/src/lib.rs"),
-        )
+        let routing_lib_source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../ridi-router-routing/src/lib.rs"
+        ))
         .unwrap();
         assert!(!routing_lib_source.contains("read_router_rules"));
     }
@@ -110,7 +117,10 @@ mod tests {
         fs::remove_file(path).unwrap();
 
         assert!(matches!(
-            rules.highway.as_ref().and_then(|values| values.get("primary")),
+            rules
+                .highway
+                .as_ref()
+                .and_then(|values| values.get("primary")),
             Some(RulesTagValueAction::Avoid)
         ));
     }

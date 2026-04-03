@@ -82,7 +82,8 @@ impl ManifestGenerator {
             let checksum = format!("sha256:{}", hex::encode(checksum_bytes));
 
             let neighbors = self.compute_neighbors(*tile_id, tile_ids);
-            let military_geojson_filename = discover_military_geojson_filename(output_dir, *tile_id);
+            let military_geojson_filename =
+                discover_military_geojson_filename(output_dir, *tile_id);
 
             tiles.push(TileMetadata {
                 filename,

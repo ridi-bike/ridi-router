@@ -290,7 +290,8 @@ impl RouterRunner {
         output_request: RouteOutputRequest,
         rule_file: Option<PathBuf>,
     ) -> std::result::Result<(), RouterRunnerError> {
-        let rules = read_router_rules(rule_file).map_err(|error| RouterRunnerError::Rules { error })?;
+        let rules =
+            read_router_rules(rule_file).map_err(|error| RouterRunnerError::Rules { error })?;
 
         info!(tiles_dir = ?tiles_dir, "Using RMDF tiles");
         let mut executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir })
@@ -320,9 +321,8 @@ impl RouterRunner {
         )?;
 
         info!(input = ?request.input, output_dir = ?request.output_dir, "Tile generation started");
-        let summary = generate_tiles(request).map_err(|error| RouterRunnerError::TileGeneration {
-            error,
-        })?;
+        let summary =
+            generate_tiles(request).map_err(|error| RouterRunnerError::TileGeneration { error })?;
         info!(output_dir = ?summary.output_dir, tile_count = summary.tile_count, "Tile generation complete");
 
         Ok(())
@@ -352,9 +352,10 @@ impl RouterRunner {
                 db_path,
             } => Self::run_generate_tiles(input, input_dir, output, tile_size_deg, db_path),
             #[cfg(feature = "rule-schema-writer")]
-            CliMode::RuleSchemaWrite { destination } =>
+            CliMode::RuleSchemaWrite { destination } => {
                 crate::cli::rules::generate_json_schema(&destination)
-                    .map_err(|error| RouterRunnerError::RuleSchema { error }),
+                    .map_err(|error| RouterRunnerError::RuleSchema { error })
+            }
             #[cfg(feature = "rmdf-viewer")]
             CliMode::RmdfViewer { input_dir } => crate::debug::rmdf_viewer::run(input_dir)
                 .map_err(|error| RouterRunnerError::RmdfViewer { error }),
@@ -364,7 +365,12 @@ impl RouterRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use clap::{error::ErrorKind, Parser};
     use ridi_router_routing::{
@@ -505,8 +511,14 @@ mod tests {
     fn generate_route_cli_maps_args_into_route_request() {
         let request = super::RouterRunner::build_route_request(
             &super::RoutingMode::StartFinish {
-                start: Coords { lat: 48.1, lon: 11.5 },
-                finish: Coords { lat: 48.2, lon: 11.6 },
+                start: Coords {
+                    lat: 48.1,
+                    lon: 11.5,
+                },
+                finish: Coords {
+                    lat: 48.2,
+                    lon: 11.6,
+                },
             },
             RouterRules::default(),
         );
@@ -514,8 +526,14 @@ mod tests {
         assert!(matches!(
             request.mode,
             RouteMode::StartFinish {
-                start: RoutingCoords { lat: 48.1, lon: 11.5 },
-                finish: RoutingCoords { lat: 48.2, lon: 11.6 },
+                start: RoutingCoords {
+                    lat: 48.1,
+                    lon: 11.5
+                },
+                finish: RoutingCoords {
+                    lat: 48.2,
+                    lon: 11.6
+                },
             }
         ));
     }
@@ -524,7 +542,10 @@ mod tests {
     fn route_mode_round_trip_maps_from_cli_inputs() {
         let request = super::RouterRunner::build_route_request(
             &super::RoutingMode::RoundTrip {
-                start_finish: Coords { lat: 48.1, lon: 11.5 },
+                start_finish: Coords {
+                    lat: 48.1,
+                    lon: 11.5,
+                },
                 bearing: 90.0,
                 distance: 30_000,
             },
@@ -534,7 +555,10 @@ mod tests {
         assert!(matches!(
             request.mode,
             RouteMode::RoundTrip {
-                start_finish: RoutingCoords { lat: 48.1, lon: 11.5 },
+                start_finish: RoutingCoords {
+                    lat: 48.1,
+                    lon: 11.5
+                },
                 bearing: 90.0,
                 distance: 30_000,
             }
@@ -646,7 +670,9 @@ mod tests {
             }),
         };
 
-        assert!(error.to_string().contains("Could not find start point on map"));
+        assert!(error
+            .to_string()
+            .contains("Could not find start point on map"));
     }
 
     #[test]

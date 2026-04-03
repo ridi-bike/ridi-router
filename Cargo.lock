@@ -308,27 +308,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "csv"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
-dependencies = [
- "csv-core",
- "itoa",
- "ryu",
- "serde_core",
-]
-
-[[package]]
-name = "csv-core"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "deranged"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -484,15 +463,6 @@ dependencies = [
  "robust",
  "rstar",
  "spade",
-]
-
-[[package]]
-name = "geo-traits"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e7c353d12a704ccfab1ba8bfb1a7fe6cb18b665bf89d37f4f7890edcd260206"
-dependencies = [
- "geo-types",
 ]
 
 [[package]]
@@ -723,12 +693,6 @@ dependencies = [
  "once_cell",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "json-tools"
-version = "1.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d28c16c044c4acdd8c511f9b505a33cba1eff7b116448c8985b84011ee8d8368"
 
 [[package]]
 name = "kdtree"
@@ -989,44 +953,25 @@ name = "ridi-router-cli"
 version = "0.8.6"
 dependencies = [
  "anyhow",
- "bincode",
  "bytemuck",
- "chrono",
  "clap",
- "csv",
- "derive-name",
  "geo",
  "gpx",
- "hdbscan",
- "hex",
  "include_directory",
- "json-tools",
  "memmap2",
- "num-traits",
- "osmpbfreader",
- "rayon",
- "redb",
  "ridi-router-common",
  "ridi-router-routing",
  "ridi-router-tiles",
- "rstar",
  "rusty-fork",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
- "sha2",
- "smartstring",
  "static_vcruntime",
- "struct-field-names-as-array",
  "thiserror 2.0.18",
  "tiny_http",
  "tracing",
  "tracing-subscriber",
  "ts-rs",
- "typeshare",
- "wide",
- "wkt",
 ]
 
 [[package]]
@@ -1086,6 +1031,7 @@ dependencies = [
  "rayon",
  "redb",
  "ridi-router-common",
+ "ridi-router-routing",
  "rstar",
  "rusty-fork",
  "serde",
@@ -1570,28 +1516,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
-name = "typeshare"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da1bf9fe204f358ffea7f8f779b53923a20278b3ab8e8d97962c5e1b3a54edb7"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "typeshare-annotation",
-]
-
-[[package]]
-name = "typeshare-annotation"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "621963e302416b389a1ec177397e9e62de849a78bd8205d428608553def75350"
-dependencies = [
- "quote",
- "syn",
-]
-
-[[package]]
 name = "unicase"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1853,19 +1777,6 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
-
-[[package]]
-name = "wkt"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "efb2b923ccc882312e559ffaa832a055ba9d1ac0cc8e86b3e25453247e4b81d7"
-dependencies = [
- "geo-traits",
- "geo-types",
- "log",
- "num-traits",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "xml-rs"

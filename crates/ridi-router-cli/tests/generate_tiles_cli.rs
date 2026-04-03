@@ -33,7 +33,10 @@ fn generate_tiles_cli_renders_typed_tile_generation_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    assert!(stderr.contains("Tile generation error:"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("Tile generation error:"),
+        "stderr: {stderr}"
+    );
     assert!(stderr.contains("missing-input.osm.pbf"), "stderr: {stderr}");
 
     if output_dir.exists() {

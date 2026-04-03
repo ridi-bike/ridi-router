@@ -17,7 +17,6 @@ use crate::{
 
 use super::{line::MapDataLine, point::MapDataPoint};
 
-
 pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]

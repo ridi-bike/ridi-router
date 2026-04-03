@@ -1,4 +1,4 @@
-name: Build all-features and test
+name: Build workspace and CLI all-features
 
 on:
   pull_request:
@@ -13,76 +13,108 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        targets: x86_64-unknown-linux-gnu
-        toolchain: stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          targets: x86_64-unknown-linux-gnu
+          toolchain: stable
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 8
-        run_install: false
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
 
-    - name: Normalize Cargo.toml and Cargo.lock versions for caching
-      run: |
-        cp Cargo.toml _cargo.toml
-        cp Cargo.lock _cargo.lock
-        sed -i 's/^version = ".*"/version = "0.0.0"/' _cargo.toml
-        sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' _cargo.lock
-      shell: bash
+      - name: Normalize Cargo.toml and Cargo.lock versions for caching
+        run: |
+          cp Cargo.toml _cargo.toml
+          cp Cargo.lock _cargo.lock
+          sed -i 's/^version = ".*"/version = "0.0.0"/' _cargo.toml
+          python <<'PY'
+          from pathlib import Path
 
-    - name: Cache cargo and build files
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry/
-          ~/.cargo/git/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}---all-features
-        restore-keys: |
-          ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}---all-features
+          workspace_packages = {
+              "ridi-router-cli",
+              "ridi-router-common",
+              "ridi-router-routing",
+              "ridi-router-tiles",
+          }
 
-    - name: Cache pnpm
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.local/share/pnpm/store
-          src/debug/viewer/ui/node_modules
-        key: ${{ runner.os }}-pnpm
-        restore-keys: |
-          ${{ runner.os }}-pnpm
+          lock_path = Path("_cargo.lock")
+          lines = lock_path.read_text().splitlines()
+          normalized = []
+          in_workspace_package = False
 
-    - name: Install node_modules
-      run: |
-        cd src/debug/viewer/ui/
-        pnpm install
+          for line in lines:
+              if line == "[[package]]":
+                  in_workspace_package = False
+              elif line.startswith('name = "'):
+                  name = line[len('name = "'):-1]
+                  in_workspace_package = name in workspace_packages
+              elif in_workspace_package and line.startswith('version = "'):
+                  line = 'version = "0.0.0"'
+                  in_workspace_package = False
 
-    - name: Build UI
-      run: |
-        cd src/debug/viewer/ui/
-        pnpm build
+              normalized.append(line)
 
-    - name: Run clippy
-      run: cargo clippy
+          lock_path.write_text("\n".join(normalized) + "\n")
+          PY
+        shell: bash
 
-    - name: Run tests
-      run: cargo test
+      - name: Cache cargo and build files
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}---workspace
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}---workspace
 
-    - name: Run check
-      run: cargo check
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/pnpm/store
+            crates/ridi-router-cli/src/debug/rmdf_viewer/ui/node_modules
+          key: ${{ runner.os }}-pnpm
+          restore-keys: |
+            ${{ runner.os }}-pnpm
 
-    - name: Run cargo build
-      run: cargo build --all-features
+      - name: Install node_modules
+        run: |
+          cd crates/ridi-router-cli/src/debug/rmdf_viewer/ui/
+          pnpm install
+
+      - name: Build UI
+        run: |
+          cd crates/ridi-router-cli/src/debug/rmdf_viewer/ui/
+          pnpm build
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Run expensive tile API integration coverage
+        run: cargo test -p ridi-router-tiles --test public_api_success -- --ignored
+      - name: Run check
+        run: cargo check --workspace
+
+      - name: Run cargo build
+        run: cargo build --workspace
+
+      - name: Build CLI with all features
+        run: cargo build -p ridi-router-cli --all-features

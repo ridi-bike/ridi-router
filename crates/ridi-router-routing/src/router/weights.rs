@@ -532,7 +532,6 @@ mod test {
         }
     }
 
-
     // TODO: Re-enable this test with tile-based test data
     // This test requires JSON file loading which has been removed
     /*

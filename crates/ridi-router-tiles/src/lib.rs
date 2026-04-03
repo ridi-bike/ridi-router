@@ -182,10 +182,11 @@ fn validate_input_directory(path: &Path) -> Result<(), TileGenerationError> {
 
 fn prepare_output_dir(path: &Path) -> Result<(), TileGenerationError> {
     if path.exists() {
-        let metadata = fs::metadata(path).map_err(|error| TileGenerationError::InvalidOutputDir {
-            path: path.to_path_buf(),
-            reason: format!("failed to read metadata: {error}"),
-        })?;
+        let metadata =
+            fs::metadata(path).map_err(|error| TileGenerationError::InvalidOutputDir {
+                path: path.to_path_buf(),
+                reason: format!("failed to read metadata: {error}"),
+            })?;
 
         if !metadata.is_dir() {
             return Err(TileGenerationError::InvalidOutputDir {
@@ -203,19 +204,21 @@ fn prepare_output_dir(path: &Path) -> Result<(), TileGenerationError> {
     })
 }
 
-fn read_generation_summary(output_dir: &Path) -> Result<TileGenerationSummary, TileGenerationError> {
+fn read_generation_summary(
+    output_dir: &Path,
+) -> Result<TileGenerationSummary, TileGenerationError> {
     let manifest_path = output_dir.join("manifest.json");
-    let manifest_file = std::fs::File::open(&manifest_path).map_err(|error| {
-        TileGenerationError::ManifestRead {
+    let manifest_file =
+        std::fs::File::open(&manifest_path).map_err(|error| TileGenerationError::ManifestRead {
             manifest_path: manifest_path.clone(),
+            error,
+        })?;
+    let manifest: TileManifest = serde_json::from_reader(manifest_file).map_err(|error| {
+        TileGenerationError::ManifestParse {
+            manifest_path,
             error,
         }
     })?;
-    let manifest: TileManifest =
-        serde_json::from_reader(manifest_file).map_err(|error| TileGenerationError::ManifestParse {
-            manifest_path,
-            error,
-        })?;
 
     Ok(TileGenerationSummary {
         output_dir: output_dir.to_path_buf(),
@@ -286,7 +289,9 @@ mod tests {
             fs::remove_dir_all(output_dir).unwrap();
         }
 
-        assert!(matches!(error, TileGenerationError::InputMissing { path } if path == missing_input));
+        assert!(
+            matches!(error, TileGenerationError::InputMissing { path } if path == missing_input)
+        );
     }
 
     #[test]
@@ -307,7 +312,10 @@ mod tests {
         fs::remove_file(input_file).unwrap();
         fs::remove_file(output_file).unwrap();
 
-        assert!(matches!(error, TileGenerationError::InvalidOutputDir { .. }));
+        assert!(matches!(
+            error,
+            TileGenerationError::InvalidOutputDir { .. }
+        ));
     }
 
     #[test]

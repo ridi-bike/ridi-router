@@ -27,7 +27,10 @@ pub struct Coords {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RouteMode {
-    StartFinish { start: Coords, finish: Coords },
+    StartFinish {
+        start: Coords,
+        finish: Coords,
+    },
     RoundTrip {
         start_finish: Coords,
         bearing: f32,
@@ -139,7 +142,9 @@ impl RoutingExecutor {
                 false,
                 Some(&WP_LOOKUP_ALLOWED_HWS),
             )
-            .ok_or(RoutingGenerationError::PointNotFound { point: "start point" })?;
+            .ok_or(RoutingGenerationError::PointNotFound {
+                point: "start point",
+            })?;
 
         let finish = MapDataGraph::get()
             .get_closest_to_coords(
@@ -167,10 +172,11 @@ fn normalize_tiles_dir(path: &Path) -> PathBuf {
 
 fn validate_tiles_manifest(tiles_dir: &Path) -> Result<TileManifest, RoutingOpenError> {
     let manifest_path = tiles_dir.join("manifest.json");
-    let file = std::fs::File::open(&manifest_path).map_err(|error| RoutingOpenError::ManifestRead {
-        manifest_path: manifest_path.clone(),
-        error,
-    })?;
+    let file =
+        std::fs::File::open(&manifest_path).map_err(|error| RoutingOpenError::ManifestRead {
+            manifest_path: manifest_path.clone(),
+            error,
+        })?;
 
     serde_json::from_reader(file).map_err(|error| RoutingOpenError::ManifestParse {
         manifest_path,
@@ -191,7 +197,9 @@ mod tests {
     use crate::router::rules::RouterRules;
     use rusty_fork::rusty_fork_test;
 
-    use super::{Coords, RouteMode, RouteRequest, RoutingError, RoutingExecutor, RoutingExecutorConfig};
+    use super::{
+        Coords, RouteMode, RouteRequest, RoutingError, RoutingExecutor, RoutingExecutorConfig,
+    };
 
     const RMDF_HEADER_SIZE: u64 = 112;
     const POINT_RECORD_SIZE: u64 = 48;
@@ -442,7 +450,11 @@ mod tests {
             }]
         });
 
-        fs::write(dir.join("manifest.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -535,7 +547,6 @@ mod tests {
         .unwrap()
     }
 }
-
 
 #[cfg(test)]
 mod phase_2_tests {

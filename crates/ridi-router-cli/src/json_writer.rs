@@ -123,7 +123,12 @@ impl JsonWriter {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use ridi_router_routing::{ComputedRoute, RouteStatElement, RouteStats};
 
@@ -228,9 +233,15 @@ mod tests {
         let document = JsonRouteDocument::from(test_route(vec![(48.1, 11.5)], 12_345.0));
         let json = serde_json::to_value(document).unwrap();
 
-        assert!(json.get("coords").and_then(|value| value.as_array()).is_some());
+        assert!(json
+            .get("coords")
+            .and_then(|value| value.as_array())
+            .is_some());
         assert!(json.get("stats").is_some());
         assert!(json.get("routes").is_none());
-        assert_eq!(json["stats"]["approximated_route"][0], serde_json::json!([1.0, 2.0]));
+        assert_eq!(
+            json["stats"]["approximated_route"][0],
+            serde_json::json!([1.0, 2.0])
+        );
     }
 }

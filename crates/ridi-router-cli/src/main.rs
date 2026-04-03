@@ -4,22 +4,10 @@ mod debug;
 mod file_naming;
 mod gpx_writer;
 mod json_writer;
-#[cfg(feature = "rmdf-viewer")]
-mod map_data;
-#[cfg(feature = "rmdf-viewer")]
-mod osm_data;
-#[cfg(feature = "rmdf-viewer")]
-mod proximity;
 mod result_writer;
 #[cfg(feature = "rmdf-viewer")]
 mod rmdf;
-#[cfg(feature = "rmdf-viewer")]
-mod router;
 mod router_runner;
-#[cfg(feature = "rmdf-viewer")]
-mod simd;
-#[cfg(all(test, feature = "rmdf-viewer"))]
-mod test_utils;
 
 use std::{
     io::{self, IsTerminal},

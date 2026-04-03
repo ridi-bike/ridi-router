@@ -17,7 +17,10 @@ fn unique_test_dir(prefix: &str) -> PathBuf {
 }
 
 fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 fn repo_path(relative: &str) -> PathBuf {
@@ -503,7 +506,10 @@ fn generate_route_synthetic_json_writes_route_file() {
         .map(|entry| entry.unwrap().path())
         .collect::<Vec<_>>();
     assert_eq!(files.len(), 1, "expected one route file, got: {files:?}");
-    assert_eq!(files[0].extension().and_then(|ext| ext.to_str()), Some("json"));
+    assert_eq!(
+        files[0].extension().and_then(|ext| ext.to_str()),
+        Some("json")
+    );
 
     let content = fs::read_to_string(&files[0]).unwrap();
     let json: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -539,7 +545,10 @@ fn generate_route_synthetic_gpx_writes_route_file() {
         .map(|entry| entry.unwrap().path())
         .collect::<Vec<_>>();
     assert_eq!(files.len(), 1, "expected one route file, got: {files:?}");
-    assert_eq!(files[0].extension().and_then(|ext| ext.to_str()), Some("gpx"));
+    assert_eq!(
+        files[0].extension().and_then(|ext| ext.to_str()),
+        Some("gpx")
+    );
 
     let content = fs::read_to_string(&files[0]).unwrap();
     assert!(content.contains("<gpx"), "content: {content}");

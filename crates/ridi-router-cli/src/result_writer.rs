@@ -57,7 +57,13 @@ impl ResultWriter {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        collections::HashMap,
+        fs,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use ridi_router_routing::{ComputedRoute, RouteComputation, RouteStatElement, RouteStats};
 

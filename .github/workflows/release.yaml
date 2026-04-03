@@ -1,4 +1,4 @@
-name: Release 
+name: Release
 
 on: workflow_dispatch
 
@@ -15,51 +15,54 @@ jobs:
       bump-commit-sha: ${{ steps.commit.outputs.commit-sha }}
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        token: ${{ secrets.GH_TOKEN }}
-    
-    - name: Get Next Version
-      id: semver
-      uses: ietf-tools/semver-action@v1
-      with:
-        token: ${{ secrets.GH_TOKEN }}
-        branch: main
-        majorList: major
-        patchList: chore, fix, bugfix, perf, refactor, test, tests
-    
-    - name: Update Cargo.toml Version
-      run: |
-        VERSION="${{ steps.semver.outputs.next }}"
-        VERSION_CLEAN="${VERSION#v}"  # Remove leading 'v' if present
-        sed -i "s/^version = .*/version = \"$VERSION_CLEAN\"/" Cargo.toml
-        cargo update --package ridi-router
-        
-    - name: Generate Release Notes
-      run: |
-        git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD^)..HEAD --pretty=format:"* %s" > RELEASE_NOTES.md
-        
-    - name: Commit Version Update
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add Cargo.toml
-        git add Cargo.lock
-        git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
-        git push origin main
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_TOKEN }}
 
-    - name: Upload Release Notes
-      uses: actions/upload-artifact@v4
-      with:
-        name: RELEASE_NOTES
-        path: RELEASE_NOTES.md
+      - name: Get Next Version
+        id: semver
+        uses: ietf-tools/semver-action@v1
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          branch: main
+          majorList: major
+          patchList: chore, fix, bugfix, perf, refactor, test, tests
 
-    - name: Get commit SHA
-      id: commit
-      run: echo "commit-sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+      - name: Update workspace version
+        run: |
+          VERSION="${{ steps.semver.outputs.next }}"
+          VERSION_CLEAN="${VERSION#v}"
+          sed -i "s/^version = .*/version = \"$VERSION_CLEAN\"/" Cargo.toml
+          cargo update \
+            --package ridi-router-cli \
+            --package ridi-router-common \
+            --package ridi-router-routing \
+            --package ridi-router-tiles
 
-  build-debug-viewer:
+      - name: Generate Release Notes
+        run: |
+          git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD^)..HEAD --pretty=format:"* %s" > RELEASE_NOTES.md
+
+      - name: Commit Version Update
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add Cargo.toml Cargo.lock
+          git diff --staged --quiet || git commit -m "chore: bump version to ${{ steps.semver.outputs.next }}"
+          git push origin main
+
+      - name: Upload Release Notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: RELEASE_NOTES
+          path: RELEASE_NOTES.md
+
+      - name: Get commit SHA
+        id: commit
+        run: echo "commit-sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+  build-rmdf-viewer:
     needs: prepare-version
     runs-on: ubuntu-latest
     steps:
@@ -89,7 +92,35 @@ jobs:
           cp Cargo.toml _cargo.toml
           cp Cargo.lock _cargo.lock
           sed -i 's/^version = ".*"/version = "0.0.0"/' _cargo.toml
-          sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' _cargo.lock
+          python <<'PY'
+          from pathlib import Path
+
+          workspace_packages = {
+              "ridi-router-cli",
+              "ridi-router-common",
+              "ridi-router-routing",
+              "ridi-router-tiles",
+          }
+
+          lock_path = Path("_cargo.lock")
+          lines = lock_path.read_text().splitlines()
+          normalized = []
+          in_workspace_package = False
+
+          for line in lines:
+              if line == "[[package]]":
+                  in_workspace_package = False
+              elif line.startswith('name = "'):
+                  name = line[len('name = "'):-1]
+                  in_workspace_package = name in workspace_packages
+              elif in_workspace_package and line.startswith('version = "'):
+                  line = 'version = "0.0.0"'
+                  in_workspace_package = False
+
+              normalized.append(line)
+
+          lock_path.write_text("\n".join(normalized) + "\n")
+          PY
         shell: bash
 
       - name: Cache cargo and build files
@@ -99,45 +130,45 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}-debug-viewer
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}-rmdf-viewer
           restore-keys: |
-              ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}-debug-viewer
+            ${{ runner.os }}-cargo-${{ hashFiles('**/_cargo.lock', '**/_cargo.toml', 'rust-toolchain.toml') }}-rmdf-viewer
 
       - name: Cache pnpm
         uses: actions/cache@v4
         with:
           path: |
             ~/.local/share/pnpm/store
-            src/debug/viewer/ui/node_modules
+            crates/ridi-router-cli/src/debug/rmdf_viewer/ui/node_modules
           key: ${{ runner.os }}-pnpm
           restore-keys: |
             ${{ runner.os }}-pnpm
 
       - name: Install node_modules
         run: |
-          cd src/debug/viewer/ui/
+          cd crates/ridi-router-cli/src/debug/rmdf_viewer/ui/
           pnpm install
 
       - name: Build UI
         run: |
-          cd src/debug/viewer/ui/
+          cd crates/ridi-router-cli/src/debug/rmdf_viewer/ui/
           pnpm build
 
-      - name: Build with debug-viewer
-        run: cargo build --release --target x86_64-unknown-linux-gnu --features debug-viewer
+      - name: Build CLI with rmdf-viewer feature
+        run: cargo build --release --target x86_64-unknown-linux-gnu --package ridi-router-cli --features rmdf-viewer
 
-      - name: Prepare debug-viewer binary and create zip
+      - name: Prepare rmdf-viewer binary and create zip
         run: |
-          mkdir dist
-          cp "target/x86_64-unknown-linux-gnu/release/ridi-router" "dist/ridi-router-debug-viewer-linux-amd64"
-          chmod +x "dist/ridi-router-debug-viewer-linux-amd64"
+          mkdir -p dist
+          cp "target/x86_64-unknown-linux-gnu/release/ridi-router-cli" "dist/ridi-router-cli-rmdf-viewer-linux-amd64"
+          chmod +x "dist/ridi-router-cli-rmdf-viewer-linux-amd64"
           cd dist
-          zip "ridi-router-debug-viewer-linux-amd64.zip" "ridi-router-debug-viewer-linux-amd64"
+          zip "ridi-router-cli-rmdf-viewer-linux-amd64.zip" "ridi-router-cli-rmdf-viewer-linux-amd64"
 
-      - name: Upload debug-viewer binary
+      - name: Upload rmdf-viewer binary
         uses: actions/upload-artifact@v4
         with:
-          name: binary-debug-viewer-linux-amd64
+          name: binary-rmdf-viewer-linux-amd64
           path: dist/*.zip
 
   build:
@@ -159,7 +190,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-version.outputs.bump-commit-sha }}
-      
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
@@ -170,12 +201,39 @@ jobs:
         run: |
           cp Cargo.toml _cargo.toml
           cp Cargo.lock _cargo.lock
+          python <<'PY'
+          from pathlib import Path
+
+          workspace_packages = {
+              "ridi-router-cli",
+              "ridi-router-common",
+              "ridi-router-routing",
+              "ridi-router-tiles",
+          }
+
+          lock_path = Path("_cargo.lock")
+          lines = lock_path.read_text().splitlines()
+          normalized = []
+          in_workspace_package = False
+
+          for line in lines:
+              if line == "[[package]]":
+                  in_workspace_package = False
+              elif line.startswith('name = "'):
+                  name = line[len('name = "'):-1]
+                  in_workspace_package = name in workspace_packages
+              elif in_workspace_package and line.startswith('version = "'):
+                  line = 'version = "0.0.0"'
+                  in_workspace_package = False
+
+              normalized.append(line)
+
+          lock_path.write_text("\n".join(normalized) + "\n")
+          PY
           if [[ "$OSTYPE" == "darwin"* ]]; then
             sed -i '' 's/^version = ".*"/version = "0.0.0"/' _cargo.toml
-            sed -i '' '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' _cargo.lock
           else
             sed -i 's/^version = ".*"/version = "0.0.0"/' _cargo.toml
-            sed -i '/^name = "ridi-router"$/,/^version = ".*"$/ s/^version = ".*"/version = "0.0.0"/' _cargo.lock
           fi
         shell: bash
 
@@ -194,19 +252,17 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # Build for both architectures
-            cargo build --release --target x86_64-apple-darwin
-            cargo build --release --target aarch64-apple-darwin
-            
-            # Create universal binary
+            cargo build --release --package ridi-router-cli --target x86_64-apple-darwin
+            cargo build --release --package ridi-router-cli --target aarch64-apple-darwin
+
             mkdir -p dist
             lipo -create \
-              "target/x86_64-apple-darwin/release/ridi-router" \
-              "target/aarch64-apple-darwin/release/ridi-router" \
-              -output "dist/ridi-router-${{ matrix.name }}"
-            chmod +x "dist/ridi-router-${{ matrix.name }}"
+              "target/x86_64-apple-darwin/release/ridi-router-cli" \
+              "target/aarch64-apple-darwin/release/ridi-router-cli" \
+              -output "dist/ridi-router-cli-${{ matrix.name }}"
+            chmod +x "dist/ridi-router-cli-${{ matrix.name }}"
           else
-            cargo build --release --target ${{ matrix.target }}
+            cargo build --release --package ridi-router-cli --target ${{ matrix.target }}
           fi
 
       - name: Prepare binary and create zip
@@ -214,19 +270,18 @@ jobs:
         run: |
           mkdir -p dist
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp "target/${{ matrix.target }}/release/ridi-router.exe" "dist/ridi-router-${{ matrix.name }}.exe"
+            cp "target/${{ matrix.target }}/release/ridi-router-cli.exe" "dist/ridi-router-cli-${{ matrix.name }}.exe"
             cd dist
-             powershell Compress-Archive "ridi-router-${{ matrix.name }}.exe" "ridi-router-${{ matrix.name }}.zip"
+            powershell Compress-Archive "ridi-router-cli-${{ matrix.name }}.exe" "ridi-router-cli-${{ matrix.name }}.zip"
           elif [ "${{ matrix.os }}" = "macos-latest" ]; then
-            # Binary already in dist from build step
             cd dist
-            chmod +x "ridi-router-${{ matrix.name }}"
-            zip "ridi-router-${{ matrix.name }}.zip" "ridi-router-${{ matrix.name }}"
+            chmod +x "ridi-router-cli-${{ matrix.name }}"
+            zip "ridi-router-cli-${{ matrix.name }}.zip" "ridi-router-cli-${{ matrix.name }}"
           else
-            cp "target/${{ matrix.target }}/release/ridi-router" "dist/ridi-router-${{ matrix.name }}"
-            chmod +x "dist/ridi-router-${{ matrix.name }}"
+            cp "target/${{ matrix.target }}/release/ridi-router-cli" "dist/ridi-router-cli-${{ matrix.name }}"
+            chmod +x "dist/ridi-router-cli-${{ matrix.name }}"
             cd dist
-            zip "ridi-router-${{ matrix.name }}.zip" "ridi-router-${{ matrix.name }}"
+            zip "ridi-router-cli-${{ matrix.name }}.zip" "ridi-router-cli-${{ matrix.name }}"
           fi
 
       - name: Upload binary
@@ -236,7 +291,7 @@ jobs:
           path: dist/*.zip
 
   create-release:
-    needs: [prepare-version, build, build-debug-viewer]
+    needs: [prepare-version, build, build-rmdf-viewer]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -249,7 +304,7 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir release_files
-          cp artifacts/binary-*/ridi-router-* release_files/
+          cp artifacts/binary-*/ridi-router-cli-* release_files/
           cp artifacts/RELEASE_NOTES/RELEASE_NOTES.md .
 
       - name: Create Release
