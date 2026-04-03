@@ -304,7 +304,7 @@ mod tests {
             return;
         }
 
-        let manager = TileManager::new(tile_dir).expect("Failed to load TileManager");
+        let _manager = TileManager::new(tile_dir).expect("Failed to load TileManager");
     }
 
     #[test]

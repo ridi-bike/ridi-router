@@ -533,6 +533,7 @@ pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {
         .all(|v| v)
 }
 
+#[allow(dead_code)]
 pub fn get_test_data_osm_json_nodes() -> Vec<&'static str> {
     vec![
         r#"{"#,
@@ -593,6 +594,7 @@ pub fn get_test_data_osm_json_nodes() -> Vec<&'static str> {
         r#"}"#,
     ]
 }
+#[allow(dead_code)]
 pub fn get_test_data_osm_json() -> Vec<&'static str> {
     vec![
         r#"{"#,

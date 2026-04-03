@@ -21,6 +21,7 @@ pub struct WeightCalcInput<'a> {
 }
 
 pub struct WeightCalc {
+    #[allow(dead_code)]
     pub name: String,
     pub calc: fn(input: WeightCalcInput) -> WeightCalcResult,
 }
@@ -503,21 +504,7 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput) -> WeightCalcResult {
 #[cfg(test)]
 mod test {
 
-    use std::path::PathBuf;
-
-    use rusty_fork::rusty_fork_test;
-    use tracing::info;
-
-    use crate::{
-        map_data::graph::{MapDataGraph, MapDataPointRef},
-        router::{
-            itinerary::Itinerary, navigator::WeightCalcResult, route::segment::Segment,
-            rules::RouterRules, walker::Walker,
-        },
-        test_utils::{graph_from_test_dataset, set_graph_static},
-    };
-
-    use super::{get_priority_from_headings, weight_heading, WeightCalcInput};
+    use super::get_priority_from_headings;
 
     #[test]
     fn get_prio_from_headings() {
@@ -545,23 +532,6 @@ mod test {
         }
     }
 
-    fn get_route_segment(
-        end_point: MapDataPointRef,
-        opposite_point_for_line: MapDataPointRef,
-    ) -> Segment {
-        let end_point_borrowed = end_point.get();
-        let line = end_point_borrowed
-            .lines
-            .iter()
-            .find(|line| {
-                let line = line.get();
-                (line.points.0 == end_point && line.points.1 == opposite_point_for_line)
-                    || (line.points.1 == end_point && line.points.0 == opposite_point_for_line)
-            })
-            .expect("line to be found");
-
-        Segment::new(line.clone(), end_point.clone())
-    }
 
     // TODO: Re-enable this test with tile-based test data
     // This test requires JSON file loading which has been removed

@@ -8,6 +8,7 @@ pub mod point;
 pub mod rule;
 pub use generation_graph::GenerationGraph;
 
+#[allow(dead_code)]
 #[derive(Debug, PartialEq, Clone, thiserror::Error)]
 pub enum MapDataError {
     #[error("Missing point with ID: {point_id}")]

@@ -287,6 +287,7 @@ impl Navigator {
 
             if loop_counter >= self.rules.basic.step_limit.0 {
                 trace!("Reached loop {loop_counter}, stopping");
+                return NavigationResult::Stopped;
             }
         }
     }

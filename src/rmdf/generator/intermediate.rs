@@ -380,10 +380,10 @@ pub fn find_overlapping_cells(
             let global_col = ((lon + 180.0) / GRID_CELL_SIZE_DEG).floor() as i32;
             let global_row = ((lat + 90.0) / GRID_CELL_SIZE_DEG).floor() as i32;
 
-            overlaps
-                .entry((global_col, global_row))
-                .or_default()
-                .push((*grid_id, local_idx));
+            let sources = overlaps.entry((global_col, global_row)).or_default();
+            if sources.iter().all(|(existing_grid_id, _)| existing_grid_id != grid_id) {
+                sources.push((*grid_id, local_idx));
+            }
         }
     }
 

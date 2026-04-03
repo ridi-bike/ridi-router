@@ -51,6 +51,7 @@ pub struct TileNeighbors {
     pub southwest: Option<String>,
 }
 
+#[allow(dead_code)]
 pub fn military_geojson_filename(tile_id: TileId) -> String {
     format!("tile_{}_{}.military.geojson", tile_id.col, tile_id.row)
 }

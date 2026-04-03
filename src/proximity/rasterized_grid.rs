@@ -386,6 +386,7 @@ impl RasterizedProximityGrid {
     }
 
     /// Get grid bounds as (lon_min, lat_min, lon_max, lat_max)
+    #[allow(dead_code)]
     pub fn bounds(&self) -> (f32, f32, f32, f32) {
         let lon_max = self.lon_min + (self.cols as f32) * GRID_CELL_SIZE_DEG;
         let lat_max = self.lat_min + (self.rows as f32) * GRID_CELL_SIZE_DEG;

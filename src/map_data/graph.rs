@@ -17,12 +17,6 @@ use crate::{
 
 use super::{line::MapDataLine, point::MapDataPoint};
 
-#[derive(PartialEq, Eq, Hash)]
-enum AvoidTag {
-    Highway(String),
-    Surface(String),
-    Smoothness(String),
-}
 
 pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
@@ -146,9 +140,11 @@ impl ElementTags {
     pub fn new() -> Self {
         Self::default()
     }
+    #[allow(dead_code)]
     pub fn len(&self) -> (usize, usize) {
         (self.tag_values.len(), self.tag_sets.len())
     }
+    #[allow(dead_code)]
     pub fn clear_maps(&mut self) {
         self.tag_set_map = HashMap::new();
         self.tag_map = HashMap::new();
@@ -302,6 +298,7 @@ pub struct MapDataGraph {
     tile_manager: std::sync::RwLock<crate::rmdf::TileManager>,
     // TODO: Implement proper tag loading from tiles
     // For now, keeping tags in memory for compatibility
+    #[allow(dead_code)]
     tags: std::sync::RwLock<ElementTags>,
     // Test-only: in-memory storage for unit tests
     #[cfg(test)]
@@ -500,10 +497,6 @@ impl MapDataGraph {
         }
 
         let mut tm = self.tile_manager.write().unwrap();
-        let adjacent = tm
-            .get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
-            .expect("Failed to get adjacent points");
-
         let adjacent = tm
             .get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
             .expect("Failed to get adjacent points");

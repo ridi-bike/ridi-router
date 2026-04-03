@@ -53,6 +53,7 @@ impl GenerationGraph {
     }
 
     /// Get mutable tags reference (used during graph building)
+    #[allow(dead_code)]
     pub fn get_tags_mut(&mut self) -> &mut ElementTags {
         &mut self.tags
     }
@@ -132,8 +133,6 @@ impl GenerationGraph {
                 continue;
             }
 
-            let from_idx = *from_idx.unwrap();
-            let to_idx = *to_idx.unwrap();
 
             // Create line using simple structure (no Refs)
             let line = GenerationLine {

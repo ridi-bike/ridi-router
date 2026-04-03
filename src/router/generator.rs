@@ -264,8 +264,9 @@ impl Generator {
                     .collect(),
             );
         }
-        if points.is_empty() {
-            return Ok(vec![]);
+
+        if points.len() < 2 {
+            return Ok(itineraries);
         }
         let params = HdbscanHyperParams::builder()
             .epsilon(0.01)

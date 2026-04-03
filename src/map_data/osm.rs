@@ -18,6 +18,7 @@ pub struct OsmWay {
 }
 
 impl OsmWay {
+    #[allow(dead_code)]
     pub fn is_one_way(&self) -> bool {
         if let Some(tags) = &self.tags {
             tags.get("oneway").map_or(false, |one_way| one_way == "yes")
@@ -29,6 +30,7 @@ impl OsmWay {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_roundabout(&self) -> bool {
         if let Some(tags) = &self.tags {
             tags.get("junction")

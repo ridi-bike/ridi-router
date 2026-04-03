@@ -157,6 +157,7 @@ impl PbfBounds {
     /// Extract bounds as (lat_min, lat_max, lon_min, lon_max)
     /// # Panics
     /// Panics if bounds are not valid
+    #[allow(dead_code)]
     pub fn extract(&self) -> (f64, f64, f64, f64) {
         (
             self.lat_min.expect("lat_min not set"),
@@ -209,7 +210,7 @@ impl InMemoryPbf {
 
         // Pass 1: Load all nodes
         info!("Pass 1: Loading nodes...");
-        let (mut nodes_by_id, nodes_spatial, bounds) = Self::load_nodes(path)?;
+        let (mut nodes_by_id, _nodes_spatial, bounds) = Self::load_nodes(path)?;
         info!(
             "Loaded {} nodes in {:.2}s",
             nodes_by_id.len(),
@@ -335,7 +336,7 @@ impl InMemoryPbf {
 
         // Pass 1: Load all nodes
         info!("Pass 1: Loading nodes...");
-        let (mut nodes_by_id, nodes_spatial, bounds) = Self::load_nodes(path)?;
+        let (mut nodes_by_id, _nodes_spatial, bounds) = Self::load_nodes(path)?;
         info!(
             "Loaded {} nodes in {:.2}s",
             nodes_by_id.len(),
@@ -1017,10 +1018,12 @@ impl InMemoryPbf {
         }
     }
 
+    #[allow(dead_code)]
     fn has_military_tags(tags: &HashMap<String, String>) -> bool {
         tags.get("landuse").map(|v| v.as_str()) == Some("military") || tags.contains_key("military")
     }
 
+    #[allow(dead_code)]
     pub fn extract_military_polygons(&self) -> Vec<MultiPolygon<f64>> {
         let military_way_ids: Vec<u64> = self
             .ways_by_id

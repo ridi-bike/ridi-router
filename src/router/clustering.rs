@@ -45,6 +45,13 @@ impl Clustering {
             return None;
         }
 
+        if approximated_routes.len() < 2 {
+            return Some(Self {
+                labels: vec![-1; approximated_routes.len()],
+                approximated_routes,
+            });
+        }
+
         let params = HdbscanHyperParams::builder()
             .epsilon(0.1)
             .min_cluster_size(2)
