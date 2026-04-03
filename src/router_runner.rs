@@ -12,7 +12,6 @@ use tracing::{info, trace};
 
 use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
-    ipc_handler::IpcHandlerError,
     map_data::graph::MapDataGraph,
     result_writer::{OutputFormat, ResultWriter, ResultWriterError, RouteOutputRequest},
     route_output::RouteComputation,
@@ -31,7 +30,10 @@ pub enum RouterRunnerError {
     InputFileFormatIncorrect { filename: PathBuf },
 
     #[error("Failed to create output directory '{directory:?}': {error}")]
-    OutputDirectoryCreate { directory: PathBuf, error: io::Error },
+    OutputDirectoryCreate {
+        directory: PathBuf,
+        error: io::Error,
+    },
 
     #[error("Output directory invalid '{directory:?}': {reason}")]
     OutputDirectoryInvalid { directory: PathBuf, reason: String },
@@ -45,9 +47,6 @@ pub enum RouterRunnerError {
         cause: String,
         error: Option<ParseFloatError>,
     },
-
-    #[error("IPC error: {error}")]
-    Ipc { error: IpcHandlerError },
 
     #[error("Could not find {point} on map")]
     PointNotFound { point: String },
@@ -360,12 +359,14 @@ impl RouterRunner {
                 }
             })?;
 
-            if entries.next().transpose().map_err(|error| {
-                RouterRunnerError::OutputDirectoryInvalid {
+            if entries
+                .next()
+                .transpose()
+                .map_err(|error| RouterRunnerError::OutputDirectoryInvalid {
                     directory: output_dir.to_path_buf(),
                     reason: format!("failed while reading directory contents: {error}"),
-                }
-            })?.is_some()
+                })?
+                .is_some()
             {
                 return Err(RouterRunnerError::OutputDirectoryNotEmpty {
                     directory: output_dir.to_path_buf(),
@@ -416,8 +417,9 @@ impl RouterRunner {
 
         info!("Route generation started");
 
-        let computation = RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules)
-            .map(RouteComputation::from)?;
+        let computation =
+            RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules)
+                .map(RouteComputation::from)?;
 
         RouterRunner::write_route_output(output_request, computation)?;
         Ok(())
@@ -743,5 +745,38 @@ mod tests {
         assert_eq!(computation.routes.len(), 1);
         assert_eq!(computation.routes[0].coords, vec![(2.0, 2.0), (3.0, 3.0)]);
         assert_eq!(computation.routes[0].stats.len_m, 1_234.0);
+    }
+
+    #[test]
+    fn router_runner_source_no_longer_mentions_ipc_types() {
+        let source = include_str!("router_runner.rs");
+        let transport_module = ["ipc", "_handler::"].concat();
+        let transport_error = ["Ipc", "HandlerError"].concat();
+        let transport_variant = ["RouterRunnerError::", "Ipc"].concat();
+
+        assert!(!source.contains(&transport_module));
+        assert!(!source.contains(&transport_error));
+        assert!(!source.contains(&transport_variant));
+    }
+
+    #[test]
+    fn crate_no_longer_references_dead_ipc_transport() {
+        let main_source = include_str!("main.rs");
+        let main_module_decl = ["mod ", "ipc", "_handler;"].into_iter().collect::<String>();
+        assert!(!main_source.contains(&main_module_decl));
+
+        let cargo_toml =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap();
+        let removed_dependency = ["inter", "process = "].into_iter().collect::<String>();
+        assert!(!cargo_toml.contains(&removed_dependency));
+
+        let removed_transport_file = format!(
+            "{}/src/{}{}",
+            env!("CARGO_MANIFEST_DIR"),
+            "ipc_",
+            "handler.rs"
+        );
+        let removed_transport_path = std::path::Path::new(&removed_transport_file);
+        assert!(!removed_transport_path.exists());
     }
 }

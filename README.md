@@ -17,16 +17,16 @@ So I decided to build a tool that does what I need, offers flexiblity in findind
 - Round trips - specify start-finish point, direction, approximate distance and get multiple routes that do a loop and bring you back
 - Start-finish trips - specify start coordinates and finish coordinates and get multiple route options
 - Route statistics - total distance on different road types and surface types, calculates a score for how interesting the route might be (twisty bits vs straight bits)
-- Supports input map data from OpenStreetMap.org in either osm.pbf format or json format
-- Output route data in gpx or json format
+- Supports input map data from OpenStreetMap.org in osm.pbf format
+- Output route data in GPX or JSON format
 
 ## Output
 
-Generated routes can be saved as json or GPX files. GPX files are a standard that can be used with a lot of different programs and physical GPS devices. For easy viewing https://www.gpxsee.org/ can be used on the desktop or the GPX files can be imported into https://www.gaiagps.com/ for easy sync to mobile devices.
+Generated routes can be saved as JSON or GPX files. Route generation writes one file per route into an output directory. GPX files are a standard that can be used with a lot of different programs and physical GPS devices. For easy viewing https://www.gpxsee.org/ can be used on the desktop or the GPX files can be imported into https://www.gaiagps.com/ for easy sync to mobile devices.
 
 ## How
 
-Run `ridi-router generate-route --input map.json --output routes.gpx --rule-file avoid-pavement.json start-finish --start 56.951861,24.113821 --finish 57.313103,25.281460`
+Run `ridi-router generate-route --tiles ./tiles --output-dir ./routes --format gpx --rule-file avoid-pavement.json start-finish --start 56.951861,24.113821 --finish 57.313103,25.281460`
 
 Ridi-router will generate routes based on a naive approximation on how I'd do it manually - start with a point, move in the right direction and at every junction make a decision on which road might be the best option. The best road is evaluated based on multiple rules that can be fine-tuned based on preferences by creating a custom rule-file.
 
@@ -97,7 +97,8 @@ Args:
 ```bash
 ridi-router generate-route \
     --tiles ./tiles \
-    --output routes.gpx \
+    --output-dir ./routes \
+    --format gpx \
     --rule-file avoid-pavement.json \
     start-finish \
     --start 56.951861,24.113821 \
@@ -106,7 +107,8 @@ ridi-router generate-route \
 
 Args:
 - `--tiles` - Directory containing RMDF tiles and manifest.json (from Step 1)
-- `--output` - File to write the generated routes to (GPX or JSON). Can be omitted to print to terminal
+- `--output-dir` - Directory that will receive one GPX or JSON file per route
+- `--format` - Final route output format: `gpx` or `json`
 - `--rule-file` - Rule file defining route generation options (see below)
 - `--start` - Start GPS coordinates (LAT,LON)
 - `--finish` - Finish GPS coordinates (LAT,LON)
@@ -116,7 +118,8 @@ Args:
 ```bash
 ridi-router generate-route \
     --tiles ./tiles \
-    --output routes.gpx \
+    --output-dir ./routes \
+    --format json \
     --rule-file avoid-pavement.json \
     round-trip \
     --start-finish 56.951861,24.113821 \
@@ -126,7 +129,8 @@ ridi-router generate-route \
 
 Args:
 - `--tiles` - Directory containing RMDF tiles and manifest.json
-- `--output` - File to write the generated routes to (GPX or JSON)
+- `--output-dir` - Directory that will receive one GPX or JSON file per route
+- `--format` - Final route output format: `gpx` or `json`
 - `--rule-file` - Rule file defining route generation options
 - `--start-finish` - Start and finish GPS coordinates (LAT,LON)
 - `--bearing` - Direction in degrees (North: 0°, East: 90°, South: 180°, West: 270°)

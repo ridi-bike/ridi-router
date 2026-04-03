@@ -12,7 +12,6 @@ use tracing::{error_span, Level};
 mod debug;
 mod gpx_writer;
 mod json_writer;
-mod ipc_handler;
 mod map_data;
 mod osm_data;
 mod proximity;
