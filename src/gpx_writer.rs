@@ -2,7 +2,7 @@ use geo::Point;
 use gpx::{errors::GpxError, write, Gpx, GpxVersion, Route as GpxRoute, Waypoint};
 use std::{collections::HashMap, fs::File, io::Error, isize, path::PathBuf};
 
-use crate::{ipc_handler::RouteMessage, router::route::RouteStatElement};
+use crate::{route_output::ComputedRoute, router::route::RouteStatElement};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GpxWriterError {
@@ -14,7 +14,7 @@ pub enum GpxWriterError {
 }
 
 pub struct GpxWriter {
-    routes: Vec<RouteMessage>,
+    routes: Vec<ComputedRoute>,
     file_name: PathBuf,
 }
 
@@ -25,7 +25,7 @@ fn sort_by_longest(map: HashMap<String, RouteStatElement>) -> Vec<(String, Route
 }
 
 impl GpxWriter {
-    pub fn new(routes: Vec<RouteMessage>, file_name: PathBuf) -> Self {
+    pub fn new(routes: Vec<ComputedRoute>, file_name: PathBuf) -> Self {
         Self { routes, file_name }
     }
     pub fn write_gpx(self) -> Result<(), GpxWriterError> {
@@ -115,5 +115,129 @@ impl GpxWriter {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        fs::{self, File},
+        io::BufReader,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use crate::{
+        route_output::ComputedRoute,
+        router::route::{RouteStatElement, RouteStats},
+    };
+
+    use super::{sort_by_longest, GpxWriter};
+
+    fn unique_test_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ridi-router-gpx-writer-{}-{}.gpx",
+            process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn test_stats(len_m: f64) -> RouteStats {
+        RouteStats {
+            len_m,
+            junction_count: 2,
+            highway: HashMap::from([(
+                "primary".to_string(),
+                RouteStatElement {
+                    len_m,
+                    percentage: 100.0,
+                },
+            )]),
+            surface: HashMap::new(),
+            smoothness: HashMap::new(),
+            score: 7.5,
+            cluster: Some(2),
+            approximated_route: Vec::new(),
+        }
+    }
+
+    fn test_route(coords: Vec<(f32, f32)>, len_m: f64) -> ComputedRoute {
+        ComputedRoute {
+            coords,
+            stats: test_stats(len_m),
+        }
+    }
+
+    #[test]
+    fn sort_by_longest_sorts_descending_by_length() {
+        let sorted = sort_by_longest(HashMap::from([
+            (
+                "short".to_string(),
+                RouteStatElement {
+                    len_m: 10.0,
+                    percentage: 10.0,
+                },
+            ),
+            (
+                "long".to_string(),
+                RouteStatElement {
+                    len_m: 30.0,
+                    percentage: 30.0,
+                },
+            ),
+            (
+                "mid".to_string(),
+                RouteStatElement {
+                    len_m: 20.0,
+                    percentage: 20.0,
+                },
+            ),
+        ]));
+
+        assert_eq!(sorted[0].0, "long");
+        assert_eq!(sorted[1].0, "mid");
+        assert_eq!(sorted[2].0, "short");
+    }
+
+    #[test]
+    fn write_gpx_accepts_transport_neutral_routes() {
+        let file = unique_test_path();
+
+        GpxWriter::new(
+            vec![test_route(vec![(48.1, 11.5), (48.2, 11.6)], 10_000.0)],
+            file.clone(),
+        )
+        .write_gpx()
+        .unwrap();
+
+        assert!(file.exists());
+        fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn write_gpx_includes_route_points_for_each_route() {
+        let file = unique_test_path();
+
+        GpxWriter::new(
+            vec![
+                test_route(vec![(48.1, 11.5), (48.2, 11.6)], 10_000.0),
+                test_route(vec![(49.1, 12.5), (49.2, 12.6), (49.3, 12.7)], 20_000.0),
+            ],
+            file.clone(),
+        )
+        .write_gpx()
+        .unwrap();
+
+        let parsed = gpx::read(BufReader::new(File::open(&file).unwrap())).unwrap();
+        fs::remove_file(file).unwrap();
+
+        assert_eq!(parsed.routes.len(), 2);
+        assert_eq!(parsed.routes[0].points.len(), 2);
+        assert_eq!(parsed.routes[1].points.len(), 3);
     }
 }

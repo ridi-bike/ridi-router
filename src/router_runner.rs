@@ -7,9 +7,10 @@ use tracing::{info, trace};
 
 use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
-    ipc_handler::{IpcHandlerError, ResponseMessage, RouteMessage, RouterResult},
+    ipc_handler::IpcHandlerError,
     map_data::graph::MapDataGraph,
     result_writer::{DataDestination, ResultWriter, ResultWriterError},
+    route_output::RouteComputation,
     router::{
         generator::{Generator, RouteWithStats},
         rules::RouterRules,
@@ -374,38 +375,11 @@ impl RouterRunner {
         info!("Route generation started");
 
         let route_result =
-            RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules);
-        ResultWriter::write(
-            data_destination.clone(),
-            ResponseMessage {
-                id: "oo".to_string(),
-                result: route_result.map_or_else(
-                    |error| RouterResult::Error {
-                        message: format!("Error generating route {:?}", error),
-                    },
-                    |routes| RouterResult::Ok {
-                        routes: routes
-                            .iter()
-                            .map(|route| RouteMessage {
-                                coords: route
-                                    .route
-                                    .clone()
-                                    .into_iter()
-                                    .map(|segment| {
-                                        (
-                                            segment.get_end_point().get().lat,
-                                            segment.get_end_point().get().lon,
-                                        )
-                                    })
-                                    .collect(),
-                                stats: route.stats.clone(),
-                            })
-                            .collect(),
-                    },
-                ),
-            },
-        )
-        .map_err(|error| RouterRunnerError::ResultWrite { error })?;
+            RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules)
+                .map(RouteComputation::from)
+                .map_err(|error| format!("Error generating route {:?}", error));
+        ResultWriter::write(data_destination.clone(), route_result)
+            .map_err(|error| RouterRunnerError::ResultWrite { error })?;
         Ok(())
     }
 
@@ -498,5 +472,105 @@ impl RouterRunner {
             #[cfg(feature = "rmdf-viewer")]
             CliMode::RmdfViewer { input_dir } => crate::debug::rmdf_viewer::run(input_dir.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{
+        route_output::RouteComputation,
+        router::{
+            generator::RouteWithStats,
+            route::{segment::Segment, Route, RouteStatElement, RouteStats},
+        },
+        test_utils::{
+            graph_from_test_dataset, line_is_between_point_ids, set_graph_static, test_dataset_1,
+        },
+    };
+
+    use super::Coords;
+
+    fn test_route_stats() -> RouteStats {
+        RouteStats {
+            len_m: 1_234.0,
+            junction_count: 2,
+            highway: HashMap::from([(
+                "primary".to_string(),
+                RouteStatElement {
+                    len_m: 1_234.0,
+                    percentage: 100.0,
+                },
+            )]),
+            surface: HashMap::new(),
+            smoothness: HashMap::new(),
+            score: 5.0,
+            cluster: Some(0),
+            approximated_route: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn coords_from_str_parses_valid_lat_lon() {
+        let coords: Coords = "48.123,11.456".parse().unwrap();
+
+        assert_eq!(coords.lat, 48.123);
+        assert_eq!(coords.lon, 11.456);
+    }
+
+    #[test]
+    fn coords_from_str_rejects_missing_lon() {
+        let error = "48.123".parse::<Coords>().unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::RouterRunnerError::Coords { cause, .. } if cause == "missing"
+        ));
+    }
+
+    #[test]
+    fn router_runner_maps_generated_routes_into_transport_neutral_model() {
+        let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
+        let point_1 = map_data.test_get_point_ref_by_id(&1).unwrap();
+        let point_2 = map_data.test_get_point_ref_by_id(&2).unwrap();
+        let point_3 = map_data.test_get_point_ref_by_id(&3).unwrap();
+
+        let line_12 = map_data
+            .get_adjacent(point_1.clone())
+            .into_iter()
+            .find_map(|(line, other_point)| {
+                if other_point == point_2 && line_is_between_point_ids(&line, 1, 2) {
+                    Some(line)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        let line_23 = map_data
+            .get_adjacent(point_2.clone())
+            .into_iter()
+            .find_map(|(line, other_point)| {
+                if other_point == point_3 && line_is_between_point_ids(&line, 2, 3) {
+                    Some(line)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        let mut route = Route::new();
+        route.add_segment(Segment::new(line_12, point_2));
+        route.add_segment(Segment::new(line_23, point_3));
+
+        let computation = RouteComputation::from(vec![RouteWithStats {
+            stats: test_route_stats(),
+            route,
+        }]);
+
+        assert_eq!(computation.routes.len(), 1);
+        assert_eq!(computation.routes[0].coords, vec![(2.0, 2.0), (3.0, 3.0)]);
+        assert_eq!(computation.routes[0].stats.len_m, 1_234.0);
     }
 }

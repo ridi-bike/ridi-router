@@ -1,3 +1,4 @@
+mod route_output;
 use std::{
     io::{self, IsTerminal},
     process,
