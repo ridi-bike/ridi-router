@@ -3,9 +3,7 @@ use gpx::{errors::GpxError, write, Gpx, GpxVersion, Route as GpxRoute, Waypoint}
 use std::{collections::HashMap, fs::File, io::Error, isize, path::PathBuf};
 
 use crate::{
-    file_naming::route_file_path,
-    route_output::ComputedRoute,
-    router::route::RouteStatElement,
+    file_naming::route_file_path, route_output::ComputedRoute, router::route::RouteStatElement,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -258,7 +256,10 @@ mod tests {
         fs::create_dir_all(&output_dir).unwrap();
 
         GpxWriter::new(
-            vec![test_route(vec![(48.1, 11.5), (48.2, 11.6), (48.3, 11.7)], 10_000.0)],
+            vec![test_route(
+                vec![(48.1, 11.5), (48.2, 11.6), (48.3, 11.7)],
+                10_000.0,
+            )],
             output_dir.clone(),
         )
         .write_gpx()

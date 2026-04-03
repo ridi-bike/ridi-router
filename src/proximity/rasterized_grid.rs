@@ -265,7 +265,11 @@ impl RasterizedProximityGrid {
         let col = ((lon - self.lon_min) / MILITARY_GRID_CELL_SIZE_DEG) as i32;
         let row = ((lat - self.lat_min) / MILITARY_GRID_CELL_SIZE_DEG) as i32;
 
-        if col < 0 || col >= self.military_cols as i32 || row < 0 || row >= self.military_rows as i32 {
+        if col < 0
+            || col >= self.military_cols as i32
+            || row < 0
+            || row >= self.military_rows as i32
+        {
             return None;
         }
 
@@ -415,7 +419,10 @@ impl RasterizedProximityGrid {
         let cell_size = 36;
         let military_header_size = 8;
         let mut bytes = Vec::with_capacity(
-            header_size + self.cells.len() * cell_size + military_header_size + self.military_cells.len(),
+            header_size
+                + self.cells.len() * cell_size
+                + military_header_size
+                + self.military_cells.len(),
         );
 
         // Header
@@ -494,9 +501,12 @@ impl RasterizedProximityGrid {
 
         let lon_max = lon_min + (cols as f32) * GRID_CELL_SIZE_DEG;
         let lat_max = lat_min + (rows as f32) * GRID_CELL_SIZE_DEG;
-        let default_military_cols = ((lon_max - lon_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
-        let default_military_rows = ((lat_max - lat_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
-        let default_military_len = (default_military_cols as usize) * (default_military_rows as usize);
+        let default_military_cols =
+            ((lon_max - lon_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
+        let default_military_rows =
+            ((lat_max - lat_min) / MILITARY_GRID_CELL_SIZE_DEG).ceil() as u32;
+        let default_military_len =
+            (default_military_cols as usize) * (default_military_rows as usize);
 
         let (military_cols, military_rows, military_cells) = if bytes.len() >= offset + 8 {
             let military_cols = u32::from_le_bytes([

@@ -3,7 +3,9 @@
 //! Converts residential and military polygons into the rasterized proximity grid
 //! by computing values for each grid cell using directional sectors.
 
-use geo::{Contains, Distance, GeodesicArea, Haversine, HaversineClosestPoint, MultiPolygon, Point};
+use geo::{
+    Contains, Distance, GeodesicArea, Haversine, HaversineClosestPoint, MultiPolygon, Point,
+};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
@@ -442,11 +444,7 @@ fn check_military_status(
 }
 
 /// Check if a point is inside a military polygon.
-fn is_military_interior(
-    lat: f32,
-    lon: f32,
-    polygon_bboxes: &[(&MultiPolygon<f64>, BBox)],
-) -> bool {
+fn is_military_interior(lat: f32, lon: f32, polygon_bboxes: &[(&MultiPolygon<f64>, BBox)]) -> bool {
     let geo_point = Point::new(lon as f64, lat as f64);
 
     for (polygon, bbox) in polygon_bboxes {

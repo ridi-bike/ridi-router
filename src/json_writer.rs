@@ -27,10 +27,11 @@ impl JsonWriter {
     pub fn write_json(self) -> Result<(), JsonWriterError> {
         for (idx, route) in self.routes.into_iter().enumerate() {
             let path = route_file_path(&self.output_dir, idx, route.stats.len_m, "json");
-            let json = serde_json::to_string(&route).map_err(|error| JsonWriterError::SerializeJson {
-                path: path.clone(),
-                error,
-            })?;
+            let json =
+                serde_json::to_string(&route).map_err(|error| JsonWriterError::SerializeJson {
+                    path: path.clone(),
+                    error,
+                })?;
 
             fs::write(&path, json).map_err(|error| JsonWriterError::FileWrite {
                 path: path.clone(),
