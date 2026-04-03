@@ -58,6 +58,7 @@ pub fn read_router_rules_from_stdin() -> Result<RouterRules, RuleFileError> {
     Ok(RouterRules::default())
 }
 
+#[cfg(feature = "rule-schema-writer")]
 pub fn generate_json_schema(dest: &std::path::PathBuf) -> anyhow::Result<()> {
     let schema = schemars::schema_for!(RouterRules);
     let file = std::fs::File::create(dest)?;

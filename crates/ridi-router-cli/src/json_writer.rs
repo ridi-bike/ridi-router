@@ -1,7 +1,9 @@
-use std::{fs, io, path::PathBuf};
+use std::{collections::HashMap, fs, io, path::PathBuf};
+
+use serde::Serialize;
 
 use crate::file_naming::route_file_path;
-use ridi_router_routing::ComputedRoute;
+use ridi_router_routing::{ComputedRoute, RouteStatElement, RouteStats};
 
 #[derive(Debug, thiserror::Error)]
 pub enum JsonWriterError {
@@ -13,6 +15,79 @@ pub enum JsonWriterError {
 
     #[error("Failed to write JSON file '{path:?}': {error}")]
     FileWrite { path: PathBuf, error: io::Error },
+}
+
+#[derive(Serialize)]
+struct JsonRouteDocument {
+    coords: Vec<[f32; 2]>,
+    stats: JsonRouteStats,
+}
+
+#[derive(Serialize)]
+struct JsonRouteStats {
+    len_m: f64,
+    junction_count: u32,
+    highway: HashMap<String, JsonRouteStatElement>,
+    surface: HashMap<String, JsonRouteStatElement>,
+    smoothness: HashMap<String, JsonRouteStatElement>,
+    score: f64,
+    cluster: Option<usize>,
+    approximated_route: Vec<[f32; 2]>,
+}
+
+#[derive(Serialize)]
+struct JsonRouteStatElement {
+    len_m: f64,
+    percentage: f64,
+}
+
+impl From<ComputedRoute> for JsonRouteDocument {
+    fn from(route: ComputedRoute) -> Self {
+        Self {
+            coords: route.coords.into_iter().map(tuple_to_pair).collect(),
+            stats: route.stats.into(),
+        }
+    }
+}
+
+impl From<RouteStats> for JsonRouteStats {
+    fn from(stats: RouteStats) -> Self {
+        Self {
+            len_m: stats.len_m,
+            junction_count: stats.junction_count,
+            highway: map_stat_elements(stats.highway),
+            surface: map_stat_elements(stats.surface),
+            smoothness: map_stat_elements(stats.smoothness),
+            score: stats.score,
+            cluster: stats.cluster,
+            approximated_route: stats
+                .approximated_route
+                .into_iter()
+                .map(tuple_to_pair)
+                .collect(),
+        }
+    }
+}
+
+fn map_stat_elements(
+    stats: HashMap<String, RouteStatElement>,
+) -> HashMap<String, JsonRouteStatElement> {
+    stats
+        .into_iter()
+        .map(|(key, value)| {
+            (
+                key,
+                JsonRouteStatElement {
+                    len_m: value.len_m,
+                    percentage: value.percentage,
+                },
+            )
+        })
+        .collect()
+}
+
+fn tuple_to_pair((lat, lon): (f32, f32)) -> [f32; 2] {
+    [lat, lon]
 }
 
 pub struct JsonWriter {
@@ -28,9 +103,12 @@ impl JsonWriter {
     pub fn write_json(self) -> Result<(), JsonWriterError> {
         for (idx, route) in self.routes.into_iter().enumerate() {
             let path = route_file_path(&self.output_dir, idx, route.stats.len_m, "json");
-            let json = serde_json::to_string(&route).map_err(|error| JsonWriterError::SerializeJson {
-                path: path.clone(),
-                error,
+            let document = JsonRouteDocument::from(route);
+            let json = serde_json::to_string(&document).map_err(|error| {
+                JsonWriterError::SerializeJson {
+                    path: path.clone(),
+                    error,
+                }
             })?;
 
             fs::write(&path, json).map_err(|error| JsonWriterError::FileWrite {
@@ -45,11 +123,11 @@ impl JsonWriter {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
+    use std::{fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
 
     use ridi_router_routing::{ComputedRoute, RouteStatElement, RouteStats};
 
-    use super::JsonWriter;
+    use super::{JsonRouteDocument, JsonWriter};
 
     fn unique_test_dir() -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -66,18 +144,18 @@ mod tests {
         RouteStats {
             len_m,
             junction_count: 2,
-            highway: HashMap::from([(
+            highway: std::collections::HashMap::from([(
                 "primary".to_string(),
                 RouteStatElement {
                     len_m,
                     percentage: 100.0,
                 },
             )]),
-            surface: HashMap::new(),
-            smoothness: HashMap::new(),
+            surface: std::collections::HashMap::new(),
+            smoothness: std::collections::HashMap::new(),
             score: 7.5,
             cluster: Some(2),
-            approximated_route: Vec::new(),
+            approximated_route: vec![(1.0, 2.0), (3.0, 4.0)],
         }
     }
 
@@ -143,5 +221,16 @@ mod tests {
         assert!(written.contains("\"coords\""));
         assert!(written.contains("\"len_m\":12345.0"));
         assert!(!written.contains("\"routes\""));
+    }
+
+    #[test]
+    fn cli_json_output_can_diverge_from_library_struct_shape() {
+        let document = JsonRouteDocument::from(test_route(vec![(48.1, 11.5)], 12_345.0));
+        let json = serde_json::to_value(document).unwrap();
+
+        assert!(json.get("coords").and_then(|value| value.as_array()).is_some());
+        assert!(json.get("stats").is_some());
+        assert!(json.get("routes").is_none());
+        assert_eq!(json["stats"]["approximated_route"][0], serde_json::json!([1.0, 2.0]));
     }
 }

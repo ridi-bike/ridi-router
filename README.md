@@ -1,207 +1,157 @@
-# Ridi-router - CLI for motorcycle route generation
+# ridi-router
 
-Ridi-router is a CLI tool for generating motorcycle routes based on your own preferences. Define the type of roads and surfaces you prefer and save that as a rule-file, then use it when generating routes for trips.
+`ridi-router` is now a Cargo workspace with reusable libraries and a thin CLI.
 
-## Why
+## Workspace layout
 
-I live in a somewhat rural but densely populated area whith lots of nice forest tracks and paths and unpaved roads, many of which lead to private properties, farms but also many which are for public use.
+- `crates/ridi-router-cli` - CLI adapter, file IO policy, JSON/GPX output, human-readable errors
+- `crates/ridi-router-routing` - routing library over generated RMDF tiles
+- `crates/ridi-router-tiles` - tile-generation library from OSM PBF input
+- `crates/ridi-router-common` - small shared RMDF data types
 
-So if I've got a free hour, I want to spend it riding nice tracks and paths instead of looking at maps trying to find paths and tracks that I can ride.
+## Binary name
 
-And so far I've not found an existing tool/app that allows me to define the type of roads I prefer.
+The CLI package is `ridi-router-cli` and the produced binary is also `ridi-router-cli`.
 
-So I decided to build a tool that does what I need, offers flexiblity in findind the exact roads/paths/tracks that I like.
-
-## Features
-
-- Round trips - specify start-finish point, direction, approximate distance and get multiple routes that do a loop and bring you back
-- Start-finish trips - specify start coordinates and finish coordinates and get multiple route options
-- Route statistics - total distance on different road types and surface types, calculates a score for how interesting the route might be (twisty bits vs straight bits)
-- Supports input map data from OpenStreetMap.org in osm.pbf format
-- Output route data in GPX or JSON format
-
-## Output
-
-Generated routes are written as files into an output directory.
-
-- Use `--output-dir DIR` and `--format gpx|json` with `generate-route`.
-- One file is written per route.
-- If `--output-dir` does not exist, ridi-router creates it.
-- If `--output-dir` already exists and is empty, it is reused.
-- If `--output-dir` already contains files, the command fails instead of merging or overwriting.
-- Final GPX/JSON route payloads are written to files, not to stdout.
-- If route computation succeeds but produces zero valid routes, the command still exits successfully, leaves the output directory empty, and logs that no routes were found.
-
-GPX files are a standard that can be used with a lot of different programs and physical GPS devices. For easy viewing https://www.gpxsee.org/ can be used on the desktop or the GPX files can be imported into https://www.gaiagps.com/ for easy sync to mobile devices.
-
-## How
-
-Run `ridi-router generate-route --tiles ./tiles --output-dir ./routes --format gpx --rule-file ./rule-examples/rules-prefer-unpaved.json start-finish --start 56.951861,24.113821 --finish 57.313103,25.281460`
-
-Ridi-router will generate routes based on a naive approximation on how I'd do it manually - start with a point, move in the right direction and at every junction make a decision on which road might be the best option. The best road is evaluated based on multiple rules that can be fine-tuned based on preferences by creating a custom rule-file.
-
-If the chosen road ends up being a dead-end or end up going in the wrong direction, the router will stop, take a step back and try the next best one.
-
-Repeat the process until all possible routes are explored, we've reached an arbitrary step limit or we've reached the finish coordinates.
-
-Multiple different waypoints are chosen to introduce variation in the generated routes.
-
-## Breaking Changes in v1.0
-
-**IMPORTANT**: Version 1.0 introduces a new tile-based map data format (RMDF) and removes several deprecated features:
-
-- **Removed**: JSON input support (only PBF files supported)
-- **Removed**: Bincode cache system (`--cache-dir` parameter)
-- **Removed**: `prep-cache` command
-- **Removed**: Direct PBF loading for routing (`--input` parameter for `generate-route`)
-- **Removed**: Single-file route output via `--output FILE`
-- **Required**: You must now generate RMDF tiles before routing using the `generate-tiles` command
-- **Required**: You must now route with `--tiles`, `--output-dir`, and `--format`
-
-**Migration**: To upgrade from v0.x, you'll need to:
-1. Download OSM PBF files for your region from https://download.geofabrik.de/
-2. Generate RMDF tiles using `ridi-router generate-tiles`
-3. Use the generated tiles directory for routing
-4. Read final route files from the output directory instead of stdout or a single `--output` file
-
-> [!NOTE]
-> Stdout is intentionally kept free of final GPX/JSON route payloads so the CLI can grow future machine-oriented streaming output without mixing it with file output.
-
-## Usage
-
-### Get the CLI tool
-
-#### Github Releases
-
-Releases are prepared with binaries for Windows, MacOS and Linux. These can be downloaded form the Github Releases section.
-
-On Windows and MacOS the binaries will be flagged as potentially dangerous. This warning can be ignored.
-
-#### Build from source
-
-Rust must be installed and set up beforehand.
-
-The binary can be built from source by cloning the repo and running `cargo build --release`. A release binary is needed to ensure routes are generated at an acceptable speed.
-
-### Input Map Data (PBF format)
-
-Data files for regions can be downloaded at https://download.geofabrik.de/ - there are individual files available for all countries, US states and other special regions. Depending on the region size, these files can be fairly large in their packed state (for example Spain is 1.2 GB, Germany is 4.1 GB, USA is 10.1 GB).
-
-**Note**: As of version 1.0, only PBF format is supported. JSON format has been removed.
-
-### CLI Usage
-
-#### Step 1: Generate Tiles
-
-Before routing, you must first generate RMDF tiles from a PBF file:
+## Build
 
 ```bash
-ridi-router generate-tiles \
-    --input montenegro.osm.pbf \
-    --output ./tiles \
-    --tile-size-deg 0.1
+cargo build --workspace
 ```
 
-Args:
-- `--input` - OSM PBF file downloaded from https://download.geofabrik.de/
-- `--output` - Directory where tiles and manifest will be stored
-- `--tile-size-deg` - Tile size in degrees (default: 1.0, smaller values like 0.1 for better granularity)
-
-#### Step 2: Start-Finish Route Generation
+Run the CLI from the workspace root:
 
 ```bash
-ridi-router generate-route \
-    --tiles ./tiles \
-    --output-dir ./routes \
-    --format gpx \
-    --rule-file ./rule-examples/rules-prefer-unpaved.json \
-    start-finish \
-    --start 56.951861,24.113821 \
-    --finish 57.313103,25.281460
+cargo run -p ridi-router-cli -- --help
 ```
 
-Args:
-- `--tiles` - Directory containing RMDF tiles and manifest.json (from Step 1)
-- `--output-dir` - Directory that will receive one GPX or JSON file per route
-- `--format` - Final route output format: `gpx` or `json`
-- `--rule-file` - Rule file defining route generation options (see below)
-- `--start` - Start GPS coordinates (LAT,LON)
-- `--finish` - Finish GPS coordinates (LAT,LON)
-
-#### Step 2 Alternative: Round-Trip Route Generation
+Or run the built binary directly:
 
 ```bash
-ridi-router generate-route \
-    --tiles ./tiles \
-    --output-dir ./routes \
-    --format json \
-    --rule-file ./rule-examples/rules-prefer-unpaved.json \
-    round-trip \
-    --start-finish 56.951861,24.113821 \
-    --bearing 35 \
-    --distance 100000
+./target/debug/ridi-router-cli --help
 ```
 
-Args:
-- `--tiles` - Directory containing RMDF tiles and manifest.json
-- `--output-dir` - Directory that will receive one GPX or JSON file per route
-- `--format` - Final route output format: `gpx` or `json`
-- `--rule-file` - Rule file defining route generation options
-- `--start-finish` - Start and finish GPS coordinates (LAT,LON)
-- `--bearing` - Direction in degrees (North: 0°, East: 90°, South: 180°, West: 270°)
-- `--distance` - Desired round trip distance in meters
+## Workflow
 
-Notes:
-- `manifest.json` is required in the tiles directory.
-- Route file ordering is not guaranteed yet, so rely on file presence and contents rather than filename order.
-- If no routes are found, the command still exits with code 0 and leaves `--output-dir` empty.
-### Rule file
-
-A rule file is a json file that is read and used when evaluating which road to take at a given junction. Every junction is evaluated against all basic rules and specified advanced rules.
-
-- basic rules that control the basic navigation like making sure we are going in the right general direction. These rules have built in default values and should only be changed in rare circumstances
-- advanced rules add additional checks based on road surface, type and smoothness. These rules should be created based on preferences
-
-Basic rules provide rule criteria and a priority value to use when applying the rule.
-
-Advanced rules can either provide a priority value or specify "avoid" action to prevent the router form picking a road.
-
-Priority values must be between 0 (meaning no priority change) and 255 (highest priority). When a possible road is evaluated, all priority values are summed up from all rules and the one with the highest total priority is picked. If a single "avoid" action is encountered, the road is excluded regardless of the priority values.
-
-An example rule file can be found in `./rule-examples/rules-prefer-unpaved.json` that prefers smaller unpaved roads.
-
-An example rule file that will not pick unpaved roads or paths and trails can be seen here `./rule-examples/rules-avoid-unpaved.json`
-
-Road types, smoothness and surfaces are based on OpenStreetMap.org tag values. Road type is specified as "highway" (https://wiki.openstreetmap.org/wiki/Key:highway), while smoothness (https://wiki.openstreetmap.org/wiki/Key:smoothness) and surface (https://wiki.openstreetmap.org/wiki/Key:surface) are specified as such.
-
-Rule file can be validated against a schema file located in `./rule-examples/schema.json`
-
-#### Basic rules
-
-These rules dictate basic navigation and route finding. Altering these values can lead to broken results but can also help in certain scenarios where geographic obstacles need to be overcome
-
-A rule file with default basic rule settings can be found here `./rule-examples/rules-default.json`
-
-- step_limit - limits the number of steps, defaults to 30'000 steps. If this limit is reached, the route variation will be marked abandoned but other variations will continue to be processed
-- prefer_same_road - used to stay on the same road for a longer period
-- progression_direction - controls how long of a detour can happen before a direction is considered wrong. This can be increased in cases where large obstacles need to be overcome like lakes, rivers without bridges, mountain ranges, etc
-- progression_speed - disabled by default. Checks how much progress is made and decides when to stop. Useful in scenarios where geographic obstacles in combination with city streets produce many twists and turns without any significant progress towards the finish
-- no_short_detours - avoids jumping off roads at a junction with a more favourable surface or road type just to get back on the same road shortly after for example doing a short detour on a forst track coming off of a primary road just to join back in several hundred meters
-- no_sharp_turns - avoids scenarios where missing traffic rules in the OpenStreetMap data cause illegal U turns on highways or off/on ramps
-
-### Advanced Usage
-
-#### RMDF Viewer
-
-The repo also includes an RMDF tile viewer for inspecting generated tiles.
-
-Build it with `--features=rmdf-viewer`, then run:
+### 1. Generate RMDF tiles
 
 ```bash
-ridi-router rmdf-viewer --input-dir /path/to/tiles
+ridi-router-cli generate-tiles \
+  --input ./map-data/pbf/latvia-latest.osm.pbf \
+  --output ./tiles \
+  --tile-size-deg 1.0
 ```
 
-This starts a local web server on http://0.0.0.0:1337/ and serves a browser UI for exploring tiles from `manifest.json`.
+You can also generate from a directory of `.pbf` files:
 
-> [!WARNING]
-> The RMDF viewer is still very much work in progress, so the functionality is limited and there may still be bugs lurking around.
+```bash
+ridi-router-cli generate-tiles \
+  --input-dir ./map-data/pbf \
+  --output ./tiles \
+  --tile-size-deg 1.0
+```
+
+### 2. Generate routes from tiles
+
+Start-finish mode:
+
+```bash
+ridi-router-cli generate-route \
+  --tiles ./tiles \
+  --output-dir ./routes \
+  --format gpx \
+  --rule-file ./rule-examples/rules-empty.json \
+  start-finish \
+  --start 56.951861,24.113821 \
+  --finish 57.313103,25.281460
+```
+
+Round-trip mode:
+
+```bash
+ridi-router-cli generate-route \
+  --tiles ./tiles \
+  --output-dir ./routes \
+  --format json \
+  --rule-file ./rule-examples/rules-empty.json \
+  round-trip \
+  --start-finish 56.951861,24.113821 \
+  --bearing 35 \
+  --distance 100000
+```
+
+## Output behavior
+
+- `generate-route` writes one file per route into `--output-dir`
+- final route payloads go to files, not stdout
+- if `--output-dir` does not exist, the CLI creates it
+- if `--output-dir` exists and is empty, it is reused
+- if `--output-dir` exists and is not empty, the command fails
+- if routing succeeds but finds no valid routes, the command still succeeds and leaves the output directory empty
+
+## Rule files
+
+Rule files are parsed by the CLI and passed into the routing library as Rust values.
+
+Examples live in `./rule-examples/`.
+
+A schema can be written with the optional feature:
+
+```bash
+cargo run -p ridi-router-cli --features rule-schema-writer -- \
+  rule-schema-write --destination ./rule-examples/schema.json
+```
+
+## Library usage
+
+### Routing library
+
+```rust
+use std::path::PathBuf;
+use ridi_router_routing::{
+    Coords, RouteMode, RouteRequest, RouterRules, RoutingExecutor, RoutingExecutorConfig,
+};
+
+let mut executor = RoutingExecutor::open(RoutingExecutorConfig {
+    tiles_dir: PathBuf::from("./tiles"),
+})?;
+
+let result = executor.generate(RouteRequest {
+    mode: RouteMode::StartFinish {
+        start: Coords { lat: 56.95, lon: 24.11 },
+        finish: Coords { lat: 57.31, lon: 25.28 },
+    },
+    rules: RouterRules::default(),
+})?;
+```
+
+### Tile-generation library
+
+```rust
+use std::path::PathBuf;
+use ridi_router_tiles::{generate_tiles, TileGenerationRequest, TileInputSource};
+
+let summary = generate_tiles(TileGenerationRequest {
+    input: TileInputSource::File(PathBuf::from("./region.osm.pbf")),
+    output_dir: PathBuf::from("./tiles"),
+    tile_size_deg: 1.0,
+    db_path: None,
+})?;
+```
+
+## Tests
+
+```bash
+cargo check --workspace
+cargo test --workspace
+cargo tree --workspace
+```
+
+## Optional RMDF viewer
+
+The workspace still includes the RMDF viewer behind a feature flag:
+
+```bash
+cargo run -p ridi-router-cli --features rmdf-viewer -- \
+  rmdf-viewer --input-dir ./tiles
+```

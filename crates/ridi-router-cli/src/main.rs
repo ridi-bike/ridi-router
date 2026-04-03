@@ -4,15 +4,21 @@ mod debug;
 mod file_naming;
 mod gpx_writer;
 mod json_writer;
+#[cfg(feature = "rmdf-viewer")]
 mod map_data;
+#[cfg(feature = "rmdf-viewer")]
 mod osm_data;
+#[cfg(feature = "rmdf-viewer")]
 mod proximity;
 mod result_writer;
+#[cfg(feature = "rmdf-viewer")]
 mod rmdf;
+#[cfg(feature = "rmdf-viewer")]
 mod router;
 mod router_runner;
+#[cfg(feature = "rmdf-viewer")]
 mod simd;
-#[cfg(test)]
+#[cfg(all(test, feature = "rmdf-viewer"))]
 mod test_utils;
 
 use std::{
@@ -20,6 +26,7 @@ use std::{
     process,
 };
 
+use cli::rendering::render_user_error;
 use router_runner::RouterRunner;
 use tracing::{error_span, Level};
 
@@ -47,16 +54,16 @@ fn main() {
         tracing::subscriber::set_global_default(subscriber)
     };
 
-    if let Err(subscriber) = subscriber {
-        tracing::error!(error = ?subscriber, "Subscriber setup failed");
+    if let Err(error) = subscriber {
+        eprintln!("Failed to initialize tracing subscriber: {error}");
         process::exit(1);
     }
 
     let span = error_span!("Process", service = "ridi-router-cli");
     let _entered = span.enter();
-    let runner = RouterRunner::run();
-    if let Err(runner) = runner {
-        tracing::error!(error = ?runner, "Router startup failed");
+
+    if let Err(error) = RouterRunner::run() {
+        eprintln!("{}", render_user_error(&error));
         process::exit(1);
     }
 }

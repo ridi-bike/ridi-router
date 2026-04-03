@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::{num::ParseFloatError, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
@@ -8,13 +7,13 @@ use tracing::info;
 use crate::{
     cli::{
         output_dir::{prepare_empty_output_dir, OutputDirError},
-        rules::{generate_json_schema, read_router_rules, RuleFileError},
+        rules::{read_router_rules, RuleFileError},
     },
     result_writer::{OutputFormat, ResultWriter, ResultWriterError, RouteOutputRequest},
 };
 use ridi_router_routing::{
     Coords as RoutingCoords, RouteComputation, RouteMode, RouteRequest, RouterRules, RoutingError,
-    RoutingExecutor, RoutingExecutorConfig, RoutingGenerationError, RoutingOpenError,
+    RoutingExecutor, RoutingExecutorConfig,
 };
 use ridi_router_tiles::{
     generate_tiles, TileGenerationError, TileGenerationRequest, TileInputSource,
@@ -49,6 +48,14 @@ pub enum RouterRunnerError {
 
     #[error("Failed to write result: {error}")]
     ResultWrite { error: ResultWriterError },
+
+    #[cfg(feature = "rule-schema-writer")]
+    #[error("Failed to write rule schema: {error}")]
+    RuleSchema { error: anyhow::Error },
+
+    #[cfg(feature = "rmdf-viewer")]
+    #[error("RMDF viewer failed: {error}")]
+    RmdfViewer { error: anyhow::Error },
 }
 
 #[derive(Debug, Parser)]
@@ -322,7 +329,7 @@ impl RouterRunner {
     }
 
     #[tracing::instrument]
-    pub fn run() -> Result<()> {
+    pub fn run() -> std::result::Result<(), RouterRunnerError> {
         let cli = Cli::parse();
         match cli.mode {
             CliMode::GenerateRoute {
@@ -331,23 +338,26 @@ impl RouterRunner {
                 output_dir,
                 format,
                 rule_file,
-            } => Ok(Self::run_generate_route(
+            } => Self::run_generate_route(
                 tiles,
                 &routing_mode,
                 RouteOutputRequest { output_dir, format },
                 rule_file,
-            )?),
+            ),
             CliMode::GenerateTiles {
                 input,
                 input_dir,
                 output,
                 tile_size_deg,
                 db_path,
-            } => Ok(Self::run_generate_tiles(input, input_dir, output, tile_size_deg, db_path)?),
+            } => Self::run_generate_tiles(input, input_dir, output, tile_size_deg, db_path),
             #[cfg(feature = "rule-schema-writer")]
-            CliMode::RuleSchemaWrite { destination } => Ok(generate_json_schema(&destination)?),
+            CliMode::RuleSchemaWrite { destination } =>
+                crate::cli::rules::generate_json_schema(&destination)
+                    .map_err(|error| RouterRunnerError::RuleSchema { error }),
             #[cfg(feature = "rmdf-viewer")]
-            CliMode::RmdfViewer { input_dir } => Ok(crate::debug::rmdf_viewer::run(input_dir)?),
+            CliMode::RmdfViewer { input_dir } => crate::debug::rmdf_viewer::run(input_dir)
+                .map_err(|error| RouterRunnerError::RmdfViewer { error }),
         }
     }
 }

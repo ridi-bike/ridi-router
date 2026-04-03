@@ -269,4 +269,21 @@ mod tests {
         let route = test_route(vec![(48.1, 11.5), (48.2, 11.6)], 12_345.0);
         assert_eq!(route.stats.len_m, 12_345.0);
     }
+
+    #[test]
+    fn cli_gpx_output_can_diverge_from_library_struct_shape() {
+        let gpx = GpxWriter::build_gpx(
+            test_route(vec![(48.1, 11.5), (48.2, 11.6)], 12_345.0),
+            0,
+        );
+
+        assert_eq!(gpx.routes.len(), 1);
+        assert_eq!(gpx.routes[0].points.len(), 2);
+        assert_eq!(gpx.routes[0].name.as_deref(), Some("r_0_c_2"));
+        assert!(gpx.routes[0]
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("Length: 12.35km"));
+    }
 }
