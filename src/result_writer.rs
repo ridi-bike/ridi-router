@@ -110,13 +110,13 @@ mod tests {
     }
 
     #[test]
-    fn writer_dispatches_to_json_writer_for_json_format() {
-        let output_dir = unique_test_dir();
-        fs::create_dir_all(&output_dir).unwrap();
+    fn result_writer_writes_only_requested_format() {
+        let json_output_dir = unique_test_dir();
+        fs::create_dir_all(&json_output_dir).unwrap();
 
         ResultWriter::write(
             RouteOutputRequest {
-                output_dir: output_dir.clone(),
+                output_dir: json_output_dir.clone(),
                 format: OutputFormat::Json,
             },
             RouteComputation {
@@ -125,18 +125,16 @@ mod tests {
         )
         .unwrap();
 
-        assert!(output_dir.join("001-12km.json").exists());
-        fs::remove_dir_all(output_dir).unwrap();
-    }
+        assert!(json_output_dir.join("001-12km.json").exists());
+        assert!(!json_output_dir.join("001-12km.gpx").exists());
+        fs::remove_dir_all(&json_output_dir).unwrap();
 
-    #[test]
-    fn writer_dispatches_to_gpx_writer_for_gpx_format() {
-        let output_dir = unique_test_dir();
-        fs::create_dir_all(&output_dir).unwrap();
+        let gpx_output_dir = unique_test_dir();
+        fs::create_dir_all(&gpx_output_dir).unwrap();
 
         ResultWriter::write(
             RouteOutputRequest {
-                output_dir: output_dir.clone(),
+                output_dir: gpx_output_dir.clone(),
                 format: OutputFormat::Gpx,
             },
             RouteComputation {
@@ -145,12 +143,13 @@ mod tests {
         )
         .unwrap();
 
-        assert!(output_dir.join("001-12km.gpx").exists());
-        fs::remove_dir_all(output_dir).unwrap();
+        assert!(gpx_output_dir.join("001-12km.gpx").exists());
+        assert!(!gpx_output_dir.join("001-12km.json").exists());
+        fs::remove_dir_all(gpx_output_dir).unwrap();
     }
 
     #[test]
-    fn writer_returns_ok_for_zero_routes_without_creating_files() {
+    fn result_writer_leaves_output_dir_empty_when_routes_are_empty() {
         let output_dir = unique_test_dir();
         fs::create_dir_all(&output_dir).unwrap();
 

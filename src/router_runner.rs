@@ -407,9 +407,10 @@ impl RouterRunner {
 
         info!("Using RMDF tiles from {:?}", tiles_dir);
 
-        let mut tile_manager =
-            crate::rmdf::TileManager::new(tiles_dir).context("Failed to initialize TileManager")?;
+        let mut tile_manager = crate::rmdf::TileManager::new(tiles_dir.clone())
+            .context("Failed to initialize TileManager")?;
 
+        MapDataGraph::init(tiles_dir);
         // SAFETY: TileManager lives for entire routing request
         // This is safe because we control the execution flow
         let tile_manager_static: &'static mut crate::rmdf::TileManager =
@@ -660,7 +661,18 @@ mod tests {
     }
 
     #[test]
-    fn generate_route_allows_existing_empty_output_dir() {
+    fn validate_output_dir_accepts_missing_then_createable_dir() {
+        let output_dir = unique_test_dir();
+
+        super::RouterRunner::prepare_output_dir(&output_dir).unwrap();
+
+        assert!(output_dir.is_dir());
+        assert_eq!(fs::read_dir(&output_dir).unwrap().count(), 0);
+        fs::remove_dir_all(output_dir).unwrap();
+    }
+
+    #[test]
+    fn validate_output_dir_accepts_existing_empty_dir() {
         let output_dir = unique_test_dir();
         fs::create_dir_all(&output_dir).unwrap();
 
@@ -670,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn generate_route_rejects_non_empty_output_dir() {
+    fn validate_output_dir_rejects_non_empty_dir() {
         let output_dir = unique_test_dir();
         fs::create_dir_all(&output_dir).unwrap();
         fs::write(output_dir.join("already-there.txt"), "x").unwrap();

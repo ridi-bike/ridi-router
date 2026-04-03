@@ -24,9 +24,22 @@ mod tests {
     use super::{route_file_name, route_file_path};
 
     #[test]
-    fn route_file_name_uses_expected_pattern() {
+    fn filename_rounds_distance_to_nearest_whole_kilometer() {
         assert_eq!(route_file_name(0, 12_345.0, "gpx"), "001-12km.gpx");
-        assert_eq!(route_file_name(1, 12_500.0, ".json"), "002-13km.json");
+        assert_eq!(route_file_name(1, 12_500.0, "json"), "002-13km.json");
+        assert_eq!(route_file_name(2, 499.0, "json"), "003-0km.json");
+    }
+
+    #[test]
+    fn filename_uses_expected_extension_for_format() {
+        assert_eq!(route_file_name(0, 1_000.0, "gpx"), "001-1km.gpx");
+        assert_eq!(route_file_name(0, 1_000.0, ".json"), "001-1km.json");
+    }
+
+    #[test]
+    fn filename_generation_does_not_imply_stable_ordering() {
+        assert_eq!(route_file_name(0, 2_000.0, "json"), "001-2km.json");
+        assert_eq!(route_file_name(4, 2_000.0, "json"), "005-2km.json");
     }
 
     #[test]

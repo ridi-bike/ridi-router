@@ -22,11 +22,21 @@ So I decided to build a tool that does what I need, offers flexiblity in findind
 
 ## Output
 
-Generated routes can be saved as JSON or GPX files. Route generation writes one file per route into an output directory. GPX files are a standard that can be used with a lot of different programs and physical GPS devices. For easy viewing https://www.gpxsee.org/ can be used on the desktop or the GPX files can be imported into https://www.gaiagps.com/ for easy sync to mobile devices.
+Generated routes are written as files into an output directory.
+
+- Use `--output-dir DIR` and `--format gpx|json` with `generate-route`.
+- One file is written per route.
+- If `--output-dir` does not exist, ridi-router creates it.
+- If `--output-dir` already exists and is empty, it is reused.
+- If `--output-dir` already contains files, the command fails instead of merging or overwriting.
+- Final GPX/JSON route payloads are written to files, not to stdout.
+- If route computation succeeds but produces zero valid routes, the command still exits successfully, leaves the output directory empty, and logs that no routes were found.
+
+GPX files are a standard that can be used with a lot of different programs and physical GPS devices. For easy viewing https://www.gpxsee.org/ can be used on the desktop or the GPX files can be imported into https://www.gaiagps.com/ for easy sync to mobile devices.
 
 ## How
 
-Run `ridi-router generate-route --tiles ./tiles --output-dir ./routes --format gpx --rule-file avoid-pavement.json start-finish --start 56.951861,24.113821 --finish 57.313103,25.281460`
+Run `ridi-router generate-route --tiles ./tiles --output-dir ./routes --format gpx --rule-file ./rule-examples/rules-prefer-unpaved.json start-finish --start 56.951861,24.113821 --finish 57.313103,25.281460`
 
 Ridi-router will generate routes based on a naive approximation on how I'd do it manually - start with a point, move in the right direction and at every junction make a decision on which road might be the best option. The best road is evaluated based on multiple rules that can be fine-tuned based on preferences by creating a custom rule-file.
 
@@ -44,13 +54,18 @@ Multiple different waypoints are chosen to introduce variation in the generated 
 - **Removed**: Bincode cache system (`--cache-dir` parameter)
 - **Removed**: `prep-cache` command
 - **Removed**: Direct PBF loading for routing (`--input` parameter for `generate-route`)
+- **Removed**: Single-file route output via `--output FILE`
 - **Required**: You must now generate RMDF tiles before routing using the `generate-tiles` command
-- **New**: `--tiles` directory parameter (required for routing)
+- **Required**: You must now route with `--tiles`, `--output-dir`, and `--format`
 
 **Migration**: To upgrade from v0.x, you'll need to:
 1. Download OSM PBF files for your region from https://download.geofabrik.de/
 2. Generate RMDF tiles using `ridi-router generate-tiles`
 3. Use the generated tiles directory for routing
+4. Read final route files from the output directory instead of stdout or a single `--output` file
+
+> [!NOTE]
+> Stdout is intentionally kept free of final GPX/JSON route payloads so the CLI can grow future machine-oriented streaming output without mixing it with file output.
 
 ## Usage
 
@@ -84,13 +99,13 @@ Before routing, you must first generate RMDF tiles from a PBF file:
 ridi-router generate-tiles \
     --input montenegro.osm.pbf \
     --output ./tiles \
-    --tile-size 0.1
+    --tile-size-deg 0.1
 ```
 
 Args:
 - `--input` - OSM PBF file downloaded from https://download.geofabrik.de/
 - `--output` - Directory where tiles and manifest will be stored
-- `--tile-size` - Tile size in degrees (default: 1.0, smaller values like 0.1 for better granularity)
+- `--tile-size-deg` - Tile size in degrees (default: 1.0, smaller values like 0.1 for better granularity)
 
 #### Step 2: Start-Finish Route Generation
 
@@ -99,7 +114,7 @@ ridi-router generate-route \
     --tiles ./tiles \
     --output-dir ./routes \
     --format gpx \
-    --rule-file avoid-pavement.json \
+    --rule-file ./rule-examples/rules-prefer-unpaved.json \
     start-finish \
     --start 56.951861,24.113821 \
     --finish 57.313103,25.281460
@@ -120,7 +135,7 @@ ridi-router generate-route \
     --tiles ./tiles \
     --output-dir ./routes \
     --format json \
-    --rule-file avoid-pavement.json \
+    --rule-file ./rule-examples/rules-prefer-unpaved.json \
     round-trip \
     --start-finish 56.951861,24.113821 \
     --bearing 35 \
@@ -136,6 +151,10 @@ Args:
 - `--bearing` - Direction in degrees (North: 0°, East: 90°, South: 180°, West: 270°)
 - `--distance` - Desired round trip distance in meters
 
+Notes:
+- `manifest.json` is required in the tiles directory.
+- Route file ordering is not guaranteed yet, so rely on file presence and contents rather than filename order.
+- If no routes are found, the command still exits with code 0 and leaves `--output-dir` empty.
 ### Rule file
 
 A rule file is a json file that is read and used when evaluating which road to take at a given junction. Every junction is evaluated against all basic rules and specified advanced rules.
@@ -172,15 +191,17 @@ A rule file with default basic rule settings can be found here `./rule-examples/
 
 ### Advanced Usage
 
-#### Result Debugging
+#### RMDF Viewer
 
-To understand how routes are generated and fine-tune rules, debug information can be enabled and writted to disk. This process slows down route generation and will produce large files with information on each of the steps, junctions and weights that were calcualted on rules.
+The repo also includes an RMDF tile viewer for inspecting generated tiles.
 
-The debug mode can be enabled by spcifying `--debug-dir`. This directory will be cleared and populated with new debug files each time `generate-routes` command is run.
+Build it with `--features=rmdf-viewer`, then run:
 
-The debug files can be viewed with the `debug-viewer` build of the `ridi-router` - the debug build can be downloaded from the Github releases or can be built from source by spcifying `--features=debug-viewer`.
+```bash
+ridi-router rmdf-viewer --input-dir /path/to/tiles
+```
 
-Run the debug viewer by doing `ridi-router debug-viewer --debug-dir /path/to/debug/dir`, this will start a local web server on http://0.0.0.0:1337/ which will load the debug files and show a map on the route generation steps.
+This starts a local web server on http://0.0.0.0:1337/ and serves a browser UI for exploring tiles from `manifest.json`.
 
 > [!WARNING]
-> The debug viewer is still very much Work In Progress so the functionality is limited and there may still be bugs lurking around.
+> The RMDF viewer is still very much work in progress, so the functionality is limited and there may still be bugs lurking around.

@@ -1,132 +1,53 @@
-types-gen:
-	typeshare ./src --lang=typescript --output-file=./src/debug/viewer/ui/src/api-types.ts
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+# Common local paths / example inputs
+pbf-latvia := "./map-data/pbf/latvia-latest.osm.pbf"
+pbf-spain := "./map-data/pbf/spain-latest.osm.pbf"
+pbf-greece := "./map-data/pbf/greece-latest.osm.pbf"
+tiles-dir := "./map-data/output"
+routes-dir := "./map-data/routes"
+rule-file := "./rule-examples/rules-prefer-unpaved.json"
+start := "56.951861,24.113821"
+finish := "57.313103,25.281460"
+round-trip-start := "56.951861,24.113821"
+round-trip-bearing := "35"
+round-trip-distance := "100000"
+
+rule-schema:
 	cargo run --features=rule-schema-writer -- rule-schema-write --destination rule-examples/schema.json
 
-gps-query-range := '100000' # 100km
-gps-query-from := '56.951861,24.113821' # riga
-gps-query-to := '57.313103,25.281460' # cesis
-map-data-json-name := "map-data-riga-cesis.json"
-
-# gps-query-range := '100' # 100m
-# gps-query-from := '57.155453,24.853327' # sigulda
-# gps-query-to := '57.155453,24.853327' # sigulda
-# map-data-json-name := "test-data-sig-100.json"
-
-overpass-query := '"[out:json];
-                    way
-                      [highway]
-                      [highway!=cycleway]
-                      [highway!=steps]
-                      [highway!=pedestrian]
-                      [highway!=path]
-                      [highway!=service]
-                      [highway!=footway]
-                      [motor_vehicle!=private]
-                      [motor_vehicle!=no]
-                      [!service]
-                      [access!=no]
-                      [access!=private]
-                      (around:' + gps-query-range + ',' + gps-query-from + ',' + gps-query-to + ')->.roads;
-                    relation
-                      [type=restriction]
-                      (around:' + gps-query-range + ',' + gps-query-from + ',' + gps-query-to + ')->.rules;
-                    (
-                      .roads;>>;
-                      .rules;>>;
-                    );
-                    out;"'
-
-data-fetch-overpass-query:
-  curl --data {{overpass-query}} "https://overpass-api.de/api/interpreter" > map-data/{{map-data-json-name}}
-
 data-fetch-pbf-latvia:
-	wget -O map-data/latvia-latest.osm.pbf https://download.geofabrik.de/europe/latvia-latest.osm.pbf 
+	mkdir -p ./map-data/pbf
+	wget -O {{pbf-latvia}} https://download.geofabrik.de/europe/latvia-latest.osm.pbf
 
 data-fetch-pbf-spain:
-	wget -O map-data/spain-latest.osm.pbf https://download.geofabrik.de/europe/spain-latest.osm.pbf 
+	mkdir -p ./map-data/pbf
+	wget -O {{pbf-spain}} https://download.geofabrik.de/europe/spain-latest.osm.pbf
 
 data-fetch-pbf-greece:
-	wget -O map-data/greece-latest.osm.pbf https://download.geofabrik.de/europe/greece-latest.osm.pbf 
+	mkdir -p ./map-data/pbf
+	wget -O {{pbf-greece}} https://download.geofabrik.de/europe/greece-latest.osm.pbf
 
-# gps-test-from-lat := '56.92517' # zaķusala
-# gps-test-from-lon := '24.13688' # zaķusala
-# gps-test-from-lat := '57.55998' # zilaiskalns
-# gps-test-from-lon := '25.20804' # zilaiskalns
-# gps-test-from-lat := '56.956384' # riga
-# gps-test-from-lon := '24.121288' # riga
-# gps-test-from-lat := '57.154260' # sigulda
-# gps-test-from-lon := '24.853496' # sigulda
-# gps-test-from-lat := '57.094175' # adazi
-# gps-test-from-lon := '24.313313' # adazi
-gps-test-from-lat := '52.38901' # berlin
-gps-test-from-lon := '13.20376' # berlin
-# gps-test-to-lat := '56.92517' # zaķusala
-# gps-test-to-lon := '24.13688' # zaķusala
-# gps-test-to-lat := '57.154260' # sigulda
-# gps-test-to-lon := '24.853496' # sigulda
-gps-test-to-lat := '56.956384' # riga
-gps-test-to-lon := '24.121288' # riga
-# gps-test-from-lat := '36.618195' # malaga
-# gps-test-from-lon := '-4.500159' # malaga
-# gps-test-to-lat := '56.856551'		# doles sala
-# gps-test-to-lon := '24.253038'		# doles sala
-# gps-test-to-lat := '57.111708'		# garciems
-# gps-test-to-lon := '24.192656'		# garciems
-# gps-test-to-lat := '56.62557'		# garoza
-# gps-test-to-lon := '23.93226'		# garoza
-# gps-test-to-lat := '37.119409'		# gergal, spain
-# gps-test-to-lon := '-2.541200'		# gergal, spain
+generate-tiles-latvia:
+	cargo run -- generate-tiles --input {{pbf-latvia}} --output {{tiles-dir}} --tile-size-deg 0.1
 
-run-load-json-show:
-	cargo run -- generate-route --input map-data/{{map-data-json-name}} --output map-data/output.gpx --rule-file rule-examples/rules-empty.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
-	gpxsee map-data/output.gpx &
+generate-route-json:
+	rm -rf {{routes-dir}}
+	cargo run -- generate-route --tiles {{tiles-dir}} --output-dir {{routes-dir}} --format json --rule-file {{rule-file}} start-finish --start {{start}} --finish {{finish}}
 
-run-load-pbf-show:
-	cargo run --features=debug-split-gpx -- generate-route --input map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/lv --output map-data/output.gpx --rule-file ./rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
-	gpxsee map-data/output.gpx &
+generate-route-gpx:
+	rm -rf {{routes-dir}}
+	cargo run -- generate-route --tiles {{tiles-dir}} --output-dir {{routes-dir}} --format gpx --rule-file {{rule-file}} start-finish --start {{start}} --finish {{finish}}
 
-run-load-cache-show:
-	cargo run -- generate-route --input map-data/latvia-latest.osm.pbf --debug-dir ./map-data/debug --output map-data/output.gpx --cache-dir map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json start-finish --start {{gps-test-from-lat}},{{gps-test-from-lon}} --finish {{gps-test-to-lat}},{{gps-test-to-lon}}
-	gpxsee map-data/output.gpx &
+generate-round-trip-json:
+	rm -rf {{routes-dir}}
+	cargo run -- generate-route --tiles {{tiles-dir}} --output-dir {{routes-dir}} --format json --rule-file {{rule-file}} round-trip --start-finish {{round-trip-start}} --bearing {{round-trip-bearing}} --distance {{round-trip-distance}}
 
-run-gr:
-	cargo run -- generate-route --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece start-finish --start 37.0458401,22.1265497 --finish 37.0744365,22.4263953
+list-route-files:
+	ls -la {{routes-dir}}
 
-run-gr-short:
-	cargo run -- generate-route --input ./map-data/greece-latest.osm.pbf --output map-data/gr.gpx --cache-dir ./map-data/cache/greece start-finish --start 37.0331605,22.1573558 --finish 37.041196,22.182086 
+open-gpx-routes:
+	gpxsee {{routes-dir}}/*.gpx
 
-run-lv-round-debug:
-	cargo run -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json round-trip --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
-
-run-lv-round:
-	cargo run -- generate-route --input ./map-data/latvia-latest.osm.pbf --output map-data/lv.gpx --cache-dir ./map-data/cache/latvia --rule-file rule-examples/rules-prefer-unpaved.json round-trip --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} --bearing 0 --distance 100000
-
-
-run-lv-gen:
-  cargo run --features=debug-split-gpx -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest-apps.osm.pbf --cache-dir ./map-data/cache/latvia --rule-file ./rules.json start-finish --start 57.170998,24.86442 --finish 56.64119,24.48387
-
-run-lv-gen-nogo:
-  cargo run --features=debug-split-gpx -- generate-route --debug-dir ./map-data/debug --input ./map-data/latvia-latest.osm.pbf --rule-file ./rule-examples/rules-prefer-unpaved.json --output map-data/output.gpx start-finish --start 57.12364,24.34510 --finish 57.19295,24.58614
-
-cache-lv:
-	cargo run -- prep-cache --input ./map-data/latvia-latest.osm.pbf --cache-dir ./map-data/cache/latvia
-
-cache-spain:
-	cargo run -- prep-cache --input ./map-data/spain-latest.osm.pbf --cache-dir ./map-data/cache/spain
-
-debug-viewer:
-  cargo run --features debug-viewer -- \
-    debug-viewer \
-      --debug-dir ./map-data/debug
-
-run:
-  cargo run --features=debug-split-gpx -- \
-      --input ./map-data/brandenburg-latest.osm.pbf \
-      --output ./map-data/output.gpx \
-      --debug-dir ./map-data/debug/ \
-      --cache-dir ./map-data/cache/brandenburg-latest/ \
-      --rule-file ./rule-examples/rules-empty.json \
-    round-trip \
-      --start-finish {{gps-test-from-lat}},{{gps-test-from-lon}} \
-      --bearing 0 \
-      --distance 100000
+rmdf-viewer:
+	cargo run --features rmdf-viewer -- rmdf-viewer --input-dir {{tiles-dir}}
