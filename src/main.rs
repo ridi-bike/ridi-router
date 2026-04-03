@@ -1,15 +1,7 @@
-mod file_naming;
-mod route_output;
-use std::{
-    io::{self, IsTerminal},
-    process,
-};
-
-use router_runner::RouterRunner;
-use tracing::{error_span, Level};
-
+mod cli;
 #[cfg(feature = "rmdf-viewer")]
 mod debug;
+mod file_naming;
 mod gpx_writer;
 mod json_writer;
 mod map_data;
@@ -17,11 +9,22 @@ mod osm_data;
 mod proximity;
 mod result_writer;
 mod rmdf;
+mod route_output;
 mod router;
 mod router_runner;
+mod routing_api;
 mod simd;
 #[cfg(test)]
 mod test_utils;
+mod tiles_api;
+
+use std::{
+    io::{self, IsTerminal},
+    process,
+};
+
+use router_runner::RouterRunner;
+use tracing::{error_span, Level};
 
 fn main() {
     let subscriber = if std::io::stdin().is_terminal() {

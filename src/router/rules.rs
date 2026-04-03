@@ -1,24 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{self, BufRead, IsTerminal};
-use std::{path::PathBuf, str::Utf8Error};
-use tracing::trace;
-
-#[derive(Debug, thiserror::Error)]
-pub enum RulesError {
-    #[error("Failed to read rules file: {error}")]
-    FileRead { error: io::Error },
-
-    #[error("Failed to parse file as UTF-8: {error}")]
-    FileParse { error: Utf8Error },
-
-    #[error("Failed to parse JSON: {error}")]
-    JsonParse { error: serde_json::Error },
-
-    #[error("Failed to read from stdin: {error}")]
-    StdinRead { error: io::Error },
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
@@ -102,6 +84,7 @@ impl Default for BasicRuleNoShortDetour {
         }
     }
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BasicRuleNoSharpTurns {
@@ -229,50 +212,8 @@ pub struct RouterRules {
     pub generation: GenerationRules,
 }
 
-impl RouterRules {
-    #[tracing::instrument]
-    pub fn read_from_file(file: PathBuf) -> Result<Self, RulesError> {
-        let file = std::fs::read(file).map_err(|error| RulesError::FileRead { error })?;
-        let text =
-            std::str::from_utf8(&file[..]).map_err(|error| RulesError::FileParse { error })?;
-        let rules: RouterRules =
-            serde_json::from_str(text).map_err(|error| RulesError::JsonParse { error })?;
-
-        trace!(
-            rules = serde_json::to_string_pretty(&rules).unwrap(),
-            "Rules from file"
-        );
-        Ok(rules)
-    }
-
-    #[tracing::instrument]
-    pub fn read_from_stdin() -> Result<Self, RulesError> {
-        let mut text = String::new();
-        let stdin = io::stdin();
-        let rules: RouterRules = if !stdin.is_terminal() {
-            for line in stdin.lock().lines() {
-                let line = line.map_err(|error| RulesError::StdinRead { error })?;
-                text.push_str(&line);
-            }
-
-            serde_json::from_str(&text).map_err(|error| RulesError::JsonParse { error })?
-        } else {
-            RouterRules::default()
-        };
-
-        Ok(rules)
-    }
-
-    pub fn read(file: Option<PathBuf>) -> Result<Self, RulesError> {
-        match file {
-            None => Self::read_from_stdin(),
-            Some(file) => Self::read_from_file(file),
-        }
-    }
-}
-
 #[cfg(feature = "rule-schema-writer")]
-pub fn generate_json_schema(dest: &PathBuf) -> anyhow::Result<()> {
+pub fn generate_json_schema(dest: &std::path::PathBuf) -> anyhow::Result<()> {
     let schema = schemars::schema_for!(RouterRules);
     let file = std::fs::File::create(dest)?;
     serde_json::to_writer_pretty(file, &schema)?;

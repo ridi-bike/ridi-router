@@ -1,40 +1,32 @@
-use anyhow::{Context, Result};
-use std::{
-    fs, io,
-    num::ParseFloatError,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use anyhow::Result;
+use std::{num::ParseFloatError, path::PathBuf, str::FromStr};
 
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use tracing::{info, trace};
+use tracing::info;
 
-use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
-    map_data::graph::MapDataGraph,
+    cli::{
+        output_dir::{prepare_empty_output_dir, OutputDirError},
+        rules::{read_router_rules, RuleFileError},
+    },
     result_writer::{OutputFormat, ResultWriter, ResultWriterError, RouteOutputRequest},
     route_output::RouteComputation,
-    router::{
-        generator::{Generator, RouteWithStats},
-        rules::RouterRules,
+    router::rules::RouterRules,
+    routing_api::{
+        Coords as RoutingCoords, RouteMode, RouteRequest, RoutingError, RoutingExecutor,
+        RoutingExecutorConfig,
     },
+    tiles_api::{generate_tiles, TileGenerationError, TileGenerationRequest, TileInputSource},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum RouterRunnerError {
+    #[error(transparent)]
+    OutputDirectory { error: OutputDirError },
 
-    #[error("Failed to create output directory '{directory:?}': {error}")]
-    OutputDirectoryCreate {
-        directory: PathBuf,
-        error: io::Error,
-    },
-
-    #[error("Output directory invalid '{directory:?}': {reason}")]
-    OutputDirectoryInvalid { directory: PathBuf, reason: String },
-
-    #[error("Output directory must be empty '{directory:?}'")]
-    OutputDirectoryNotEmpty { directory: PathBuf },
+    #[error(transparent)]
+    Rules { error: RuleFileError },
 
     #[error("Coordinate error for {name}: {cause}{}", .error.as_ref().map(|e| format!(": {}", e)).unwrap_or_default())]
     Coords {
@@ -43,14 +35,17 @@ pub enum RouterRunnerError {
         error: Option<ParseFloatError>,
     },
 
-    #[error("Could not find {point} on map")]
-    PointNotFound { point: String },
+    #[error("Invalid tile generation arguments: {reason}")]
+    InvalidTileGenerationArgs { reason: &'static str },
+
+    #[error(transparent)]
+    Routing { error: RoutingError },
+
+    #[error(transparent)]
+    TileGeneration { error: TileGenerationError },
 
     #[error("Failed to write result: {error}")]
     ResultWrite { error: ResultWriterError },
-
-    #[error("Failed to generate routes: {error}")]
-    GenerateRoute { error: GeneratorError },
 }
 
 #[derive(Debug, Parser)]
@@ -61,16 +56,25 @@ struct Cli {
     pub mode: CliMode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Coords {
     lat: f32,
     lon: f32,
 }
 
+impl From<Coords> for RoutingCoords {
+    fn from(value: Coords) -> Self {
+        Self {
+            lat: value.lat,
+            lon: value.lon,
+        }
+    }
+}
+
 impl FromStr for Coords {
     type Err = RouterRunnerError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let mut split = s.split(',');
         let lat = split
             .next()
@@ -99,6 +103,7 @@ impl FromStr for Coords {
                 cause: "not parsable as f64".to_string(),
                 error: Some(error),
             })?;
+
         Ok(Coords { lat, lon })
     }
 }
@@ -204,119 +209,62 @@ enum CliMode {
 pub struct RouterRunner;
 
 impl RouterRunner {
-    #[tracing::instrument(skip_all)]
-    fn generate_route(
-        routing_mode: &RoutingMode,
-        rules: RouterRules,
-    ) -> Result<Vec<RouteWithStats>, RouterRunnerError> {
-        let (start_lat, start_lon, finish_lat, finish_lon) = match routing_mode {
-            RoutingMode::StartFinish { start, finish } => {
-                (start.lat, start.lon, finish.lat, finish.lon)
-            }
-            RoutingMode::RoundTrip { start_finish, .. } => (
-                start_finish.lat,
-                start_finish.lon,
-                start_finish.lat,
-                start_finish.lon,
-            ),
+    fn build_route_request(routing_mode: &RoutingMode, rules: RouterRules) -> RouteRequest {
+        let mode = match routing_mode {
+            RoutingMode::StartFinish { start, finish } => RouteMode::StartFinish {
+                start: start.clone().into(),
+                finish: finish.clone().into(),
+            },
+            RoutingMode::RoundTrip {
+                start_finish,
+                bearing,
+                distance,
+            } => RouteMode::RoundTrip {
+                start_finish: start_finish.clone().into(),
+                bearing: *bearing,
+                distance: *distance,
+            },
         };
 
-        let start = MapDataGraph::get()
-            .get_closest_to_coords(
-                start_lat,
-                start_lon,
-                &rules,
-                false,
-                Some(&WP_LOOKUP_ALLOWED_HWS),
-            )
-            .ok_or(RouterRunnerError::PointNotFound {
-                point: "Start point".to_string(),
-            })?;
-
-        trace!("Start point {start}");
-
-        let finish = MapDataGraph::get()
-            .get_closest_to_coords(
-                finish_lat,
-                finish_lon,
-                &rules,
-                false,
-                Some(&WP_LOOKUP_ALLOWED_HWS),
-            )
-            .ok_or(RouterRunnerError::PointNotFound {
-                point: "Finish point".to_string(),
-            })?;
-
-        trace!("Finish point {finish}");
-
-        let round_trip = if let RoutingMode::RoundTrip {
-            bearing, distance, ..
-        } = routing_mode
-        {
-            Some((*bearing, *distance))
-        } else {
-            None
-        };
-
-        let route_generator = Generator::new(start.clone(), finish.clone(), round_trip, rules);
-        let routes = route_generator
-            .generate_routes()
-            .map_err(|error| RouterRunnerError::GenerateRoute { error })?;
-
-        Ok(routes)
+        RouteRequest { mode, rules }
     }
 
-    fn prepare_output_dir(output_dir: &Path) -> Result<(), RouterRunnerError> {
-        if output_dir.exists() {
-            let metadata = fs::metadata(output_dir).map_err(|error| {
-                RouterRunnerError::OutputDirectoryInvalid {
-                    directory: output_dir.to_path_buf(),
-                    reason: format!("failed to read metadata: {error}"),
-                }
-            })?;
-
-            if !metadata.is_dir() {
-                return Err(RouterRunnerError::OutputDirectoryInvalid {
-                    directory: output_dir.to_path_buf(),
-                    reason: "path exists but is not a directory".to_string(),
-                });
+    fn build_tile_generation_request(
+        input: Option<PathBuf>,
+        input_dir: Option<PathBuf>,
+        output_dir: PathBuf,
+        tile_size_deg: f32,
+        db_path: Option<PathBuf>,
+    ) -> std::result::Result<TileGenerationRequest, RouterRunnerError> {
+        let input = match (input, input_dir) {
+            (Some(_), Some(_)) => {
+                return Err(RouterRunnerError::InvalidTileGenerationArgs {
+                    reason: "cannot use both --input and --input-dir",
+                })
             }
-
-            let mut entries = fs::read_dir(output_dir).map_err(|error| {
-                RouterRunnerError::OutputDirectoryInvalid {
-                    directory: output_dir.to_path_buf(),
-                    reason: format!("failed to read directory: {error}"),
-                }
-            })?;
-
-            if entries
-                .next()
-                .transpose()
-                .map_err(|error| RouterRunnerError::OutputDirectoryInvalid {
-                    directory: output_dir.to_path_buf(),
-                    reason: format!("failed while reading directory contents: {error}"),
-                })?
-                .is_some()
-            {
-                return Err(RouterRunnerError::OutputDirectoryNotEmpty {
-                    directory: output_dir.to_path_buf(),
-                });
+            (None, None) => {
+                return Err(RouterRunnerError::InvalidTileGenerationArgs {
+                    reason: "must provide either --input or --input-dir",
+                })
             }
+            (Some(file), None) => TileInputSource::File(file),
+            (None, Some(directory)) => TileInputSource::Directory(directory),
+        };
 
-            return Ok(());
-        }
-
-        fs::create_dir_all(output_dir).map_err(|error| RouterRunnerError::OutputDirectoryCreate {
-            directory: output_dir.to_path_buf(),
-            error,
+        Ok(TileGenerationRequest {
+            input,
+            output_dir,
+            tile_size_deg,
+            db_path,
         })
     }
 
     fn write_route_output(
         output_request: RouteOutputRequest,
         computation: RouteComputation,
-    ) -> Result<(), RouterRunnerError> {
-        Self::prepare_output_dir(&output_request.output_dir)?;
+    ) -> std::result::Result<(), RouterRunnerError> {
+        prepare_empty_output_dir(&output_request.output_dir)
+            .map_err(|error| RouterRunnerError::OutputDirectory { error })?;
 
         if computation.routes.is_empty() {
             info!(output_dir = ?output_request.output_dir, "No routes found");
@@ -326,120 +274,79 @@ impl RouterRunner {
             .map_err(|error| RouterRunnerError::ResultWrite { error })
     }
 
-    #[tracing::instrument(skip_all)]
     fn run_generate_route(
         tiles_dir: PathBuf,
         routing_mode: &RoutingMode,
         output_request: RouteOutputRequest,
         rule_file: Option<PathBuf>,
-    ) -> Result<()> {
-        Self::prepare_output_dir(&output_request.output_dir)?;
+    ) -> std::result::Result<(), RouterRunnerError> {
+        let rules = read_router_rules(rule_file).map_err(|error| RouterRunnerError::Rules { error })?;
 
-        let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
-
-        info!("Using RMDF tiles from {:?}", tiles_dir);
-
-        MapDataGraph::init(tiles_dir);
+        info!(tiles_dir = ?tiles_dir, "Using RMDF tiles");
+        let mut executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir })
+            .map_err(|error| RouterRunnerError::Routing { error })?;
 
         info!("Route generation started");
+        let request = Self::build_route_request(routing_mode, rules);
+        let computation = executor
+            .generate(request)
+            .map_err(|error| RouterRunnerError::Routing { error })?;
+        Self::write_route_output(output_request, computation)
+    }
 
-        let computation = RouterRunner::generate_route(routing_mode, rules).map(RouteComputation::from)?;
-        RouterRunner::write_route_output(output_request, computation)?;
+    fn run_generate_tiles(
+        input: Option<PathBuf>,
+        input_dir: Option<PathBuf>,
+        output_dir: PathBuf,
+        tile_size_deg: f32,
+        db_path: Option<PathBuf>,
+    ) -> std::result::Result<(), RouterRunnerError> {
+        let request = Self::build_tile_generation_request(
+            input,
+            input_dir,
+            output_dir,
+            tile_size_deg,
+            db_path,
+        )?;
+
+        info!(input = ?request.input, output_dir = ?request.output_dir, "Tile generation started");
+        let summary = generate_tiles(request).map_err(|error| RouterRunnerError::TileGeneration {
+            error,
+        })?;
+        info!(output_dir = ?summary.output_dir, tile_count = summary.tile_count, "Tile generation complete");
+
         Ok(())
     }
 
     #[tracing::instrument]
     pub fn run() -> Result<()> {
         let cli = Cli::parse();
-        match &cli.mode {
+        match cli.mode {
             CliMode::GenerateRoute {
                 routing_mode,
                 tiles,
                 output_dir,
                 format,
                 rule_file,
-            } => RouterRunner::run_generate_route(
-                tiles.clone(),
-                routing_mode,
-                RouteOutputRequest {
-                    output_dir: output_dir.clone(),
-                    format: *format,
-                },
-                rule_file.clone(),
-            ),
+            } => Ok(Self::run_generate_route(
+                tiles,
+                &routing_mode,
+                RouteOutputRequest { output_dir, format },
+                rule_file,
+            )?),
             CliMode::GenerateTiles {
                 input,
                 input_dir,
                 output,
                 tile_size_deg,
                 db_path,
-            } => {
-                // Validate exactly one input option is provided
-                match (&input, &input_dir) {
-                    (Some(_), Some(_)) => {
-                        anyhow::bail!("Cannot use both --input and --input-dir");
-                    }
-                    (None, None) => {
-                        anyhow::bail!("Must provide either --input or --input-dir");
-                    }
-                    _ => {}
-                }
-
-                if let Some(input_file) = input {
-                    // Single-PBF mode (existing behavior)
-                    use crate::rmdf::generator::TileGenerator;
-
-                    // Validate that input is a file, not a directory
-                    if input_file.is_dir() {
-                        anyhow::bail!(
-                            "--input expects a PBF file, but {:?} is a directory. Use --input-dir for multi-file mode.",
-                            input_file
-                        );
-                    }
-
-                    info!(
-                        "Generating tiles from {:?} to {:?} (tile_size_deg={}°)",
-                        input_file, output, tile_size_deg
-                    );
-
-                    let generator =
-                        TileGenerator::new(input_file.clone(), output.clone(), *tile_size_deg)?;
-                    generator.generate()?;
-
-                    info!("Tile generation complete");
-                } else if let Some(input_dir) = input_dir {
-                    // Multi-PBF mode (new behavior)
-                    use crate::rmdf::generator::MultiPbfGenerator;
-
-                    info!(
-                        "Generating tiles from directory {:?} to {:?} (tile_size_deg={}°)",
-                        input_dir, output, tile_size_deg
-                    );
-
-                    // Use provided db_path or default to temp location in output directory
-                    let db_path = db_path
-                        .clone()
-                        .unwrap_or_else(|| output.join(".intermediate.redb"));
-
-                    let generator = MultiPbfGenerator::new(
-                        input_dir.clone(),
-                        output.clone(),
-                        *tile_size_deg,
-                        db_path,
-                    )?;
-                    generator.generate()?;
-
-                    info!("Multi-PBF tile generation complete");
-                }
-
-                Ok(())
-            }
+            } => Ok(Self::run_generate_tiles(input, input_dir, output, tile_size_deg, db_path)?),
             #[cfg(feature = "rule-schema-writer")]
             CliMode::RuleSchemaWrite { destination } => {
-                Ok(crate::router::rules::generate_json_schema(destination)?)
+                Ok(crate::router::rules::generate_json_schema(&destination)?)
             }
             #[cfg(feature = "rmdf-viewer")]
-            CliMode::RmdfViewer { input_dir } => crate::debug::rmdf_viewer::run(input_dir.clone()),
+            CliMode::RmdfViewer { input_dir } => Ok(crate::debug::rmdf_viewer::run(input_dir)?),
         }
     }
 }
@@ -457,15 +364,19 @@ mod tests {
     use clap::{error::ErrorKind, Parser};
 
     use crate::{
+        cli::output_dir::{prepare_empty_output_dir, OutputDirError},
         result_writer::{OutputFormat, RouteOutputRequest},
         route_output::RouteComputation,
         router::{
             generator::RouteWithStats,
             route::{segment::Segment, Route, RouteStatElement, RouteStats},
+            rules::RouterRules,
         },
+        routing_api::{Coords as RoutingCoords, RouteMode},
         test_utils::{
             graph_from_test_dataset, line_is_between_point_ids, set_graph_static, test_dataset_1,
         },
+        tiles_api::TileInputSource,
     };
 
     use super::Coords;
@@ -583,10 +494,102 @@ mod tests {
     }
 
     #[test]
+    fn route_mode_start_finish_maps_from_cli_inputs() {
+        let request = super::RouterRunner::build_route_request(
+            &super::RoutingMode::StartFinish {
+                start: Coords { lat: 48.1, lon: 11.5 },
+                finish: Coords { lat: 48.2, lon: 11.6 },
+            },
+            RouterRules::default(),
+        );
+
+        assert!(matches!(
+            request.mode,
+            RouteMode::StartFinish {
+                start: RoutingCoords { lat: 48.1, lon: 11.5 },
+                finish: RoutingCoords { lat: 48.2, lon: 11.6 },
+            }
+        ));
+    }
+
+    #[test]
+    fn route_mode_round_trip_maps_from_cli_inputs() {
+        let request = super::RouterRunner::build_route_request(
+            &super::RoutingMode::RoundTrip {
+                start_finish: Coords { lat: 48.1, lon: 11.5 },
+                bearing: 90.0,
+                distance: 30_000,
+            },
+            RouterRules::default(),
+        );
+
+        assert!(matches!(
+            request.mode,
+            RouteMode::RoundTrip {
+                start_finish: RoutingCoords { lat: 48.1, lon: 11.5 },
+                bearing: 90.0,
+                distance: 30_000,
+            }
+        ));
+    }
+
+    #[test]
+    fn router_runner_builds_route_request_from_cli_args() {
+        let rules = RouterRules::default();
+        let request = super::RouterRunner::build_route_request(
+            &super::RoutingMode::StartFinish {
+                start: Coords { lat: 1.0, lon: 2.0 },
+                finish: Coords { lat: 3.0, lon: 4.0 },
+            },
+            rules.clone(),
+        );
+
+        match request.mode {
+            RouteMode::StartFinish { start, finish } => {
+                assert_eq!(start, RoutingCoords { lat: 1.0, lon: 2.0 });
+                assert_eq!(finish, RoutingCoords { lat: 3.0, lon: 4.0 });
+            }
+            _ => panic!("expected start-finish route mode"),
+        }
+        assert_eq!(request.rules.basic.step_limit.0, rules.basic.step_limit.0);
+    }
+
+    #[test]
+    fn build_tile_generation_request_maps_file_input() {
+        let request = super::RouterRunner::build_tile_generation_request(
+            Some(PathBuf::from("/tmp/input.osm.pbf")),
+            None,
+            PathBuf::from("/tmp/output"),
+            1.0,
+            None,
+        )
+        .unwrap();
+
+        assert!(matches!(request.input, TileInputSource::File(_)));
+    }
+
+    #[test]
+    fn build_tile_generation_request_rejects_missing_input_mode() {
+        let error = super::RouterRunner::build_tile_generation_request(
+            None,
+            None,
+            PathBuf::from("/tmp/output"),
+            1.0,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::RouterRunnerError::InvalidTileGenerationArgs { .. }
+        ));
+    }
+
+    #[test]
     fn validate_output_dir_accepts_missing_then_createable_dir() {
         let output_dir = unique_test_dir();
 
-        super::RouterRunner::prepare_output_dir(&output_dir).unwrap();
+        prepare_empty_output_dir(&output_dir).unwrap();
 
         assert!(output_dir.is_dir());
         assert_eq!(fs::read_dir(&output_dir).unwrap().count(), 0);
@@ -598,7 +601,7 @@ mod tests {
         let output_dir = unique_test_dir();
         fs::create_dir_all(&output_dir).unwrap();
 
-        super::RouterRunner::prepare_output_dir(&output_dir).unwrap();
+        prepare_empty_output_dir(&output_dir).unwrap();
 
         fs::remove_dir_all(output_dir).unwrap();
     }
@@ -609,13 +612,10 @@ mod tests {
         fs::create_dir_all(&output_dir).unwrap();
         fs::write(output_dir.join("already-there.txt"), "x").unwrap();
 
-        let error = super::RouterRunner::prepare_output_dir(&output_dir).unwrap_err();
+        let error = prepare_empty_output_dir(&output_dir).unwrap_err();
         fs::remove_dir_all(output_dir).unwrap();
 
-        assert!(matches!(
-            error,
-            super::RouterRunnerError::OutputDirectoryNotEmpty { .. }
-        ));
+        assert!(matches!(error, OutputDirError::NotEmpty { .. }));
     }
 
     #[test]
