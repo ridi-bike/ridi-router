@@ -1,100 +1,55 @@
-use std::{
-    io::{self, Write},
-    path::PathBuf,
-};
+use std::path::PathBuf;
 
-use serde::Serialize;
-use tracing::{info, trace};
+use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     gpx_writer::{GpxWriter, GpxWriterError},
+    json_writer::{JsonWriter, JsonWriterError},
     route_output::RouteComputation,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResultWriterError {
-    #[error("JSON Serialization error {error}")]
-    SerializeJson { error: serde_json::Error },
-
     #[error("GPX writing failed: {error}")]
     Gpx { error: GpxWriterError },
 
-    #[error("Failed to generate routes: {error}")]
-    RoutesGenerationFailed { error: String },
+    #[error("JSON writing failed: {error}")]
+    Json { error: JsonWriterError },
+}
 
-    #[error("Failed to write to stdout: {error}")]
-    Stdout { error: io::Error },
-
-    #[error("Failed to write to file: {error}")]
-    FileWrite { error: io::Error },
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+pub enum OutputFormat {
+    Gpx,
+    Json,
 }
 
 #[derive(Debug, Clone)]
-pub enum DataDestination {
-    Stdout,
-    Gpx { file: PathBuf },
-    Json { file: PathBuf },
-}
-
-#[derive(Serialize)]
-struct ErrorResult<'a> {
-    message: &'a str,
+pub struct RouteOutputRequest {
+    pub output_dir: PathBuf,
+    pub format: OutputFormat,
 }
 
 pub struct ResultWriter;
 impl ResultWriter {
-    fn serialize_result(
-        result: &Result<RouteComputation, String>,
-    ) -> Result<String, ResultWriterError> {
-        match result {
-            Ok(computation) => serde_json::to_string(computation)
-                .map_err(|error| ResultWriterError::SerializeJson { error }),
-            Err(message) => serde_json::to_string(&ErrorResult { message })
-                .map_err(|error| ResultWriterError::SerializeJson { error }),
-        }
-    }
-
-    #[tracing::instrument(skip(result))]
+    #[tracing::instrument(skip(computation))]
     pub fn write(
-        dest: DataDestination,
-        result: Result<RouteComputation, String>,
+        request: RouteOutputRequest,
+        computation: RouteComputation,
     ) -> Result<(), ResultWriterError> {
-        match dest {
-            DataDestination::Stdout => {
-                let json = Self::serialize_result(&result)?;
-
-                trace!(bytes_len = json.as_bytes().len(), "Writing json to stdout");
-
-                std::io::stdout()
-                    .write_all(json.as_bytes())
-                    .map_err(|error| ResultWriterError::Stdout { error })?;
-                Ok(())
+        match request.format {
+            OutputFormat::Gpx => {
+                info!(output_dir = ?request.output_dir, "Writing GPX routes");
+                GpxWriter::new(computation.routes, request.output_dir)
+                    .write_gpx()
+                    .map_err(|error| ResultWriterError::Gpx { error })
             }
-            DataDestination::Gpx { file } => match result {
-                Err(message) => Err(ResultWriterError::RoutesGenerationFailed { error: message }),
-                Ok(computation) => {
-                    info!(file = ?file, "Writing gpx");
-
-                    GpxWriter::new(computation.routes, file.clone())
-                        .write_gpx()
-                        .map_err(|error| ResultWriterError::Gpx { error })?;
-
-                    Ok(())
-                }
-            },
-            DataDestination::Json { file } => {
-                let json = Self::serialize_result(&result)?;
-
-                trace!(
-                    bytes_len = json.as_bytes().len(),
-                    destination = ?file,
-                    "Writing json"
-                );
-
-                std::fs::write(file, json)
-                    .map_err(|error| ResultWriterError::FileWrite { error })?;
-
-                Ok(())
+            OutputFormat::Json => {
+                info!(output_dir = ?request.output_dir, "Writing JSON routes");
+                JsonWriter::new(computation.routes, request.output_dir)
+                    .write_json()
+                    .map_err(|error| ResultWriterError::Json { error })
             }
         }
     }
@@ -115,17 +70,16 @@ mod tests {
         router::route::{RouteStatElement, RouteStats},
     };
 
-    use super::{DataDestination, ResultWriter, ResultWriterError};
+    use super::{OutputFormat, ResultWriter, RouteOutputRequest};
 
-    fn unique_test_path(extension: &str) -> PathBuf {
+    fn unique_test_dir() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "ridi-router-result-writer-{}-{}.{}",
+            "ridi-router-result-writer-{}-{}",
             process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos(),
-            extension
+                .as_nanos()
         ))
     }
 
@@ -156,49 +110,60 @@ mod tests {
     }
 
     #[test]
-    fn write_json_serializes_transport_neutral_result() {
-        let file = unique_test_path("json");
-        let result = Ok(RouteComputation {
-            routes: vec![test_route()],
-        });
+    fn writer_dispatches_to_json_writer_for_json_format() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
 
-        ResultWriter::write(DataDestination::Json { file: file.clone() }, result).unwrap();
+        ResultWriter::write(
+            RouteOutputRequest {
+                output_dir: output_dir.clone(),
+                format: OutputFormat::Json,
+            },
+            RouteComputation {
+                routes: vec![test_route()],
+            },
+        )
+        .unwrap();
 
-        let written = fs::read_to_string(&file).unwrap();
-        fs::remove_file(&file).unwrap();
-
-        assert!(written.contains("\"routes\""));
-        assert!(written.contains("\"coords\""));
-        assert!(written.contains("\"len_m\":12345.0"));
+        assert!(output_dir.join("001-12km.json").exists());
+        fs::remove_dir_all(output_dir).unwrap();
     }
 
     #[test]
-    fn write_gpx_path_uses_transport_neutral_routes() {
-        let file = unique_test_path("gpx");
-        let result = Ok(RouteComputation {
-            routes: vec![test_route()],
-        });
+    fn writer_dispatches_to_gpx_writer_for_gpx_format() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
 
-        ResultWriter::write(DataDestination::Gpx { file: file.clone() }, result).unwrap();
+        ResultWriter::write(
+            RouteOutputRequest {
+                output_dir: output_dir.clone(),
+                format: OutputFormat::Gpx,
+            },
+            RouteComputation {
+                routes: vec![test_route()],
+            },
+        )
+        .unwrap();
 
-        let written = fs::read_to_string(&file).unwrap();
-        fs::remove_file(&file).unwrap();
-
-        assert!(written.contains("<gpx"));
-        assert!(written.contains("<rtept"));
+        assert!(output_dir.join("001-12km.gpx").exists());
+        fs::remove_dir_all(output_dir).unwrap();
     }
 
     #[test]
-    fn write_error_result_returns_routes_generation_failed() {
-        let file = unique_test_path("gpx");
-        let result = Err("route generation failed".to_string());
+    fn writer_returns_ok_for_zero_routes_without_creating_files() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
 
-        let error = ResultWriter::write(DataDestination::Gpx { file }, result).unwrap_err();
+        ResultWriter::write(
+            RouteOutputRequest {
+                output_dir: output_dir.clone(),
+                format: OutputFormat::Json,
+            },
+            RouteComputation { routes: vec![] },
+        )
+        .unwrap();
 
-        assert!(matches!(
-            error,
-            ResultWriterError::RoutesGenerationFailed { error }
-                if error == "route generation failed"
-        ));
+        assert_eq!(fs::read_dir(&output_dir).unwrap().count(), 0);
+        fs::remove_dir_all(output_dir).unwrap();
     }
 }

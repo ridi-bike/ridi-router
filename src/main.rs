@@ -1,3 +1,4 @@
+mod file_naming;
 mod route_output;
 use std::{
     io::{self, IsTerminal},
@@ -10,6 +11,7 @@ use tracing::{error_span, Level};
 #[cfg(feature = "rmdf-viewer")]
 mod debug;
 mod gpx_writer;
+mod json_writer;
 mod ipc_handler;
 mod map_data;
 mod osm_data;

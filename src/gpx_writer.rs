@@ -2,20 +2,24 @@ use geo::Point;
 use gpx::{errors::GpxError, write, Gpx, GpxVersion, Route as GpxRoute, Waypoint};
 use std::{collections::HashMap, fs::File, io::Error, isize, path::PathBuf};
 
-use crate::{route_output::ComputedRoute, router::route::RouteStatElement};
+use crate::{
+    file_naming::route_file_path,
+    route_output::ComputedRoute,
+    router::route::RouteStatElement,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GpxWriterError {
-    #[error("File Creation Error {error}")]
-    FileCreateError { error: Error },
+    #[error("Failed to create GPX file '{path:?}': {error}")]
+    FileCreateError { path: PathBuf, error: Error },
 
-    #[error("Gpx Write Error {error}")]
-    GpxWrite { error: GpxError },
+    #[error("Failed to write GPX file '{path:?}': {error}")]
+    GpxWrite { path: PathBuf, error: GpxError },
 }
 
 pub struct GpxWriter {
     routes: Vec<ComputedRoute>,
-    file_name: PathBuf,
+    output_dir: PathBuf,
 }
 
 fn sort_by_longest(map: HashMap<String, RouteStatElement>) -> Vec<(String, RouteStatElement)> {
@@ -25,96 +29,83 @@ fn sort_by_longest(map: HashMap<String, RouteStatElement>) -> Vec<(String, Route
 }
 
 impl GpxWriter {
-    pub fn new(routes: Vec<ComputedRoute>, file_name: PathBuf) -> Self {
-        Self { routes, file_name }
+    pub fn new(routes: Vec<ComputedRoute>, output_dir: PathBuf) -> Self {
+        Self { routes, output_dir }
     }
+
     pub fn write_gpx(self) -> Result<(), GpxWriterError> {
-        #[cfg(not(feature = "debug-split-gpx"))]
-        let mut gpx = {
-            let mut gpx = Gpx::default();
-            gpx.version = GpxVersion::Gpx11;
-            gpx
-        };
-        for (idx, route) in self.routes.clone().into_iter().enumerate() {
-            #[cfg(feature = "debug-split-gpx")]
-            let mut gpx = {
-                let mut gpx = Gpx::default();
-                gpx.version = GpxVersion::Gpx11;
-                gpx
-            };
-            let mut gpx_route = GpxRoute::new();
-            gpx_route.name = Some(format!(
-                "r_{idx}_c_{}",
-                route.stats.cluster.map_or(-1, |c| c as isize)
-            ));
+        for (idx, route) in self.routes.into_iter().enumerate() {
+            let path = route_file_path(&self.output_dir, idx, route.stats.len_m, "gpx");
+            let gpx = Self::build_gpx(route, idx);
+            let file = File::create(&path).map_err(|error| GpxWriterError::FileCreateError {
+                path: path.clone(),
+                error,
+            })?;
 
-            let mut description = String::new();
-            description.push_str(&format!("Length: {:.2}km\n", route.stats.len_m / 1000.));
-            description.push_str(&format!(
-                "Number of junctions: {}\n",
-                route.stats.junction_count
-            ));
-            description.push_str(&format!(
-                "Cluster: {}\n",
-                route.stats.cluster.map_or(-1, |c| c as isize)
-            ));
-            description.push_str(&format!("Score: {:.2}\n", route.stats.score));
-            description.push_str("Road types:\n");
-            for (road_type, stat) in sort_by_longest(route.stats.highway).iter() {
-                description.push_str(&format!(
-                    " - {road_type}: {:.2}km, {:.2}%\n",
-                    stat.len_m / 1000.,
-                    stat.percentage,
-                ));
-            }
-            description.push_str("Road surface:\n");
-            for (surface_type, stat) in sort_by_longest(route.stats.surface).iter() {
-                description.push_str(&format!(
-                    " - {surface_type}: {:.2}km, {:.2}%\n",
-                    stat.len_m / 1000.,
-                    stat.percentage,
-                ));
-            }
-            description.push_str("Road smoothness:\n");
-            for (smoothness_type, stat) in sort_by_longest(route.stats.smoothness).iter() {
-                description.push_str(&format!(
-                    " - {smoothness_type}: {:.2}km, {:.2}%\n",
-                    stat.len_m / 1000.,
-                    stat.percentage,
-                ));
-            }
-
-            gpx_route.description = Some(description);
-
-            for (lat, lon) in &route.coords {
-                let waypoint = Waypoint::new(Point::new(*lon as f64, *lat as f64));
-                gpx_route.points.push(waypoint);
-            }
-
-            gpx.routes.push(gpx_route);
-            #[cfg(feature = "debug-split-gpx")]
-            {
-                let mut filename = PathBuf::from(&self.file_name);
-                filename.set_file_name(format!(
-                    "{}_{}.gpx",
-                    filename.file_name().unwrap().to_string_lossy(),
-                    idx
-                ));
-                let file = File::create(&filename)
-                    .map_err(|error| GpxWriterError::FileCreateError { error })?;
-
-                write(&gpx, file).map_err(|error| GpxWriterError::GpxWrite { error })?;
-            }
-        }
-        #[cfg(not(feature = "debug-split-gpx"))]
-        {
-            let file = File::create(&self.file_name)
-                .map_err(|error| GpxWriterError::FileCreateError { error })?;
-
-            write(&gpx, file).map_err(|error| GpxWriterError::GpxWrite { error })?;
+            write(&gpx, file).map_err(|error| GpxWriterError::GpxWrite {
+                path: path.clone(),
+                error,
+            })?;
         }
 
         Ok(())
+    }
+
+    fn build_gpx(route: ComputedRoute, idx: usize) -> Gpx {
+        let mut gpx = Gpx::default();
+        gpx.version = GpxVersion::Gpx11;
+
+        let mut gpx_route = GpxRoute::new();
+        gpx_route.name = Some(format!(
+            "r_{idx}_c_{}",
+            route.stats.cluster.map_or(-1, |c| c as isize)
+        ));
+
+        let mut description = String::new();
+        description.push_str(&format!("Length: {:.2}km\n", route.stats.len_m / 1000.));
+        description.push_str(&format!(
+            "Number of junctions: {}\n",
+            route.stats.junction_count
+        ));
+        description.push_str(&format!(
+            "Cluster: {}\n",
+            route.stats.cluster.map_or(-1, |c| c as isize)
+        ));
+        description.push_str(&format!("Score: {:.2}\n", route.stats.score));
+        description.push_str("Road types:\n");
+        for (road_type, stat) in sort_by_longest(route.stats.highway).iter() {
+            description.push_str(&format!(
+                " - {road_type}: {:.2}km, {:.2}%\n",
+                stat.len_m / 1000.,
+                stat.percentage,
+            ));
+        }
+        description.push_str("Road surface:\n");
+        for (surface_type, stat) in sort_by_longest(route.stats.surface).iter() {
+            description.push_str(&format!(
+                " - {surface_type}: {:.2}km, {:.2}%\n",
+                stat.len_m / 1000.,
+                stat.percentage,
+            ));
+        }
+        description.push_str("Road smoothness:\n");
+        for (smoothness_type, stat) in sort_by_longest(route.stats.smoothness).iter() {
+            description.push_str(&format!(
+                " - {smoothness_type}: {:.2}km, {:.2}%\n",
+                stat.len_m / 1000.,
+                stat.percentage,
+            ));
+        }
+
+        gpx_route.description = Some(description);
+
+        for (lat, lon) in &route.coords {
+            let waypoint = Waypoint::new(Point::new(*lon as f64, *lat as f64));
+            gpx_route.points.push(waypoint);
+        }
+
+        gpx.routes.push(gpx_route);
+        gpx
     }
 }
 
@@ -136,9 +127,9 @@ mod tests {
 
     use super::{sort_by_longest, GpxWriter};
 
-    fn unique_test_path() -> PathBuf {
+    fn unique_test_dir() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "ridi-router-gpx-writer-{}-{}.gpx",
+            "ridi-router-gpx-writer-{}-{}",
             process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -205,39 +196,81 @@ mod tests {
     }
 
     #[test]
-    fn write_gpx_accepts_transport_neutral_routes() {
-        let file = unique_test_path();
-
-        GpxWriter::new(
-            vec![test_route(vec![(48.1, 11.5), (48.2, 11.6)], 10_000.0)],
-            file.clone(),
-        )
-        .write_gpx()
-        .unwrap();
-
-        assert!(file.exists());
-        fs::remove_file(file).unwrap();
-    }
-
-    #[test]
-    fn write_gpx_includes_route_points_for_each_route() {
-        let file = unique_test_path();
+    fn gpx_writer_writes_one_file_per_route() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
 
         GpxWriter::new(
             vec![
                 test_route(vec![(48.1, 11.5), (48.2, 11.6)], 10_000.0),
-                test_route(vec![(49.1, 12.5), (49.2, 12.6), (49.3, 12.7)], 20_000.0),
+                test_route(vec![(49.1, 12.5), (49.2, 12.6)], 20_000.0),
             ],
-            file.clone(),
+            output_dir.clone(),
         )
         .write_gpx()
         .unwrap();
 
-        let parsed = gpx::read(BufReader::new(File::open(&file).unwrap())).unwrap();
-        fs::remove_file(file).unwrap();
+        let entries = fs::read_dir(&output_dir).unwrap().count();
+        fs::remove_dir_all(output_dir).unwrap();
 
-        assert_eq!(parsed.routes.len(), 2);
-        assert_eq!(parsed.routes[0].points.len(), 2);
-        assert_eq!(parsed.routes[1].points.len(), 3);
+        assert_eq!(entries, 2);
+    }
+
+    #[test]
+    fn gpx_writer_uses_expected_filename_pattern() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        GpxWriter::new(
+            vec![test_route(vec![(48.1, 11.5), (48.2, 11.6)], 12_345.0)],
+            output_dir.clone(),
+        )
+        .write_gpx()
+        .unwrap();
+
+        assert!(output_dir.join("001-12km.gpx").exists());
+        fs::remove_dir_all(output_dir).unwrap();
+    }
+
+    #[test]
+    fn gpx_writer_accepts_arbitrary_route_order_without_sorting() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        GpxWriter::new(
+            vec![
+                test_route(vec![(48.1, 11.5), (48.2, 11.6)], 1_000.0),
+                test_route(vec![(49.1, 12.5), (49.2, 12.6)], 2_000.0),
+            ],
+            output_dir.clone(),
+        )
+        .write_gpx()
+        .unwrap();
+
+        assert!(output_dir.join("001-1km.gpx").exists());
+        assert!(output_dir.join("002-2km.gpx").exists());
+        fs::remove_dir_all(output_dir).unwrap();
+    }
+
+    #[test]
+    fn write_gpx_includes_route_points_in_each_written_file() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        GpxWriter::new(
+            vec![test_route(vec![(48.1, 11.5), (48.2, 11.6), (48.3, 11.7)], 10_000.0)],
+            output_dir.clone(),
+        )
+        .write_gpx()
+        .unwrap();
+
+        let parsed = gpx::read(BufReader::new(
+            File::open(output_dir.join("001-10km.gpx")).unwrap(),
+        ))
+        .unwrap();
+        fs::remove_dir_all(output_dir).unwrap();
+
+        assert_eq!(parsed.routes.len(), 1);
+        assert_eq!(parsed.routes[0].points.len(), 3);
     }
 }

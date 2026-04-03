@@ -1,7 +1,12 @@
 use anyhow::{Context, Result};
-use std::{num::ParseFloatError, path::PathBuf, str::FromStr};
+use std::{
+    fs, io,
+    num::ParseFloatError,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use tracing::{info, trace};
 
@@ -9,7 +14,7 @@ use crate::router::generator::{GeneratorError, WP_LOOKUP_ALLOWED_HWS};
 use crate::{
     ipc_handler::IpcHandlerError,
     map_data::graph::MapDataGraph,
-    result_writer::{DataDestination, ResultWriter, ResultWriterError},
+    result_writer::{OutputFormat, ResultWriter, ResultWriterError, RouteOutputRequest},
     route_output::RouteComputation,
     router::{
         generator::{Generator, RouteWithStats},
@@ -17,21 +22,22 @@ use crate::{
     },
 };
 
-use clap::Subcommand;
-
 #[derive(Debug, thiserror::Error)]
 pub enum RouterRunnerError {
-    #[error("Output File Invalid '{filename}'")]
-    OutputFileInvalid { filename: String },
-
     #[error("Input File Invalid '{filename}'")]
     InputFileInvalid { filename: String },
 
     #[error("Input File Format Incorrect for '{filename}'")]
     InputFileFormatIncorrect { filename: PathBuf },
 
-    #[error("Output File Format Incorrect for '{filename}'")]
-    OutputFileFormatIncorrect { filename: PathBuf },
+    #[error("Failed to create output directory '{directory:?}': {error}")]
+    OutputDirectoryCreate { directory: PathBuf, error: io::Error },
+
+    #[error("Output directory invalid '{directory:?}': {reason}")]
+    OutputDirectoryInvalid { directory: PathBuf, reason: String },
+
+    #[error("Output directory must be empty '{directory:?}'")]
+    OutputDirectoryNotEmpty { directory: PathBuf },
 
     #[error("Coordinate error for {name}: {cause}{}", .error.as_ref().map(|e| format!(": {}", e)).unwrap_or_default())]
     Coords {
@@ -53,7 +59,7 @@ pub enum RouterRunnerError {
     GenerateRoute { error: GeneratorError },
 }
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 #[command(propagate_version = true)]
 struct Cli {
@@ -71,7 +77,7 @@ impl FromStr for Coords {
     type Err = RouterRunnerError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut split = s.split(",");
+        let mut split = s.split(',');
         let lat = split
             .next()
             .ok_or_else(|| RouterRunnerError::Coords {
@@ -100,27 +106,6 @@ impl FromStr for Coords {
                 error: Some(error),
             })?;
         Ok(Coords { lat, lon })
-    }
-}
-
-impl FromStr for DataDestination {
-    type Err = RouterRunnerError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "DataDestination::Stdout" {
-            return Ok(DataDestination::Stdout);
-        }
-        let file = PathBuf::from_str(s).map_err(|_error| RouterRunnerError::OutputFileInvalid {
-            filename: s.to_string(),
-        })?;
-        if let Some(ext) = file.extension() {
-            if ext == "json" {
-                return Ok(DataDestination::Json { file });
-            } else if ext == "gpx" {
-                return Ok(DataDestination::Gpx { file });
-            }
-        }
-        Err(RouterRunnerError::OutputFileFormatIncorrect { filename: file })
     }
 }
 
@@ -154,7 +139,7 @@ pub enum RoutingMode {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum CliMode {
     /// Load input data and generate a route
     GenerateRoute {
@@ -162,14 +147,13 @@ enum CliMode {
         /// Tiles directory containing manifest.json and RMDF tiles
         tiles: PathBuf,
 
-        #[arg(
-            long,
-            value_name = "FILE",
-            required = false,
-            default_value = "DataDestination::Stdout"
-        )]
-        /// Destination json or gpx file path and name. If not specified, results piped to screen
-        output: DataDestination,
+        #[arg(long, value_name = "DIR")]
+        /// Directory that will receive one output file per route
+        output_dir: PathBuf,
+
+        #[arg(long, value_enum)]
+        /// Final route output format
+        format: OutputFormat,
 
         #[arg(long, value_name = "FILE")]
         /// JSON file with specified rules for route generation. Default values used if file not
@@ -353,11 +337,69 @@ impl RouterRunner {
         Ok(routes)
     }
 
+    fn prepare_output_dir(output_dir: &Path) -> Result<(), RouterRunnerError> {
+        if output_dir.exists() {
+            let metadata = fs::metadata(output_dir).map_err(|error| {
+                RouterRunnerError::OutputDirectoryInvalid {
+                    directory: output_dir.to_path_buf(),
+                    reason: format!("failed to read metadata: {error}"),
+                }
+            })?;
+
+            if !metadata.is_dir() {
+                return Err(RouterRunnerError::OutputDirectoryInvalid {
+                    directory: output_dir.to_path_buf(),
+                    reason: "path exists but is not a directory".to_string(),
+                });
+            }
+
+            let mut entries = fs::read_dir(output_dir).map_err(|error| {
+                RouterRunnerError::OutputDirectoryInvalid {
+                    directory: output_dir.to_path_buf(),
+                    reason: format!("failed to read directory: {error}"),
+                }
+            })?;
+
+            if entries.next().transpose().map_err(|error| {
+                RouterRunnerError::OutputDirectoryInvalid {
+                    directory: output_dir.to_path_buf(),
+                    reason: format!("failed while reading directory contents: {error}"),
+                }
+            })?.is_some()
+            {
+                return Err(RouterRunnerError::OutputDirectoryNotEmpty {
+                    directory: output_dir.to_path_buf(),
+                });
+            }
+
+            return Ok(());
+        }
+
+        fs::create_dir_all(output_dir).map_err(|error| RouterRunnerError::OutputDirectoryCreate {
+            directory: output_dir.to_path_buf(),
+            error,
+        })
+    }
+
+    fn write_route_output(
+        output_request: RouteOutputRequest,
+        computation: RouteComputation,
+    ) -> Result<(), RouterRunnerError> {
+        Self::prepare_output_dir(&output_request.output_dir)?;
+
+        if computation.routes.is_empty() {
+            info!(output_dir = ?output_request.output_dir, "No routes found");
+        }
+
+        ResultWriter::write(output_request, computation)
+            .map_err(|error| RouterRunnerError::ResultWrite { error })
+    }
+
     #[tracing::instrument(skip_all)]
     fn run_generate_route(
         tiles_dir: PathBuf,
         routing_mode: &RoutingMode,
-        data_destination: &DataDestination,
+        output_request: RouteOutputRequest,
         rule_file: Option<PathBuf>,
     ) -> Result<()> {
         let rules = RouterRules::read(rule_file).context("Failed to read rules")?;
@@ -374,12 +416,10 @@ impl RouterRunner {
 
         info!("Route generation started");
 
-        let route_result =
-            RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules)
-                .map(RouteComputation::from)
-                .map_err(|error| format!("Error generating route {:?}", error));
-        ResultWriter::write(data_destination.clone(), route_result)
-            .map_err(|error| RouterRunnerError::ResultWrite { error })?;
+        let computation = RouterRunner::generate_route_with_tiles(tile_manager_static, routing_mode, rules)
+            .map(RouteComputation::from)?;
+
+        RouterRunner::write_route_output(output_request, computation)?;
         Ok(())
     }
 
@@ -390,12 +430,16 @@ impl RouterRunner {
             CliMode::GenerateRoute {
                 routing_mode,
                 tiles,
+                output_dir,
+                format,
                 rule_file,
-                output,
             } => RouterRunner::run_generate_route(
                 tiles.clone(),
                 routing_mode,
-                output,
+                RouteOutputRequest {
+                    output_dir: output_dir.clone(),
+                    format: *format,
+                },
                 rule_file.clone(),
             ),
             CliMode::GenerateTiles {
@@ -477,9 +521,18 @@ impl RouterRunner {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        fs,
+        path::PathBuf,
+        process,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use clap::{error::ErrorKind, Parser};
 
     use crate::{
+        result_writer::{OutputFormat, RouteOutputRequest},
         route_output::RouteComputation,
         router::{
             generator::RouteWithStats,
@@ -491,6 +544,17 @@ mod tests {
     };
 
     use super::Coords;
+
+    fn unique_test_dir() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ridi-router-router-runner-{}-{}",
+            process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
 
     fn test_route_stats() -> RouteStats {
         RouteStats {
@@ -527,6 +591,113 @@ mod tests {
             error,
             super::RouterRunnerError::Coords { cause, .. } if cause == "missing"
         ));
+    }
+
+    #[test]
+    fn generate_route_cli_requires_output_dir() {
+        let error = super::Cli::try_parse_from([
+            "ridi-router",
+            "generate-route",
+            "--tiles",
+            "/tmp/tiles",
+            "--format",
+            "json",
+            "start-finish",
+            "--start",
+            "48.1,11.5",
+            "--finish",
+            "48.2,11.6",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn generate_route_cli_requires_format() {
+        let error = super::Cli::try_parse_from([
+            "ridi-router",
+            "generate-route",
+            "--tiles",
+            "/tmp/tiles",
+            "--output-dir",
+            "/tmp/output",
+            "start-finish",
+            "--start",
+            "48.1,11.5",
+            "--finish",
+            "48.2,11.6",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn generate_route_cli_rejects_old_output_flag() {
+        let error = super::Cli::try_parse_from([
+            "ridi-router",
+            "generate-route",
+            "--tiles",
+            "/tmp/tiles",
+            "--output",
+            "route.json",
+            "--output-dir",
+            "/tmp/output",
+            "--format",
+            "json",
+            "start-finish",
+            "--start",
+            "48.1,11.5",
+            "--finish",
+            "48.2,11.6",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn generate_route_allows_existing_empty_output_dir() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        super::RouterRunner::prepare_output_dir(&output_dir).unwrap();
+
+        fs::remove_dir_all(output_dir).unwrap();
+    }
+
+    #[test]
+    fn generate_route_rejects_non_empty_output_dir() {
+        let output_dir = unique_test_dir();
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::write(output_dir.join("already-there.txt"), "x").unwrap();
+
+        let error = super::RouterRunner::prepare_output_dir(&output_dir).unwrap_err();
+        fs::remove_dir_all(output_dir).unwrap();
+
+        assert!(matches!(
+            error,
+            super::RouterRunnerError::OutputDirectoryNotEmpty { .. }
+        ));
+    }
+
+    #[test]
+    fn generate_route_zero_routes_is_successful_end_state() {
+        let output_dir = unique_test_dir();
+
+        super::RouterRunner::write_route_output(
+            RouteOutputRequest {
+                output_dir: output_dir.clone(),
+                format: OutputFormat::Json,
+            },
+            RouteComputation { routes: vec![] },
+        )
+        .unwrap();
+
+        assert!(output_dir.exists());
+        assert_eq!(fs::read_dir(&output_dir).unwrap().count(), 0);
+        fs::remove_dir_all(output_dir).unwrap();
     }
 
     #[test]
