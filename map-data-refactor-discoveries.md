@@ -1,26 +1,27 @@
 # Map Data Refactor Discoveries
 
-This document captures discoveries for the **follow-up refactor** that removes the remaining old global map-data architecture.
+This document captures discoveries for the **future follow-up refactor** that removes the remaining process-global map-data architecture from routing.
 
-The main IPC simplification can proceed first, but the bigger structural issue is still the routing stack's dependence on global map-data access.
+The immediate library split can proceed first with an executor-shaped API, but the deeper routing internals are still built around global map-data access.
 
 ---
 
 ## Executive Summary
 
-The current RMDF routing path is not truly request-scoped yet.
+The current RMDF routing path is **tile-backed**, but it is **not instance-scoped** yet.
 
-The code already has:
-- request-local `TileManager` creation in `src/router_runner.rs`
-- RMDF manifest loading in `src/rmdf/tile_manager.rs`
-- tile-backed `MapDataGraph` methods in `src/map_data/graph.rs`
+What the code already has:
+- `MapDataGraph` as a concrete struct that wraps tile access
+- `TileManager`-backed lookup for point, line, adjacency, and nearest-point operations
+- a natural place to hang routing context state
 
-But the routing stack still fundamentally assumes:
-- one global `MapDataGraph`
-- initialized once
-- accessed everywhere through `MapDataGraph::get()`
+What the code still assumes:
+- one process-global `MapDataGraph`
+- initialized once through `OnceLock`
+- accessed from routing code through `MapDataGraph::get()`
+- references and tag lookups that resolve through that same global instance
 
-That assumption is the main leftover from the old long-lived process model.
+That means the real architectural problem is not missing tile support. It is the **global access pattern**.
 
 ---
 
@@ -37,54 +38,55 @@ Key lines discovered:
 - `MapDataGraph::get()` returns the global instance
 
 Implication:
-- routing still depends on hidden process-global initialization order
-- one-shot CLI execution and future library usage are both awkward with this model
+- runtime correctness still depends on hidden process-global initialization order
+- this is acceptable for the short-term CLI flow, but awkward for a reusable library
+- opening different datasets in the same process is not safely supported by the current design
 
 Why this matters for the follow-up:
-- a library should not depend on hidden global state for correctness
-- multiple independent route computations in one process become harder to reason about
-- tests also need singleton workarounds
+- a routing library should not depend on ambient global state for correctness
+- explicit context ownership is a much cleaner base for testing and reuse
 
 ---
 
-## 2. The current route path still does not cleanly wire request-local tiles into routing
+## 2. The current route path already initializes the graph from the runner, not from request-local state
 
 File:
 - `src/router_runner.rs`
 
 Current behavior:
-- `run_generate_route()` creates `TileManager::new(tiles_dir)`
-- it then does an unsafe transmute to `&'static mut TileManager`
-- that value is passed into `generate_route_with_tiles()`
-- but the parameter is unused
-- actual routing still accesses `MapDataGraph::get()`
-
-This shows a mismatch:
-- the runner thinks in terms of request-local state
-- the routing core still thinks in terms of global state
+- `run_generate_route()` calls `MapDataGraph::init(tiles_dir)`
+- route generation then resolves start and finish through `MapDataGraph::get()`
+- deeper routing code also continues to call `MapDataGraph::get()` directly
 
 Implication:
-- the current code is transitional glue, not a stable design
-- the follow-up refactor should remove this mismatch instead of extending it
+- graph setup is currently CLI-owned global initialization
+- moving that initialization into `RoutingExecutor::open(...)` is a reasonable interim step for library extraction
+- that interim step does **not** make the graph executor-scoped; it only hides the singleton behind the executor API
+
+Short-term design consequence:
+- the routing library should reject subsequent `open(...)` calls with a different `tiles_dir`
+- silently reusing the first dataset would be incorrect and dangerous
 
 ---
 
-## 3. `MapDataGraph` already wraps `TileManager`, but behind a global access pattern
+## 3. `MapDataGraph` itself is already close to an instance-scoped routing context
 
-File:
+Files:
 - `src/map_data/graph.rs`
+- `src/rmdf/tile_manager.rs`
 
 Current structure:
 - `MapDataGraph` stores `tile_manager: RwLock<crate::rmdf::TileManager>`
 - methods like `get_closest_to_coords()`, `get_adjacent()`, `get_point_from_tiles()`, and `get_line_from_tiles()` already route through tile-backed lookup
+- `TileManager` owns manifest loading, tile loading, adjacency lookup, and nearest-point lookup
 
 This is good news:
-- the tile-based backend is already in place
-- the larger problem is mostly access pattern and lifecycle, not missing functionality
+- the tile backend is already there
+- the bigger problem is lifecycle and access pattern, not the lack of a routing context type
 
 Implication:
-- the follow-up does not need to reinvent the backend
-- it mainly needs to replace global singleton access with request-scoped shared access
+- the future refactor does not need to invent a new backend first
+- it mainly needs to replace global singleton access with instance-owned shared access
 
 ---
 
@@ -92,190 +94,212 @@ Implication:
 
 Files:
 - `src/router/generator.rs`
-- `src/router/navigator.rs`
 - `src/router/walker.rs`
-- `src/router/weights.rs`
+- `src/router_runner.rs`
 - `src/map_data/graph.rs`
+- test code in `src/router/navigator.rs`, `src/router/walker.rs`, and `src/router/weights.rs`
 
-Observed pattern:
+Observed runtime pattern:
 - route generation frequently calls `MapDataGraph::get()` directly
-- this happens for closest-point lookup, adjacency traversal, point/line dereferencing, and tag lookups
+- walker traversal calls `MapDataGraph::get().get_adjacent(...)`
+- closest-point lookup calls `MapDataGraph::get().get_closest_to_coords(...)`
 
 Implication:
 - removing the singleton is a multi-file refactor
-- this is the real reason it should be its own dedicated follow-up
+- this is the main reason it should be treated as a dedicated follow-up instead of being bundled into the workspace split
 
 Expected shape of the future work:
-- pass shared routing context explicitly through generator/navigator/walker/weights
-- or make references carry enough context to avoid repeated global calls
+- pass shared routing context explicitly through generator, walker, navigator, and related helpers
+- or centralize those operations behind objects that already own the context
 
 ---
 
-## 5. The current map-data API is already close to a reusable routing context
+## 5. The ref types are also globally coupled
 
-Files:
+File:
 - `src/map_data/graph.rs`
-- `src/rmdf/tile_manager.rs`
 
-The existing `MapDataGraph` already acts like a request context:
-- owns access to `TileManager`
-- resolves points and lines on demand
-- centralizes tile-aware lookups
+Important discovery:
+- `MapDataElementRef<T>::get()` resolves through `T::get_from_tiles(...)`
+- `MapDataPoint` and `MapDataLine` implement that trait by calling `MapDataGraph::get()`
+- `ElementTagValueRef::get()` and `ElementTagSetRef::get()` also call `MapDataGraph::get()`
 
-That suggests a straightforward follow-up path:
+Why this matters:
+- the singleton is not only used in high-level routing code
+- it is also embedded in the basic reference/dereference model for points, lines, and tags
 
-### Conservative path
-- keep the `MapDataGraph` type name
-- remove the global `OnceLock`
-- instantiate `MapDataGraph` per request
-- share it via `Arc<MapDataGraph>`
+Implication:
+- a future instance-scoped refactor is not just "stop calling `MapDataGraph::get()` in generator"
+- it also needs a new strategy for dereferencing point, line, and tag refs without ambient global state
 
-### Cleaner path
-- rename `MapDataGraph` to something like `RoutingContext`
-- remove the old global naming and assumptions entirely
-
-My discovery-based recommendation:
-- start with the conservative path first
-- rename later if it still feels useful
+This is the strongest reason the full refactor is not a quick cleanup.
 
 ---
 
-## 6. There are still incomplete tile-backed behaviors in the map-data layer
+## 6. The short-term executor plan is valid, but it is only an interim containment step
+
+Recommended interim direction for the library split:
+- move graph initialization into `RoutingExecutor::open(config)`
+- keep the executor/session-shaped public API
+- allow reuse of the already-opened graph only when the same `tiles_dir` is requested again
+- reject a conflicting `tiles_dir` with a typed initialization/open error
+
+What this buys us now:
+- the CLI stops owning graph initialization directly
+- the reusable library gets the right public shape
+- the singleton becomes an internal implementation detail instead of a caller-facing requirement
+
+What it does **not** buy us yet:
+- true executor-scoped routing state
+- multiple independent datasets in the same process
+- full removal of hidden global map-data assumptions
+
+This is a good transition step, not the end state.
+
+---
+
+## 7. There are still incomplete tile-backed behaviors in the map-data layer
 
 Files:
 - `src/map_data/graph.rs`
 - `src/rmdf/tile_manager.rs`
 
 Notable TODOs found:
-- `src/map_data/graph.rs`: `// TODO: Implement proper tag loading from tiles`
-- `src/map_data/graph.rs`: `rules: Vec::new(), // TODO: Fetch rules from tiles`
-- `src/rmdf/tile_manager.rs`: `// TODO: Implement rules filtering`
-- `src/rmdf/tile_manager.rs`: `// TODO: Implement highway tag filtering`
+- `src/map_data/graph.rs`: proper tag loading from tiles is still marked TODO
+- `src/map_data/graph.rs`: point rules are still returned as `Vec::new()` with a TODO to fetch from tiles
+- `src/rmdf/tile_manager.rs`: rules filtering is still TODO
+- `src/rmdf/tile_manager.rs`: highway tag filtering is still TODO
 
 Implication:
-- the follow-up map-data refactor should not assume the tile access layer is fully complete
-- there is architectural cleanup work and feature-completeness work mixed together
+- the future map-data refactor should not assume tile access semantics are fully complete
+- there are two related but separate concerns:
+  - architectural cleanup of global access
+  - finishing tile-backed filtering and rule-loading behavior
 
-Important distinction:
-- removing the singleton is one refactor
-- finishing all tile-backed filtering/rule-loading semantics may be a separate concern
+Recommendation:
+- keep those concerns separate unless there is a strong reason to merge them
 
 ---
 
-## 7. Test support currently depends on the singleton too
+## 8. Tests currently depend on the singleton too
 
-File:
+Files:
 - `src/test_utils.rs`
+- routing tests that use `set_graph_static(...)`
 
 Found:
 - `set_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph`
-- many tests use global graph setup assumptions
+- many tests rely on singleton graph setup and then access points through `MapDataGraph::get()`
 
 Implication:
-- the follow-up refactor will need a testing story that does not depend on a process-global singleton
-- likely by constructing a request-scoped context directly in tests
+- the future refactor will need a testing story that constructs local routing contexts directly
+- test helpers will need to stop assuming process-global graph state
 
-This should improve tests, but it will require touching test helpers.
+This should improve test isolation, but it will require touching test helpers and routing tests.
 
 ---
 
-## 8. The crate is still binary-only today
+## 9. The crate is still binary-first today, so this refactor should prepare for a library cleanly
 
 Discovery:
-- there is no `src/lib.rs`
-- the repository currently exposes a CLI, not a reusable library surface
+- the current repo still behaves like a CLI-first application
+- the routing stack is not yet organized around an explicit library-owned runtime context
 
-Implication for the map-data follow-up:
-- singleton removal should be done in a way that makes future library extraction easy
+Implication for the follow-up:
+- removing singleton access should be done in a way that makes future library extraction simpler
 - explicit context passing is much more library-friendly than hidden globals
 
-This matters because future library consumers will likely want:
-- to create a routing engine/context explicitly
+Future library consumers will likely want:
+- to create a routing executor/context explicitly
 - to submit route requests programmatically
-- to receive route results as in-memory data structures
-
----
-
-## 9. `MapDataGraph` currently provides a natural seam for library extraction
-
-If the project later becomes a library, a sensible split would be:
-
-- library domain types and route computation in `src/lib.rs`
-- CLI parsing/orchestration in `src/main.rs` / runner modules
-
-A future library-facing API could be shaped around:
-- `RoutingContext::from_tiles_dir(...)`
-- `RouteRequest`
-- `RouteResult` / `ComputedRoute`
-- optional writer/helpers for GPX/JSON/NDJSON outside the core engine
-
-The current global singleton model is the biggest blocker to that direction.
+- to receive route results as Rust values without CLI/file-output concerns
 
 ---
 
 ## Recommended Follow-up Refactor Direction
 
-## Phase A - Remove global initialization assumptions
+## Phase 0 - Interim containment during library extraction
 
 Goal:
-- stop using `MAP_DATA_GRAPH` / `MapDataGraph::get()` in runtime code
+- keep the public routing API executor-shaped now without doing the full graph refactor yet
 
 Plan direction:
-- construct `MapDataGraph` per request
-- share via `Arc<MapDataGraph>`
-- pass it through generator/navigator/walker/weights
+- initialize graph state inside `RoutingExecutor::open(...)`
+- store enough internal metadata to detect the opened `tiles_dir`
+- reject subsequent opens that try to use a different tiles directory in the same process
+- document the temporary limitation: one routing dataset per process
 
-## Phase B - Fix runner/context ownership boundary
+This phase is about **containment**, not architectural completion.
+
+## Phase A - Remove runtime dependence on `MapDataGraph::get()`
 
 Goal:
-- remove unsafe transmute and the unused tile-manager parameter path in `router_runner.rs`
+- stop using `MAP_DATA_GRAPH` / `MapDataGraph::get()` in runtime routing code
 
 Plan direction:
-- runner creates the request-scoped context
-- routing stack receives that context explicitly
+- construct `MapDataGraph` as owned executor state
+- pass shared context explicitly through generator, walker, navigator, and related helpers
+- stop making routing logic reach outward for ambient global state
+
+## Phase B - Replace globally coupled ref dereferencing
+
+Goal:
+- make point, line, and tag refs work without `MapDataGraph::get()`
+
+Possible directions:
+- make refs lightweight IDs only and resolve them through explicit context methods
+- or give routing objects methods that do the dereferencing on behalf of callers
+- avoid baking long-lived ambient graph access into the ref types themselves
+
+This phase is the real heart of the instance-scoping refactor.
 
 ## Phase C - Repair test helpers
 
 Goal:
 - make tests construct local contexts directly
-- stop depending on singleton initialization helpers
-
-## Phase D - Prepare for library extraction
-
-Goal:
-- make CLI a thin wrapper over reusable Rust API
+- remove singleton-based helper setup
 
 Plan direction:
-- introduce `src/lib.rs` later
-- keep core routing request/response types independent from CLI/file concerns
+- create test-local graph/context builders
+- update routing tests to use explicit owned context instead of static setup
+
+## Phase D - Prepare for later cleanup and naming simplification
+
+Goal:
+- make the routing context model obvious and library-friendly
+
+Possible direction:
+- keep the `MapDataGraph` name during the mechanical refactor first
+- consider renaming later to something like `RoutingContext` only if that genuinely improves clarity
 
 ---
 
 ## What This Follow-up Refactor Should Not Automatically Try to Do
 
-To keep it manageable, the follow-up refactor should not automatically absorb every remaining concern.
-These may need to stay separate unless you explicitly want to combine them:
+To keep it manageable, the follow-up should not automatically absorb every remaining concern.
+These may need to stay separate unless explicitly combined on purpose:
 
 - full JSON output redesign
-- NDJSON event streaming implementation
-- completion of all tag/rule loading TODOs from tiles
+- event streaming API design
 - broader routing algorithm changes
-- all library extraction work at once
+- all workspace/library extraction work at once
+- every remaining tile-feature TODO in the same change
 
 The main purpose of the follow-up should be:
 - remove singleton/global map-data access
-- make runtime state explicit and request-scoped
-- improve future library readiness
+- make runtime state explicit and instance-scoped
+- improve long-term library readiness
 
 ---
 
 ## Bottom Line
 
-The IPC cleanup is the easy visible cleanup.
+The library split can move forward now with an executor/session API even if the first implementation still hides a process-global `MapDataGraph` internally.
 
-The deeper architectural follow-up is:
+That is acceptable **only** as an interim step, with explicit rejection of conflicting `tiles_dir` openings.
+
+The real follow-up refactor is still needed:
 - remove `MapDataGraph` as a global singleton
-- make routing context explicit
-- make the core usable both from CLI and, later, from a Rust library
-
-That follow-up is where the old server-era architecture is really still holding on.
+- remove global dereferencing from map-data refs
+- make routing context explicit and instance-scoped
+- make the routing core cleanly reusable from a Rust library
