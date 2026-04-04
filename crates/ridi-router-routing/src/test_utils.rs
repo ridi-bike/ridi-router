@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     map_data::{
@@ -12,6 +12,28 @@ use crate::{
     RoutingContext,
 };
 pub type OsmTestData = (Vec<OsmNode>, Vec<OsmWay>, Vec<OsmRelation>);
+
+pub struct RoutingTestContext {
+    pub graph: Arc<MapDataGraph>,
+}
+
+impl RoutingTestContext {
+    pub fn new(test_data: OsmTestData) -> Self {
+        Self {
+            graph: Arc::new(graph_from_test_dataset(test_data)),
+        }
+    }
+
+    pub fn resolver(&self) -> RoutingContext<'_> {
+        RoutingContext::new(self.graph.as_ref())
+    }
+
+    pub fn point(&self, id: u64) -> MapDataPointRef {
+        self.graph
+            .test_get_point_ref_by_id(&id)
+            .unwrap_or_else(|| panic!("missing test point id {id}"))
+    }
+}
 
 fn make_osm_point_with_id(id: u64) -> OsmNode {
     OsmNode {
@@ -357,11 +379,6 @@ pub fn test_dataset_3() -> OsmTestData {
     )
 }
 
-// REMOVED: JSON support has been removed. Use graph_from_test_dataset instead.
-// pub fn graph_from_test_file(file: &PathBuf) -> MapDataGraph {
-//     ...
-// }
-
 pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
     let map_data = MapDataGraph::new_test();
     let (test_nodes, test_ways, test_relations) = &test_data;
@@ -521,7 +538,7 @@ pub fn line_is_between_point_ids(
     let point_ids = [ctx.point(&line.points.0).id, ctx.point(&line.points.1).id];
     point_ids.contains(&id1) && point_ids.contains(&id2)
 }
-pub fn route_matches_ids(ctx: &RoutingContext<'_>, route: Route, ids: Vec<u64>) -> bool {
+pub fn route_matches_ids(ctx: &RoutingContext<'_>, route: Route, ids: &[u64]) -> bool {
     ids.iter()
         .enumerate()
         .map(|(idx, &id)| {
@@ -707,4 +724,36 @@ pub fn get_test_data_osm_json() -> Vec<&'static str> {
         r#"  ]"#,
         r#"}"#,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{test_dataset_1, test_dataset_2, RoutingTestContext};
+
+    #[test]
+    fn routing_test_context_exposes_local_graph_and_context() {
+        let test_ctx = RoutingTestContext::new(test_dataset_1());
+        let ctx = test_ctx.resolver();
+
+        let start = test_ctx.point(1);
+        let finish = test_ctx.point(7);
+
+        assert_eq!(ctx.point(&start).id, 1);
+        assert_eq!(ctx.point(&finish).id, 7);
+    }
+
+    #[test]
+    fn routing_test_contexts_support_multiple_graphs_in_one_process() {
+        let first = RoutingTestContext::new(test_dataset_1());
+        let second = RoutingTestContext::new(test_dataset_2());
+
+        let first_ctx = first.resolver();
+        let second_ctx = second.resolver();
+
+        assert!(first.graph.test_get_point_ref_by_id(&121).is_none());
+        assert!(second.graph.test_get_point_ref_by_id(&121).is_some());
+
+        assert_eq!(first_ctx.point(&first.point(7)).lines.len(), 1);
+        assert_eq!(second_ctx.point(&second.point(7)).lines.len(), 4);
+    }
 }

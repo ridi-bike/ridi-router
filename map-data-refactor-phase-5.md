@@ -124,35 +124,35 @@ Expected finish line:
 
 ## Validation checklist
 
-- [ ] `test_utils.rs` no longer exposes singleton-based setup as the standard test path
-- [ ] routing tests build local graph-backed harnesses
-- [ ] tests can create more than one graph in a single process without hidden coupling
-- [ ] no test still relies on singleton open ordering
-- [ ] leftover migration helpers/shims are removed
-- [ ] `Debug` / `Display` impls are minimal and free of hidden lookup work
-- [ ] routing crate tests pass
-- [ ] CLI crate tests pass
-- [ ] workspace-level validation for the refactor path passes
+- [x] `test_utils.rs` no longer exposes singleton-based setup as the standard test path
+- [x] routing tests build local graph-backed harnesses
+- [x] tests can create more than one graph in a single process without hidden coupling
+- [x] no test still relies on singleton open ordering
+- [x] leftover migration helpers/shims are removed
+- [x] `Debug` / `Display` impls are minimal and free of hidden lookup work
+- [x] routing crate tests pass
+- [x] CLI crate tests pass
+- [x] workspace-level validation for the refactor path passes
 
 ### Suggested checks
 
-- [ ] `rg "set_graph_static|MAP_DATA_GRAPH|MapDataGraph::get\(" crates/ridi-router-routing/src`
-- [ ] `cargo test -p ridi-router-routing`
-- [ ] `cargo test -p ridi-router-cli`
-- [ ] `cargo test --workspace`
+- [x] `rg "set_graph_static|MAP_DATA_GRAPH|MapDataGraph::get\(" crates/ridi-router-routing/src`
+- [x] `cargo test -p ridi-router-routing`
+- [x] `cargo test -p ridi-router-cli`
+- [x] `cargo test --workspace`
 - [ ] optional targeted parallel test run if applicable to the harness design
 
 ## Progress checklist
 
-- [ ] design and add local `RoutingTestContext`-style harness helpers
-- [ ] remove singleton-based test utilities
-- [ ] convert routing tests to local graph/context setup
-- [ ] add or update multi-graph tests
-- [ ] remove leftover migration scaffolding
-- [ ] simplify signatures after the conversion settles
-- [ ] audit `Debug` / `Display`
-- [ ] run final routing + CLI + workspace validation
-- [ ] confirm phase acceptance criteria are met
+- [x] design and add local `RoutingTestContext`-style harness helpers
+- [x] remove singleton-based test utilities
+- [x] convert routing tests to local graph/context setup
+- [x] add or update multi-graph tests
+- [x] remove leftover migration scaffolding
+- [x] simplify signatures after the conversion settles
+- [x] audit `Debug` / `Display`
+- [x] run final routing + CLI + workspace validation
+- [x] confirm phase acceptance criteria are met
 
 ## Notes and watch-outs
 

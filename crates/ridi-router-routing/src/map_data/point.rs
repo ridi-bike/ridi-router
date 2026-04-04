@@ -46,26 +46,15 @@ impl PartialEq for MapDataPoint {
 }
 impl Debug for MapDataPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "MapDataPoint
-    id={}
-    lat={}
-    lon={}
-    lines={:?}
-    junction={}
-    residential_in_proximity={}
-    nogo_area={}
-    rules={:#?}",
-            self.id,
-            self.lat,
-            self.lon,
-            self.lines,
-            self.is_junction(),
-            self.residential_in_proximity,
-            self.nogo_area,
-            self.rules
-        )
+        f.debug_struct("MapDataPoint")
+            .field("id", &self.id)
+            .field("lat", &self.lat)
+            .field("lon", &self.lon)
+            .field("line_count", &self.lines.len())
+            .field("rule_count", &self.rules.len())
+            .field("residential_in_proximity", &self.residential_in_proximity)
+            .field("nogo_area", &self.nogo_area)
+            .finish()
     }
 }
 

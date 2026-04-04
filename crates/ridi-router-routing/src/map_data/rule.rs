@@ -18,22 +18,10 @@ pub struct MapDataRule {
 }
 impl Debug for MapDataRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "({:?}){}({:?})",
-            self.from_lines
-                .iter()
-                .map(|line| format!("{line}"))
-                .collect::<Vec<_>>(),
-            if self.rule_type == MapDataRuleType::OnlyAllowed {
-                "--->"
-            } else {
-                "-x->"
-            },
-            self.to_lines
-                .iter()
-                .map(|line| format!("{line}"))
-                .collect::<Vec<_>>(),
-        )
+        f.debug_struct("MapDataRule")
+            .field("rule_type", &self.rule_type)
+            .field("from_line_count", &self.from_lines.len())
+            .field("to_line_count", &self.to_lines.len())
+            .finish()
     }
 }

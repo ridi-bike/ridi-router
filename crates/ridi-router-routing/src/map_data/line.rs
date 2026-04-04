@@ -46,13 +46,10 @@ impl PartialEq for MapDataLine {
 
 impl Debug for MapDataLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "MapDataLine\n    points=({},{})\n    direction={:?}\n    tags={:?}",
-            self.points.0,
-            self.points.1,
-            self.direction,
-            self.tags
-        )
+        f.debug_struct("MapDataLine")
+            .field("points", &self.points)
+            .field("direction", &self.direction)
+            .field("tags", &self.tags)
+            .finish()
     }
 }

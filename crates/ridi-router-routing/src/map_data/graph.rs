@@ -98,9 +98,8 @@ impl ElementTags {
         surface: Option<&String>,
         smoothness: Option<&String>,
     ) -> ElementTagSetRef {
-        // LEGACY: This old tag deduplication system is not used in tile-based routing
-        // Using placeholder TileId for compatibility with old code
-        // This will be removed in Phase 8 cleanup
+        // Test graph generation still deduplicates in-memory tag sets before tile serialization.
+        // Use a placeholder tile ID because these refs are not resolved through tile-backed lookups.
         let placeholder_tile = TileId { col: 0, row: 0 };
 
         let name_ref = self.get_tag_value_ref(name, placeholder_tile);
@@ -219,8 +218,8 @@ pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
 
 pub struct MapDataGraph {
     tile_manager: std::sync::RwLock<crate::rmdf::TileManager>,
-    // TODO: Implement proper tag loading from tiles
-    // For now, keeping tags in memory for compatibility
+    // Tile-backed routing resolves tag data through TileManager.
+    // Keep in-memory tags only for graph generation and test support.
     #[allow(dead_code)]
     tags: std::sync::RwLock<ElementTags>,
     // Test-only: in-memory storage for unit tests

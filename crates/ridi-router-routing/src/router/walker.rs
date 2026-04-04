@@ -735,7 +735,7 @@ mod tests {
             };
 
             let route = walker.get_route().clone();
-            assert!(route_matches_ids(&ctx, route, vec![7, 11, 12, 13, 131]));
+            assert!(route_matches_ids(&ctx, route, &[7, 11, 12, 13, 131]));
         }
     }
 

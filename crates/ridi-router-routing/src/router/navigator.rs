@@ -304,8 +304,7 @@ mod test {
             rules::RouterRules,
             weights::{WeightCalc, WeightCalcInput},
         },
-        test_utils::{graph_from_test_dataset, route_matches_ids, test_dataset_1},
-        RoutingContext,
+        test_utils::{route_matches_ids, test_dataset_1, RoutingTestContext},
     };
 
     use super::Navigator;
@@ -327,10 +326,10 @@ mod test {
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            let graph = graph_from_test_dataset(test_dataset_1());
-            let ctx = RoutingContext::new(&graph);
-            let from = graph.test_get_point_ref_by_id(&1).unwrap();
-            let to = graph.test_get_point_ref_by_id(&7).unwrap();
+            let test_ctx = RoutingTestContext::new(test_dataset_1());
+            let ctx = test_ctx.resolver();
+            let from = test_ctx.point(1);
+            let to = test_ctx.point(7);
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary.clone(),
@@ -346,7 +345,7 @@ mod test {
                 }
             };
 
-            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), &[2, 3, 6, 7]));
 
             fn weight2(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
@@ -375,7 +374,7 @@ mod test {
                 }
             };
 
-            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 4, 8, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), &[2, 3, 4, 8, 6, 7]));
         }
     }
 
@@ -404,10 +403,10 @@ mod test {
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            let graph = graph_from_test_dataset(test_dataset_1());
-            let ctx = RoutingContext::new(&graph);
-            let from = graph.test_get_point_ref_by_id(&1).unwrap();
-            let to = graph.test_get_point_ref_by_id(&7).unwrap();
+            let test_ctx = RoutingTestContext::new(test_dataset_1());
+            let ctx = test_ctx.resolver();
+            let from = test_ctx.point(1);
+            let to = test_ctx.point(7);
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -423,7 +422,7 @@ mod test {
                 }
             };
 
-            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), &[2, 3, 6, 7]));
         }
     }
 
@@ -434,10 +433,10 @@ mod test {
             fn weight(_input: WeightCalcInput) -> WeightCalcResult {
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            let graph = graph_from_test_dataset(test_dataset_1());
-            let ctx = RoutingContext::new(&graph);
-            let from = graph.test_get_point_ref_by_id(&1).unwrap();
-            let to = graph.test_get_point_ref_by_id(&11).unwrap();
+            let test_ctx = RoutingTestContext::new(test_dataset_1());
+            let ctx = test_ctx.resolver();
+            let from = test_ctx.point(1);
+            let to = test_ctx.point(11);
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -462,10 +461,10 @@ mod test {
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            let graph = graph_from_test_dataset(test_dataset_1());
-            let ctx = RoutingContext::new(&graph);
-            let from = graph.test_get_point_ref_by_id(&1).unwrap();
-            let to = graph.test_get_point_ref_by_id(&7).unwrap();
+            let test_ctx = RoutingTestContext::new(test_dataset_1());
+            let ctx = test_ctx.resolver();
+            let from = test_ctx.point(1);
+            let to = test_ctx.point(7);
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -508,10 +507,10 @@ mod test {
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(6)
             }
-            let graph = graph_from_test_dataset(test_dataset_1());
-            let ctx = RoutingContext::new(&graph);
-            let from = graph.test_get_point_ref_by_id(&1).unwrap();
-            let to = graph.test_get_point_ref_by_id(&7).unwrap();
+            let test_ctx = RoutingTestContext::new(test_dataset_1());
+            let ctx = test_ctx.resolver();
+            let from = test_ctx.point(1);
+            let to = test_ctx.point(7);
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -526,7 +525,7 @@ mod test {
                     return ;
                 }
             };
-            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 4, 8, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), &[2, 3, 4, 8, 6, 7]));
         }
     }
 }
