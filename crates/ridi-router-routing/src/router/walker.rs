@@ -1,8 +1,11 @@
 use std::{collections::HashSet, fmt::Debug};
 
-use crate::map_data::{
-    graph::{MapDataGraph, MapDataPointRef},
-    rule::MapDataRuleType,
+use crate::{
+    map_data::{
+        graph::{MapDataGraph, MapDataPointRef},
+        rule::MapDataRuleType,
+    },
+    RoutingContext,
 };
 
 use super::route::{segment::Segment, segment_list::SegmentList, Route};
@@ -48,58 +51,76 @@ impl Walker {
     }
 
     fn get_segments_for_point(&self, center_point: &MapDataPointRef) -> SegmentList {
-        let center_point_borrowed = center_point.get();
+        let ctx = RoutingContext::new(MapDataGraph::get());
+        self.get_segments_for_point_with_context(&ctx, center_point)
+    }
 
-        let not_allow_rules = center_point_borrowed
+    fn get_segments_for_point_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        center_point: &MapDataPointRef,
+    ) -> SegmentList {
+        let center_point_data = ctx.point(center_point);
+        let not_allow_rules = center_point_data
             .rules
             .iter()
             .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
             .collect::<Vec<_>>();
-        let segments = MapDataGraph::get().get_adjacent(center_point.clone());
-        let segment_list = segments
+        let segments = ctx.adjacent(center_point);
+
+        segments
             .iter()
-            .filter_map(|(l, p)| {
-                if l.get().is_one_way() && &l.get().points.1 == center_point {
+            .filter_map(|(line_ref, point_ref)| {
+                let line = ctx.line(line_ref);
+                if line.is_one_way() && &line.points.1 == center_point {
                     return None;
                 }
                 if !not_allow_rules.is_empty() {
                     let not_allow_rules_for_segment = not_allow_rules
                         .iter()
-                        .filter(|rule| rule.to_lines.contains(l))
+                        .filter(|rule| rule.to_lines.contains(line_ref))
                         .collect::<Vec<_>>();
-                    let other_segments = segments.iter().filter(|s| &s.0 != l).collect::<Vec<_>>();
+                    let other_segments = segments
+                        .iter()
+                        .filter(|segment| &segment.0 != line_ref)
+                        .collect::<Vec<_>>();
 
                     if not_allow_rules_for_segment.iter().any(|rule| {
                         other_segments
                             .iter()
-                            .all(|seg| rule.to_lines.contains(&seg.0))
+                            .all(|segment| rule.to_lines.contains(&segment.0))
                     }) {
                         return None;
                     }
                 }
-                Some(Segment::new(l.clone(), p.clone()))
+                Some(Segment::new(line_ref.clone(), point_ref.clone()))
             })
-            .collect::<SegmentList>();
-
-        segment_list
+            .collect()
     }
 
     fn get_fork_segments_for_segment(&self, segment: &Segment) -> SegmentList {
+        let ctx = RoutingContext::new(MapDataGraph::get());
+        self.get_fork_segments_for_segment_with_context(&ctx, segment)
+    }
+
+    fn get_fork_segments_for_segment_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        segment: &Segment,
+    ) -> SegmentList {
         let center_point = segment.get_end_point();
         let center_line = segment.get_line();
-
-        let prev_point = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
-            if let Some(p) = self.route_walked.get_segment_by_index(idx) {
-                &p.get_end_point().get()
-            } else {
-                &self.start.get()
-            }
+        let prev_point_id = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
+            self.route_walked
+                .get_segment_by_index(idx)
+                .map(|segment| ctx.point(segment.get_end_point()).id)
+                .unwrap_or_else(|| ctx.point(&self.start).id)
         } else {
-            &self.start.get()
+            ctx.point(&self.start).id
         };
 
-        let center_point_borrowed = center_point.get();
-        let only_allow_rules = center_point_borrowed
+        let center_point_data = ctx.point(center_point);
+        let only_allow_rules = center_point_data
             .rules
             .iter()
             .filter(|rule| {
@@ -108,7 +129,7 @@ impl Walker {
             })
             .collect::<Vec<_>>();
 
-        let not_allow_rules = center_point_borrowed
+        let not_allow_rules = center_point_data
             .rules
             .iter()
             .filter(|rule| {
@@ -117,44 +138,38 @@ impl Walker {
             })
             .collect::<Vec<_>>();
 
-        MapDataGraph::get()
-            .get_adjacent(center_point.clone())
+        ctx.adjacent(center_point)
             .into_iter()
-            .filter(|(line_next, point_next)| {
-                // do not offer the same line as you came from
-                if point_next.get().id == prev_point.id {
+            .filter(|(line_next_ref, point_next_ref)| {
+                if ctx.point(point_next_ref).id == prev_point_id {
                     return false;
                 }
 
-                // exclude if next line is one way and the direction is backwards
-                if line_next.get().is_one_way() && &line_next.get().points.1 == center_point {
+                let line_next = ctx.line(line_next_ref);
+                if line_next.is_one_way() && &line_next.points.1 == center_point {
                     return false;
                 }
 
-                // if no rules exist, don't check anything further
-                if center_point.get().rules.is_empty() {
+                if center_point_data.rules.is_empty() {
                     return true;
                 }
 
-                // if not allow rules exist, make sure next line is not in them
                 if not_allow_rules
                     .iter()
-                    .any(|rule| rule.to_lines.contains(line_next))
+                    .any(|rule| rule.to_lines.contains(line_next_ref))
                 {
                     return false;
                 }
 
-                // if only allow rules exist, only check those
                 if !only_allow_rules.is_empty() {
                     return only_allow_rules
                         .iter()
-                        .any(|rule| rule.to_lines.contains(line_next));
+                        .any(|rule| rule.to_lines.contains(line_next_ref));
                 }
 
-                // must not be in not allow rules
                 true
             })
-            .map(|(line, end_point)| Segment::new(line, end_point))
+            .map(|(line_ref, end_point_ref)| Segment::new(line_ref, end_point_ref))
             .collect()
     }
 
@@ -163,8 +178,17 @@ impl Walker {
     }
 
     fn get_roundabout_exits(&self, segment: &Segment) -> SegmentList {
+        let ctx = RoutingContext::new(MapDataGraph::get());
+        self.get_roundabout_exits_with_context(&ctx, segment)
+    }
+
+    fn get_roundabout_exits_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        segment: &Segment,
+    ) -> SegmentList {
         let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
-        if !segment.get_line().get().is_roundabout() {
+        if !ctx.line(segment.get_line()).is_roundabout() {
             return SegmentList::new();
         }
 
@@ -173,34 +197,34 @@ impl Walker {
         let mut current_segment = segment.clone();
 
         loop {
-            let fork_segments = self.get_fork_segments_for_segment(&current_segment);
+            let fork_segments = self.get_fork_segments_for_segment_with_context(ctx, &current_segment);
             let fork_segments: Vec<_> = fork_segments.into();
 
             segments.push(
                 fork_segments
                     .iter()
-                    .filter_map(|f| {
-                        if f.get_line().get().is_roundabout() {
+                    .filter_map(|fork_segment| {
+                        if ctx.line(fork_segment.get_line()).is_roundabout() {
                             return None;
                         }
-                        Some(f.clone())
+                        Some(fork_segment.clone())
                     })
                     .collect::<Vec<_>>(),
             );
 
             current_segment = match fork_segments
                 .iter()
-                .find(|s| s.get_line().get().is_roundabout())
+                .find(|roundabout_segment| ctx.line(roundabout_segment.get_line()).is_roundabout())
             {
                 None => break,
-                Some(s) => {
-                    if s.get_end_point() == segment.get_end_point() {
+                Some(roundabout_segment) => {
+                    if roundabout_segment.get_end_point() == segment.get_end_point() {
                         break;
                     }
-                    s.clone()
+                    roundabout_segment.clone()
                 }
             };
-            if visited_points.contains(&current_segment.get_end_point()) {
+            if visited_points.contains(current_segment.get_end_point()) {
                 break;
             }
             visited_points.insert(current_segment.get_end_point().clone());
@@ -210,14 +234,23 @@ impl Walker {
     }
 
     fn move_to_roundabout_exit(&mut self, exit_point: &MapDataPointRef) {
+        let ctx = RoutingContext::new(MapDataGraph::get());
+        self.move_to_roundabout_exit_with_context(&ctx, exit_point);
+    }
+
+    fn move_to_roundabout_exit_with_context(
+        &mut self,
+        ctx: &RoutingContext<'_>,
+        exit_point: &MapDataPointRef,
+    ) {
         let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
 
         let last_segment = match self.route_walked.get_segment_last() {
-            Some(seg) => {
-                if !seg.get_line().get().is_roundabout() {
+            Some(segment) => {
+                if !ctx.line(segment.get_line()).is_roundabout() {
                     return;
                 }
-                seg.clone()
+                segment.clone()
             }
             None => return,
         };
@@ -235,26 +268,23 @@ impl Walker {
             }
             visited_points.insert(last_point);
 
-            let fork_segments = self.get_fork_segments_for_segment(&current_segment);
+            let fork_segments = self.get_fork_segments_for_segment_with_context(ctx, &current_segment);
             let fork_segments: Vec<_> = fork_segments.into();
 
-            if fork_segments
-                .iter()
-                .any(|s| s.get_end_point() == exit_point)
-            {
+            if fork_segments.iter().any(|segment| segment.get_end_point() == exit_point) {
                 break;
             }
 
             current_segment = match fork_segments
                 .iter()
-                .find(|s| s.get_line().get().is_roundabout())
+                .find(|segment| ctx.line(segment.get_line()).is_roundabout())
             {
                 None => break,
-                Some(s) => {
-                    if s.get_end_point() == last_segment.get_end_point() {
+                Some(segment) => {
+                    if segment.get_end_point() == last_segment.get_end_point() {
                         break;
                     }
-                    s.clone()
+                    segment.clone()
                 }
             };
 
@@ -262,8 +292,9 @@ impl Walker {
         }
     }
 
-    pub fn move_forward_to_next_fork<T: Fn(MapDataPointRef) -> bool>(
+    pub(crate) fn move_forward_to_next_fork_with_context<T: Fn(MapDataPointRef) -> bool>(
         &mut self,
+        ctx: &RoutingContext<'_>,
         is_finished: T,
     ) -> Result<WalkerMoveResult, WalkerError> {
         let mut visited_junction: HashSet<MapDataPointRef> = HashSet::new();
@@ -277,12 +308,12 @@ impl Walker {
             }
 
             let available_segments = match self.route_walked.get_segment_last() {
-                None => self.get_segments_for_point(&self.start),
+                None => self.get_segments_for_point_with_context(ctx, &self.start),
                 Some(segment) => {
-                    if segment.get_line().get().is_roundabout() {
-                        self.get_roundabout_exits(segment)
+                    if ctx.line(segment.get_line()).is_roundabout() {
+                        self.get_roundabout_exits_with_context(ctx, segment)
                     } else {
-                        self.get_fork_segments_for_segment(segment)
+                        self.get_fork_segments_for_segment_with_context(ctx, segment)
                     }
                 }
             };
@@ -294,11 +325,11 @@ impl Walker {
             let next_segment = if let Some(next_point) = self.next_fork_choice_point.take() {
                 if !available_segments.has_segment_with_point(&next_point) {
                     return Err(WalkerError::WrongForkChoice {
-                        id: next_point.get().id,
+                        id: ctx.point(&next_point).id,
                         available_fork_ids: available_segments
                             .get_all_segment_points()
                             .iter()
-                            .map(|p| p.get().id)
+                            .map(|point_ref| ctx.point(point_ref).id)
                             .collect(),
                     });
                 }
@@ -315,33 +346,45 @@ impl Walker {
                 Some(segment) => segment,
             };
 
-            // due to problematic map data we can get into a scenario where we get into a loop
-            // where incoming road is one way and there are no leaving roads
-            if next_segment.get_end_point().get().is_junction() {
+            if ctx.point(next_segment.get_end_point()).is_junction() {
                 if visited_junction.contains(next_segment.get_end_point()) {
                     return Ok(WalkerMoveResult::DeadEnd);
                 }
                 visited_junction.insert(next_segment.get_end_point().clone());
             }
 
-            self.move_to_roundabout_exit(next_segment.get_end_point());
+            self.move_to_roundabout_exit_with_context(ctx, next_segment.get_end_point());
             self.route_walked.add_segment(next_segment.clone());
         }
     }
 
-    pub fn move_backwards_to_prev_fork(&mut self) -> Option<SegmentList> {
+    pub fn move_forward_to_next_fork<T: Fn(MapDataPointRef) -> bool>(
+        &mut self,
+        is_finished: T,
+    ) -> Result<WalkerMoveResult, WalkerError> {
+        let ctx = RoutingContext::new(MapDataGraph::get());
+        self.move_forward_to_next_fork_with_context(&ctx, is_finished)
+    }
+
+    pub(crate) fn move_backwards_to_prev_fork_with_context(
+        &mut self,
+        ctx: &RoutingContext<'_>,
+    ) -> Option<SegmentList> {
         self.next_fork_choice_point = None;
         self.route_walked.remove_last_segment();
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
-                if (last_segment.get_end_point().get().is_junction()
+                if (ctx.point(last_segment.get_end_point()).is_junction()
                     && self
-                        .get_fork_segments_for_segment(last_segment)
+                        .get_fork_segments_for_segment_with_context(ctx, last_segment)
                         .get_segment_count()
                         > 1)
-                    || (last_segment.get_line().get().is_roundabout()
-                        && self.get_roundabout_exits(last_segment).get_segment_count() > 1)
+                    || (ctx.line(last_segment.get_line()).is_roundabout()
+                        && self
+                            .get_roundabout_exits_with_context(ctx, last_segment)
+                            .get_segment_count()
+                            > 1)
                 {
                     break;
                 }
@@ -352,15 +395,21 @@ impl Walker {
         }
 
         if let Some(last_segment) = self.route_walked.get_segment_last() {
-            return Some(self.get_fork_segments_for_segment(last_segment));
+            return Some(self.get_fork_segments_for_segment_with_context(ctx, last_segment));
         }
 
         None
     }
 
+    pub fn move_backwards_to_prev_fork(&mut self) -> Option<SegmentList> {
+        let ctx = RoutingContext::new(MapDataGraph::get());
+        self.move_backwards_to_prev_fork_with_context(&ctx)
+    }
+
     pub fn get_route(&self) -> &Route {
         &self.route_walked
     }
+
 }
 
 #[cfg(test)]

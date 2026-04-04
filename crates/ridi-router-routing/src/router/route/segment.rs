@@ -1,6 +1,8 @@
 use std::fmt::Debug;
 
-use crate::map_data::graph::{MapDataLineRef, MapDataPointRef};
+use geo::Bearing;
+
+use crate::{map_data::graph::{MapDataLineRef, MapDataPointRef}, RoutingContext};
 
 #[derive(PartialEq, Clone)]
 pub struct Segment {
@@ -34,6 +36,22 @@ impl Segment {
             .1
             .get()
             .bearing(&self.line.get().points.0)
+    }
+
+    pub(crate) fn get_bearing_with_context(&self, ctx: &RoutingContext<'_>) -> f32 {
+        let line = ctx.line(&self.line);
+        if self.end_point == line.points.0 {
+            let from = ctx.point(&line.points.0);
+            let to = ctx.point(&line.points.1);
+            let from_geo = geo::Point::new(from.lon, from.lat);
+            let to_geo = geo::Point::new(to.lon, to.lat);
+            return geo::Haversine.bearing(from_geo, to_geo);
+        }
+        let from = ctx.point(&line.points.1);
+        let to = ctx.point(&line.points.0);
+        let from_geo = geo::Point::new(from.lon, from.lat);
+        let to_geo = geo::Point::new(to.lon, to.lat);
+        geo::Haversine.bearing(from_geo, to_geo)
     }
 }
 

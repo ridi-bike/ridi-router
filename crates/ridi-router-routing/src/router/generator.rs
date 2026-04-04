@@ -1,10 +1,11 @@
 use std::{collections::HashMap, ops::Sub, time::Instant};
 
 use crate::{
-    map_data::graph::{MapDataGraph, MapDataPointRef},
+    map_data::graph::MapDataPointRef,
     router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
+    RoutingContext,
 };
-use geo::{Destination, Haversine, Point};
+use geo::{Bearing, Destination, Haversine, Point};
 use hdbscan::{Hdbscan, HdbscanError, HdbscanHyperParams};
 use rayon::prelude::*;
 use tracing::{error, info, trace};
@@ -64,13 +65,29 @@ impl Generator {
         }
     }
 
+    fn point_bearing(
+        ctx: &RoutingContext<'_>,
+        from: &MapDataPointRef,
+        to: &MapDataPointRef,
+    ) -> f32 {
+        let from = ctx.point(from);
+        let to = ctx.point(to);
+        let from_geo = Point::new(from.lon, from.lat);
+        let to_geo = Point::new(to.lon, to.lat);
+
+        Haversine.bearing(from_geo, to_geo)
+    }
+
     fn create_waypoints_around(
         &self,
+        ctx: &RoutingContext<'_>,
         point: &MapDataPointRef,
         bearing: &f32,
         avoid_residential: bool,
     ) -> Vec<MapDataPointRef> {
-        let point_geo = Point::new(point.get().lon, point.get().lat);
+        let point = ctx.point(point);
+        let point_geo = Point::new(point.lon, point.lat);
+
         self.rules
             .generation
             .waypoint_generation
@@ -88,7 +105,7 @@ impl Generator {
                     .filter_map(|distance| {
                         let wp_geo = Haversine.destination(point_geo, *bearing, *distance);
 
-                        MapDataGraph::get().get_closest_to_coords(
+                        ctx.closest_to_coords(
                             wp_geo.y(),
                             wp_geo.x(),
                             &self.rules,
@@ -100,14 +117,16 @@ impl Generator {
             .collect()
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, ctx))]
     fn generate_itineraries(
         &self,
+        ctx: &RoutingContext<'_>,
         avoid_residential: bool,
         round_trip_bearing_adjustment: Option<f32>,
     ) -> Vec<Itinerary> {
         if let Some(round_trip) = self.round_trip {
-            let start_geo = Point::new(self.start.get().lon, self.start.get().lat);
+            let start = ctx.point(&self.start);
+            let start_geo = Point::new(start.lon, start.lat);
 
             return self
                 .rules
@@ -152,14 +171,13 @@ impl Generator {
                                                 dist * tip_ratio,
                                             );
 
-                                            let tip_point = match MapDataGraph::get()
-                                                .get_closest_to_coords(
-                                                    tip_geo.y(),
-                                                    tip_geo.x(),
-                                                    &self.rules,
-                                                    avoid_residential,
-                                                    Some(&WP_LOOKUP_ALLOWED_HWS),
-                                                ) {
+                                            let tip_point = match ctx.closest_to_coords(
+                                                tip_geo.y(),
+                                                tip_geo.x(),
+                                                &self.rules,
+                                                avoid_residential,
+                                                Some(&WP_LOOKUP_ALLOWED_HWS),
+                                            ) {
                                                 None => return None,
                                                 Some(p) => p,
                                             };
@@ -170,14 +188,13 @@ impl Generator {
                                                 dist * side_left_ratio,
                                             );
 
-                                            let side_left_point = match MapDataGraph::get()
-                                                .get_closest_to_coords(
-                                                    side_left_geo.y(),
-                                                    side_left_geo.x(),
-                                                    &self.rules,
-                                                    avoid_residential,
-                                                    Some(&WP_LOOKUP_ALLOWED_HWS),
-                                                ) {
+                                            let side_left_point = match ctx.closest_to_coords(
+                                                side_left_geo.y(),
+                                                side_left_geo.x(),
+                                                &self.rules,
+                                                avoid_residential,
+                                                Some(&WP_LOOKUP_ALLOWED_HWS),
+                                            ) {
                                                 None => return None,
                                                 Some(p) => p,
                                             };
@@ -188,14 +205,13 @@ impl Generator {
                                                 dist * side_right_ratio,
                                             );
 
-                                            let side_right_point = match MapDataGraph::get()
-                                                .get_closest_to_coords(
-                                                    side_right_geo.y(),
-                                                    side_right_geo.x(),
-                                                    &self.rules,
-                                                    avoid_residential,
-                                                    Some(&WP_LOOKUP_ALLOWED_HWS),
-                                                ) {
+                                            let side_right_point = match ctx.closest_to_coords(
+                                                side_right_geo.y(),
+                                                side_right_geo.x(),
+                                                &self.rules,
+                                                avoid_residential,
+                                                Some(&WP_LOOKUP_ALLOWED_HWS),
+                                            ) {
                                                 None => return None,
                                                 Some(p) => p,
                                             };
@@ -216,13 +232,15 @@ impl Generator {
                 .collect();
         }
         let from_waypoints = self.create_waypoints_around(
+            ctx,
             &self.start,
-            &self.finish.get().bearing(&self.start),
+            &Self::point_bearing(ctx, &self.finish, &self.start),
             avoid_residential,
         );
         let to_waypoints = self.create_waypoints_around(
+            ctx,
             &self.finish,
-            &self.start.get().bearing(&self.finish),
+            &Self::point_bearing(ctx, &self.start, &self.finish),
             avoid_residential,
         );
         let mut itineraries = vec![Itinerary::new_start_finish(
@@ -245,22 +263,22 @@ impl Generator {
         itineraries
     }
 
-    #[tracing::instrument(skip(self, itineraries))]
+    #[tracing::instrument(skip(self, ctx, itineraries))]
     pub fn dedupe_itineraries(
         &self,
+        ctx: &RoutingContext<'_>,
         itineraries: Vec<Itinerary>,
     ) -> Result<Vec<Itinerary>, GeneratorError> {
         let mut points = Vec::new();
-        for itinerary in itineraries.iter().filter(|i| i.waypoints.len() > 0) {
+        for itinerary in itineraries.iter().filter(|i| !i.waypoints.is_empty()) {
             points.push(
                 itinerary
                     .waypoints
                     .iter()
-                    .map(|p| {
-                        let point = p.get();
-                        vec![point.lat, point.lon]
+                    .flat_map(|point_ref| {
+                        let point = ctx.point(point_ref);
+                        [point.lat, point.lon]
                     })
-                    .flatten()
                     .collect(),
             );
         }
@@ -287,15 +305,18 @@ impl Generator {
         deduped_itineraries.append(
             &mut itineraries
                 .into_iter()
-                .filter(|i| i.waypoints.len() == 0)
+                .filter(|i| i.waypoints.is_empty())
                 .collect(),
         );
 
         Ok(deduped_itineraries)
     }
 
-    #[tracing::instrument(skip(self))]
-    pub fn generate_routes(self) -> Result<Vec<RouteWithStats>, GeneratorError> {
+    #[tracing::instrument(skip(self, ctx))]
+    pub fn generate_routes(
+        self,
+        ctx: &RoutingContext<'_>,
+    ) -> Result<Vec<RouteWithStats>, GeneratorError> {
         let route_generation_start = Instant::now();
         let mut routes: Vec<Route> = Vec::new();
         'outer: for avoid_residential in self
@@ -327,8 +348,9 @@ impl Generator {
                 {
                     break 'outer;
                 }
-                let itineraries = self.generate_itineraries(*avoid_residential, Some(adjustment));
-                let itineraries = self.dedupe_itineraries(itineraries)?;
+                let itineraries =
+                    self.generate_itineraries(ctx, *avoid_residential, Some(adjustment));
+                let itineraries = self.dedupe_itineraries(ctx, itineraries)?;
                 let itinerary_count = itineraries.len();
 
                 let route_gen_start_instant = Instant::now();
@@ -391,7 +413,7 @@ impl Generator {
                             ],
                             self.round_trip.is_some(),
                         )
-                        .generate_routes()
+                        .generate_routes_with_context(ctx)
                     })
                     .filter_map(|nav_route| match nav_route {
                         NavigationResult::Stuck => None,
@@ -413,7 +435,7 @@ impl Generator {
             }
         }
 
-        let clustering = match Clustering::generate(&routes) {
+        let clustering = match Clustering::generate_with_context(ctx, &routes) {
             None => return Ok(Vec::new()),
             Some(c) => c,
         };
@@ -424,7 +446,7 @@ impl Generator {
             .iter()
             .enumerate()
             .map(|(idx, route)| {
-                let mut stats = route.calc_stats(&self.rules);
+                let mut stats = route.calc_stats_with_context(ctx, &self.rules);
                 let approx_route = &clustering.approximated_routes[idx];
                 stats.cluster = Some(clustering.labels[idx] as usize);
                 stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();

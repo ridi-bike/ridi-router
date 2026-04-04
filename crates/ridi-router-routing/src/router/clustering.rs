@@ -1,3 +1,4 @@
+use crate::RoutingContext;
 use super::route::Route;
 use hdbscan::{Hdbscan, HdbscanHyperParams};
 use serde::{Deserialize, Serialize};
@@ -61,6 +62,67 @@ impl Clustering {
             Ok(l) => l,
             Err(e) => {
                 error!("Failed to cluster routes: {e}");
+                return None;
+            }
+        };
+
+        Some(Self {
+            approximated_routes,
+            labels,
+        })
+    }
+
+    pub fn generate_with_context(ctx: &RoutingContext<'_>, routes: &Vec<Route>) -> Option<Self> {
+        let mut approximated_routes = Vec::new();
+        let mut points = Vec::new();
+
+        for route in routes {
+            if route.get_segment_count() > 0 {
+                let points_in_step = route.get_segment_count() as f32 / APPROXIMATION_POINTS as f32;
+                let approximated_points = (0..APPROXIMATION_POINTS as u32)
+                    .map(|step| {
+                        let route_chunk = route.get_route_chunk(
+                            (step as f32 * points_in_step) as usize,
+                            ((step as f32 + 1.) * points_in_step) as usize,
+                        );
+                        let sum_point = route_chunk
+                            .iter()
+                            .map(|segment| {
+                                let point = ctx.point(segment.get_end_point());
+                                (point.lat, point.lon)
+                            })
+                            .fold((0., 0.), |acc, point| (acc.0 + point.0, acc.1 + point.1));
+                        [
+                            sum_point.0 / route_chunk.len() as f32,
+                            sum_point.1 / route_chunk.len() as f32,
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                points.push(approximated_points.as_flattened().to_vec());
+                approximated_routes.push(approximated_points);
+            }
+        }
+
+        if approximated_routes.is_empty() {
+            return None;
+        }
+
+        if approximated_routes.len() < 2 {
+            return Some(Self {
+                labels: vec![-1; approximated_routes.len()],
+                approximated_routes,
+            });
+        }
+
+        let params = HdbscanHyperParams::builder()
+            .epsilon(0.1)
+            .min_cluster_size(2)
+            .build();
+        let alg = Hdbscan::new(&points, params);
+        let labels = match alg.cluster() {
+            Ok(labels) => labels,
+            Err(error) => {
+                error!("Failed to cluster routes: {error}");
                 return None;
             }
         };

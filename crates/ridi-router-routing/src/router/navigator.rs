@@ -5,7 +5,11 @@ use std::{
 
 use tracing::trace;
 
-use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules};
+use crate::{
+    map_data::graph::{MapDataGraph, MapDataPointRef},
+    router::rules::RouterRules,
+    RoutingContext,
+};
 
 use super::{
     itinerary::Itinerary,
@@ -193,9 +197,17 @@ impl Navigator {
         }
     }
 
-    #[tracing::instrument(skip(self), fields(id = self.itinerary.id()))]
-    pub fn generate_routes(mut self) -> NavigationResult {
-        trace!("Route gen for itinerary {}", self.itinerary);
+    pub fn generate_routes(self) -> NavigationResult {
+        let ctx = RoutingContext::new(MapDataGraph::get());
+        self.generate_routes_with_context(&ctx)
+    }
+
+    #[tracing::instrument(skip(self, ctx))]
+    pub(crate) fn generate_routes_with_context(
+        mut self,
+        ctx: &RoutingContext<'_>,
+    ) -> NavigationResult {
+        trace!("Route generation started");
 
         let mut loop_counter = 0;
         loop {
@@ -203,7 +215,7 @@ impl Navigator {
 
             let move_result = self
                 .walker
-                .move_forward_to_next_fork(|p| self.itinerary.is_finished(p));
+                .move_forward_to_next_fork_with_context(ctx, |p| self.itinerary.is_finished(p));
 
             if move_result == Ok(WalkerMoveResult::Finish) {
                 return NavigationResult::Finished(self.walker.get_route().clone());
@@ -216,7 +228,10 @@ impl Navigator {
                     .map_or(Vec::new(), |d| d);
                 let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
 
-                if self.itinerary.check_set_next(last_point.clone()) {
+                if self
+                    .itinerary
+                    .check_set_next_with_context(ctx, last_point.clone())
+                {
                     self.discarded_fork_choices.set_new_next();
                 }
 
@@ -236,6 +251,7 @@ impl Navigator {
                                             fork_route_segment.get_end_point().clone(),
                                         ),
                                         rules: &self.rules,
+                                        ctx,
                                     });
                                     weight_calc_result
                                 })
@@ -261,7 +277,7 @@ impl Navigator {
                     if self
                         .walker
                         .get_route()
-                        .get_junction_before_last_segment()
+                        .get_junction_before_last_segment_with_context(ctx)
                         .is_none()
                     {
                         trace!("Stuck");
@@ -273,7 +289,7 @@ impl Navigator {
                     {
                         self.discarded_fork_choices.set_prev_next();
                     }
-                    self.walker.move_backwards_to_prev_fork();
+                    self.walker.move_backwards_to_prev_fork_with_context(ctx);
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
                 if self
@@ -282,7 +298,7 @@ impl Navigator {
                 {
                     self.discarded_fork_choices.set_prev_next();
                 }
-                self.walker.move_backwards_to_prev_fork();
+                self.walker.move_backwards_to_prev_fork_with_context(ctx);
             }
 
             if loop_counter >= self.rules.basic.step_limit.0 {

@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::router::rules::{RouterRules, RulesTagValueAction};
+use geo::Distance;
+
+use crate::{router::rules::{RouterRules, RulesTagValueAction}, RoutingContext};
 
 use super::Route;
 
@@ -72,6 +74,68 @@ impl Score {
                 None
             } else if let Some(hw) = segment.get_line().get().tags.get().highway() {
                 if hw == "residential" || segment.get_end_point().get().residential_in_proximity {
+                    None
+                } else {
+                    Some(curr_bearing)
+                }
+            } else {
+                Some(curr_bearing)
+            };
+        }
+
+        tot_bearing_diff_adj / len_m * 1000.
+    }
+
+    pub fn calc_score_with_context(
+        ctx: &RoutingContext<'_>,
+        route: &Route,
+        rules: &RouterRules,
+    ) -> f64 {
+        let mut prev_bearing: Option<f32> = None;
+        let mut tot_bearing_diff_adj: f64 = 0.;
+        let mut len_m: f64 = 0.;
+
+        for segment in route.iter() {
+            let line = ctx.line(segment.get_line());
+            let point_a = ctx.point(&line.points.0);
+            let point_b = ctx.point(&line.points.1);
+            let point_a_geo = geo::Point::new(point_a.lon, point_a.lat);
+            let point_b_geo = geo::Point::new(point_b.lon, point_b.lat);
+            let line_len: f64 = geo::Haversine.distance(point_a_geo, point_b_geo).into();
+            len_m += line_len;
+
+            let curr_bearing = segment.get_bearing_with_context(ctx);
+            if let Some(prev_bearing) = prev_bearing {
+                let bearing_diff = (prev_bearing - curr_bearing).abs() as f64;
+                tot_bearing_diff_adj += if bearing_diff >= 90. {
+                    0.
+                } else {
+                    let line_tags = ctx.tag_set(&line.tags);
+                    let mut adjusted = bearing_diff;
+                    adjusted += get_rule_adjustment(
+                        bearing_diff,
+                        &ctx.tag_value(&line_tags.highway),
+                        &rules.highway,
+                    );
+                    adjusted += get_rule_adjustment(
+                        bearing_diff,
+                        &ctx.tag_value(&line_tags.surface),
+                        &rules.surface,
+                    );
+                    adjusted += get_rule_adjustment(
+                        bearing_diff,
+                        &ctx.tag_value(&line_tags.smoothness),
+                        &rules.smoothness,
+                    );
+                    adjusted
+                }
+            }
+            let end_point = ctx.point(segment.get_end_point());
+            let line_tags = ctx.tag_set(&line.tags);
+            prev_bearing = if end_point.is_junction() {
+                None
+            } else if let Some(hw) = ctx.tag_value(&line_tags.highway) {
+                if hw == "residential" || end_point.residential_in_proximity {
                     None
                 } else {
                     Some(curr_bearing)

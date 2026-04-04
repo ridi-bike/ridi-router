@@ -129,33 +129,33 @@ Phase 3 should be able to assume:
 
 ## Validation checklist
 
-- [ ] `RoutingExecutor::generate` takes `&self`
-- [ ] start/finish lookup uses `RoutingContext`
-- [ ] generator uses context for nearest-point/lookup operations
-- [ ] walker uses context for adjacency lookup
-- [ ] navigator call paths accept/pass `&RoutingContext` where lookup access is needed
-- [ ] `route_output.rs` uses an explicit context-aware construction path
-- [ ] CLI caller compiles against the new executor API
-- [ ] no top-level runtime path depends on singleton open order
+- [x] `RoutingExecutor::generate` takes `&self`
+- [x] start/finish lookup uses `RoutingContext`
+- [x] generator uses context for nearest-point/lookup operations
+- [x] walker uses context for adjacency lookup
+- [x] navigator call paths accept/pass `&RoutingContext` where lookup access is needed
+- [x] `route_output.rs` uses an explicit context-aware construction path
+- [x] CLI caller compiles against the new executor API
+- [x] no top-level runtime path depends on singleton open order
 
 ### Suggested checks
 
 - [ ] `rg "MapDataGraph::get\(" crates/ridi-router-routing/src/routing_api.rs crates/ridi-router-routing/src/router/generator.rs crates/ridi-router-routing/src/router/walker.rs crates/ridi-router-routing/src/router/navigator.rs crates/ridi-router-routing/src/route_output.rs crates/ridi-router-cli/src/router_runner.rs`
-- [ ] targeted route-generation tests still pass on the converted path
-- [ ] `cargo test -p ridi-router-routing`
-- [ ] `cargo test -p ridi-router-cli`
+- [x] targeted route-generation tests still pass on the converted path
+- [x] `cargo test -p ridi-router-routing`
+- [x] `cargo test -p ridi-router-cli`
 
 ## Progress checklist
 
-- [ ] change `RoutingExecutor::generate` to `&self`
-- [ ] construct `RoutingContext` inside `generate(...)`
-- [ ] replace entrypoint closest-point lookups with context calls
-- [ ] thread `&RoutingContext` through generator
-- [ ] thread `&RoutingContext` through walker
-- [ ] thread `&RoutingContext` through navigator
-- [ ] move route output materialization to explicit context-aware helper(s)
-- [ ] update CLI integration
-- [ ] confirm phase acceptance criteria are met
+- [x] change `RoutingExecutor::generate` to `&self`
+- [x] construct `RoutingContext` inside `generate(...)`
+- [x] replace entrypoint closest-point lookups with context calls
+- [x] thread `&RoutingContext` through generator
+- [x] thread `&RoutingContext` through walker
+- [x] thread `&RoutingContext` through navigator
+- [x] move route output materialization to explicit context-aware helper(s)
+- [x] update CLI integration
+- [x] confirm phase acceptance criteria are met
 
 ## Notes and watch-outs
 

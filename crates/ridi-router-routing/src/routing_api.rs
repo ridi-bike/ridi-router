@@ -137,10 +137,10 @@ impl RoutingExecutor {
             })?;
 
         let routes = Generator::new(start, finish, round_trip, request.rules)
-            .generate_routes()
+            .generate_routes(&ctx)
             .map_err(|error| RoutingGenerationError::RouteGeneration { error })?;
 
-        Ok(RouteComputation::from(routes))
+        Ok(RouteComputation::from_routes(&ctx, routes))
     }
 }
 
