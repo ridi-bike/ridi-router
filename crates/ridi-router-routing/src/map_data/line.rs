@@ -2,9 +2,12 @@ use std::fmt::{Debug, Display};
 
 use serde::{Deserialize, Serialize};
 
-use super::graph::{ElementTagSetRef, MapDataPointRef};
+use super::{
+    graph::{ElementTagSetRef, MapDataPointRef},
+    point::MapDataPoint,
+};
 
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum LineDirection {
     BothWays = 0,
     OneWay = 1,
@@ -24,17 +27,14 @@ impl Display for MapDataLine {
     }
 }
 impl MapDataLine {
-    pub fn line_id(&self) -> String {
-        format!("{}-{}", self.points.0.get().id, self.points.1.get().id)
-    }
     pub fn is_one_way(&self) -> bool {
         self.direction == LineDirection::OneWay || self.direction == LineDirection::Roundabout
     }
     pub fn is_roundabout(&self) -> bool {
         self.direction == LineDirection::Roundabout
     }
-    pub fn get_len_m(&self) -> f32 {
-        self.points.0.get().distance_between(&self.points.1)
+    pub fn len_m(&self, start: &MapDataPoint, end: &MapDataPoint) -> f32 {
+        start.distance_between(end)
     }
 }
 
@@ -48,16 +48,11 @@ impl Debug for MapDataLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "MapDataLine
-    id={}
-    points=({},{})
-    one_way={}
-    roundabout={}",
-            self.line_id(),
-            self.points.0.get().id,
-            self.points.1.get().id,
-            self.is_one_way(),
-            self.direction == LineDirection::Roundabout
+            "MapDataLine\n    points=({},{})\n    direction={:?}\n    tags={:?}",
+            self.points.0,
+            self.points.1,
+            self.direction,
+            self.tags
         )
     }
 }

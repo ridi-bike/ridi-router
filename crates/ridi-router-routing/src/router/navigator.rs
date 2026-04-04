@@ -157,12 +157,7 @@ impl Debug for ForkWeights {
             "{}",
             self.weight_list
                 .iter()
-                .fold(String::new(), |all, el| format!(
-                    "{}\n\t{}:{}",
-                    all,
-                    el.0.get().id,
-                    el.1
-                ))
+                .fold(String::new(), |all, el| format!("{}\n\t{}:{}", all, el.0, el.1))
         )
     }
 }
@@ -228,10 +223,7 @@ impl Navigator {
                     .map_or(Vec::new(), |d| d);
                 let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
 
-                if self
-                    .itinerary
-                    .check_set_next_with_context(ctx, last_point.clone())
-                {
+                if self.itinerary.check_set_next(ctx, last_point.clone()) {
                     self.discarded_fork_choices.set_new_next();
                 }
 
@@ -277,7 +269,7 @@ impl Navigator {
                     if self
                         .walker
                         .get_route()
-                        .get_junction_before_last_segment_with_context(ctx)
+                        .get_junction_before_last_segment(ctx)
                         .is_none()
                     {
                         trace!("Stuck");

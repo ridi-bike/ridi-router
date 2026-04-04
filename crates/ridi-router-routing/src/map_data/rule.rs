@@ -23,7 +23,7 @@ impl Debug for MapDataRule {
             "({:?}){}({:?})",
             self.from_lines
                 .iter()
-                .map(|l| l.get().line_id())
+                .map(|line| format!("{line}"))
                 .collect::<Vec<_>>(),
             if self.rule_type == MapDataRuleType::OnlyAllowed {
                 "--->"
@@ -32,7 +32,7 @@ impl Debug for MapDataRule {
             },
             self.to_lines
                 .iter()
-                .map(|l| l.get().line_id())
+                .map(|line| format!("{line}"))
                 .collect::<Vec<_>>(),
         )
     }

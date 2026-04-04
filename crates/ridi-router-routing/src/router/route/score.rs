@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use geo::Distance;
 
 use crate::{router::rules::{RouterRules, RulesTagValueAction}, RoutingContext};
 
@@ -33,60 +32,7 @@ fn get_rule_adjustment(
 }
 
 impl Score {
-    pub fn calc_score(route: &Route, rules: &RouterRules) -> f64 {
-        let mut prev_bearing: Option<f32> = None;
-        let mut tot_bearing_diff_adj: f64 = 0.;
-        let mut len_m: f64 = 0.;
-
-        for segment in route.iter() {
-            let line_len: f64 = segment.get_line().get().get_len_m().into();
-            len_m += line_len;
-
-            let curr_bearing = segment.get_bearing();
-            if let Some(prev_bearing) = prev_bearing {
-                let bearing_diff = (prev_bearing - curr_bearing).abs() as f64;
-                tot_bearing_diff_adj += if bearing_diff >= 90. {
-                    // assumption is that a 90 or more
-                    // degree turn is a junction, not a curve
-                    // we don't want junctions
-                    0.
-                } else {
-                    let mut adjusted = bearing_diff;
-                    adjusted += get_rule_adjustment(
-                        bearing_diff,
-                        &segment.get_line().get().tags.get().highway(),
-                        &rules.highway,
-                    );
-                    adjusted += get_rule_adjustment(
-                        bearing_diff,
-                        &segment.get_line().get().tags.get().surface(),
-                        &rules.surface,
-                    );
-                    adjusted += get_rule_adjustment(
-                        bearing_diff,
-                        &segment.get_line().get().tags.get().smoothness(),
-                        &rules.smoothness,
-                    );
-                    adjusted
-                }
-            }
-            prev_bearing = if segment.get_end_point().get().is_junction() {
-                None
-            } else if let Some(hw) = segment.get_line().get().tags.get().highway() {
-                if hw == "residential" || segment.get_end_point().get().residential_in_proximity {
-                    None
-                } else {
-                    Some(curr_bearing)
-                }
-            } else {
-                Some(curr_bearing)
-            };
-        }
-
-        tot_bearing_diff_adj / len_m * 1000.
-    }
-
-    pub fn calc_score_with_context(
+    pub fn calc_score(
         ctx: &RoutingContext<'_>,
         route: &Route,
         rules: &RouterRules,
@@ -99,12 +45,10 @@ impl Score {
             let line = ctx.line(segment.get_line());
             let point_a = ctx.point(&line.points.0);
             let point_b = ctx.point(&line.points.1);
-            let point_a_geo = geo::Point::new(point_a.lon, point_a.lat);
-            let point_b_geo = geo::Point::new(point_b.lon, point_b.lat);
-            let line_len: f64 = geo::Haversine.distance(point_a_geo, point_b_geo).into();
+            let line_len: f64 = line.len_m(&point_a, &point_b).into();
             len_m += line_len;
 
-            let curr_bearing = segment.get_bearing_with_context(ctx);
+            let curr_bearing = segment.bearing(ctx);
             if let Some(prev_bearing) = prev_bearing {
                 let bearing_diff = (prev_bearing - curr_bearing).abs() as f64;
                 tot_bearing_diff_adj += if bearing_diff >= 90. {

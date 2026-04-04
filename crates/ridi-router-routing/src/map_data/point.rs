@@ -9,7 +9,6 @@ use std::fmt::Debug;
 use std::fmt::Display;
 
 use super::graph::MapDataLineRef;
-use super::graph::MapDataPointRef;
 use super::rule::MapDataRule;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -24,15 +23,16 @@ pub struct MapDataPoint {
 }
 
 impl MapDataPoint {
-    pub fn distance_between(&self, point: &MapDataPointRef) -> f32 {
-        let self_geo = Point::new(self.lon, self.lat);
-        let point_geo = Point::new(point.get().lon, point.get().lat);
-        Haversine.distance(self_geo, point_geo)
+    fn to_geo_point(&self) -> Point<f32> {
+        Point::new(self.lon, self.lat)
     }
-    pub fn bearing(&self, point: &MapDataPointRef) -> f32 {
-        let self_geo = Point::new(self.lon, self.lat);
-        let point_geo = Point::new(point.get().lon, point.get().lat);
-        Haversine.bearing(self_geo, point_geo)
+
+    pub fn distance_between(&self, point: &MapDataPoint) -> f32 {
+        Haversine.distance(self.to_geo_point(), point.to_geo_point())
+    }
+
+    pub fn bearing(&self, point: &MapDataPoint) -> f32 {
+        Haversine.bearing(self.to_geo_point(), point.to_geo_point())
     }
     pub fn is_junction(&self) -> bool {
         self.lines.len() > 2
@@ -60,10 +60,7 @@ impl Debug for MapDataPoint {
             self.id,
             self.lat,
             self.lon,
-            self.lines
-                .iter()
-                .map(|l| l.get().line_id())
-                .collect::<Vec<_>>(),
+            self.lines,
             self.is_junction(),
             self.residential_in_proximity,
             self.nogo_area,

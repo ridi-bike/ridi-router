@@ -1,6 +1,6 @@
 # Map Data Refactor - Phase 3: Convert lower-level helpers and domain methods
 
-_Status: planned_
+_Status: completed_
 
 ## Purpose
 
@@ -125,33 +125,33 @@ Phase 4 should then be able to delete singleton and implicit dereference machine
 
 ## Validation checklist
 
-- [ ] `weights.rs` no longer relies on implicit point/line/tag dereference
-- [ ] `route/*` helpers no longer hide ref resolution inside pure-looking methods
-- [ ] `clustering.rs` uses explicit lookup or explicit geometry inputs
-- [ ] `itinerary.rs` uses explicit lookup or explicit geometry inputs
-- [ ] `map_data/point.rs` helpers either accept resolved values or explicit `&RoutingContext`
-- [ ] `map_data/line.rs` helpers either accept resolved values or explicit `&RoutingContext`
-- [ ] `map_data/rule.rs` no longer depends on hidden global lookup patterns in runtime paths
-- [ ] formatting/debug paths used during routing are minimal or explicitly context-aware
-- [ ] runtime routing code does not depend on nested `.get().get()` chains
+- [x] `weights.rs` no longer relies on implicit point/line/tag dereference
+- [x] `route/*` helpers no longer hide ref resolution inside pure-looking methods
+- [x] `clustering.rs` uses explicit lookup or explicit geometry inputs
+- [x] `itinerary.rs` uses explicit lookup or explicit geometry inputs
+- [x] `map_data/point.rs` helpers either accept resolved values or explicit `&RoutingContext`
+- [x] `map_data/line.rs` helpers either accept resolved values or explicit `&RoutingContext`
+- [x] `map_data/rule.rs` no longer depends on hidden global lookup patterns in runtime paths
+- [x] formatting/debug paths used during routing are minimal or explicitly context-aware
+- [x] runtime routing code does not depend on nested `.get().get()` chains
 
 ### Suggested checks
 
-- [ ] `rg "\.get\(\)" crates/ridi-router-routing/src/router crates/ridi-router-routing/src/map_data/point.rs crates/ridi-router-routing/src/map_data/line.rs crates/ridi-router-routing/src/map_data/rule.rs`
-- [ ] spot-check converted signatures for explicit context or explicit resolved-value inputs
-- [ ] run routing-focused tests after helper conversion
-- [ ] `cargo test -p ridi-router-routing`
+- [x] `rg "\.get\(\)" crates/ridi-router-routing/src/router crates/ridi-router-routing/src/map_data/point.rs crates/ridi-router-routing/src/map_data/line.rs crates/ridi-router-routing/src/map_data/rule.rs`
+- [x] spot-check converted signatures for explicit context or explicit resolved-value inputs
+- [x] run routing-focused tests after helper conversion
+- [x] `cargo test -p ridi-router-routing`
 
 ## Progress checklist
 
-- [ ] audit deep helper methods that still hide lookups
-- [ ] classify each helper as lookup helper vs pure helper
-- [ ] move lookup helpers toward `RoutingContext` or explicit context parameters
-- [ ] convert geometry helpers to explicit coordinate/resolved-value inputs
-- [ ] convert scoring/stat/tag helpers to explicit lookup patterns
-- [ ] clean up formatting/debug helpers that still dereference refs transitively
-- [ ] remove remaining runtime uses of ref/tag `.get()` from converted areas
-- [ ] confirm phase acceptance criteria are met
+- [x] audit deep helper methods that still hide lookups
+- [x] classify each helper as lookup helper vs pure helper
+- [x] move lookup helpers toward `RoutingContext` or explicit context parameters
+- [x] convert geometry helpers to explicit coordinate/resolved-value inputs
+- [x] convert scoring/stat/tag helpers to explicit lookup patterns
+- [x] clean up formatting/debug helpers that still dereference refs transitively
+- [x] remove remaining runtime uses of ref/tag `.get()` from converted areas
+- [x] confirm phase acceptance criteria are met
 
 ## Notes and watch-outs
 

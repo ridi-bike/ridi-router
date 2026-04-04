@@ -1,6 +1,5 @@
 use std::fmt::Display;
 
-use geo::Distance;
 
 use crate::{map_data::graph::MapDataPointRef, RoutingContext};
 
@@ -74,16 +73,16 @@ impl Itinerary {
         }
     }
 
-    pub fn id(&self) -> String {
+    pub fn id(&self, ctx: &RoutingContext<'_>) -> String {
         format!(
             "{}-{}-{}",
-            self.start.get().id,
+            ctx.point(&self.start).id,
             self.waypoints
                 .iter()
-                .map(|p| format!("{}", p.get().id))
+                .map(|point| format!("{}", ctx.point(point).id))
                 .collect::<Vec<_>>()
                 .join("-"),
-            self.finish.get().id
+            ctx.point(&self.finish).id
         )
     }
 
@@ -101,53 +100,15 @@ impl Itinerary {
         false
     }
 
-    pub fn check_set_next(&mut self, current: MapDataPointRef) -> bool {
-        if self.next != self.finish
-            && current.get().distance_between(&self.next) <= self.waypoint_radius
-        {
-            if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
-                let prev_point = self.next.clone();
-                self.next = self
-                    .waypoints
-                    .get(idx + 1)
-                    .map_or(self.finish.clone(), |w| w.clone());
-                self.switched_wps_on.push(WaypointHistoryElement {
-                    on_point: current.clone(),
-                    from_point: prev_point.clone(),
-                });
-            } else {
-                self.switched_wps_on.push(WaypointHistoryElement {
-                    on_point: current.clone(),
-                    from_point: self.next.clone(),
-                });
-                self.next = self.finish.clone();
-            }
-            return true;
-        } else if !self.visit_all_wps
-            && self.next != self.finish
-            && current.get().distance_between(&self.finish) <= self.waypoint_radius
-        {
-            self.switched_wps_on.push(WaypointHistoryElement {
-                on_point: current.clone(),
-                from_point: self.next.clone(),
-            });
-            self.next = self.finish.clone();
-            return true;
-        }
-        false
-    }
-
-    pub fn check_set_next_with_context(
+    pub fn check_set_next(
         &mut self,
         ctx: &RoutingContext<'_>,
         current: MapDataPointRef,
     ) -> bool {
         let current_point = ctx.point(&current);
-        let current_geo = geo::Point::new(current_point.lon, current_point.lat);
         let next_point = ctx.point(&self.next);
-        let next_geo = geo::Point::new(next_point.lon, next_point.lat);
         if self.next != self.finish
-            && geo::Haversine.distance(current_geo, next_geo) <= self.waypoint_radius
+            && current_point.distance_between(&next_point) <= self.waypoint_radius
         {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 let prev_point = self.next.clone();
@@ -170,10 +131,9 @@ impl Itinerary {
         }
 
         let finish_point = ctx.point(&self.finish);
-        let finish_geo = geo::Point::new(finish_point.lon, finish_point.lat);
         if !self.visit_all_wps
             && self.next != self.finish
-            && geo::Haversine.distance(current_geo, finish_geo) <= self.waypoint_radius
+            && current_point.distance_between(&finish_point) <= self.waypoint_radius
         {
             self.switched_wps_on.push(WaypointHistoryElement {
                 on_point: current.clone(),

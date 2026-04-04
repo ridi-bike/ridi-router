@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use geo::{Bearing, Distance, Haversine, Point};
+use geo::{Bearing, Haversine, Point};
 use tracing::{error, trace};
 
 use crate::{
@@ -48,9 +48,7 @@ fn point_distance(
 ) -> f32 {
     let from = ctx.point(from);
     let to = ctx.point(to);
-    let from_geo = Point::new(from.lon, from.lat);
-    let to_geo = Point::new(to.lon, to.lat);
-    Haversine.distance(from_geo, to_geo)
+    from.distance_between(&to)
 }
 
 fn segment_name(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<String> {
@@ -173,7 +171,7 @@ pub fn weight_no_loops(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_no_loops");
     if input
         .route
-        .has_looped_with_context(input.ctx, input.itinerary.get_point_loop_check_since())
+        .has_looped(input.ctx, input.itinerary.get_point_loop_check_since())
     {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
@@ -191,8 +189,8 @@ pub fn weight_no_sharp_turns(input: WeightCalcInput<'_, '_>) -> WeightCalcResult
     let prev_segment = input.route.get_segment_last();
 
     if let Some(prev_segment) = prev_segment {
-        let deg_diff = (prev_segment.get_bearing_with_context(input.ctx)
-            - input.current_fork_segment.get_bearing_with_context(input.ctx))
+        let deg_diff = (prev_segment.bearing(input.ctx)
+            - input.current_fork_segment.bearing(input.ctx))
         .abs();
         if deg_diff <= input.rules.basic.no_sharp_turns.under_deg {
             return WeightCalcResult::ForkChoiceUseWithWeight(
@@ -213,7 +211,7 @@ pub fn weight_no_short_detours(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
 
     let hw_ref = segment_hw_ref(input.ctx, input.current_fork_segment);
     let hw_name = segment_name(input.ctx, input.current_fork_segment);
-    if input.route.is_back_on_road_within_distance_with_context(
+    if input.route.is_back_on_road_within_distance(
         input.ctx,
         hw_ref,
         hw_name,
@@ -246,7 +244,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput<'_, '_>) -> WeightCa
     let distance_to_next_junctions_back = match input
         .route
         .split_at_point(check_from)
-        .get_junctions_from_end_with_context(input.ctx, check_junctions_back)
+        .get_junctions_from_end(input.ctx, check_junctions_back)
     {
         None => return WeightCalcResult::ForkChoiceUseWithWeight(0),
         Some(segment) => point_distance(input.ctx, segment.get_end_point(), &input.itinerary.next),
@@ -337,7 +335,7 @@ pub fn weight_rules_highway(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
 
     if input
         .route
-        .get_route_chunk_since_junction_before_last_with_context(input.ctx)
+        .get_route_chunk_since_junction_before_last(input.ctx)
         .iter()
         .any(|segment| {
             if let Some(tag_rule) =
@@ -372,7 +370,7 @@ pub fn weight_rules_surface(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
 
     if input
         .route
-        .get_route_chunk_since_junction_before_last_with_context(input.ctx)
+        .get_route_chunk_since_junction_before_last(input.ctx)
         .iter()
         .any(|segment| {
             if let Some(tag_rule) =
@@ -407,7 +405,7 @@ pub fn weight_rules_smoothness(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
 
     if input
         .route
-        .get_route_chunk_since_junction_before_last_with_context(input.ctx)
+        .get_route_chunk_since_junction_before_last(input.ctx)
         .iter()
         .any(|segment| {
             if let Some(tag_rule) =
@@ -481,7 +479,7 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput<'_, '_>) -> WeightCalcRes
 
     let last_chunk = input
         .route
-        .get_route_chunk_since_junction_before_last_with_context(input.ctx);
+        .get_route_chunk_since_junction_before_last(input.ctx);
     if was_on_avoid(&last_chunk, &input.rules.highway, |segment| {
         segment_highway(input.ctx, segment)
     }) {

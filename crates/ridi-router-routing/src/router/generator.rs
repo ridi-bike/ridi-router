@@ -5,7 +5,7 @@ use crate::{
     router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
     RoutingContext,
 };
-use geo::{Bearing, Destination, Haversine, Point};
+use geo::{Destination, Haversine, Point};
 use hdbscan::{Hdbscan, HdbscanError, HdbscanHyperParams};
 use rayon::prelude::*;
 use tracing::{error, info, trace};
@@ -72,10 +72,8 @@ impl Generator {
     ) -> f32 {
         let from = ctx.point(from);
         let to = ctx.point(to);
-        let from_geo = Point::new(from.lon, from.lat);
-        let to_geo = Point::new(to.lon, to.lat);
 
-        Haversine.bearing(from_geo, to_geo)
+        from.bearing(&to)
     }
 
     fn create_waypoints_around(
@@ -435,7 +433,7 @@ impl Generator {
             }
         }
 
-        let clustering = match Clustering::generate_with_context(ctx, &routes) {
+        let clustering = match Clustering::generate(ctx, &routes) {
             None => return Ok(Vec::new()),
             Some(c) => c,
         };
@@ -446,7 +444,7 @@ impl Generator {
             .iter()
             .enumerate()
             .map(|(idx, route)| {
-                let mut stats = route.calc_stats_with_context(ctx, &self.rules);
+                let mut stats = route.calc_stats(ctx, &self.rules);
                 let approx_route = &clustering.approximated_routes[idx];
                 stats.cluster = Some(clustering.labels[idx] as usize);
                 stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
