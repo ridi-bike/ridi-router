@@ -2,13 +2,14 @@ use std::collections::HashMap;
 
 use crate::{
     map_data::{
-        graph::{ElementTagSetRef, MapDataGraph, MapDataLineRef, MapDataPointRef, MAP_DATA_GRAPH},
+        graph::{ElementTagSetRef, MapDataGraph, MapDataLineRef, MapDataPointRef},
         line::{LineDirection, MapDataLine},
         osm::{OsmNode, OsmRelation, OsmWay},
         point::MapDataPoint,
         rule::{MapDataRule, MapDataRuleType},
     },
     router::route::Route,
+    RoutingContext,
 };
 pub type OsmTestData = (Vec<OsmNode>, Vec<OsmWay>, Vec<OsmRelation>);
 
@@ -510,21 +511,23 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
     }
     map_data
 }
-pub fn set_graph_static(map_data: MapDataGraph) -> &'static MapDataGraph {
-    MAP_DATA_GRAPH.get_or_init(|| map_data)
-}
-
-pub fn line_is_between_point_ids(line: &MapDataLineRef, id1: u64, id2: u64) -> bool {
-    let point_ids = [line.get().points.0.get().id, line.get().points.1.get().id];
+pub fn line_is_between_point_ids(
+    ctx: &RoutingContext<'_>,
+    line: &MapDataLineRef,
+    id1: u64,
+    id2: u64,
+) -> bool {
+    let line = ctx.line(line);
+    let point_ids = [ctx.point(&line.points.0).id, ctx.point(&line.points.1).id];
     point_ids.contains(&id1) && point_ids.contains(&id2)
 }
-pub fn route_matches_ids(route: Route, ids: Vec<u64>) -> bool {
+pub fn route_matches_ids(ctx: &RoutingContext<'_>, route: Route, ids: Vec<u64>) -> bool {
     ids.iter()
         .enumerate()
         .map(|(idx, &id)| {
             let route_segment = route.get_segment_by_index(idx);
             if let Some(route_segment) = route_segment {
-                if route_segment.get_end_point().get().id == id {
+                if ctx.point(route_segment.get_end_point()).id == id {
                     return true;
                 }
             }

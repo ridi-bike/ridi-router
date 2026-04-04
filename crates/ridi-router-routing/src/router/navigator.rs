@@ -5,11 +5,7 @@ use std::{
 
 use tracing::trace;
 
-use crate::{
-    map_data::graph::{MapDataGraph, MapDataPointRef},
-    router::rules::RouterRules,
-    RoutingContext,
-};
+use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules, RoutingContext};
 
 use super::{
     itinerary::Itinerary,
@@ -157,7 +153,10 @@ impl Debug for ForkWeights {
             "{}",
             self.weight_list
                 .iter()
-                .fold(String::new(), |all, el| format!("{}\n\t{}:{}", all, el.0, el.1))
+                .fold(String::new(), |all, el| format!(
+                    "{}\n\t{}:{}",
+                    all, el.0, el.1
+                ))
         )
     }
 }
@@ -190,11 +189,6 @@ impl Navigator {
             weight_calcs,
             discarded_fork_choices: DiscardedForkChoices::new(reset_at_new_next),
         }
-    }
-
-    pub fn generate_routes(self) -> NavigationResult {
-        let ctx = RoutingContext::new(MapDataGraph::get());
-        self.generate_routes_with_context(&ctx)
     }
 
     #[tracing::instrument(skip(self, ctx))]
@@ -304,16 +298,14 @@ impl Navigator {
 #[cfg(test)]
 mod test {
     use crate::{
-        map_data::graph::MapDataGraph,
         router::{
             itinerary::Itinerary,
             navigator::{NavigationResult, WeightCalcResult},
             rules::RouterRules,
             weights::{WeightCalc, WeightCalcInput},
         },
-        test_utils::{
-            graph_from_test_dataset, route_matches_ids, set_graph_static, test_dataset_1,
-        },
+        test_utils::{graph_from_test_dataset, route_matches_ids, test_dataset_1},
+        RoutingContext,
     };
 
     use super::Navigator;
@@ -328,16 +320,17 @@ mod test {
                     Some(segment) => segment.get_end_point(),
                     None => &input.itinerary.start.clone(),
                 };
-                if prev_point.get().id == 3
-                    && input.current_fork_segment.get_end_point().get().id == 6
+                if input.ctx.point(prev_point).id == 3
+                    && input.ctx.point(input.current_fork_segment.get_end_point()).id == 6
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
-            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let graph = graph_from_test_dataset(test_dataset_1());
+            let ctx = RoutingContext::new(&graph);
+            let from = graph.test_get_point_ref_by_id(&1).unwrap();
+            let to = graph.test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary.clone(),
@@ -345,7 +338,7 @@ mod test {
                 vec![WeightCalc{calc: weight, name:"weight".to_string()}],
                 false
             );
-            let route = match navigator.generate_routes() {
+            let route = match navigator.generate_routes_with_context(&ctx) {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
@@ -353,7 +346,7 @@ mod test {
                 }
             };
 
-            assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 6, 7]));
 
             fn weight2(input: WeightCalcInput) -> WeightCalcResult {
                 let prev_point = match input.route.get_segment_last() {
@@ -361,8 +354,8 @@ mod test {
                     None => &input.itinerary.finish.clone(),
                 };
 
-                if prev_point.get().id == 3
-                    && input.current_fork_segment.get_end_point().get().id == 4
+                if input.ctx.point(prev_point).id == 3
+                    && input.ctx.point(input.current_fork_segment.get_end_point()).id == 4
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
@@ -374,7 +367,7 @@ mod test {
                 vec![WeightCalc{ calc:weight2, name:"weight2".to_string() }],
                 false
             );
-            let route = match navigator.generate_routes() {
+            let route = match navigator.generate_routes_with_context(&ctx) {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
@@ -382,7 +375,7 @@ mod test {
                 }
             };
 
-            assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 4, 8, 6, 7]));
         }
     }
 
@@ -396,24 +389,25 @@ mod test {
                     None => &input.itinerary.finish.clone(),
                 };
 
-                if prev_point.get().id == 3 {
-                    if input.current_fork_segment.get_end_point().get().id == 5 {
+                if input.ctx.point(prev_point).id == 3 {
+                    if input.ctx.point(input.current_fork_segment.get_end_point()).id == 5 {
                         return WeightCalcResult::ForkChoiceUseWithWeight(10);
                     }
-                    if input.current_fork_segment.get_end_point().get().id == 6 {
+                    if input.ctx.point(input.current_fork_segment.get_end_point()).id == 6 {
                         return WeightCalcResult::ForkChoiceUseWithWeight(5);
                     }
                 }
-                if prev_point.get().id == 6
-                    && input.current_fork_segment.get_end_point().get().id == 7
+                if input.ctx.point(prev_point).id == 6
+                    && input.ctx.point(input.current_fork_segment.get_end_point()).id == 7
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
-            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let graph = graph_from_test_dataset(test_dataset_1());
+            let ctx = RoutingContext::new(&graph);
+            let from = graph.test_get_point_ref_by_id(&1).unwrap();
+            let to = graph.test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -421,7 +415,7 @@ mod test {
                 vec![WeightCalc{ calc: weight, name:"weight".to_string() }],
                 false,
             );
-            let route = match navigator.generate_routes() {
+            let route = match navigator.generate_routes_with_context(&ctx) {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
@@ -429,7 +423,7 @@ mod test {
                 }
             };
 
-            assert!(route_matches_ids(route.clone(), vec![2, 3, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 6, 7]));
         }
     }
 
@@ -440,9 +434,10 @@ mod test {
             fn weight(_input: WeightCalcInput) -> WeightCalcResult {
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
-            let to = MapDataGraph::get().test_get_point_ref_by_id(&11).unwrap();
+            let graph = graph_from_test_dataset(test_dataset_1());
+            let ctx = RoutingContext::new(&graph);
+            let from = graph.test_get_point_ref_by_id(&1).unwrap();
+            let to = graph.test_get_point_ref_by_id(&11).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -451,7 +446,7 @@ mod test {
                 false,
             );
 
-            if let NavigationResult::Finished(_) = navigator.generate_routes() {
+            if let NavigationResult::Finished(_) = navigator.generate_routes_with_context(&ctx) {
                 assert!(false);
             }
         }
@@ -462,14 +457,15 @@ mod test {
         #[test]
         fn navigate_no_routes_with_do_not_use_weight() {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
-                if input.current_fork_segment.get_end_point().get().id == 7 {
+                if input.ctx.point(input.current_fork_segment.get_end_point()).id == 7 {
                     return WeightCalcResult::ForkChoiceDoNotUse;
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }
-            set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
-            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let graph = graph_from_test_dataset(test_dataset_1());
+            let ctx = RoutingContext::new(&graph);
+            let from = graph.test_get_point_ref_by_id(&1).unwrap();
+            let to = graph.test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -477,7 +473,7 @@ mod test {
                 vec![WeightCalc{ calc: weight, name:"weight".to_string()}],
                 false
             );
-            if let NavigationResult::Finished(_) = navigator.generate_routes() {
+            if let NavigationResult::Finished(_) = navigator.generate_routes_with_context(&ctx) {
                 assert!(false);
             }
         }
@@ -492,8 +488,8 @@ mod test {
                     Some(segment) => segment.get_end_point(),
                     None => &input.itinerary.finish.clone(),
                 };
-                if prev_point.get().id == 3
-                    && input.current_fork_segment.get_end_point().get().id == 6
+                if input.ctx.point(prev_point).id == 3
+                    && input.ctx.point(input.current_fork_segment.get_end_point()).id == 6
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(10);
                 }
@@ -505,16 +501,17 @@ mod test {
                     None => &input.itinerary.finish.clone(),
                 };
 
-                if prev_point.get().id == 3
-                    && input.current_fork_segment.get_end_point().get().id == 6
+                if input.ctx.point(prev_point).id == 3
+                    && input.ctx.point(input.current_fork_segment.get_end_point()).id == 6
                 {
                     return WeightCalcResult::ForkChoiceUseWithWeight(1);
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(6)
             }
-            set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            let from = MapDataGraph::get().test_get_point_ref_by_id(&1).unwrap();
-            let to = MapDataGraph::get().test_get_point_ref_by_id(&7).unwrap();
+            let graph = graph_from_test_dataset(test_dataset_1());
+            let ctx = RoutingContext::new(&graph);
+            let from = graph.test_get_point_ref_by_id(&1).unwrap();
+            let to = graph.test_get_point_ref_by_id(&7).unwrap();
             let itinerary = Itinerary::new_start_finish(from, to, Vec::new(), 0.);
             let navigator = Navigator::new(
                 itinerary,
@@ -522,14 +519,14 @@ mod test {
                 vec![WeightCalc{calc: weight1, name:"weight1".to_string()}, WeightCalc{ calc: weight2, name:"weight2".to_string()}],
                 false,
             );
-            let route = match navigator.generate_routes() {
+            let route = match navigator.generate_routes_with_context(&ctx) {
                 crate::router::navigator::NavigationResult::Finished(r) => r,
                 _ => {
                     assert!(false);
                     return ;
                 }
             };
-            assert!(route_matches_ids(route.clone(), vec![2, 3, 4, 8, 6, 7]));
+            assert!(route_matches_ids(&ctx, route.clone(), vec![2, 3, 4, 8, 6, 7]));
         }
     }
 }

@@ -4,7 +4,6 @@ use std::{
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
-    sync::OnceLock,
 };
 
 use serde::{Deserialize, Serialize};
@@ -16,8 +15,6 @@ use crate::{
 };
 
 use super::{line::MapDataLine, point::MapDataPoint};
-
-pub static MAP_DATA_GRAPH: OnceLock<MapDataGraph> = OnceLock::new();
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagValueRef {
@@ -46,10 +43,6 @@ impl ElementTagValueRef {
             Self::some(tile_id, tag_idx)
         }
     }
-
-    pub fn get(&self) -> Option<String> {
-        MapDataGraph::get().get_tag_value(self)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,10 +58,6 @@ impl ElementTagSetRef {
             tag_set_idx: idx,
         }
     }
-
-    pub fn get(&self) -> ElementTagSet {
-        MapDataGraph::get().get_tag_set(self)
-    }
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
@@ -78,24 +67,6 @@ pub struct ElementTagSet {
     pub highway: ElementTagValueRef,
     pub surface: ElementTagValueRef,
     pub smoothness: ElementTagValueRef,
-}
-
-impl ElementTagSet {
-    pub fn name(&self) -> Option<String> {
-        self.name.get()
-    }
-    pub fn hw_ref(&self) -> Option<String> {
-        self.hw_ref.get()
-    }
-    pub fn highway(&self) -> Option<String> {
-        self.highway.get()
-    }
-    pub fn surface(&self) -> Option<String> {
-        self.surface.get()
-    }
-    pub fn smoothness(&self) -> Option<String> {
-        self.smoothness.get()
-    }
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
@@ -181,44 +152,26 @@ impl ElementTags {
     }
 }
 
-pub trait MapDataElement: Debug + Display {
-    fn get_from_tiles(tile_id: crate::rmdf::TileId, element_id: u64) -> Self;
-}
-impl MapDataElement for MapDataPoint {
-    fn get_from_tiles(tile_id: crate::rmdf::TileId, osm_id: u64) -> MapDataPoint {
-        MapDataGraph::get().get_point_from_tiles(tile_id, osm_id)
-    }
-}
-impl MapDataElement for MapDataLine {
-    fn get_from_tiles(tile_id: crate::rmdf::TileId, line_index: u64) -> MapDataLine {
-        MapDataGraph::get().get_line_from_tiles(tile_id, line_index as usize)
-    }
-}
-
 #[derive(Serialize, Deserialize)]
-pub struct MapDataElementRef<T: MapDataElement> {
+pub struct MapDataElementRef<T> {
     tile_id: crate::rmdf::TileId,
     element_id: u64, // osm_id for points, line_index as u64 for lines
     _marker: PhantomData<T>,
 }
 
-impl<T: MapDataElement + 'static> Display for MapDataElementRef<T> {
+impl<T> Display for MapDataElementRef<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Ref(tile:{:?}, id:{})", self.tile_id, self.element_id)
     }
 }
 
-impl<T: MapDataElement> MapDataElementRef<T> {
+impl<T> MapDataElementRef<T> {
     pub fn new(tile_id: crate::rmdf::TileId, element_id: u64) -> Self {
         Self {
             tile_id,
             element_id,
             _marker: PhantomData,
         }
-    }
-
-    pub fn get(&self) -> T {
-        T::get_from_tiles(self.tile_id, self.element_id)
     }
 
     pub fn get_tile_id(&self) -> crate::rmdf::TileId {
@@ -230,7 +183,7 @@ impl<T: MapDataElement> MapDataElementRef<T> {
     }
 }
 
-impl<T: MapDataElement> Clone for MapDataElementRef<T> {
+impl<T> Clone for MapDataElementRef<T> {
     fn clone(&self) -> Self {
         Self {
             tile_id: self.tile_id,
@@ -240,22 +193,22 @@ impl<T: MapDataElement> Clone for MapDataElementRef<T> {
     }
 }
 
-impl<T: MapDataElement> PartialEq for MapDataElementRef<T> {
+impl<T> PartialEq for MapDataElementRef<T> {
     fn eq(&self, other: &Self) -> bool {
         self.tile_id == other.tile_id && self.element_id == other.element_id
     }
 }
 
-impl<T: MapDataElement> Eq for MapDataElementRef<T> {}
+impl<T> Eq for MapDataElementRef<T> {}
 
-impl<T: MapDataElement> Hash for MapDataElementRef<T> {
+impl<T> Hash for MapDataElementRef<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.tile_id.hash(state);
         self.element_id.hash(state);
     }
 }
 
-impl<T: MapDataElement + 'static> Debug for MapDataElementRef<T> {
+impl<T> Debug for MapDataElementRef<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Ref(tile:{:?}, id:{})", self.tile_id, self.element_id)
     }
@@ -355,7 +308,7 @@ impl MapDataGraph {
         }
     }
 
-    /// Test-only: Get point from test storage (used by MapDataElement trait impl)
+    /// Test-only: Get point from test storage
     #[cfg(test)]
     fn get_test_point(&self, osm_id: u64) -> Option<MapDataPoint> {
         self.test_points.read().unwrap().get(&osm_id).cloned()
@@ -552,812 +505,4 @@ impl MapDataGraph {
         // Convert to MapDataPointRef
         Some(MapDataPointRef::new(result.0, result.1))
     }
-
-    fn get_or_init(tiles_path: Option<std::path::PathBuf>) -> &'static MapDataGraph {
-        MAP_DATA_GRAPH.get_or_init(|| {
-            let tiles_path = tiles_path.expect("tiles path must be passed in when calling init");
-            let tile_manager = crate::rmdf::TileManager::new(tiles_path)
-                .expect("Failed to initialize TileManager");
-            MapDataGraph::new(tile_manager)
-        })
-    }
-
-    #[tracing::instrument]
-    pub fn init(tiles_path: std::path::PathBuf) {
-        MapDataGraph::get_or_init(Some(tiles_path));
-    }
-
-    pub fn get() -> &'static MapDataGraph {
-        MapDataGraph::get_or_init(None) // we've already initialized the graph
-    }
-}
-
-// TODO: Rewrite tests for tile-based system
-// All tests below are commented out because they rely on the old graph building functionality
-// which has been removed in favor of the tile-based system.
-#[cfg(test)]
-#[allow(dead_code)]
-mod tests {
-    /*
-    use core::panic;
-    use std::{collections::HashSet, u8};
-
-    use rusty_fork::rusty_fork_test;
-    use tracing::info;
-
-    use crate::{
-        router::rules::{BasicRules, GenerationRules},
-        test_utils::{graph_from_test_dataset, set_graph_static, test_dataset_1},
-    };
-
-    use super::*;
-
-    #[test]
-    fn check_way_ok() {
-        let map_data = MapDataGraph::new();
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "primary".to_string(),
-            )])),
-        };
-
-        assert!(map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "proposed".to_string(),
-            )])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "cycleway".to_string(),
-            )])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "hhhighway".to_string(),
-                "primary".to_string(),
-            )])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "steps".to_string(),
-            )])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "pedestrian".to_string(),
-            )])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([("highway".to_string(), "path".to_string())])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "service".to_string(),
-            )])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "footway".to_string(),
-            )])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([("highway".to_string(), "omg".to_string())])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([
-                ("highway".to_string(), "primary".to_string()),
-                ("motor_vehicle".to_string(), "yes".to_string()),
-            ])),
-        };
-
-        assert!(map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([
-                ("highway".to_string(), "primary".to_string()),
-                ("motor_vehicle".to_string(), "no".to_string()),
-            ])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([
-                ("highway".to_string(), "primary".to_string()),
-                ("motor_vehicle".to_string(), "private".to_string()),
-            ])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([
-                ("highway".to_string(), "primary".to_string()),
-                ("motor_vehicle".to_string(), "yes".to_string()),
-                ("service".to_string(), "yes".to_string()),
-            ])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([
-                ("highway".to_string(), "primary".to_string()),
-                ("motor_vehicle".to_string(), "yes".to_string()),
-                ("access".to_string(), "yes".to_string()),
-            ])),
-        };
-
-        assert!(map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([
-                ("highway".to_string(), "primary".to_string()),
-                ("motor_vehicle".to_string(), "yes".to_string()),
-                ("access".to_string(), "no".to_string()),
-            ])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-
-        let osm_way = OsmWay {
-            id: 1,
-            point_ids: Vec::new(),
-            tags: Some(HashMap::from([
-                ("highway".to_string(), "primary".to_string()),
-                ("motor_vehicle".to_string(), "yes".to_string()),
-                ("access".to_string(), "private".to_string()),
-            ])),
-        };
-
-        assert!(!map_data.way_is_ok(&osm_way));
-    }
-
-    #[derive(Debug)]
-    struct PointTest {
-        lat: f32,
-        lon: f32,
-        lines: Vec<&'static str>,
-        junction: bool,
-    }
-
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn check_point_consistency() {
-            fn point_is_ok(map_data: &MapDataGraph, id: &u64, test: PointTest) -> bool {
-                let point = map_data
-                    .get_point_ref_by_id(id)
-                    .unwrap_or_else(|| panic!("point {} must exist", id));
-                let point = point.get();
-                info!("point {:#?}", point);
-                info!("test {:#?}", test);
-                point.lat == test.lat
-                    && point.lon == test.lon
-                    && point.lines.len() == test.lines.len()
-                    && point.lines.iter().enumerate().all(|(idx, l)| {
-                        let test_line_id = test
-                            .lines
-                            .get(idx)
-                            .unwrap_or_else(|| panic!("{}: line at idx {} must exist", id, idx));
-                        l.get().line_id() == *test_line_id
-                    })
-                    && point.is_junction() == test.junction
-            }
-            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            assert!(point_is_ok(
-                map_data,
-                &1,
-                PointTest {
-                    lat: 1.0,
-                    lon: 1.0,
-                    lines: vec!["1-2"],
-                    junction: false
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &2,
-                PointTest {
-                    lat: 2.0,
-                    lon: 2.0,
-                    lines: vec!["1-2", "2-3"],
-                    junction: false
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &3,
-                PointTest {
-                    lat: 3.0,
-                    lon: 3.0,
-                    lines: vec!["2-3", "3-4", "5-3", "3-6"],
-                    junction: true
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &4,
-                PointTest {
-                    lat: 4.0,
-                    lon: 4.0,
-                    lines: vec!["3-4", "4-8"],
-                    junction: false
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &5,
-                PointTest {
-                    lat: 5.0,
-                    lon: 5.0,
-                    lines: vec!["5-3"],
-                    junction: false
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &6,
-                PointTest {
-                    lat: 6.0,
-                    lon: 6.0,
-                    lines: vec!["3-6", "6-7", "6-8"],
-                    junction: true
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &7,
-                PointTest {
-                    lat: 7.0,
-                    lon: 7.0,
-                    lines: vec!["6-7"],
-                    junction: false
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &8,
-                PointTest {
-                    lat: 8.0,
-                    lon: 8.0,
-                    lines: vec!["4-8", "8-9", "6-8"],
-                    junction: true
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &9,
-                PointTest {
-                    lat: 9.0,
-                    lon: 9.0,
-                    lines: vec!["8-9"],
-                    junction: false
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &11,
-                PointTest {
-                    lat: 11.0,
-                    lon: 11.0,
-                    lines: vec!["11-12"],
-                    junction: false
-                }
-            ));
-            assert!(point_is_ok(
-                map_data,
-                &12,
-                PointTest {
-                    lat: 12.0,
-                    lon: 12.0,
-                    lines: vec!["11-12"],
-                    junction: false
-                }
-            ));
-        }
-    }
-
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn check_line_consistency() {
-            fn line_is_ok(
-                map_data: &MapDataGraph,
-                id: &str,
-                test_points: (u64, u64),
-            ) -> bool {
-                let line = map_data
-                    .lines
-                    .iter()
-                    .find(|l| l.line_id() == *id)
-                    .unwrap_or_else(|| panic!("line {} must exist", id));
-                info!("line {:#?}", line);
-                info!("test {:#?}", test_points);
-                     line.points.0.get().id == test_points.0
-                    && line.points.1.get().id == test_points.1
-            }
-            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            assert!(line_is_ok(map_data, "1-2", (1, 2)));
-            assert!(line_is_ok(map_data, "2-3", (2, 3)));
-            assert!(line_is_ok(map_data, "3-4", (3, 4)));
-            assert!(line_is_ok(map_data, "5-3", (5, 3)));
-            assert!(line_is_ok(map_data, "3-6", (3, 6)));
-            assert!(line_is_ok(map_data, "6-7", (6, 7)));
-            assert!(line_is_ok(map_data, "4-8", (4, 8)));
-            assert!(line_is_ok(map_data, "8-9", (8, 9)));
-            assert!(line_is_ok(map_data, "6-8", (6, 8)));
-            assert!(line_is_ok(map_data, "11-12", (11, 12)));
-        }
-    }
-
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn check_missing_points() {
-            let mut map_data = MapDataGraph::new();
-            let res = map_data.insert_way(OsmWay {
-                id: 1,
-                point_ids: vec![1],
-                tags:Some(HashMap::from([("highway".to_string(), "primary".to_string())]))
-            });
-            if res.is_ok() {
-                assert!(false);
-            } else if let Err(e) = res {
-                if let MapDataError::MissingPoint { point_id: p } = e {
-                    assert_eq!(p, 1);
-                } else {
-                    assert!(false);
-                }
-            }
-        }
-    }
-
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn mark_junction() {
-            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            let point = map_data.get_point_ref_by_id(&5).unwrap();
-            let points = map_data.get_adjacent(point);
-            points.iter().for_each(|p| {
-                assert!((p.1.get().id == 3 && p.1.get().is_junction()) || p.1.get().id != 3)
-            });
-
-            let point = map_data.get_point_ref_by_id(&3).unwrap();
-            let points = map_data.get_adjacent(point);
-            let non_junctions = [2, 5, 4];
-            points.iter().for_each(|p| {
-                assert!(
-                    ((non_junctions.contains(&p.1.get().id) && !p.1.get().is_junction())
-                        || !non_junctions.contains(&p.1.get().id))
-                )
-            });
-            points.iter().for_each(|p| {
-                assert!((p.1.get().id == 6 && p.1.get().is_junction()) || p.1.get().id != 6)
-            });
-        }
-    }
-
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn adjacent_lookup() {
-            let map_data = set_graph_static(graph_from_test_dataset(test_dataset_1()));
-
-            let tests: Vec<(u8, MapDataPointRef, Vec<(String, u64)>)> = vec![
-                (
-                    1,
-                    MapDataGraph::get().get_point_ref_by_id(&2).unwrap(),
-                    vec![(String::from("1-2"), 1), (String::from("2-3"), 3)],
-                ),
-                (
-                    2,
-                    MapDataGraph::get().get_point_ref_by_id(&3).unwrap(),
-                    vec![
-                        (String::from("5-3"), 5),
-                        (String::from("6-3"), 6),
-                        (String::from("2-3"), 2),
-                        (String::from("4-3"), 4),
-                    ],
-                ),
-                (
-                    3,
-                    MapDataGraph::get().get_point_ref_by_id(&1).unwrap(),
-                    vec![(String::from("1-2"), 2)],
-                ),
-            ];
-
-            for test in tests {
-                let (_test_id, point, expected_result) = test;
-                let adj_elements = map_data.get_adjacent(point);
-                assert_eq!(adj_elements.len(), expected_result.len());
-                for (adj_line, adj_point) in &adj_elements {
-                    let adj_match = expected_result.iter().find(|&(line_id, point_id)| {
-                        line_id.split("-").collect::<HashSet<_>>()
-                            == adj_line.get().line_id().split("-").collect::<HashSet<_>>()
-                            && point_id == &adj_point.get().id
-                    });
-                    assert!(adj_match.is_some());
-                }
-            }
-        }
-    }
-
-    type ClosestTest = (Vec<OsmNode>, Vec<OsmWay>, Option<RouterRules>, OsmNode, u64);
-
-    fn run_closest_test(test: ClosestTest) {
-        let (points, ways, rules, check_point, closest_id) = test;
-        let mut map_data = MapDataGraph::new();
-        for point in &points {
-            map_data.insert_node(point.clone());
-        }
-        for point in points {
-            if !ways.iter().any(|w| w.point_ids.contains(&point.id)) {
-                map_data
-                    .insert_way(OsmWay {
-                        id: point.id,
-                        tags: Some(HashMap::from([(
-                            "highway".to_string(),
-                            "primary".to_string(),
-                        )])),
-                        point_ids: vec![point.id, point.id],
-                    })
-                    .expect("failed to insert dummy way");
-            }
-        }
-        for way in ways {
-            map_data.insert_way(way).expect("failed to insert way");
-        }
-
-        map_data.generate_point_hashes();
-
-        let map_data = set_graph_static(map_data);
-
-        let closest = map_data.get_closest_to_coords(
-            check_point.lat as f32,
-            check_point.lon as f32,
-            &rules.map_or(
-                RouterRules {
-                    ..Default::default()
-                },
-                |r| r,
-            ),
-            false,
-            None,
-        );
-        if let Some(closest) = closest {
-            assert_eq!(closest.get().id, closest_id);
-        } else {
-            panic!("No points found");
-        }
-    }
-    fn get_closest_tests() -> [ClosestTest; 6] {
-        [
-            (
-                vec![
-                    // 0
-                    OsmNode {
-                        id: 1,
-                        lat: 57.1640,
-                        lon: 24.8652,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                ],
-                vec![],
-                None,
-                OsmNode {
-                    id: 0,
-                    lat: 57.1670,
-                    lon: 24.8658,
-                    residential_in_proximity: false,
-                    nogo_area: false,
-                },
-                1,
-            ),
-            (
-                vec![
-                    // 1
-                    OsmNode {
-                        id: 1,
-                        lat: 57.1740,
-                        lon: 24.8630,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                    OsmNode {
-                        id: 2,
-                        lat: 57.1640,
-                        lon: 24.8652,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                ],
-                vec![],
-                None,
-                OsmNode {
-                    id: 0,
-                    lat: 57.1670,
-                    lon: 24.8658,
-                    residential_in_proximity: false,
-                    nogo_area: false,
-                },
-                2,
-            ),
-            (
-                vec![
-                    // 2
-                    OsmNode {
-                        // 701.26 meters
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                    OsmNode {
-                        // 525.74 meters
-                        id: 2,
-                        lat: 57.168,
-                        lon: 24.875192642211914,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                    OsmNode {
-                        // 438.77 meters
-                        id: 3,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                ],
-                vec![],
-                None,
-                OsmNode {
-                    id: 0,
-                    lat: 57.163429387682214,
-                    lon: 24.87742424011231,
-                    residential_in_proximity: false,
-                    nogo_area: false,
-                },
-                3,
-            ),
-            (
-                vec![
-                    // 3
-                    OsmNode {
-                        // 2642.91 meters
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                    OsmNode {
-                        // 3777.35 meters
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                ],
-                vec![],
-                None,
-                OsmNode {
-                    id: 0,
-                    lat: 57.193343289610794,
-                    lon: 24.872531890869144,
-                    residential_in_proximity: false,
-                    nogo_area: false,
-                },
-                1,
-            ),
-            (
-                vec![
-                    // 4
-                    OsmNode {
-                        // 2642.91 meters
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                    OsmNode {
-                        // 3777.35 meters
-                        id: 2,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                ],
-                vec![],
-                None,
-                OsmNode {
-                    id: 0,
-                    lat: 57.193343289610794,
-                    lon: 24.872531890869144,
-                    residential_in_proximity: false,
-                    nogo_area: false,
-                },
-                1,
-            ),
-            (
-                vec![
-                    // 5
-                    OsmNode {
-                        // 701.26 meters
-                        id: 1,
-                        lat: 57.16961885299059,
-                        lon: 24.875192642211914,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                    OsmNode {
-                        // 525.74 meters
-                        id: 2,
-                        lat: 57.168,
-                        lon: 24.875192642211914,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                    OsmNode {
-                        // 438.77 meters
-                        id: 3,
-                        lat: 57.159484808175435,
-                        lon: 24.877617359161377,
-                        residential_in_proximity: false,
-                        nogo_area: false,
-                    },
-                ],
-                vec![OsmWay {
-                    id: 33,
-                    point_ids: vec![3],
-                    tags: Some(HashMap::from([(
-                        "highway".to_string(),
-                        "trunk".to_string(),
-                    )])),
-                }],
-                Some(RouterRules {
-                    basic: BasicRules::default(),
-                    highway: Some(HashMap::from([(
-                        "trunk".to_string(),
-                        RulesTagValueAction::Avoid,
-                    )])),
-                    surface: None,
-                    smoothness: None,
-                    generation: GenerationRules::default(),
-                }),
-                OsmNode {
-                    id: 0,
-                    lat: 57.163429387682214,
-                    lon: 24.87742424011231,
-                    residential_in_proximity: false,
-                    nogo_area: false,
-                },
-                2,
-            ),
-        ]
-    }
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn closest_lookup_0() {
-            let tests = get_closest_tests();
-            run_closest_test(tests[0].clone());
-        }
-    }
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn closest_lookup_1() {
-            let tests = get_closest_tests();
-            run_closest_test(tests[1].clone());
-        }
-    }
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn closest_lookup_2() {
-            let tests = get_closest_tests();
-            run_closest_test(tests[2].clone());
-        }
-    }
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn closest_lookup_3() {
-            let tests = get_closest_tests();
-            run_closest_test(tests[3].clone());
-        }
-    }
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn closest_lookup_4() {
-            let tests = get_closest_tests();
-            run_closest_test(tests[4].clone());
-        }
-    }
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn closest_lookup_5() {
-            let tests = get_closest_tests();
-            run_closest_test(tests[5].clone());
-        }
-    }
-    */
 }

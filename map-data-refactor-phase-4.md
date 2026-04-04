@@ -1,6 +1,6 @@
 # Map Data Refactor - Phase 4: Remove singleton and implicit dereference machinery
 
-_Status: planned_
+_Status: completed_
 
 ## Purpose
 
@@ -103,31 +103,31 @@ This phase should leave the codebase in the actual target architecture, not in a
 
 ## Validation checklist
 
-- [ ] `graph.rs` no longer defines `MAP_DATA_GRAPH`
-- [ ] `graph.rs` no longer defines `MapDataGraph::init(...)`
-- [ ] `graph.rs` no longer defines `MapDataGraph::get()`
-- [ ] `MapDataElementRef<T>::get()` is removed or redesigned away from ambient lookup
-- [ ] `ElementTagValueRef::get()` is removed or redesigned away from ambient lookup
-- [ ] `ElementTagSetRef::get()` is removed or redesigned away from ambient lookup
-- [ ] runtime modules compile against explicit graph/context access only
-- [ ] no migration-only singleton compatibility shim remains
+- [x] `graph.rs` no longer defines `MAP_DATA_GRAPH`
+- [x] `graph.rs` no longer defines `MapDataGraph::init(...)`
+- [x] `graph.rs` no longer defines `MapDataGraph::get()`
+- [x] `MapDataElementRef<T>::get()` is removed or redesigned away from ambient lookup
+- [x] `ElementTagValueRef::get()` is removed or redesigned away from ambient lookup
+- [x] `ElementTagSetRef::get()` is removed or redesigned away from ambient lookup
+- [x] runtime modules compile against explicit graph/context access only
+- [x] no migration-only singleton compatibility shim remains
 
 ### Suggested checks
 
-- [ ] `rg "MAP_DATA_GRAPH|MapDataGraph::init|MapDataGraph::get|ElementTagValueRef::get|ElementTagSetRef::get|MapDataElementRef<.*>::get" crates/ridi-router-routing/src`
-- [ ] `rg "\.get\(\)" crates/ridi-router-routing/src | rg "MapData|ElementTag|tag"`
-- [ ] full compile/test pass once this deletion phase lands cleanly
-- [ ] `cargo test -p ridi-router-routing`
+- [x] `rg "MAP_DATA_GRAPH|MapDataGraph::init|MapDataGraph::get|ElementTagValueRef::get|ElementTagSetRef::get|MapDataElementRef<.*>::get" crates/ridi-router-routing/src`
+- [x] `rg "\.get\(\)" crates/ridi-router-routing/src | rg "MapData|ElementTag|tag"`
+- [x] full compile/test pass once this deletion phase lands cleanly
+- [x] `cargo test -p ridi-router-routing`
 
 ## Progress checklist
 
-- [ ] remove singleton static and singleton constructors/accessors
-- [ ] delete or redesign ambient dereference trait/method machinery
-- [ ] delete or redesign ambient tag dereference methods
-- [ ] update remaining call sites to explicit graph/context lookups
-- [ ] remove migration-only compatibility helpers
-- [ ] run search-based validation for deleted APIs
-- [ ] confirm phase acceptance criteria are met
+- [x] remove singleton static and singleton constructors/accessors
+- [x] delete or redesign ambient dereference trait/method machinery
+- [x] delete or redesign ambient tag dereference methods
+- [x] update remaining call sites to explicit graph/context lookups
+- [x] remove migration-only compatibility helpers
+- [x] run search-based validation for deleted APIs
+- [x] confirm phase acceptance criteria are met
 
 ## Notes and watch-outs
 

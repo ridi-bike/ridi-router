@@ -99,9 +99,9 @@ pub fn weight_heading(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_heading");
 
     let mut walker = input.walker_from_fork;
-    let next_fork = match walker
-        .move_forward_to_next_fork_with_context(input.ctx, |point| input.itinerary.is_finished(point))
-    {
+    let next_fork = match walker.move_forward_to_next_fork_with_context(input.ctx, |point| {
+        input.itinerary.is_finished(point)
+    }) {
         Ok(value) => value,
         Err(error) => {
             error!("weight calc error {:#?}", error);
@@ -189,9 +189,8 @@ pub fn weight_no_sharp_turns(input: WeightCalcInput<'_, '_>) -> WeightCalcResult
     let prev_segment = input.route.get_segment_last();
 
     if let Some(prev_segment) = prev_segment {
-        let deg_diff = (prev_segment.bearing(input.ctx)
-            - input.current_fork_segment.bearing(input.ctx))
-        .abs();
+        let deg_diff =
+            (prev_segment.bearing(input.ctx) - input.current_fork_segment.bearing(input.ctx)).abs();
         if deg_diff <= input.rules.basic.no_sharp_turns.under_deg {
             return WeightCalcResult::ForkChoiceUseWithWeight(
                 input.rules.basic.no_sharp_turns.priority,
@@ -408,9 +407,10 @@ pub fn weight_rules_smoothness(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
         .get_route_chunk_since_junction_before_last(input.ctx)
         .iter()
         .any(|segment| {
-            if let Some(tag_rule) =
-                get_rule_for_tag(&input.rules.smoothness, segment_smoothness(input.ctx, segment))
-            {
+            if let Some(tag_rule) = get_rule_for_tag(
+                &input.rules.smoothness,
+                segment_smoothness(input.ctx, segment),
+            ) {
                 if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
                     return true;
                 }
@@ -529,64 +529,4 @@ mod test {
             assert_eq!(test.2, res);
         }
     }
-
-    // TODO: Re-enable this test with tile-based test data
-    // This test requires JSON file loading which has been removed
-    /*
-    rusty_fork_test! {
-        #![rusty_fork(timeout_ms = 2000)]
-        #[test]
-        fn weight_heading_test() {
-            set_graph_static(graph_from_test_dataset(test_dataset_1()));
-            let from = MapDataGraph::get()
-                .test_get_point_ref_by_id(&885564366)
-                .expect("did not find start point");
-            let to = MapDataGraph::get()
-                .test_get_point_ref_by_id(&33416714)
-                .expect("did not find end point");
-            let walker = Walker::new(
-                from.clone(),
-            );
-
-            let fork_point = MapDataGraph::get()
-                .test_get_point_ref_by_id(&81272994)
-                .expect("to find fork point");
-
-            let segment = get_route_segment(fork_point, from.clone());
-
-            let itinerary = Itinerary::new_start_finish(from.clone(), to.clone(), Vec::new(), 0.);
-
-
-            let fork_weight = weight_heading(WeightCalcInput {
-                route: walker.get_route(),
-                itinerary: &itinerary,
-                current_fork_segment: &segment,
-                walker_from_fork: Walker::new(
-                    from.clone(),
-                ),
-                rules: &RouterRules::default()
-
-            });
-            info!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::ForkChoiceUseWithWeight(176));
-            let fork_point = MapDataGraph::get()
-                .test_get_point_ref_by_id(&9212889586)
-                .expect("to find fork point");
-
-            let segment = get_route_segment(fork_point, from.clone());
-
-            let fork_weight = weight_heading(WeightCalcInput {
-                route: walker.get_route(),
-                itinerary: &itinerary,
-                current_fork_segment: &segment,
-                walker_from_fork: Walker::new(
-                    from.clone(),
-                ),
-                rules: &RouterRules::default()
-            });
-            info!("{:#?}", fork_weight);
-            assert_eq!(fork_weight, WeightCalcResult::ForkChoiceUseWithWeight(64));
-        }
-    }
-    */
 }
