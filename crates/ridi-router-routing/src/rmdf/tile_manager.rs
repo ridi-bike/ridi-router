@@ -33,7 +33,7 @@ impl TileManager {
     }
 
     /// Create TileManager from manifest directly (for tests)
-    #[cfg(test)]
+    /// Create TileManager from manifest directly
     pub fn from_manifest(manifest: TileManifest, tile_dir: PathBuf) -> Self {
         let tile_size_degrees = manifest.tile_size_degrees;
         Self {

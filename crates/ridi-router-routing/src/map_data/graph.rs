@@ -48,16 +48,7 @@ impl ElementTagValueRef {
     }
 
     pub fn get(&self) -> Option<String> {
-        if self.tag_value_idx == TagSetRecord::NONE {
-            return None;
-        }
-
-        MapDataGraph::get()
-            .tile_manager
-            .write()
-            .unwrap()
-            .get_tag_value(self.tile_id, self.tag_value_idx)
-            .ok()
+        MapDataGraph::get().get_tag_value(self)
     }
 }
 
@@ -76,27 +67,7 @@ impl ElementTagSetRef {
     }
 
     pub fn get(&self) -> ElementTagSet {
-        let tag_set_record = MapDataGraph::get()
-            .tile_manager
-            .write()
-            .unwrap()
-            .get_tag_set_record(self.tile_id, self.tag_set_idx)
-            .unwrap_or_else(|_| TagSetRecord {
-                name_idx: TagSetRecord::NONE,
-                hw_ref_idx: TagSetRecord::NONE,
-                highway_idx: TagSetRecord::NONE,
-                surface_idx: TagSetRecord::NONE,
-                smoothness_idx: TagSetRecord::NONE,
-            });
-
-        // Construct ElementTagSet with tile-aware refs
-        ElementTagSet {
-            name: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.name_idx),
-            hw_ref: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.hw_ref_idx),
-            highway: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.highway_idx),
-            surface: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.surface_idx),
-            smoothness: ElementTagValueRef::from_idx(self.tile_id, tag_set_record.smoothness_idx),
-        }
+        MapDataGraph::get().get_tag_set(self)
     }
 }
 
@@ -318,6 +289,13 @@ impl MapDataGraph {
         }
     }
 
+    pub fn open(
+        tiles_dir: std::path::PathBuf,
+        manifest: crate::rmdf::generator::manifest::TileManifest,
+    ) -> Self {
+        Self::new(crate::rmdf::TileManager::from_manifest(manifest, tiles_dir))
+    }
+
     /// Test-only: Create a MapDataGraph with dummy TileManager for unit tests
     #[cfg(test)]
     pub fn new_test() -> Self {
@@ -471,6 +449,44 @@ impl MapDataGraph {
         }
     }
 
+    pub fn get_tag_value(&self, tag_value_ref: &ElementTagValueRef) -> Option<String> {
+        if tag_value_ref.tag_value_idx == TagSetRecord::NONE {
+            return None;
+        }
+
+        self.tile_manager
+            .write()
+            .unwrap()
+            .get_tag_value(tag_value_ref.tile_id, tag_value_ref.tag_value_idx)
+            .ok()
+    }
+
+    pub fn get_tag_set(&self, tag_set_ref: &ElementTagSetRef) -> ElementTagSet {
+        let tag_set_record = self
+            .tile_manager
+            .write()
+            .unwrap()
+            .get_tag_set_record(tag_set_ref.tile_id, tag_set_ref.tag_set_idx)
+            .unwrap_or_else(|_| TagSetRecord {
+                name_idx: TagSetRecord::NONE,
+                hw_ref_idx: TagSetRecord::NONE,
+                highway_idx: TagSetRecord::NONE,
+                surface_idx: TagSetRecord::NONE,
+                smoothness_idx: TagSetRecord::NONE,
+            });
+
+        ElementTagSet {
+            name: ElementTagValueRef::from_idx(tag_set_ref.tile_id, tag_set_record.name_idx),
+            hw_ref: ElementTagValueRef::from_idx(tag_set_ref.tile_id, tag_set_record.hw_ref_idx),
+            highway: ElementTagValueRef::from_idx(tag_set_ref.tile_id, tag_set_record.highway_idx),
+            surface: ElementTagValueRef::from_idx(tag_set_ref.tile_id, tag_set_record.surface_idx),
+            smoothness: ElementTagValueRef::from_idx(
+                tag_set_ref.tile_id,
+                tag_set_record.smoothness_idx,
+            ),
+        }
+    }
+
     pub fn get_adjacent(
         &self,
         center_point: MapDataPointRef,
@@ -481,8 +497,10 @@ impl MapDataGraph {
             if let Some(point) = self.get_test_point(center_point.get_element_id()) {
                 let mut adjacent = Vec::new();
                 for line_ref in &point.lines {
-                    let line = line_ref.get();
-                    // Determine which endpoint is not the center point
+                    let line = self.get_line_from_tiles(
+                        line_ref.get_tile_id(),
+                        line_ref.get_element_id() as usize,
+                    );
                     let other_point =
                         if line.points.0.get_element_id() == center_point.get_element_id() {
                             line.points.1.clone()

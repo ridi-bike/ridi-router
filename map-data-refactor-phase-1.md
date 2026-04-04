@@ -1,6 +1,6 @@
 # Map Data Refactor - Phase 1: Foundation (`RoutingExecutor` ownership + `RoutingContext`)
 
-_Status: planned_
+_Status: foundation implemented; deeper generate-path cleanup deferred_
 
 ## Purpose
 
@@ -138,6 +138,8 @@ Phase 2 should be able to assume:
 - `RoutingExecutor::generate(&self, ...)` is now possible
 - `RoutingContext` exposes the lookup operations needed by generator/walker/navigator
 
+
+Known temporary breakage accepted for this phase: `RoutingExecutor::generate(...)` can use the new executor-owned graph/context for top-level closest-point lookup, but end-to-end generation tests may still fail until later phases remove deeper `MapDataGraph::get()` / ref `.get()` usage inside `Generator`, `Walker`, `route_output`, and related helpers.
 ## Acceptance criteria
 
 - `RoutingExecutor` owns `Arc<MapDataGraph>`
@@ -157,33 +159,33 @@ Phase 2 should be able to assume:
 
 ## Validation checklist
 
-- [ ] `RoutingExecutor` stores `Arc<MapDataGraph>`
-- [ ] `RoutingExecutor::new(graph: Arc<MapDataGraph>)` exists for internal/test use
-- [ ] `routing_api.rs` no longer defines or uses `OPEN_TILES_DIR`
-- [ ] `routing_api.rs` no longer calls `MapDataGraph::init(...)`
-- [ ] `RoutingContext<'_>` exists and is crate-internal
-- [ ] `RoutingContext` methods exist for point, line, tag set, tag value, adjacency, and closest-point lookup
-- [ ] two executors can be constructed for different datasets in one process
-- [ ] no caller in this phase needs singleton open ordering for correctness
-- [ ] any new graph constructor/open helper has typed error flow compatible with `RoutingOpenError`
+- [x] `RoutingExecutor` stores `Arc<MapDataGraph>`
+- [x] `RoutingExecutor::new(graph: Arc<MapDataGraph>)` exists for internal/test use
+- [x] `routing_api.rs` no longer defines or uses `OPEN_TILES_DIR`
+- [x] `routing_api.rs` no longer calls `MapDataGraph::init(...)`
+- [x] `RoutingContext<'_>` exists and is crate-internal
+- [x] `RoutingContext` methods exist for point, line, tag set, tag value, adjacency, and closest-point lookup
+- [x] two executors can be constructed for different datasets in one process
+- [x] no caller in this phase needs singleton open ordering for correctness
+- [x] any new graph constructor/open helper has typed error flow compatible with `RoutingOpenError`
 
 ### Suggested checks
 
-- [ ] `rg "OPEN_TILES_DIR|ConflictingTilesDir|MapDataGraph::init" crates/ridi-router-routing/src`
-- [ ] targeted tests for opening different datasets in one process
-- [ ] `cargo test -p ridi-router-routing routing_api -- --nocapture`
+- [x] `rg "OPEN_TILES_DIR|ConflictingTilesDir|MapDataGraph::init" crates/ridi-router-routing/src`
+- [x] targeted tests for opening different datasets in one process
+- [ ] `cargo test -p ridi-router-routing routing_api -- --nocapture` _(expected to stay red in phase 1 until deeper generator/walker/route-output global lookups are converted)_
 
 ## Progress checklist
 
-- [ ] update `RoutingExecutor` storage to `Arc<MapDataGraph>`
-- [ ] remove `OPEN_TILES_DIR`
-- [ ] switch `open(...)` from singleton init to direct graph construction
-- [ ] add `RoutingExecutor::new(graph: Arc<MapDataGraph>)`
-- [ ] add internal `RoutingContext<'_>` type
-- [ ] add explicit context lookup methods
-- [ ] ensure `RoutingContext` delegates to `MapDataGraph` primitives
-- [ ] add or update tests for multi-dataset open behavior
-- [ ] confirm phase acceptance criteria are met
+- [x] update `RoutingExecutor` storage to `Arc<MapDataGraph>`
+- [x] remove `OPEN_TILES_DIR`
+- [x] switch `open(...)` from singleton init to direct graph construction
+- [x] add `RoutingExecutor::new(graph: Arc<MapDataGraph>)`
+- [x] add internal `RoutingContext<'_>` type
+- [x] add explicit context lookup methods
+- [x] ensure `RoutingContext` delegates to `MapDataGraph` primitives
+- [x] add or update tests for multi-dataset open behavior
+- [x] confirm phase acceptance criteria are met
 
 ## Notes and watch-outs
 
@@ -191,3 +193,4 @@ Phase 2 should be able to assume:
 - Avoid exposing `RoutingContext` publicly in this phase.
 - Do not delay this phase by trying to delete old `.get()` paths early; that is a later phase.
 - Temporary breakage outside the intentionally converted area is acceptable if the foundation is in place and the acceptance criteria above are met.
+- In particular, end-to-end `generate(...)` tests may still fail in this phase because deeper routing code still dereferences through process-global paths that are intentionally deferred to later phases.

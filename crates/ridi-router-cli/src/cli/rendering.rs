@@ -33,16 +33,16 @@ mod tests {
     #[test]
     fn cli_human_error_rendering_wraps_typed_library_errors() {
         let routing_error = RouterRunnerError::Routing {
-            error: RoutingError::Open(RoutingOpenError::ConflictingTilesDir {
-                existing_tiles_dir: PathBuf::from("/tiles/a"),
-                requested_tiles_dir: PathBuf::from("/tiles/b"),
+            error: RoutingError::Open(RoutingOpenError::ManifestRead {
+                manifest_path: PathBuf::from("/tiles/a/manifest.json"),
+                error: std::io::Error::other("boom"),
             }),
         };
 
         let rendered = render_user_error(&routing_error);
         assert!(rendered.starts_with("Routing error:"));
-        assert!(rendered.contains("/tiles/a"));
-        assert!(rendered.contains("/tiles/b"));
+        assert!(rendered.contains("/tiles/a/manifest.json"));
+        assert!(rendered.contains("boom"));
     }
 
     #[test]

@@ -3,6 +3,7 @@ mod rmdf;
 mod route_output;
 mod router;
 mod routing_api;
+pub(crate) mod routing_context;
 #[cfg(test)]
 mod test_utils;
 
@@ -13,6 +14,7 @@ pub use routing_api::{
     Coords, RouteMode, RouteRequest, RoutingError, RoutingExecutor, RoutingExecutorConfig,
     RoutingGenerationError, RoutingOpenError,
 };
+pub(crate) use routing_context::RoutingContext;
 
 #[cfg(test)]
 mod tests {

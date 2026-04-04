@@ -294,7 +294,7 @@ impl RouterRunner {
             read_router_rules(rule_file).map_err(|error| RouterRunnerError::Rules { error })?;
 
         info!(tiles_dir = ?tiles_dir, "Using RMDF tiles");
-        let mut executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir })
+        let executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir })
             .map_err(|error| RouterRunnerError::Routing { error })?;
 
         info!("Route generation started");
@@ -650,16 +650,16 @@ mod tests {
     #[test]
     fn generate_route_cli_renders_routing_open_error() {
         let error = super::RouterRunnerError::Routing {
-            error: RoutingError::Open(RoutingOpenError::ConflictingTilesDir {
-                existing_tiles_dir: PathBuf::from("/tiles/a"),
-                requested_tiles_dir: PathBuf::from("/tiles/b"),
+            error: RoutingError::Open(RoutingOpenError::ManifestRead {
+                manifest_path: PathBuf::from("/tiles/a/manifest.json"),
+                error: std::io::Error::other("boom"),
             }),
         };
 
         let rendered = error.to_string();
-        assert!(rendered.contains("already opened"));
-        assert!(rendered.contains("/tiles/a"));
-        assert!(rendered.contains("/tiles/b"));
+        assert!(rendered.contains("Failed to initialize TileManager"));
+        assert!(rendered.contains("/tiles/a/manifest.json"));
+        assert!(rendered.contains("boom"));
     }
 
     #[test]

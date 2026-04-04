@@ -1,7 +1,7 @@
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -15,9 +15,8 @@ use crate::{
         generator::{Generator, GeneratorError, WP_LOOKUP_ALLOWED_HWS},
         rules::RouterRules,
     },
+    RoutingContext,
 };
-
-static OPEN_TILES_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Coords {
@@ -49,9 +48,9 @@ pub struct RoutingExecutorConfig {
     pub tiles_dir: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RoutingExecutor {
-    tiles_dir: PathBuf,
+    graph: Arc<MapDataGraph>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -76,14 +75,6 @@ pub enum RoutingOpenError {
         manifest_path: PathBuf,
         error: serde_json::Error,
     },
-
-    #[error(
-        "Routing graph already opened for '{existing_tiles_dir:?}', cannot reopen with '{requested_tiles_dir:?}'"
-    )]
-    ConflictingTilesDir {
-        existing_tiles_dir: PathBuf,
-        requested_tiles_dir: PathBuf,
-    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -96,34 +87,19 @@ pub enum RoutingGenerationError {
 }
 
 impl RoutingExecutor {
-    pub fn open(config: RoutingExecutorConfig) -> Result<Self, RoutingError> {
-        let requested_tiles_dir = normalize_tiles_dir(&config.tiles_dir);
-
-        if let Some(existing_tiles_dir) = OPEN_TILES_DIR.get() {
-            if existing_tiles_dir != &requested_tiles_dir {
-                return Err(RoutingOpenError::ConflictingTilesDir {
-                    existing_tiles_dir: existing_tiles_dir.clone(),
-                    requested_tiles_dir,
-                }
-                .into());
-            }
-
-            return Ok(Self {
-                tiles_dir: existing_tiles_dir.clone(),
-            });
-        }
-
-        validate_tiles_manifest(&config.tiles_dir)?;
-        MapDataGraph::init(config.tiles_dir);
-        let _ = OPEN_TILES_DIR.set(requested_tiles_dir.clone());
-
-        Ok(Self {
-            tiles_dir: requested_tiles_dir,
-        })
+    pub(crate) fn new(graph: Arc<MapDataGraph>) -> Self {
+        Self { graph }
     }
 
-    pub fn generate(&mut self, request: RouteRequest) -> Result<RouteComputation, RoutingError> {
-        trace!(tiles_dir = ?self.tiles_dir, "Generating route");
+    pub fn open(config: RoutingExecutorConfig) -> Result<Self, RoutingError> {
+        let manifest = validate_tiles_manifest(&config.tiles_dir)?;
+        let graph = Arc::new(MapDataGraph::open(config.tiles_dir, manifest));
+
+        Ok(Self::new(graph))
+    }
+
+    pub fn generate(&self, request: RouteRequest) -> Result<RouteComputation, RoutingError> {
+        trace!("Generating route");
 
         let (start_coords, finish_coords, round_trip) = match request.mode {
             RouteMode::StartFinish { start, finish } => (start, finish, None),
@@ -134,8 +110,10 @@ impl RoutingExecutor {
             } => (start_finish, start_finish, Some((bearing, distance))),
         };
 
-        let start = MapDataGraph::get()
-            .get_closest_to_coords(
+        let ctx = RoutingContext::new(self.graph.as_ref());
+
+        let start = ctx
+            .closest_to_coords(
                 start_coords.lat,
                 start_coords.lon,
                 &request.rules,
@@ -146,8 +124,8 @@ impl RoutingExecutor {
                 point: "start point",
             })?;
 
-        let finish = MapDataGraph::get()
-            .get_closest_to_coords(
+        let finish = ctx
+            .closest_to_coords(
                 finish_coords.lat,
                 finish_coords.lon,
                 &request.rules,
@@ -164,10 +142,6 @@ impl RoutingExecutor {
 
         Ok(RouteComputation::from(routes))
     }
-}
-
-fn normalize_tiles_dir(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn validate_tiles_manifest(tiles_dir: &Path) -> Result<TileManifest, RoutingOpenError> {
@@ -197,9 +171,7 @@ mod tests {
     use crate::router::rules::RouterRules;
     use rusty_fork::rusty_fork_test;
 
-    use super::{
-        Coords, RouteMode, RouteRequest, RoutingError, RoutingExecutor, RoutingExecutorConfig,
-    };
+    use super::{Coords, RouteMode, RouteRequest, RoutingExecutor, RoutingExecutorConfig};
 
     const RMDF_HEADER_SIZE: u64 = 112;
     const POINT_RECORD_SIZE: u64 = 48;
@@ -458,31 +430,23 @@ mod tests {
     }
 
     #[test]
-    fn routing_executor_open_rejects_conflicting_tiles_dir() {
-        let existing_tiles_dir = synthetic_tiles_dir();
-        let requested_tiles_dir = unique_test_dir("conflicting-open");
-        fs::create_dir_all(&requested_tiles_dir).unwrap();
+    fn routing_executor_open_allows_multiple_datasets_in_one_process() {
+        let first_tiles_dir = synthetic_tiles_dir();
+        let second_tiles_dir = create_synthetic_tiles_fixture();
 
-        RoutingExecutor::open(RoutingExecutorConfig {
-            tiles_dir: existing_tiles_dir.clone(),
+        let first = RoutingExecutor::open(RoutingExecutorConfig {
+            tiles_dir: first_tiles_dir.clone(),
+        })
+        .unwrap();
+        let second = RoutingExecutor::open(RoutingExecutorConfig {
+            tiles_dir: second_tiles_dir.clone(),
         })
         .unwrap();
 
-        let error = RoutingExecutor::open(RoutingExecutorConfig {
-            tiles_dir: requested_tiles_dir.clone(),
-        })
-        .unwrap_err();
+        assert_ne!(first_tiles_dir, second_tiles_dir);
+        let _ = (first, second);
 
-        assert!(matches!(
-            error,
-            RoutingError::Open(super::RoutingOpenError::ConflictingTilesDir {
-                existing_tiles_dir: actual_existing,
-                requested_tiles_dir: actual_requested,
-            }) if actual_existing == existing_tiles_dir.canonicalize().unwrap_or(existing_tiles_dir)
-                && actual_requested == requested_tiles_dir
-        ));
-
-        fs::remove_dir_all(requested_tiles_dir).unwrap();
+        fs::remove_dir_all(second_tiles_dir).unwrap();
     }
 
     #[test]
@@ -501,7 +465,7 @@ mod tests {
         #[test]
         fn routing_executor_generate_returns_route_computation() {
             let tiles_dir = synthetic_tiles_dir();
-            let mut executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
+            let executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
 
             let computation = executor
                 .generate(RouteRequest {
@@ -567,7 +531,7 @@ mod phase_2_tests {
         #[test]
         fn routing_executor_generate_start_finish_returns_route_computation() {
             let tiles_dir = synthetic_tiles_dir();
-            let mut executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
+            let executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
 
             let computation = executor
                 .generate(RouteRequest {
@@ -586,7 +550,7 @@ mod phase_2_tests {
         #[test]
         fn routing_executor_generate_round_trip_returns_route_computation() {
             let tiles_dir = synthetic_tiles_dir();
-            let mut executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
+            let executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
 
             let computation = executor
                 .generate(RouteRequest {
@@ -605,7 +569,7 @@ mod phase_2_tests {
         #[test]
         fn routing_executor_reuse_is_sequential_and_supported() {
             let tiles_dir = synthetic_tiles_dir();
-            let mut executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
+            let executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
 
             let first = executor
                 .generate(RouteRequest {
