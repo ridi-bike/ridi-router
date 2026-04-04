@@ -1,6 +1,6 @@
 # Map Data Refactor Plan
 
-_Status: draft updated after clarification_
+_Status: draft updated after review pass_
 
 This plan is based on:
 - `map-data-refactor-discoveries.md`
@@ -14,11 +14,11 @@ These are now settled:
 1. **Ref model**: use **lightweight ID refs + explicit context**
 2. **Multi-dataset support**: **required**
 3. **Public API stability**: **not required** on this branch
-4. **Migration style**: several validated phases; phases do **not** need to be independently shippable
+4. **Migration style**: several validated phases; phases do **not** need to be independently shippable, and intermediate compile/test breakage is acceptable while the conversion is in flight as long as each phase still has concrete, scoped acceptance criteria for the parts it intentionally changes
 5. **Naming**: keep **`MapDataGraph`**
 6. **Tests**: rework singleton-based tests in the **same refactor**
 7. **Tile TODOs**: explicitly **out of scope**
-8. **Sharing**: executor/context should be **shareable**
+8. **Sharing**: `RoutingExecutor` / `RoutingContext` should be **shareable in the API sense**, but optimizing or validating **concurrent** route generation is out of scope in this refactor
 9. **Context type**: use **`RoutingContext`**
 10. **Context ownership**: use a **borrowed** `RoutingContext<'_>` over `&MapDataGraph`
 11. **Context flow**: pass `RoutingContext` into the methods that need it instead of storing it in every routing object
@@ -32,6 +32,10 @@ These are now settled:
 19. **Migration compatibility**: remove singleton APIs and ref `.get()` methods **as soon as explicit replacements exist**, rather than keeping long-lived compatibility shims
 20. **Lookup failure semantics**: keep the current internal assumption that refs are valid; invalid internal lookups may still fail hard in this refactor
 21. **Performance scope**: keep `RoutingContext` thin first; no request-local memoization/caching in this refactor
+22. **Phase file lists**: "Primary files" lists in the phases are **illustrative**, not exhaustive
+23. **Cross-dataset ref/context mismatch**: resolving a ref through the wrong graph/context is an internal bug to call out, but adding protection mechanisms for that case is out of scope in this refactor
+24. **Route output materialization**: move context-dependent route/output construction out of `From` impls and make it **explicitly context-aware**
+25. **CLI follow-through**: update CLI/consumer integration in the same refactor anywhere executor API changes affect it
 
 ## Goal
 
@@ -64,18 +68,20 @@ That means the refactor is not just a generator/walker cleanup. The basic point/
 
 ### The routing stack is full of implicit dereferencing
 
-Large parts of the crate rely on `.get()` on point, line, and tag refs:
+Large parts of the crate rely on `.get()` on point, line, and tag refs. Illustrative runtime examples include:
 - `router/generator.rs`
 - `router/walker.rs`
 - `router/navigator.rs`
 - `router/weights.rs`
-- `router/route/*`
+- `router/route/*` (including `score.rs`)
+- `router/clustering.rs`
 - `router/itinerary.rs`
+- `route_output.rs`
 - `map_data/point.rs`
 - `map_data/line.rs`
 - `map_data/rule.rs`
 
-So this is a broad internal refactor, not a small patch.
+So this is a broad internal refactor, not a small patch, and the file lists below should be read as examples rather than exhaustive inventories.
 
 ### Tests are singleton-shaped too
 
@@ -102,6 +108,7 @@ Keep refs as pure IDs and make all dereferencing explicit through an instance-ow
   - `ElementTagValueRef`
   - `ElementTagSetRef`
 - dereferencing happens through `RoutingContext`, not through global state
+- resolving a ref through the wrong graph/context is treated as an internal bug in this refactor, not a case that gets new runtime guards
 
 ### Tentative shape
 
@@ -117,6 +124,10 @@ pub struct RoutingContext<'a> {
 impl RoutingExecutor {
     pub fn new(graph: Arc<MapDataGraph>) -> Self { ... }
     pub fn generate(&self, request: RouteRequest) -> Result<RouteComputation, RoutingError> { ... }
+}
+
+impl RouteComputation {
+    fn from_routes(ctx: &RoutingContext<'_>, routes: Vec<RouteWithStats>) -> Self { ... }
 }
 
 impl RoutingContext<'_> {
@@ -159,6 +170,17 @@ Resolver methods should return owned `MapDataPoint`, `MapDataLine`, and tag valu
 
 The resolver can reduce parameter noise, but it should still be visibly threaded through the routing stack.
 
+### 5. Treat wrong-context ref resolution as an internal bug for now
+
+Multiple datasets make it possible to resolve a ref from graph A through graph B. Call that risk out in implementation notes and code review, but keep it as a trusted internal invariant in this refactor.
+
+### 6. Make context-dependent output construction explicit
+
+Context-dependent materialization such as route-output coordinate extraction should not hide behind `From` impls. Build those results in explicit helpers that receive `&RoutingContext`.
+
+## Phase validation scope
+
+Phase validation is scoped to the area intentionally converted in that phase. Until the final cleanup end state, temporary compilation failures or test failures in not-yet-converted code are acceptable.
 ## Proposed phases
 
 ## Phase 1 - Introduce instance-owned executor state
@@ -202,32 +224,40 @@ This creates a clean landing zone before the larger mechanical conversion.
 
 ## Phase 3 - Convert entrypoints and high-level routing flow
 
-### Primary files
+### Primary files (illustrative)
 
 - `crates/ridi-router-routing/src/routing_api.rs`
 - `crates/ridi-router-routing/src/router/generator.rs`
 - `crates/ridi-router-routing/src/router/walker.rs`
 - `crates/ridi-router-routing/src/router/navigator.rs`
+- `crates/ridi-router-routing/src/route_output.rs`
+- `crates/ridi-router-cli/src/router_runner.rs`
 
 ### Changes
 
-- `RoutingExecutor::generate(...)` creates/borrows a resolver
-- generator resolves closest points through the resolver
-- walker resolves adjacency through the resolver
-- navigator passes resolver access into deeper operations instead of depending on implicit ref `.get()` behavior
+- `RoutingExecutor::generate(&self, ...)` creates/borrows a `RoutingContext`
+- generator resolves closest points through the context
+- walker resolves adjacency through the context
+- navigator passes context access into deeper operations instead of depending on implicit ref `.get()` behavior
+- route output materialization moves out of `From<RouteWithStats>` and into an explicit context-aware helper such as `RouteComputation::from_routes(&ctx, ...)`
+- CLI callers are updated where the executor API or mutability expectations change
 
 ### Validation
 
 - runtime generator/walker paths no longer call `MapDataGraph::get()`
-- resolver is visibly threaded through the main route-generation flow
+- `RoutingContext` is visibly threaded through the main route-generation flow
+- route output construction no longer depends on ref `.get()` hidden inside `From` impls
+- CLI integration matches the updated executor API
 
 ## Phase 4 - Convert lower-level domain helpers away from implicit ref `.get()`
 
-### Primary files
+### Primary files (illustrative)
 
 - `crates/ridi-router-routing/src/router/weights.rs`
 - `crates/ridi-router-routing/src/router/route/mod.rs`
 - `crates/ridi-router-routing/src/router/route/segment.rs`
+- `crates/ridi-router-routing/src/router/route/score.rs`
+- `crates/ridi-router-routing/src/router/clustering.rs`
 - `crates/ridi-router-routing/src/router/itinerary.rs`
 - `crates/ridi-router-routing/src/map_data/point.rs`
 - `crates/ridi-router-routing/src/map_data/line.rs`
@@ -237,25 +267,32 @@ This creates a clean landing zone before the larger mechanical conversion.
 
 This is where implicit deref-heavy helpers need redesign.
 
+This phase is **not** just call-site replacement. It includes changing method signatures and helper responsibilities wherever apparently-owned domain methods still dereference refs internally.
+
 Examples:
 - methods that currently do `point_ref.get().lat`
 - methods that currently do `line_ref.get().tags.get().highway()`
+- methods like `MapDataPoint::distance_between(&MapDataPointRef)` and `MapDataPoint::bearing(&MapDataPointRef)`
+- methods like `MapDataLine::line_id()` / `MapDataLine::get_len_m()`
+- methods like `Segment::get_bearing()`
 - formatting helpers that dereference refs transitively
 
 ### Preferred direction
 
-Where a helper is really a lookup helper, move that logic to the resolver.
+Where a helper is really a lookup helper, move that logic to the context.
 
-Where a helper is really pure geometry or formatting, make it operate on already-resolved owned values.
+Where a helper is really pure geometry, scoring, clustering, or formatting, make it operate on already-resolved owned values or plain coordinates.
 
 Examples:
 - geometry helpers should prefer coordinates or resolved values instead of ref dereferencing
-- tag-based stats helpers should use resolver methods instead of nested `.get()` chains
+- tag-based stats helpers should use context methods instead of nested `.get()` chains
+- converted helpers should either take `&RoutingContext` explicitly or stop doing lookups internally altogether
 
 ### Validation
 
 - runtime routing code no longer depends on `MapDataElementRef<T>::get()`
 - runtime routing code no longer depends on tag ref `.get()` methods
+- converted helper APIs make lookup requirements explicit instead of hiding them inside owned domain methods
 
 ## Phase 5 - Remove singleton APIs and globally coupled dereference machinery
 
@@ -319,21 +356,21 @@ impl RoutingTestContext {
 - simplify signatures after the conversion settles
 - remove migration-only compatibility shims
 - audit `Debug` / `Display` impls
-- rename the resolver type if needed after usage becomes clear
-
+- clean up temporary scaffolding introduced to support partially converted phases
 ## Suggested implementation order inside the code
 
 1. make `RoutingExecutor` own `Arc<MapDataGraph>`
-2. add `RoutingContext` / `MapResolver`
+2. add `RoutingContext`
 3. convert `routing_api.rs`
 4. convert `generator.rs`
 5. convert `walker.rs`
 6. convert `navigator.rs`
-7. convert `weights.rs`
-8. convert `route/*`, `itinerary.rs`, `point.rs`, `line.rs`, `rule.rs`
-9. remove singleton APIs and implicit dereference machinery
-10. rework tests and test helpers
-11. final cleanup
+7. convert route output construction and CLI callers
+8. convert `weights.rs`
+9. convert `route/*`, `clustering.rs`, `itinerary.rs`, `point.rs`, `line.rs`, `rule.rs`
+10. remove singleton APIs and implicit dereference machinery
+11. rework tests and test helpers
+12. final cleanup
 
 ## Risks and watch-outs
 
@@ -353,23 +390,37 @@ Some `Debug` / `Display` code dereferences refs transitively. Those need explici
 
 If the resolver is too thin, parameter threading becomes noisy. If it becomes too magical, it starts resembling ambient state again. Keep it small and explicit.
 
-### 5. Tests are part of the real work
+### 5. Multiple datasets introduce wrong-context lookup risk
+
+With multiple graphs, resolving a ref against the wrong `RoutingContext` is now possible. Treat that as an internal invariant for this refactor and call it out clearly during implementation and review, but do not add extra guard mechanisms here.
+
+### 6. Shareable API does not mean concurrent routing is a goal
+
+`RoutingExecutor::generate(&self, ...)` should not require exclusive access, but concurrent route generation behavior/performance is out of scope in this refactor.
+
+### 7. Tests are part of the real work
 
 The refactor is not complete until singleton-shaped test setup is gone.
-
 ## Explicit non-goals
 
 Do not merge this refactor with:
 - rule loading from tiles
 - rules filtering / highway filtering TODOs in `TileManager`
-- route output redesign
+- route output schema redesign
 - event streaming work
 - algorithm changes
+- concurrent route-generation optimization/validation
 - unrelated workspace restructuring
 
 ## Remaining questions
 
-None at the architecture/planning level. The refactor scope, migration shape, and implementation direction are now clarified enough to execute against this plan.
+None that block execution. For clarity, these are now treated as settled planning assumptions:
+
+- phase file lists are illustrative, not exhaustive
+- resolving a ref against the wrong graph/context is an internal bug, and adding protection for that case is out of scope here
+- `RoutingExecutor::generate(&self, ...)` is about explicit ownership/shareable API shape; concurrent route generation is out of scope
+- CLI integration updates are part of this refactor wherever executor API changes affect them
+- temporary compilation or test breakage in not-yet-converted areas is acceptable between phases as long as scoped acceptance criteria are still defined and followed
 
 ### Final locked direction
 
@@ -384,3 +435,7 @@ None at the architecture/planning level. The refactor scope, migration shape, an
 - remove singleton/ref `.get()` compatibility paths as soon as replacements exist
 - keep current fail-hard internal lookup assumptions for this refactor
 - keep `RoutingContext` thin; no request-local caching in this refactor
+- keep phase file lists illustrative rather than exhaustive
+- move context-dependent route/output construction out of `From` impls
+- include CLI follow-through where executor API changes require it
+- accept temporarily broken intermediate states, with validation scoped to the converted area
