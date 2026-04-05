@@ -14,7 +14,11 @@ use crate::{
     router::rules::RouterRules,
 };
 
-use super::{line::MapDataLine, point::MapDataPoint};
+use super::{
+    line::MapDataLine,
+    point::MapDataPoint,
+    rule::{MapDataRule, MapDataRuleType},
+};
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagValueRef {
@@ -271,6 +275,14 @@ impl MapDataGraph {
         }
     }
 
+    fn deserialize_rule_type(rule_type: u8) -> MapDataRuleType {
+        match rule_type {
+            0 => MapDataRuleType::OnlyAllowed,
+            1 => MapDataRuleType::NotAllowed,
+            _ => panic!("Unknown serialized rule type {rule_type}"),
+        }
+    }
+
     /// Test-only: Insert a point for testing
     #[cfg(test)]
     pub fn test_insert_point(&self, point: MapDataPoint) {
@@ -355,13 +367,32 @@ impl MapDataGraph {
             })
             .collect();
 
+        let rules: Vec<MapDataRule> = tm
+            .get_rules_for_point(tile_id, &point_record)
+            .expect("Failed to get rules from tile")
+            .into_iter()
+            .map(|rule| MapDataRule {
+                from_lines: rule
+                    .from_line_indices
+                    .into_iter()
+                    .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                    .collect(),
+                to_lines: rule
+                    .to_line_indices
+                    .into_iter()
+                    .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                    .collect(),
+                rule_type: Self::deserialize_rule_type(rule.rule_type),
+            })
+            .collect();
+
         // Convert to MapDataPoint
         MapDataPoint {
             id: point_record.osm_id,
             lat: point_record.lat,
             lon: point_record.lon,
             lines,
-            rules: Vec::new(), // TODO: Fetch rules from tiles
+            rules,
             residential_in_proximity: point_record.residential_in_proximity(),
             nogo_area: point_record.nogo_area(),
         }
@@ -503,5 +534,239 @@ impl MapDataGraph {
 
         // Convert to MapDataPointRef
         Some(MapDataPointRef::new(result.0, result.1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+    use ridi_router_test_support::rmdf::{
+        empty_neighbors, manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord,
+        PointRecord, RuleRecord, TileId, TileManifest, TileMetadata, TileSpec,
+        SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+    };
+
+    #[test]
+    fn test_get_point_from_tiles_hydrates_rules() {
+        let fixture = create_rule_fixture("map-data-graph-rule-hydration");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let point = graph.get_point_from_tiles(fixture.tile_id, fixture.via_osm_id);
+
+        assert_eq!(point.id, fixture.via_osm_id);
+        assert_eq!(point.lines.len(), 3);
+        assert_eq!(point.rules.len(), 2);
+
+        assert_eq!(point.rules[0].rule_type, MapDataRuleType::OnlyAllowed);
+        assert_eq!(
+            point.rules[0].from_lines,
+            vec![MapDataLineRef::new(fixture.tile_id, 0)]
+        );
+        assert_eq!(
+            point.rules[0].to_lines,
+            vec![MapDataLineRef::new(fixture.tile_id, 1)]
+        );
+
+        assert_eq!(point.rules[1].rule_type, MapDataRuleType::NotAllowed);
+        assert_eq!(
+            point.rules[1].from_lines,
+            vec![MapDataLineRef::new(fixture.tile_id, 0)]
+        );
+        assert_eq!(
+            point.rules[1].to_lines,
+            vec![MapDataLineRef::new(fixture.tile_id, 2)]
+        );
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_point_from_tiles_keeps_points_without_rules() {
+        let fixture = create_rule_fixture("map-data-graph-no-rules");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let point = graph.get_point_from_tiles(fixture.tile_id, fixture.to_osm_id);
+
+        assert_eq!(point.id, fixture.to_osm_id);
+        assert!(point.rules.is_empty());
+        assert_eq!(point.lines, vec![MapDataLineRef::new(fixture.tile_id, 1)]);
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    struct RuleFixture {
+        dir: std::path::PathBuf,
+        tile_id: TileId,
+        via_osm_id: u64,
+        to_osm_id: u64,
+    }
+
+    fn create_rule_fixture(prefix: &str) -> RuleFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_id = SYNTHETIC_TILE_ID;
+        let via_osm_id = 2001;
+        let to_osm_id = 2002;
+        let side_osm_id = 2003;
+
+        let points = vec![
+            PointRecord {
+                osm_id: 2000,
+                lat: 10.10,
+                lon: 20.10,
+                lines_offset: 0,
+                lines_count: 1,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+            PointRecord {
+                osm_id: via_osm_id,
+                lat: 10.11,
+                lon: 20.10,
+                lines_offset: 1,
+                lines_count: 3,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 2,
+                flags: 0,
+                _padding2: 0,
+            },
+            PointRecord {
+                osm_id: to_osm_id,
+                lat: 10.12,
+                lon: 20.10,
+                lines_offset: 4,
+                lines_count: 1,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+            PointRecord {
+                osm_id: side_osm_id,
+                lat: 10.11,
+                lon: 20.11,
+                lines_offset: 5,
+                lines_count: 1,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+        ];
+
+        let lines = vec![
+            LineRecord {
+                point_a_osm_id: 2000,
+                point_a_lat: 10.10,
+                point_a_lon: 20.10,
+                point_b_osm_id: via_osm_id,
+                point_b_lat: 10.11,
+                point_b_lon: 20.10,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: via_osm_id,
+                point_a_lat: 10.11,
+                point_a_lon: 20.10,
+                point_b_osm_id: to_osm_id,
+                point_b_lat: 10.12,
+                point_b_lon: 20.10,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: via_osm_id,
+                point_a_lat: 10.11,
+                point_a_lon: 20.10,
+                point_b_osm_id: side_osm_id,
+                point_b_lat: 10.11,
+                point_b_lon: 20.11,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+        ];
+
+        let rule_line_refs = vec![0, 1, 0, 2];
+        let rules = vec![
+            RuleRecord {
+                from_lines_offset: 0,
+                from_lines_count: 1,
+                _padding1: 0,
+                to_lines_offset: 1,
+                to_lines_count: 1,
+                rule_type: 0,
+                _padding2: 0,
+                _padding3: 0,
+            },
+            RuleRecord {
+                from_lines_offset: 2,
+                from_lines_count: 1,
+                _padding1: 0,
+                to_lines_offset: 3,
+                to_lines_count: 1,
+                rule_type: 1,
+                _padding2: 0,
+                _padding3: 0,
+            },
+        ];
+
+        let tile_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                points,
+                lines,
+                line_refs: vec![0, 0, 1, 2, 1, 2],
+                rules,
+                rule_line_refs,
+            },
+        );
+
+        write_manifest(
+            &dir,
+            &TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: SYNTHETIC_TILE_SIZE_DEGREES,
+                format_version: 1,
+                generated_at: "2026-04-05T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: vec![TileMetadata {
+                    filename: tile_id.to_filename(),
+                    col: tile_id.col,
+                    row: tile_id.row,
+                    bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
+                    neighbors: empty_neighbors(),
+                    size_bytes: fs::metadata(&tile_path).unwrap().len(),
+                    point_count: 4,
+                    line_count: 3,
+                    checksum: "sha256:test".to_string(),
+                    military_geojson_filename: None,
+                }],
+            },
+        );
+
+        RuleFixture {
+            dir,
+            tile_id,
+            via_osm_id,
+            to_osm_id,
+        }
     }
 }

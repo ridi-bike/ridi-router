@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bytemuck::{cast_slice, try_from_bytes};
+use bytemuck::{cast_slice, pod_read_unaligned, try_from_bytes};
 use memmap2::Mmap;
 use std::fs::File;
 use std::path::Path;
@@ -9,6 +9,7 @@ use super::format::*;
 pub struct MappedTile {
     _file: File,
     mmap: Mmap,
+    data_end: usize,
     pub header: &'static RmdfHeader,
     pub tile_id: TileId,
 }
@@ -42,9 +43,16 @@ impl MappedTile {
         // for the lifetime of MappedTile
         let header_static: &'static RmdfHeader = unsafe { &*(header as *const RmdfHeader) };
 
+        let data_end = if super::validation::validate_checksum(&mmap).is_ok() {
+            mmap.len() - 32
+        } else {
+            mmap.len()
+        };
+
         Ok(Self {
             _file: file,
             mmap,
+            data_end,
             header: header_static,
             tile_id,
         })
@@ -156,5 +164,45 @@ impl MappedTile {
             .context("Tag value string out of bounds")?;
 
         std::str::from_utf8(string_slice).context("Invalid UTF-8 in tag value")
+    }
+
+    pub fn get_rules(&self) -> Result<Vec<RuleRecord>> {
+        let offset = self.header.section_offsets[section::RULES] as usize;
+        let count = self.header.rule_count as usize;
+        let size = count * std::mem::size_of::<RuleRecord>();
+
+        let slice = self
+            .mmap
+            .get(offset..offset + size)
+            .context("Rules section out of bounds")?;
+
+        Ok(slice
+            .chunks_exact(std::mem::size_of::<RuleRecord>())
+            .map(pod_read_unaligned)
+            .collect())
+    }
+
+    pub fn get_rule_line_refs_payload(&self) -> Result<Vec<u64>> {
+        let rules_offset = self.header.section_offsets[section::RULES] as usize;
+        let rule_record_bytes = self.header.rule_count as usize * std::mem::size_of::<RuleRecord>();
+        let payload_offset = rules_offset + rule_record_bytes;
+
+        let slice = self
+            .mmap
+            .get(payload_offset..self.data_end)
+            .context("Rule line refs payload out of bounds")?;
+
+        if slice.len() % std::mem::size_of::<u64>() != 0 {
+            anyhow::bail!(
+                "Rule line refs payload size {} is not a multiple of {}",
+                slice.len(),
+                std::mem::size_of::<u64>()
+            );
+        }
+
+        Ok(slice
+            .chunks_exact(std::mem::size_of::<u64>())
+            .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+            .collect())
     }
 }

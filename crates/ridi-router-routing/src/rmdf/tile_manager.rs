@@ -12,6 +12,13 @@ pub struct TileManager {
     tile_size_degrees: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TilePointRule {
+    pub from_line_indices: Vec<u64>,
+    pub to_line_indices: Vec<u64>,
+    pub rule_type: u8,
+}
+
 impl TileManager {
     const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
 
@@ -97,6 +104,60 @@ impl TileManager {
                 tile_id
             )
         }
+    }
+
+    pub(crate) fn get_rules_for_point(
+        &mut self,
+        tile_id: TileId,
+        point: &PointRecord,
+    ) -> Result<Vec<TilePointRule>> {
+        self.ensure_tile_loaded(tile_id)?;
+
+        let tile = self.loaded_tiles.get(&tile_id).unwrap();
+        let rule_records = tile.get_rules()?;
+        let payload = tile.get_rule_line_refs_payload()?;
+        let (rules_start, rules_end) =
+            Self::checked_range(point.rules_offset, point.rules_count, rule_records.len())
+                .with_context(|| {
+                    format!(
+                        "Rule slice for point {} is out of bounds in tile {:?}",
+                        point.osm_id, tile_id
+                    )
+                })?;
+
+        rule_records[rules_start..rules_end]
+            .iter()
+            .map(|rule_record| {
+                let from_line_indices = Self::slice_rule_line_refs(
+                    &payload,
+                    rule_record.from_lines_offset,
+                    rule_record.from_lines_count,
+                )
+                .with_context(|| {
+                    format!(
+                        "from-lines slice for point {} rule is out of bounds in tile {:?}",
+                        point.osm_id, tile_id
+                    )
+                })?;
+                let to_line_indices = Self::slice_rule_line_refs(
+                    &payload,
+                    rule_record.to_lines_offset,
+                    rule_record.to_lines_count,
+                )
+                .with_context(|| {
+                    format!(
+                        "to-lines slice for point {} rule is out of bounds in tile {:?}",
+                        point.osm_id, tile_id
+                    )
+                })?;
+
+                Ok(TilePointRule {
+                    from_line_indices,
+                    to_line_indices,
+                    rule_type: rule_record.rule_type,
+                })
+            })
+            .collect()
     }
 
     /// Get closest point to coordinates with filtering
@@ -261,6 +322,23 @@ impl TileManager {
         }
 
         Ok(())
+    }
+
+    fn checked_range(offset: u64, count: u32, len: usize) -> Result<(usize, usize)> {
+        let start = usize::try_from(offset).context("offset must fit in usize")?;
+        let count = usize::try_from(count).context("count must fit in usize")?;
+        let end = start.checked_add(count).context("slice end overflow")?;
+
+        if end > len {
+            anyhow::bail!("slice {}..{} exceeds length {}", start, end, len);
+        }
+
+        Ok((start, end))
+    }
+
+    fn slice_rule_line_refs(payload: &[u64], offset: u64, count: u32) -> Result<Vec<u64>> {
+        let (start, end) = Self::checked_range(offset, count, payload.len())?;
+        Ok(payload[start..end].to_vec())
     }
 
     /// Get tag value string from tile

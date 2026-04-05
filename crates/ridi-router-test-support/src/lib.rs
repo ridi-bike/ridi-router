@@ -7,7 +7,7 @@ pub mod rmdf {
     };
 
     use ridi_router_common::format::RmdfHeader;
-    pub use ridi_router_common::format::{LineRecord, PointRecord, TileBounds, TileId};
+    pub use ridi_router_common::format::{LineRecord, PointRecord, RuleRecord, TileBounds, TileId};
     pub use ridi_router_common::manifest::{
         TileBounds as ManifestTileBounds, TileManifest, TileMetadata, TileNeighbors,
     };
@@ -32,6 +32,8 @@ pub mod rmdf {
         pub points: Vec<PointRecord>,
         pub lines: Vec<LineRecord>,
         pub line_refs: Vec<u64>,
+        pub rules: Vec<RuleRecord>,
+        pub rule_line_refs: Vec<u64>,
     }
 
     #[derive(Debug, Clone)]
@@ -83,8 +85,10 @@ pub mod rmdf {
             points_offset + std::mem::size_of::<PointRecord>() as u64 * spec.points.len() as u64;
         let line_refs_offset =
             lines_offset + std::mem::size_of::<LineRecord>() as u64 * spec.lines.len() as u64;
-        let tail_offset =
+        let tag_values_offset =
             line_refs_offset + std::mem::size_of::<u64>() as u64 * spec.line_refs.len() as u64;
+        let tag_sets_offset = tag_values_offset;
+        let rules_offset = tag_sets_offset;
 
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RMDF");
@@ -95,15 +99,15 @@ pub mod rmdf {
         push_u32(&mut bytes, 0);
         push_u32(&mut bytes, 0);
         push_u32(&mut bytes, 0);
-        push_u32(&mut bytes, 0);
+        push_u32(&mut bytes, spec.rules.len() as u32);
         for offset in [
             points_offset,
             points_offset,
             lines_offset,
             line_refs_offset,
-            tail_offset,
-            tail_offset,
-            tail_offset,
+            tag_values_offset,
+            tag_sets_offset,
+            rules_offset,
         ] {
             push_u64(&mut bytes, offset);
         }
@@ -117,6 +121,12 @@ pub mod rmdf {
             write_line_record(&mut bytes, *line);
         }
         for line_ref in &spec.line_refs {
+            push_u64(&mut bytes, *line_ref);
+        }
+        for rule in &spec.rules {
+            write_rule_record(&mut bytes, *rule);
+        }
+        for line_ref in &spec.rule_line_refs {
             push_u64(&mut bytes, *line_ref);
         }
 
@@ -213,6 +223,8 @@ pub mod rmdf {
                 points,
                 lines,
                 line_refs,
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
             },
         );
 
@@ -327,6 +339,8 @@ pub mod rmdf {
                 points,
                 lines,
                 line_refs,
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
             },
         );
 
@@ -403,7 +417,7 @@ pub mod rmdf {
         }
     }
 
-    fn empty_neighbors() -> TileNeighbors {
+    pub fn empty_neighbors() -> TileNeighbors {
         TileNeighbors {
             north: None,
             south: None,
@@ -416,7 +430,7 @@ pub mod rmdf {
         }
     }
 
-    fn manifest_bounds(bounds: TileBounds) -> ManifestTileBounds {
+    pub fn manifest_bounds(bounds: TileBounds) -> ManifestTileBounds {
         ManifestTileBounds {
             lat_min: bounds.lat_min,
             lat_max: bounds.lat_max,
@@ -472,5 +486,16 @@ pub mod rmdf {
         buf.push(line._padding1);
         push_u16(buf, line._padding2);
         push_u32(buf, line.tag_set_index);
+    }
+
+    fn write_rule_record(buf: &mut Vec<u8>, rule: RuleRecord) {
+        push_u64(buf, rule.from_lines_offset);
+        push_u32(buf, rule.from_lines_count);
+        push_u32(buf, rule._padding1);
+        push_u64(buf, rule.to_lines_offset);
+        push_u32(buf, rule.to_lines_count);
+        buf.push(rule.rule_type);
+        buf.push(rule._padding2);
+        push_u16(buf, rule._padding3);
     }
 }
