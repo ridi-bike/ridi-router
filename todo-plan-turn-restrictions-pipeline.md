@@ -1,4 +1,4 @@
-# Review: turn restrictions after the tiles generation refactor
+# Plan: turn restrictions pipeline after the tiles generation refactor
 
 This file is the source of truth for the remaining restriction/rules work.
 
@@ -113,9 +113,9 @@ In other words:
 6. Add one generated-tile end-to-end routing test.
 
 ## Related narrower todos
-- `todo-review-rules-serialization.md` — writer slice
-- `todo-review-load-point-rules-from-tiles.md` — runtime loading slice
-- `todo-review-point-record-real-offsets.md` — keep this focused on `lines_offset`, not rules
+- `todo-review-rmdf-rules-writer.md` — writer slice
+- `todo-review-runtime-load-rules-from-tiles.md` — runtime loading slice
+- `todo-review-fix-point-line-ref-offsets.md` — keep this focused on `lines_offset`, not rules
 
 ## Done criteria
 This todo is done when all of the following are true:

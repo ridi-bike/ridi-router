@@ -54,9 +54,9 @@ Improve nearest search independently:
 Only add rule-based filtering after the restrictions pipeline exists end to end.
 
 That work is tracked by:
-- `todo-review-turn-restrictions-rule-model.md`
-- `todo-review-rules-serialization.md`
-- `todo-review-load-point-rules-from-tiles.md`
+- `todo-plan-turn-restrictions-pipeline.md`
+- `todo-review-rmdf-rules-writer.md`
+- `todo-review-runtime-load-rules-from-tiles.md`
 
 ## Key scope note
 Do **not** block `limit_to_hw_tags` on turn-restriction work.

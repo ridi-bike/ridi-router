@@ -36,10 +36,10 @@ Writer-side work only:
 This file is **not** the source of truth for overall restriction modeling.
 
 The broader decisions live in:
-- `todo-review-turn-restrictions-rule-model.md`
+- `todo-plan-turn-restrictions-pipeline.md`
 
 Runtime loading lives in:
-- `todo-review-load-point-rules-from-tiles.md`
+- `todo-review-runtime-load-rules-from-tiles.md`
 
 ## Important post-refactor constraint
 Do **not** reintroduce generation-side `point.rules` just to make serialization easy.

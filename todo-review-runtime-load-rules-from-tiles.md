@@ -10,7 +10,7 @@ That is still true in `crates/ridi-router-routing/src/map_data/graph.rs`, where 
 
 But after the `tiles` refactor, this is no longer a small runtime-only gap. `ridi-router-tiles` no longer keeps generation-side `point.rules` at all. `GenerationPoint` is intentionally just point geometry + flags.
 
-So this file now tracks the **runtime loading slice** only. It depends on the broader follow-up in `todo-review-turn-restrictions-rule-model.md`.
+So this file now tracks the **runtime loading slice** only. It depends on the broader follow-up in `todo-plan-turn-restrictions-pipeline.md`.
 
 ## Current evidence
 - `crates/ridi-router-routing/src/map_data/graph.rs`
@@ -44,8 +44,8 @@ Runtime-side work:
 
 ## Blocker
 Blocked on:
-- `todo-review-turn-restrictions-rule-model.md`
-- `todo-review-rules-serialization.md`
+- `todo-plan-turn-restrictions-pipeline.md`
+- `todo-review-rmdf-rules-writer.md`
 
 ## Validation
 A generated tile with a simple restriction should change walker behavior without relying on `crates/ridi-router-routing/src/test_utils.rs`.
