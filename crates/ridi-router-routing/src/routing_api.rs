@@ -162,11 +162,14 @@ fn validate_tiles_manifest(tiles_dir: &Path) -> Result<TileManifest, RoutingOpen
 mod tests {
     use std::{fs, path::PathBuf, sync::OnceLock};
 
-    use crate::router::rules::RouterRules;
+    use crate::{map_data::graph::MapDataGraph, router::rules::RouterRules, RoutingContext};
     use ridi_router_test_support::rmdf::create_linear_single_tile_fixture;
     use rusty_fork::rusty_fork_test;
 
-    use super::{Coords, RouteMode, RouteRequest, RoutingExecutor, RoutingExecutorConfig};
+    use super::{
+        validate_tiles_manifest, Coords, RouteMode, RouteRequest, RoutingExecutor,
+        RoutingExecutorConfig, WP_LOOKUP_ALLOWED_HWS,
+    };
 
     static SYNTHETIC_TILES_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -207,6 +210,22 @@ mod tests {
         .unwrap();
 
         RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
+    }
+
+    #[test]
+    fn synthetic_fixture_points_are_snappable_with_wp_lookup_allowed_highways() {
+        let tiles_dir = synthetic_tiles_dir();
+        let manifest = validate_tiles_manifest(&tiles_dir).unwrap();
+        let graph = MapDataGraph::open(tiles_dir, manifest);
+        let ctx = RoutingContext::new(&graph);
+        let rules = synthetic_rules();
+
+        let start = ctx.closest_to_coords(10.0, 20.0, &rules, false, Some(&WP_LOOKUP_ALLOWED_HWS));
+        let finish =
+            ctx.closest_to_coords(10.12, 20.0, &rules, false, Some(&WP_LOOKUP_ALLOWED_HWS));
+
+        assert_eq!(start.unwrap().get_element_id(), 1000);
+        assert_eq!(finish.unwrap().get_element_id(), 1012);
     }
 
     rusty_fork_test! {

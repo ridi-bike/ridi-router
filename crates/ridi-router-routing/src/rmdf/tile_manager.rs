@@ -1,8 +1,11 @@
 const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use geo::{Distance, Haversine, Point};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+
+use crate::router::rules::{RouterRules, RulesTagValueAction};
 
 use super::format::*;
 use super::generator::manifest::TileManifest;
@@ -23,6 +26,20 @@ pub(crate) struct TilePointRule {
     pub from_line_indices: Vec<u64>,
     pub to_line_indices: Vec<u64>,
     pub rule_type: u8,
+}
+
+#[derive(Debug, Default)]
+struct AvoidTagSet {
+    highways: HashSet<String>,
+    surfaces: HashSet<String>,
+    smoothness: HashSet<String>,
+}
+
+#[derive(Debug, Default)]
+struct AdjacentLineTags {
+    highway: Option<String>,
+    surface: Option<String>,
+    smoothness: Option<String>,
 }
 
 impl TileManager {
@@ -333,40 +350,35 @@ impl TileManager {
         &mut self,
         lat: f32,
         lon: f32,
-        _rules: &crate::router::rules::RouterRules,
+        rules: &RouterRules,
         avoid_proximity_to_residential: bool,
-        _limit_to_hw_tags: Option<&[&'static str]>,
+        limit_to_hw_tags: Option<&[&'static str]>,
     ) -> Result<Option<(TileId, u64)>> {
-        // Determine which tile contains these coordinates
         let tile_id = TileId::from_coords(lat, lon, self.tile_size_degrees);
-
         self.ensure_tile_loaded(tile_id)?;
 
         let tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let _spatial_index = tile.get_spatial_index()?;
-
-        // Binary search for closest grid cell
-        let _cell_id = GridCellEntry::encode_cell_id(lat, lon, 100);
-
-        // For now: linear scan through spatial index
-        // TODO: Implement expanding ring search like PointGrid
-        // TODO: Implement rules filtering
-        // TODO: Implement highway tag filtering
         let points = tile.get_points()?;
+        let line_refs = tile.get_line_refs()?;
+        let avoid_tags = Self::collect_avoid_tags(rules);
+        let check_limit_tags = Self::should_check_limit_tags(limit_to_hw_tags, &avoid_tags);
 
         let mut closest: Option<((TileId, u64), f32)> = None;
 
         for point in points {
-            if point.lines_count == 0 {
-                continue; // Skip disconnected points
-            }
-
-            // Apply proximity filter
-            if avoid_proximity_to_residential && point.residential_in_proximity() {
+            if !Self::point_matches_filters(
+                tile,
+                line_refs,
+                point,
+                avoid_proximity_to_residential,
+                &avoid_tags,
+                limit_to_hw_tags,
+                check_limit_tags,
+            )? {
                 continue;
             }
 
-            let dist = ((point.lat - lat).powi(2) + (point.lon - lon).powi(2)).sqrt();
+            let dist = Self::haversine_distance_m(lat, lon, point.lat, point.lon);
 
             if let Some((_, min_dist)) = closest {
                 if dist < min_dist {
@@ -378,6 +390,143 @@ impl TileManager {
         }
 
         Ok(closest.map(|(id_tuple, _)| id_tuple))
+    }
+
+    fn collect_avoid_tags(rules: &RouterRules) -> AvoidTagSet {
+        fn collect_tag_values(
+            tag_rules: &Option<HashMap<String, RulesTagValueAction>>,
+        ) -> HashSet<String> {
+            tag_rules
+                .iter()
+                .flat_map(|tag_rules| tag_rules.iter())
+                .filter_map(|(value, action)| match action {
+                    RulesTagValueAction::Avoid => Some(value.clone()),
+                    RulesTagValueAction::Priority { .. } => None,
+                })
+                .collect()
+        }
+
+        AvoidTagSet {
+            highways: collect_tag_values(&rules.highway),
+            surfaces: collect_tag_values(&rules.surface),
+            smoothness: collect_tag_values(&rules.smoothness),
+        }
+    }
+
+    fn should_check_limit_tags(
+        limit_to_hw_tags: Option<&[&'static str]>,
+        avoid_tags: &AvoidTagSet,
+    ) -> bool {
+        let Some(limit_to_hw_tags) = limit_to_hw_tags else {
+            return false;
+        };
+
+        limit_to_hw_tags
+            .iter()
+            .any(|highway| !avoid_tags.highways.contains(*highway))
+    }
+
+    fn adjacent_line_tags(
+        tile: &MappedTile,
+        line_refs: &[u64],
+        point: &PointRecord,
+    ) -> Result<Vec<AdjacentLineTags>> {
+        let lines = tile.get_lines()?;
+        let (start, end) =
+            Self::checked_range(point.lines_offset, point.lines_count, line_refs.len())
+                .with_context(|| {
+                    format!("Line slice for point {} is out of bounds", point.osm_id)
+                })?;
+
+        let mut adjacent_tags = Vec::with_capacity(end - start);
+
+        for &line_index in &line_refs[start..end] {
+            let line_index = usize::try_from(line_index)
+                .with_context(|| format!("Line index {} does not fit usize", line_index))?;
+            let line = *lines.get(line_index).with_context(|| {
+                format!(
+                    "Line index {} for point {} is out of bounds",
+                    line_index, point.osm_id
+                )
+            })?;
+            let tag_set = tile.get_tag_set(line.tag_set_index).with_context(|| {
+                format!(
+                    "Tag set index {} for point {} line {} is invalid",
+                    line.tag_set_index, point.osm_id, line_index
+                )
+            })?;
+
+            adjacent_tags.push(AdjacentLineTags {
+                highway: Self::optional_tag_value(tile, tag_set.highway_idx)?,
+                surface: Self::optional_tag_value(tile, tag_set.surface_idx)?,
+                smoothness: Self::optional_tag_value(tile, tag_set.smoothness_idx)?,
+            });
+        }
+
+        Ok(adjacent_tags)
+    }
+
+    fn optional_tag_value(tile: &MappedTile, tag_value_idx: u32) -> Result<Option<String>> {
+        if tag_value_idx == TagSetRecord::NONE {
+            return Ok(None);
+        }
+
+        Ok(Some(tile.get_tag_value(tag_value_idx)?.to_string()))
+    }
+
+    fn point_matches_filters(
+        tile: &MappedTile,
+        line_refs: &[u64],
+        point: &PointRecord,
+        avoid_proximity_to_residential: bool,
+        avoid_tags: &AvoidTagSet,
+        limit_to_hw_tags: Option<&[&'static str]>,
+        check_limit_tags: bool,
+    ) -> Result<bool> {
+        if point.lines_count == 0 {
+            return Ok(false);
+        }
+
+        if avoid_proximity_to_residential && point.residential_in_proximity() {
+            return Ok(false);
+        }
+
+        let adjacent_tags = Self::adjacent_line_tags(tile, line_refs, point)?;
+
+        let matches_avoid_rule = adjacent_tags.iter().any(|tags| {
+            tags.highway
+                .as_ref()
+                .is_some_and(|value| avoid_tags.highways.contains(value))
+                || tags
+                    .surface
+                    .as_ref()
+                    .is_some_and(|value| avoid_tags.surfaces.contains(value))
+                || tags
+                    .smoothness
+                    .as_ref()
+                    .is_some_and(|value| avoid_tags.smoothness.contains(value))
+        });
+        if matches_avoid_rule {
+            return Ok(false);
+        }
+
+        if !check_limit_tags {
+            return Ok(true);
+        }
+
+        let Some(limit_to_hw_tags) = limit_to_hw_tags else {
+            return Ok(true);
+        };
+
+        Ok(adjacent_tags.iter().any(|tags| {
+            tags.highway
+                .as_deref()
+                .is_some_and(|value| limit_to_hw_tags.iter().any(|allowed| *allowed == value))
+        }))
+    }
+
+    fn haversine_distance_m(from_lat: f32, from_lon: f32, to_lat: f32, to_lon: f32) -> f32 {
+        Haversine.distance(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
     }
 
     /// Get adjacent lines and points from a point (handles border crossing)
@@ -532,13 +681,14 @@ impl TileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::router::rules::RouterRules;
+    use crate::router::rules::{RouterRules, RulesTagValueAction};
     use ridi_router_test_support::rmdf::{
         create_missing_neighbor_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
-        write_manifest, write_tile, LineRecord, PointRecord, TileBounds, TileId, TileManifest,
-        TileMetadata, TileNeighbors, TileSpec,
+        write_manifest, write_tile, LineRecord, PointRecord, TagSetRecord, TileBounds, TileId,
+        TileManifest, TileMetadata, TileNeighbors, TileSpec, SYNTHETIC_TILE_BOUNDS,
+        SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
     };
-    use std::{fs, path::PathBuf};
+    use std::{collections::HashMap, fs, path::PathBuf};
 
     fn test_manifest() -> TileManifest {
         TileManifest {
@@ -569,6 +719,12 @@ mod tests {
         cross_tile_neighbor_osm_id: u64,
     }
 
+    #[derive(Debug)]
+    struct SyntheticClosestPointFixture {
+        dir: PathBuf,
+        tile_id: TileId,
+    }
+
     fn bounds_for_tile(tile_id: TileId) -> TileBounds {
         let lon_min = tile_id.col as f32 - 180.0;
         let lat_min = tile_id.row as f32 - 90.0;
@@ -580,12 +736,13 @@ mod tests {
         }
     }
 
-    fn point_record(
+    fn point_record_with_flags(
         osm_id: u64,
         lat: f32,
         lon: f32,
         lines_offset: u64,
         lines_count: u32,
+        flags: u16,
     ) -> PointRecord {
         PointRecord {
             osm_id,
@@ -596,18 +753,29 @@ mod tests {
             _padding1: 0,
             rules_offset: 0,
             rules_count: 0,
-            flags: 0,
+            flags,
             _padding2: 0,
         }
     }
 
-    fn line_record(
+    fn point_record(
+        osm_id: u64,
+        lat: f32,
+        lon: f32,
+        lines_offset: u64,
+        lines_count: u32,
+    ) -> PointRecord {
+        point_record_with_flags(osm_id, lat, lon, lines_offset, lines_count, 0)
+    }
+
+    fn line_record_with_tag_set(
         point_a_osm_id: u64,
         point_a_lat: f32,
         point_a_lon: f32,
         point_b_osm_id: u64,
         point_b_lat: f32,
         point_b_lon: f32,
+        tag_set_index: u32,
     ) -> LineRecord {
         LineRecord {
             point_a_osm_id,
@@ -619,7 +787,40 @@ mod tests {
             direction: 0,
             _padding1: 0,
             _padding2: 0,
-            tag_set_index: 0,
+            tag_set_index,
+        }
+    }
+
+    fn line_record(
+        point_a_osm_id: u64,
+        point_a_lat: f32,
+        point_a_lon: f32,
+        point_b_osm_id: u64,
+        point_b_lat: f32,
+        point_b_lon: f32,
+    ) -> LineRecord {
+        line_record_with_tag_set(
+            point_a_osm_id,
+            point_a_lat,
+            point_a_lon,
+            point_b_osm_id,
+            point_b_lat,
+            point_b_lon,
+            0,
+        )
+    }
+
+    fn tag_set_record(
+        highway_idx: Option<u32>,
+        surface_idx: Option<u32>,
+        smoothness_idx: Option<u32>,
+    ) -> TagSetRecord {
+        TagSetRecord {
+            name_idx: TagSetRecord::NONE,
+            hw_ref_idx: TagSetRecord::NONE,
+            highway_idx: highway_idx.unwrap_or(TagSetRecord::NONE),
+            surface_idx: surface_idx.unwrap_or(TagSetRecord::NONE),
+            smoothness_idx: smoothness_idx.unwrap_or(TagSetRecord::NONE),
         }
     }
 
@@ -693,6 +894,38 @@ mod tests {
             manifest,
             tiles,
             point_ids,
+        }
+    }
+
+    fn create_closest_point_fixture(prefix: &str, spec: TileSpec) -> SyntheticClosestPointFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_path = write_tile(&dir, &spec);
+        let manifest = TileManifest {
+            version: "test".to_string(),
+            tile_size_degrees: SYNTHETIC_TILE_SIZE_DEGREES,
+            format_version: 1,
+            generated_at: "2026-04-05T00:00:00Z".to_string(),
+            source_files: vec!["synthetic".to_string()],
+            tiles: vec![TileMetadata {
+                filename: spec.tile_id.to_filename(),
+                col: spec.tile_id.col,
+                row: spec.tile_id.row,
+                bounds: manifest_bounds(spec.bounds),
+                neighbors: empty_neighbors(),
+                size_bytes: fs::metadata(&tile_path).unwrap().len(),
+                point_count: spec.points.len() as u64,
+                line_count: spec.lines.len() as u64,
+                checksum: format!("sha256:{prefix}"),
+                military_geojson_filename: None,
+            }],
+        };
+        write_manifest(&dir, &manifest);
+
+        SyntheticClosestPointFixture {
+            dir,
+            tile_id: spec.tile_id,
         }
     }
 
@@ -1034,6 +1267,304 @@ mod tests {
         );
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_highway_allowlist_honors_mixed_adjacent_tags() {
+        let candidate_osm_id = 30_000;
+        let fixture = create_closest_point_fixture(
+            "tile-manager-hw-allowlist-mixed-adjacent",
+            TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![point_record(candidate_osm_id, 10.1000, 20.1000, 0, 2)],
+                lines: vec![
+                    line_record_with_tag_set(
+                        candidate_osm_id,
+                        10.1000,
+                        20.1000,
+                        30_001,
+                        10.1010,
+                        20.1010,
+                        0,
+                    ),
+                    line_record_with_tag_set(
+                        candidate_osm_id,
+                        10.1000,
+                        20.1000,
+                        30_002,
+                        10.1020,
+                        20.1020,
+                        1,
+                    ),
+                ],
+                line_refs: vec![0, 1],
+                tag_values: vec!["track".to_string(), "secondary".to_string()],
+                tag_sets: vec![
+                    tag_set_record(Some(0), None, None),
+                    tag_set_record(Some(1), None, None),
+                ],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        let closest = manager
+            .get_closest_to_coords(
+                10.1001,
+                20.1001,
+                &RouterRules::default(),
+                false,
+                Some(&["secondary"]),
+            )
+            .unwrap();
+
+        assert_eq!(closest, Some((fixture.tile_id, candidate_osm_id)));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_highway_allowlist_skips_nearest_disallowed_point() {
+        let disallowed_osm_id = 31_000;
+        let allowed_osm_id = 31_100;
+        let fixture = create_closest_point_fixture(
+            "tile-manager-hw-allowlist-nearest-disallowed",
+            TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![
+                    point_record(disallowed_osm_id, 10.1000, 20.1000, 0, 1),
+                    point_record(allowed_osm_id, 10.1020, 20.1000, 1, 1),
+                ],
+                lines: vec![
+                    line_record_with_tag_set(
+                        disallowed_osm_id,
+                        10.1000,
+                        20.1000,
+                        31_001,
+                        10.1010,
+                        20.1010,
+                        0,
+                    ),
+                    line_record_with_tag_set(
+                        allowed_osm_id,
+                        10.1020,
+                        20.1000,
+                        31_101,
+                        10.1030,
+                        20.1010,
+                        1,
+                    ),
+                ],
+                line_refs: vec![0, 1],
+                tag_values: vec!["track".to_string(), "secondary".to_string()],
+                tag_sets: vec![
+                    tag_set_record(Some(0), None, None),
+                    tag_set_record(Some(1), None, None),
+                ],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        let closest = manager
+            .get_closest_to_coords(
+                10.1001,
+                20.1000,
+                &RouterRules::default(),
+                false,
+                Some(&["secondary"]),
+            )
+            .unwrap();
+
+        assert_eq!(closest, Some((fixture.tile_id, allowed_osm_id)));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_rules_filtering_rejects_point_when_any_adjacent_line_matches() {
+        let cases = vec![
+            (
+                "highway",
+                RouterRules {
+                    highway: Some(HashMap::from([(
+                        "track".to_string(),
+                        RulesTagValueAction::Avoid,
+                    )])),
+                    ..RouterRules::default()
+                },
+                vec!["secondary".to_string(), "track".to_string()],
+                vec![
+                    tag_set_record(Some(0), None, None),
+                    tag_set_record(Some(1), None, None),
+                ],
+            ),
+            (
+                "surface",
+                RouterRules {
+                    surface: Some(HashMap::from([(
+                        "gravel".to_string(),
+                        RulesTagValueAction::Avoid,
+                    )])),
+                    ..RouterRules::default()
+                },
+                vec!["secondary".to_string(), "gravel".to_string()],
+                vec![
+                    tag_set_record(Some(0), None, None),
+                    tag_set_record(Some(0), Some(1), None),
+                ],
+            ),
+            (
+                "smoothness",
+                RouterRules {
+                    smoothness: Some(HashMap::from([(
+                        "bad".to_string(),
+                        RulesTagValueAction::Avoid,
+                    )])),
+                    ..RouterRules::default()
+                },
+                vec!["secondary".to_string(), "bad".to_string()],
+                vec![
+                    tag_set_record(Some(0), None, None),
+                    tag_set_record(Some(0), None, Some(1)),
+                ],
+            ),
+        ];
+
+        for (label, rules, tag_values, tag_sets) in cases {
+            let rejected_osm_id = 32_000;
+            let accepted_osm_id = 32_100;
+            let fixture = create_closest_point_fixture(
+                &format!("tile-manager-rules-filtering-{label}"),
+                TileSpec {
+                    tile_id: SYNTHETIC_TILE_ID,
+                    bounds: SYNTHETIC_TILE_BOUNDS,
+                    spatial_index: Vec::new(),
+                    points: vec![
+                        point_record(rejected_osm_id, 10.1000, 20.1000, 0, 2),
+                        point_record(accepted_osm_id, 10.1030, 20.1000, 2, 1),
+                    ],
+                    lines: vec![
+                        line_record_with_tag_set(
+                            rejected_osm_id,
+                            10.1000,
+                            20.1000,
+                            32_001,
+                            10.1010,
+                            20.1010,
+                            0,
+                        ),
+                        line_record_with_tag_set(
+                            rejected_osm_id,
+                            10.1000,
+                            20.1000,
+                            32_002,
+                            10.1020,
+                            20.1020,
+                            1,
+                        ),
+                        line_record_with_tag_set(
+                            accepted_osm_id,
+                            10.1030,
+                            20.1000,
+                            32_101,
+                            10.1040,
+                            20.1010,
+                            0,
+                        ),
+                    ],
+                    line_refs: vec![0, 1, 2],
+                    tag_values,
+                    tag_sets,
+                    rules: Vec::new(),
+                    rule_line_refs: Vec::new(),
+                },
+            );
+
+            let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+            let closest = manager
+                .get_closest_to_coords(10.1001, 20.1000, &rules, false, None)
+                .unwrap();
+
+            assert_eq!(
+                closest,
+                Some((fixture.tile_id, accepted_osm_id)),
+                "{label} avoid rule should reject the mixed-adjacency nearest point",
+            );
+
+            fs::remove_dir_all(fixture.dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_residential_avoidance_still_applies_after_highway_filtering() {
+        let residential_osm_id = 33_000;
+        let allowed_osm_id = 33_100;
+        let fixture = create_closest_point_fixture(
+            "tile-manager-residential-and-highway-filtering",
+            TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![
+                    point_record_with_flags(
+                        residential_osm_id,
+                        10.1000,
+                        20.1000,
+                        0,
+                        1,
+                        PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG,
+                    ),
+                    point_record(allowed_osm_id, 10.1020, 20.1000, 1, 1),
+                ],
+                lines: vec![
+                    line_record_with_tag_set(
+                        residential_osm_id,
+                        10.1000,
+                        20.1000,
+                        33_001,
+                        10.1010,
+                        20.1010,
+                        0,
+                    ),
+                    line_record_with_tag_set(
+                        allowed_osm_id,
+                        10.1020,
+                        20.1000,
+                        33_101,
+                        10.1030,
+                        20.1010,
+                        0,
+                    ),
+                ],
+                line_refs: vec![0, 1],
+                tag_values: vec!["secondary".to_string()],
+                tag_sets: vec![tag_set_record(Some(0), None, None)],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        let closest = manager
+            .get_closest_to_coords(
+                10.1001,
+                20.1000,
+                &RouterRules::default(),
+                true,
+                Some(&["secondary"]),
+            )
+            .unwrap();
+
+        assert_eq!(closest, Some((fixture.tile_id, allowed_osm_id)));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
     }
 
     #[test]
