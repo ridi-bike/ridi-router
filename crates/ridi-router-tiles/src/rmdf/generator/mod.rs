@@ -568,12 +568,8 @@ impl MultiPbfGenerator {
                     .members
                     .iter()
                     .any(|member| match member.member_type {
-                        OsmRelationMemberType::Node => {
-                            node_ids.contains(&member.member_ref)
-                        }
-                        OsmRelationMemberType::Way => {
-                            way_ids.contains(&member.member_ref)
-                        }
+                        OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
                         OsmRelationMemberType::Relation => true,
                     });
 
@@ -923,7 +919,8 @@ impl MultiPbfGenerator {
             graph.insert_way(way);
         }
 
-        // Insert all relations
+        // Pass collected restriction relations through the generation pipeline.
+        // Actual restriction materialization stays in the later rules/restrictions todo.
         for relation in tile.relations {
             graph.insert_relation(relation);
         }
@@ -935,11 +932,7 @@ impl MultiPbfGenerator {
     }
 
     /// Write RMDF tile file from generation graph
-    fn write_rmdf_tile(
-        &self,
-        tile_id: TileId,
-        graph: GenerationGraph,
-    ) -> Result<()> {
+    fn write_rmdf_tile(&self, tile_id: TileId, graph: GenerationGraph) -> Result<()> {
         use crate::rmdf::generator::writer::RmdfWriter;
 
         let output_path = self.output_dir.join(tile_id.to_filename());

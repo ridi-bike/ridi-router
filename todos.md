@@ -37,3 +37,18 @@ These are worth revisiting after the `generation` refactor lands.
 
 - Verify whether tile-backed routing behavior still differs from in-memory/test-only graph behavior after the generation refactor.
 - Identify any routing tests that currently pass only because they rely on test helpers instead of tile-backed RMDF data.
+
+
+## Test fixture follow-up
+
+- Restore or replace the workspace `map-data/output` RMDF fixture expected by `ridi-router-cli` end-to-end tests.
+  - Current state: `cargo test -p ridi-router-cli` fails in this checkout because `map-data/output/manifest.json` is missing.
+  - Prefer a deterministic checked-in synthetic fixture or per-test setup over an implicit local generated dataset.
+
+- Document current local bootstrap path for missing fixtures.
+  - `./dev.sh pbf montenegro` creates `map-data/pbf/montenegro-latest.osm.pbf`, which unblocks `crates/ridi-router-cli/tests/generate_tiles_cli.rs`.
+  - `./dev.sh generate-tiles latvia` creates `map-data/output`, which unblocks the route CLI tests that currently expect `map-data/output/manifest.json`.
+  - This path is networked, slow, and mutates shared workspace directories, so it should remain a temporary local bootstrap, not the final stable test-fixture strategy.
+- Replace implicit workspace fixture assumptions in tests with deterministic fixtures.
+  - Prefer checked-in small synthetic RMDF fixtures or per-test fixture generation helpers over relying on `map-data/output` existing locally.
+  - Avoid tests depending on `./dev.sh` side effects or downloaded Geofabrik datasets.

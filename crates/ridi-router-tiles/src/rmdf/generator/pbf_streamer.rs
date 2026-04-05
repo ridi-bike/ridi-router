@@ -24,8 +24,8 @@ use std::time::Instant;
 use tracing::info;
 
 use crate::generation::GenerationGraph;
-use crate::osm_data::{OsmNode, OsmRelation, OsmRelationMemberType, OsmWay};
 use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
+use crate::osm_data::{OsmNode, OsmRelation, OsmRelationMemberType, OsmWay};
 use crate::rmdf::format::TileId;
 use std::collections::HashMap;
 
@@ -346,12 +346,8 @@ impl<'a> PbfStreamer<'a> {
                     .members
                     .iter()
                     .any(|member| match member.member_type {
-                        OsmRelationMemberType::Node => {
-                            node_ids.contains(&member.member_ref)
-                        }
-                        OsmRelationMemberType::Way => {
-                            way_ids.contains(&member.member_ref)
-                        }
+                        OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
                         OsmRelationMemberType::Relation => true,
                     });
 
@@ -416,7 +412,8 @@ impl<'a> PbfStreamer<'a> {
             graph.insert_way(way);
         }
 
-        // Insert all relations (turn restrictions)
+        // Pass collected restriction relations through the generation pipeline.
+        // Actual restriction materialization stays in the later rules/restrictions todo.
         for relation in relations {
             graph.insert_relation(relation);
         }
@@ -434,10 +431,10 @@ impl<'a> PbfStreamer<'a> {
         let output_path = self.output_dir.join(tile_id.to_filename());
         info!("Writing RMDF tile to {:?}", output_path);
 
-        // Create RmdfWriter (reusing existing implementation)
+        // Create the RMDF writer for the generation model.
         let writer = RmdfWriter::new(self.tile_size_degrees);
 
-        // Write tile directly from GenerationGraph
+        // Write tile directly from the generation graph.
         writer
             .write_tile_from_graph(tile_id, graph, &output_path)
             .with_context(|| format!("Failed to write RMDF tile {:?}", tile_id))?;
