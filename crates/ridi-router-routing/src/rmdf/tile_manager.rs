@@ -502,7 +502,13 @@ impl TileManager {
 mod tests {
     use super::*;
     use crate::router::rules::RouterRules;
-    use ridi_router_test_support::rmdf::create_missing_neighbor_fixture;
+    use ridi_router_test_support::rmdf::{
+        create_missing_neighbor_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
+        write_manifest, write_tile, LineRecord, PointRecord, TileBounds, TileId, TileManifest,
+        TileMetadata, TileNeighbors, TileSpec,
+    };
+    use std::{fs, path::PathBuf};
+
     fn test_manifest() -> TileManifest {
         TileManifest {
             version: "test".to_string(),
@@ -512,6 +518,282 @@ mod tests {
             source_files: Vec::new(),
             tiles: Vec::new(),
         }
+    }
+
+    #[derive(Debug)]
+    struct SyntheticLruFixture {
+        dir: PathBuf,
+        manifest: TileManifest,
+        tiles: Vec<TileId>,
+        point_ids: Vec<u64>,
+    }
+
+    #[derive(Debug)]
+    struct SyntheticCrossTileFixture {
+        dir: PathBuf,
+        tile_a: TileId,
+        tile_b: TileId,
+        center_osm_id: u64,
+        in_tile_neighbor_osm_id: u64,
+        cross_tile_neighbor_osm_id: u64,
+    }
+
+    fn bounds_for_tile(tile_id: TileId) -> TileBounds {
+        let lon_min = tile_id.col as f32 - 180.0;
+        let lat_min = tile_id.row as f32 - 90.0;
+        TileBounds {
+            lat_min,
+            lat_max: lat_min + 1.0,
+            lon_min,
+            lon_max: lon_min + 1.0,
+        }
+    }
+
+    fn point_record(
+        osm_id: u64,
+        lat: f32,
+        lon: f32,
+        lines_offset: u64,
+        lines_count: u32,
+    ) -> PointRecord {
+        PointRecord {
+            osm_id,
+            lat,
+            lon,
+            lines_offset,
+            lines_count,
+            _padding1: 0,
+            rules_offset: 0,
+            rules_count: 0,
+            flags: 0,
+            _padding2: 0,
+        }
+    }
+
+    fn line_record(
+        point_a_osm_id: u64,
+        point_a_lat: f32,
+        point_a_lon: f32,
+        point_b_osm_id: u64,
+        point_b_lat: f32,
+        point_b_lon: f32,
+    ) -> LineRecord {
+        LineRecord {
+            point_a_osm_id,
+            point_a_lat,
+            point_a_lon,
+            point_b_osm_id,
+            point_b_lat,
+            point_b_lon,
+            direction: 0,
+            _padding1: 0,
+            _padding2: 0,
+            tag_set_index: 0,
+        }
+    }
+
+    fn create_single_point_tile_fixture(prefix: &str, tile_count: usize) -> SyntheticLruFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let row = 100;
+        let base_col = 200_u16;
+        let mut tiles = Vec::with_capacity(tile_count);
+        let mut point_ids = Vec::with_capacity(tile_count);
+        let mut manifest_tiles = Vec::with_capacity(tile_count);
+
+        for index in 0..tile_count {
+            let tile_id = TileId {
+                col: base_col + index as u16,
+                row,
+            };
+            let bounds = bounds_for_tile(tile_id);
+            let osm_id = 10_000 + index as u64;
+            let tile_path = write_tile(
+                &dir,
+                &TileSpec {
+                    tile_id,
+                    bounds,
+                    points: vec![point_record(
+                        osm_id,
+                        bounds.lat_min + 0.5,
+                        bounds.lon_min + 0.5,
+                        0,
+                        0,
+                    )],
+                    lines: Vec::new(),
+                    line_refs: Vec::new(),
+                    rules: Vec::new(),
+                    rule_line_refs: Vec::new(),
+                },
+            );
+
+            manifest_tiles.push(TileMetadata {
+                filename: tile_id.to_filename(),
+                col: tile_id.col,
+                row: tile_id.row,
+                bounds: manifest_bounds(bounds),
+                neighbors: empty_neighbors(),
+                size_bytes: fs::metadata(&tile_path).unwrap().len(),
+                point_count: 1,
+                line_count: 0,
+                checksum: format!("sha256:lru-{index}"),
+                military_geojson_filename: None,
+            });
+            tiles.push(tile_id);
+            point_ids.push(osm_id);
+        }
+
+        let manifest = TileManifest {
+            version: "test".to_string(),
+            tile_size_degrees: 1.0,
+            format_version: 1,
+            generated_at: "2026-04-05T00:00:00Z".to_string(),
+            source_files: vec!["synthetic".to_string()],
+            tiles: manifest_tiles,
+        };
+        write_manifest(&dir, &manifest);
+
+        SyntheticLruFixture {
+            dir,
+            manifest,
+            tiles,
+            point_ids,
+        }
+    }
+
+    fn create_cross_tile_fixture(prefix: &str) -> SyntheticCrossTileFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let bounds_a = bounds_for_tile(tile_a);
+        let bounds_b = bounds_for_tile(tile_b);
+
+        let center_osm_id = 20_000;
+        let in_tile_neighbor_osm_id = 20_001;
+        let cross_tile_neighbor_osm_id = 20_002;
+
+        let tile_a_points = vec![
+            point_record(center_osm_id, 10.50, 20.95, 0, 2),
+            point_record(in_tile_neighbor_osm_id, 10.60, 20.80, 2, 1),
+        ];
+        let tile_a_lines = vec![
+            line_record(
+                center_osm_id,
+                10.50,
+                20.95,
+                in_tile_neighbor_osm_id,
+                10.60,
+                20.80,
+            ),
+            line_record(
+                center_osm_id,
+                10.50,
+                20.95,
+                cross_tile_neighbor_osm_id,
+                10.50,
+                21.05,
+            ),
+        ];
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                points: tile_a_points,
+                lines: tile_a_lines,
+                line_refs: vec![0, 1, 0],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                points: vec![point_record(cross_tile_neighbor_osm_id, 10.50, 21.05, 0, 0)],
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_b_filename = tile_b.to_filename();
+        let tile_a_filename = tile_a.to_filename();
+        let manifest = TileManifest {
+            version: "test".to_string(),
+            tile_size_degrees: 1.0,
+            format_version: 1,
+            generated_at: "2026-04-05T00:00:00Z".to_string(),
+            source_files: vec!["synthetic".to_string()],
+            tiles: vec![
+                TileMetadata {
+                    filename: tile_a_filename.clone(),
+                    col: tile_a.col,
+                    row: tile_a.row,
+                    bounds: manifest_bounds(bounds_a),
+                    neighbors: TileNeighbors {
+                        north: None,
+                        south: None,
+                        east: Some(tile_b_filename.clone()),
+                        west: None,
+                        northeast: None,
+                        northwest: None,
+                        southeast: None,
+                        southwest: None,
+                    },
+                    size_bytes: fs::metadata(&tile_a_path).unwrap().len(),
+                    point_count: 2,
+                    line_count: 2,
+                    checksum: "sha256:cross-a".to_string(),
+                    military_geojson_filename: None,
+                },
+                TileMetadata {
+                    filename: tile_b_filename,
+                    col: tile_b.col,
+                    row: tile_b.row,
+                    bounds: manifest_bounds(bounds_b),
+                    neighbors: TileNeighbors {
+                        north: None,
+                        south: None,
+                        east: None,
+                        west: Some(tile_a_filename),
+                        northeast: None,
+                        northwest: None,
+                        southeast: None,
+                        southwest: None,
+                    },
+                    size_bytes: fs::metadata(&tile_b_path).unwrap().len(),
+                    point_count: 1,
+                    line_count: 0,
+                    checksum: "sha256:cross-b".to_string(),
+                    military_geojson_filename: None,
+                },
+            ],
+        };
+        write_manifest(&dir, &manifest);
+
+        SyntheticCrossTileFixture {
+            dir,
+            tile_a,
+            tile_b,
+            center_osm_id,
+            in_tile_neighbor_osm_id,
+            cross_tile_neighbor_osm_id,
+        }
+    }
+
+    fn touch_tile_via_point_lookup(manager: &mut TileManager, tile_id: TileId, osm_id: u64) {
+        let point = manager.get_point_by_id(tile_id, osm_id).unwrap();
+        assert_eq!(
+            point.osm_id, osm_id,
+            "expected point lookup to touch the requested tile"
+        );
     }
 
     #[test]
@@ -543,6 +825,133 @@ mod tests {
     }
 
     #[test]
+    fn test_lru_overflow_unloads_oldest_tile() {
+        let SyntheticLruFixture {
+            dir,
+            manifest,
+            tiles,
+            point_ids,
+        } = create_single_point_tile_fixture("tile-manager-lru-overflow", 4);
+        let mut manager =
+            TileManager::from_manifest_with_loaded_tiles_limit(manifest, dir.clone(), 3);
+
+        touch_tile_via_point_lookup(&mut manager, tiles[0], point_ids[0]);
+        touch_tile_via_point_lookup(&mut manager, tiles[1], point_ids[1]);
+        touch_tile_via_point_lookup(&mut manager, tiles[2], point_ids[2]);
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[0], tiles[1], tiles[2]]
+        );
+
+        touch_tile_via_point_lookup(&mut manager, tiles[3], point_ids[3]);
+
+        assert_eq!(manager.loaded_tile_count(), 3);
+        assert!(!manager.is_tile_loaded(tiles[0]));
+        assert!(manager.is_tile_loaded(tiles[1]));
+        assert!(manager.is_tile_loaded(tiles[2]));
+        assert!(manager.is_tile_loaded(tiles[3]));
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[1], tiles[2], tiles[3]]
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_lru_hit_refresh_makes_tile_newest() {
+        let SyntheticLruFixture {
+            dir,
+            manifest,
+            tiles,
+            point_ids,
+        } = create_single_point_tile_fixture("tile-manager-lru-hit-refresh", 4);
+        let mut manager =
+            TileManager::from_manifest_with_loaded_tiles_limit(manifest, dir.clone(), 3);
+
+        touch_tile_via_point_lookup(&mut manager, tiles[0], point_ids[0]);
+        touch_tile_via_point_lookup(&mut manager, tiles[1], point_ids[1]);
+        touch_tile_via_point_lookup(&mut manager, tiles[2], point_ids[2]);
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[0], tiles[1], tiles[2]]
+        );
+
+        touch_tile_via_point_lookup(&mut manager, tiles[0], point_ids[0]);
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[1], tiles[2], tiles[0]]
+        );
+
+        touch_tile_via_point_lookup(&mut manager, tiles[3], point_ids[3]);
+
+        assert_eq!(manager.loaded_tile_count(), 3);
+        assert!(!manager.is_tile_loaded(tiles[1]));
+        assert!(manager.is_tile_loaded(tiles[0]));
+        assert!(manager.is_tile_loaded(tiles[2]));
+        assert!(manager.is_tile_loaded(tiles[3]));
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[2], tiles[0], tiles[3]]
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_lru_hot_tile_survives_colder_unloads() {
+        let SyntheticLruFixture {
+            dir,
+            manifest,
+            tiles,
+            point_ids,
+        } = create_single_point_tile_fixture("tile-manager-lru-hot-tile", 5);
+        let mut manager =
+            TileManager::from_manifest_with_loaded_tiles_limit(manifest, dir.clone(), 3);
+
+        touch_tile_via_point_lookup(&mut manager, tiles[0], point_ids[0]);
+        touch_tile_via_point_lookup(&mut manager, tiles[1], point_ids[1]);
+        touch_tile_via_point_lookup(&mut manager, tiles[2], point_ids[2]);
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[0], tiles[1], tiles[2]]
+        );
+
+        touch_tile_via_point_lookup(&mut manager, tiles[0], point_ids[0]);
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[1], tiles[2], tiles[0]]
+        );
+
+        touch_tile_via_point_lookup(&mut manager, tiles[3], point_ids[3]);
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[2], tiles[0], tiles[3]]
+        );
+
+        touch_tile_via_point_lookup(&mut manager, tiles[0], point_ids[0]);
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[2], tiles[3], tiles[0]]
+        );
+
+        touch_tile_via_point_lookup(&mut manager, tiles[4], point_ids[4]);
+
+        assert_eq!(manager.loaded_tile_count(), 3);
+        assert!(!manager.is_tile_loaded(tiles[1]));
+        assert!(!manager.is_tile_loaded(tiles[2]));
+        assert!(manager.is_tile_loaded(tiles[0]));
+        assert!(manager.is_tile_loaded(tiles[3]));
+        assert!(manager.is_tile_loaded(tiles[4]));
+        assert_eq!(
+            manager.loaded_tile_order_for_test(),
+            vec![tiles[3], tiles[0], tiles[4]]
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn test_single_tile_query() {
         let tile_dir = PathBuf::from("test_data/montenegro_tiles");
 
@@ -559,6 +968,29 @@ mod tests {
             .get_closest_to_coords(42.5, 18.5, &RouterRules::default(), false, None)
             .unwrap();
         assert!(point.is_some());
+    }
+
+    #[test]
+    fn test_cross_tile_traversal_with_synthetic_fixture() {
+        let SyntheticCrossTileFixture {
+            dir,
+            tile_a,
+            tile_b,
+            center_osm_id,
+            in_tile_neighbor_osm_id,
+            cross_tile_neighbor_osm_id,
+        } = create_cross_tile_fixture("tile-manager-cross-tile-synthetic");
+
+        let mut manager = TileManager::new(dir.clone()).unwrap();
+        let adjacent = manager.get_adjacent_by_id(tile_a, center_osm_id).unwrap();
+
+        assert_eq!(adjacent.len(), 2);
+        assert!(adjacent.contains(&(tile_a, 0, tile_a, in_tile_neighbor_osm_id)));
+        assert!(adjacent.contains(&(tile_a, 1, tile_b, cross_tile_neighbor_osm_id)));
+        assert_eq!(manager.loaded_tile_count(), 2);
+        assert_eq!(manager.loaded_tile_order_for_test(), vec![tile_a, tile_b]);
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -622,6 +1054,8 @@ mod tests {
             *other_tile_id == fixture.missing_tile
                 || *other_osm_id == fixture.missing_neighbor_osm_id
         }));
+        assert_eq!(manager.loaded_tile_count(), 1);
+        assert_eq!(manager.loaded_tile_order_for_test(), vec![fixture.tile_a]);
 
         std::fs::remove_dir_all(fixture_dir).unwrap();
     }
