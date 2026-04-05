@@ -146,26 +146,6 @@ impl TileManager {
         self.debug_assert_registry_invariants();
     }
 
-    fn remove_loaded_tile_from_order(&mut self, tile_id: TileId) {
-        self.debug_assert_registry_invariants();
-        let active_len = self.loaded_tile_order_len;
-        let Some(index) = self.loaded_tile_order[..active_len]
-            .iter()
-            .position(|loaded_tile_id| *loaded_tile_id == tile_id)
-        else {
-            panic!(
-                "loaded tile registry order missing tile {:?} during removal",
-                tile_id
-            );
-        };
-
-        if index + 1 < active_len {
-            self.loaded_tile_order[index..active_len].rotate_left(1);
-        }
-        self.loaded_tile_order[active_len - 1] = TileId::default();
-        self.loaded_tile_order_len -= 1;
-    }
-
     fn mark_tile_recent(&mut self, tile_id: TileId) {
         self.debug_assert_registry_invariants();
         let active_len = self.loaded_tile_order_len;
@@ -192,12 +172,12 @@ impl TileManager {
             return Ok(());
         }
 
-        // Phase 1 keeps the existing unload behavior. Later phases will make this true LRU.
-        if let Some(tile_id) = self.loaded_tiles.keys().next().copied() {
-            self.remove_loaded_tile_from_order(tile_id);
-            self.loaded_tiles.remove(&tile_id);
-            tracing::debug!("Unloaded tile {:?}", tile_id);
-        }
+        let tile_id = self.loaded_tile_order[0];
+        self.loaded_tiles.remove(&tile_id);
+        self.loaded_tile_order[..self.loaded_tile_order_len].rotate_left(1);
+        self.loaded_tile_order[self.loaded_tile_order_len - 1] = TileId::default();
+        self.loaded_tile_order_len -= 1;
+        tracing::debug!("Unloaded tile {:?}", tile_id);
 
         self.debug_assert_registry_invariants();
         Ok(())
@@ -208,6 +188,8 @@ impl TileManager {
         self.debug_assert_registry_invariants();
 
         if self.loaded_tiles.contains_key(&tile_id) {
+            self.mark_tile_recent(tile_id);
+            self.debug_assert_registry_invariants();
             return Ok(());
         }
 
@@ -219,6 +201,7 @@ impl TileManager {
 
         self.loaded_tiles.insert(tile_id, mapped_tile);
         self.append_loaded_tile(tile_id);
+        self.unload_if_needed()?;
         self.debug_assert_registry_invariants();
 
         Ok(())
@@ -454,9 +437,6 @@ impl TileManager {
 
             result.push((tile_id, line_idx, other_tile_id, other_osm_id));
         }
-
-        // Unload old tiles if needed
-        self.unload_if_needed()?;
 
         Ok(result)
     }
