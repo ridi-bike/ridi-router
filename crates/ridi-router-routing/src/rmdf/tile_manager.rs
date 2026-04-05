@@ -1,4 +1,6 @@
 const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
+const GRID_CELL_PRECISION: u32 = 100;
+const GRID_SEARCH_RING_RADIUS: i16 = 20;
 
 use anyhow::{Context, Result};
 use geo::{Distance, Haversine, Point};
@@ -363,15 +365,135 @@ impl TileManager {
         let avoid_tags = Self::collect_avoid_tags(rules);
         let check_limit_tags = Self::should_check_limit_tags(limit_to_hw_tags, &avoid_tags);
 
-        let mut closest: Option<((TileId, u64), f32)> = None;
+        let closest = if let Some(closest) = Self::find_closest_in_grid_rings(
+            tile_id,
+            tile,
+            points,
+            line_refs,
+            lat,
+            lon,
+            avoid_proximity_to_residential,
+            &avoid_tags,
+            limit_to_hw_tags,
+            check_limit_tags,
+        )? {
+            Some(closest)
+        } else {
+            Self::find_closest_in_points(
+                tile_id,
+                tile,
+                points,
+                line_refs,
+                lat,
+                lon,
+                avoid_proximity_to_residential,
+                &avoid_tags,
+                limit_to_hw_tags,
+                check_limit_tags,
+            )?
+        };
 
+        Ok(closest.map(|(id_tuple, _)| id_tuple))
+    }
+
+    fn find_closest_in_grid_rings(
+        tile_id: TileId,
+        tile: &MappedTile,
+        points: &[PointRecord],
+        line_refs: &[u64],
+        lat: f32,
+        lon: f32,
+        avoid_proximity_to_residential: bool,
+        avoid_tags: &AvoidTagSet,
+        limit_to_hw_tags: Option<&[&'static str]>,
+        check_limit_tags: bool,
+    ) -> Result<Option<((TileId, u64), f32)>> {
+        let spatial_index = tile.get_spatial_index()?;
+        let (query_lat_cell, query_lon_cell) =
+            Self::query_cell_coords(lat, lon, GRID_CELL_PRECISION);
+        let mut closest = None;
+
+        for ring in 0..=GRID_SEARCH_RING_RADIUS {
+            for cell_id in Self::grid_ring_cell_ids(query_lat_cell, query_lon_cell, ring) {
+                let Some(grid_cell) = Self::find_grid_cell_entry(spatial_index, cell_id) else {
+                    continue;
+                };
+                let cell_points =
+                    Self::iter_points_for_grid_cell(points, grid_cell).with_context(|| {
+                        format!(
+                            "Spatial index point slice for cell {} is out of bounds in tile {:?}",
+                            grid_cell.cell_id, tile_id
+                        )
+                    })?;
+
+                Self::update_closest_for_points(
+                    tile_id,
+                    tile,
+                    line_refs,
+                    cell_points,
+                    lat,
+                    lon,
+                    avoid_proximity_to_residential,
+                    avoid_tags,
+                    limit_to_hw_tags,
+                    check_limit_tags,
+                    &mut closest,
+                )?;
+            }
+        }
+
+        Ok(closest)
+    }
+
+    fn find_closest_in_points(
+        tile_id: TileId,
+        tile: &MappedTile,
+        points: &[PointRecord],
+        line_refs: &[u64],
+        lat: f32,
+        lon: f32,
+        avoid_proximity_to_residential: bool,
+        avoid_tags: &AvoidTagSet,
+        limit_to_hw_tags: Option<&[&'static str]>,
+        check_limit_tags: bool,
+    ) -> Result<Option<((TileId, u64), f32)>> {
+        let mut closest = None;
+        Self::update_closest_for_points(
+            tile_id,
+            tile,
+            line_refs,
+            points,
+            lat,
+            lon,
+            avoid_proximity_to_residential,
+            avoid_tags,
+            limit_to_hw_tags,
+            check_limit_tags,
+            &mut closest,
+        )?;
+        Ok(closest)
+    }
+
+    fn update_closest_for_points(
+        tile_id: TileId,
+        tile: &MappedTile,
+        line_refs: &[u64],
+        points: &[PointRecord],
+        lat: f32,
+        lon: f32,
+        avoid_proximity_to_residential: bool,
+        avoid_tags: &AvoidTagSet,
+        limit_to_hw_tags: Option<&[&'static str]>,
+        check_limit_tags: bool,
+        closest: &mut Option<((TileId, u64), f32)>,
+    ) -> Result<()> {
         for point in points {
             if !Self::point_matches_filters(
                 tile,
                 line_refs,
                 point,
                 avoid_proximity_to_residential,
-                &avoid_tags,
+                avoid_tags,
                 limit_to_hw_tags,
                 check_limit_tags,
             )? {
@@ -379,17 +501,72 @@ impl TileManager {
             }
 
             let dist = Self::haversine_distance_m(lat, lon, point.lat, point.lon);
+            let should_replace = closest
+                .as_ref()
+                .is_none_or(|(_, min_dist)| dist < *min_dist);
 
-            if let Some((_, min_dist)) = closest {
-                if dist < min_dist {
-                    closest = Some(((tile_id, point.osm_id), dist));
-                }
-            } else {
-                closest = Some(((tile_id, point.osm_id), dist));
+            if should_replace {
+                *closest = Some(((tile_id, point.osm_id), dist));
             }
         }
 
-        Ok(closest.map(|(id_tuple, _)| id_tuple))
+        Ok(())
+    }
+
+    fn query_cell_coords(lat: f32, lon: f32, precision: u32) -> (i16, i16) {
+        let lat_rounded = (lat * precision as f32).round() as i16;
+        let lon_rounded = (lon * precision as f32).round() as i16;
+        (lat_rounded, lon_rounded)
+    }
+
+    fn encode_grid_cell_id(lat_rounded: i16, lon_rounded: i16) -> u32 {
+        ((lat_rounded as u32) << 16) | (lon_rounded as u32 & 0xFFFF)
+    }
+
+    fn grid_ring_cell_ids(query_lat_cell: i16, query_lon_cell: i16, ring: i16) -> Vec<u32> {
+        if ring == 0 {
+            return vec![Self::encode_grid_cell_id(query_lat_cell, query_lon_cell)];
+        }
+
+        let mut cell_ids = Vec::with_capacity((ring as usize) * 8);
+        let lat_min = query_lat_cell - ring;
+        let lat_max = query_lat_cell + ring;
+        let lon_min = query_lon_cell - ring;
+        let lon_max = query_lon_cell + ring;
+
+        for lat_cell in lat_min..=lat_max {
+            for lon_cell in lon_min..=lon_max {
+                if (lat_cell - query_lat_cell).abs() == ring
+                    || (lon_cell - query_lon_cell).abs() == ring
+                {
+                    cell_ids.push(Self::encode_grid_cell_id(lat_cell, lon_cell));
+                }
+            }
+        }
+
+        cell_ids
+    }
+
+    fn find_grid_cell_entry(
+        spatial_index: &[GridCellEntry],
+        cell_id: u32,
+    ) -> Option<&GridCellEntry> {
+        spatial_index
+            .binary_search_by_key(&cell_id, |entry| entry.cell_id)
+            .ok()
+            .map(|index| &spatial_index[index])
+    }
+
+    fn iter_points_for_grid_cell<'a>(
+        points: &'a [PointRecord],
+        grid_cell: &GridCellEntry,
+    ) -> Result<&'a [PointRecord]> {
+        let (start, end) = Self::checked_range(
+            grid_cell.points_offset,
+            grid_cell.points_count,
+            points.len(),
+        )?;
+        Ok(&points[start..end])
     }
 
     fn collect_avoid_tags(rules: &RouterRules) -> AvoidTagSet {
@@ -660,6 +837,22 @@ impl TileManager {
         let tag_set = tile.get_tag_set(tag_set_idx)?;
 
         Ok(*tag_set)
+    }
+
+    #[cfg(test)]
+    fn spatial_index_entry(
+        lat: f32,
+        lon: f32,
+        points_offset: u64,
+        points_count: u32,
+    ) -> GridCellEntry {
+        GridCellEntry {
+            cell_id: GridCellEntry::encode_cell_id(lat, lon, GRID_CELL_PRECISION),
+            _padding1: 0,
+            points_offset,
+            points_count,
+            _padding2: 0,
+        }
     }
 
     #[cfg(test)]
@@ -1356,6 +1549,127 @@ mod tests {
                         20.1000,
                         31_101,
                         10.1030,
+                        20.1010,
+                        1,
+                    ),
+                ],
+                line_refs: vec![0, 1],
+                tag_values: vec!["track".to_string(), "secondary".to_string()],
+                tag_sets: vec![
+                    tag_set_record(Some(0), None, None),
+                    tag_set_record(Some(1), None, None),
+                ],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        let closest = manager
+            .get_closest_to_coords(
+                10.1001,
+                20.1000,
+                &RouterRules::default(),
+                false,
+                Some(&["secondary"]),
+            )
+            .unwrap();
+
+        assert_eq!(closest, Some((fixture.tile_id, allowed_osm_id)));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_find_closest_in_grid_rings_returns_stage_1_match() {
+        let candidate_osm_id = 34_000;
+        let fixture = create_closest_point_fixture(
+            "tile-manager-stage-1-ring-scan-success",
+            TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: vec![TileManager::spatial_index_entry(10.1200, 20.1000, 0, 1)],
+                points: vec![point_record(candidate_osm_id, 10.1200, 20.1000, 0, 1)],
+                lines: vec![line_record_with_tag_set(
+                    candidate_osm_id,
+                    10.1200,
+                    20.1000,
+                    34_001,
+                    10.1210,
+                    20.1010,
+                    0,
+                )],
+                line_refs: vec![0],
+                tag_values: vec!["secondary".to_string()],
+                tag_sets: vec![tag_set_record(Some(0), None, None)],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        manager.ensure_tile_loaded(fixture.tile_id).unwrap();
+
+        let tile = manager.loaded_tiles.get(&fixture.tile_id).unwrap();
+        let points = tile.get_points().unwrap();
+        let line_refs = tile.get_line_refs().unwrap();
+        let avoid_tags = TileManager::collect_avoid_tags(&RouterRules::default());
+
+        let closest = TileManager::find_closest_in_grid_rings(
+            fixture.tile_id,
+            tile,
+            points,
+            line_refs,
+            10.1001,
+            20.1000,
+            false,
+            &avoid_tags,
+            Some(&["secondary"]),
+            TileManager::should_check_limit_tags(Some(&["secondary"]), &avoid_tags),
+        )
+        .unwrap();
+
+        assert_eq!(
+            closest.map(|(id_tuple, _)| id_tuple),
+            Some((fixture.tile_id, candidate_osm_id))
+        );
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_full_tile_fallback_returns_far_same_tile_candidate() {
+        let disallowed_osm_id = 35_000;
+        let allowed_osm_id = 35_100;
+        let fixture = create_closest_point_fixture(
+            "tile-manager-full-tile-fallback",
+            TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: vec![
+                    TileManager::spatial_index_entry(10.1000, 20.1000, 0, 1),
+                    TileManager::spatial_index_entry(10.4000, 20.1000, 1, 1),
+                ],
+                points: vec![
+                    point_record(disallowed_osm_id, 10.1000, 20.1000, 0, 1),
+                    point_record(allowed_osm_id, 10.4000, 20.1000, 1, 1),
+                ],
+                lines: vec![
+                    line_record_with_tag_set(
+                        disallowed_osm_id,
+                        10.1000,
+                        20.1000,
+                        35_001,
+                        10.1010,
+                        20.1010,
+                        0,
+                    ),
+                    line_record_with_tag_set(
+                        allowed_osm_id,
+                        10.4000,
+                        20.1000,
+                        35_101,
+                        10.4010,
                         20.1010,
                         1,
                     ),
