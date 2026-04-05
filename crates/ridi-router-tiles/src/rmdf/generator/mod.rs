@@ -919,11 +919,11 @@ impl MultiPbfGenerator {
             graph.insert_way(way);
         }
 
-        // Pass collected restriction relations through the generation pipeline.
-        // Actual restriction materialization stays in the later rules/restrictions todo.
+        // Materialize supported restriction relations into the generation graph.
         for relation in tile.relations {
             graph.insert_relation(relation);
         }
+        graph.log_restriction_skip_summary();
 
         // Generate point hashes for spatial indexing
         graph.generate_point_hashes();

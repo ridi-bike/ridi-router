@@ -32,3 +32,4 @@ ridi-router-common = { path = "../ridi-router-common" }
 [dev-dependencies]
 ridi-router-routing = { path = "../ridi-router-routing" }
 rusty-fork.workspace = true
+tracing-subscriber.workspace = true
