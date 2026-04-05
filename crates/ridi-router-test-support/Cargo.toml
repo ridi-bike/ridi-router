@@ -1,0 +1,8 @@
+[package]
+name = "ridi-router-test-support"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ridi-router-common = { path = "../ridi-router-common" }
+serde_json.workspace = true

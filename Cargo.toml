@@ -3,6 +3,7 @@ members = [
   "crates/ridi-router-cli",
   "crates/ridi-router-common",
   "crates/ridi-router-routing",
+  "crates/ridi-router-test-support",
   "crates/ridi-router-tiles",
 ]
 resolver = "2"

@@ -961,6 +961,7 @@ dependencies = [
  "memmap2",
  "ridi-router-common",
  "ridi-router-routing",
+ "ridi-router-test-support",
  "ridi-router-tiles",
  "rusty-fork",
  "schemars",
@@ -1002,6 +1003,7 @@ dependencies = [
  "num-traits",
  "rayon",
  "ridi-router-common",
+ "ridi-router-test-support",
  "rstar",
  "rusty-fork",
  "schemars",
@@ -1013,6 +1015,14 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "wide",
+]
+
+[[package]]
+name = "ridi-router-test-support"
+version = "0.8.6"
+dependencies = [
+ "ridi-router-common",
+ "serde_json",
 ]
 
 [[package]]

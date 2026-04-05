@@ -292,6 +292,7 @@ impl TileManager {
 mod tests {
     use super::*;
     use crate::router::rules::RouterRules;
+    use ridi_router_test_support::rmdf::create_missing_neighbor_fixture;
 
     #[test]
     fn test_load_manifest() {
@@ -360,7 +361,34 @@ mod tests {
 
     #[test]
     fn test_missing_tile_handling() {
-        // TODO: Test scenario where tile is missing
-        // Should gracefully filter out lines leading to missing tile
+        let fixture = create_missing_neighbor_fixture("tile-manager-missing-neighbor");
+        let fixture_dir = fixture.dir.clone();
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        let adjacent = manager.get_adjacent_by_id(fixture.tile_a, fixture.center_osm_id);
+
+        assert!(
+            adjacent.is_ok(),
+            "missing-neighbor adjacency lookup should succeed: {adjacent:?}",
+        );
+
+        let adjacent = adjacent.unwrap();
+        assert_eq!(
+            adjacent.len(),
+            1,
+            "missing tile edge should be filtered out"
+        );
+        assert!(adjacent.contains(&(
+            fixture.tile_a,
+            0,
+            fixture.tile_a,
+            fixture.in_tile_neighbor_osm_id,
+        )));
+        assert!(!adjacent.iter().any(|(_, _, other_tile_id, other_osm_id)| {
+            *other_tile_id == fixture.missing_tile
+                || *other_osm_id == fixture.missing_neighbor_osm_id
+        }));
+
+        std::fs::remove_dir_all(fixture_dir).unwrap();
     }
 }

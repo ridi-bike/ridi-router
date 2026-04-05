@@ -34,3 +34,4 @@ ridi-router-common = { path = "../ridi-router-common" }
 
 [dev-dependencies]
 rusty-fork.workspace = true
+ridi-router-test-support = { path = "../ridi-router-test-support" }

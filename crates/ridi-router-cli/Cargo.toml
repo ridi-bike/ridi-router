@@ -41,6 +41,7 @@ ridi-router-tiles = { path = "../ridi-router-tiles" }
 
 [dev-dependencies]
 rusty-fork.workspace = true
+ridi-router-test-support = { path = "../ridi-router-test-support" }
 
 [build-dependencies]
 static_vcruntime.workspace = true
