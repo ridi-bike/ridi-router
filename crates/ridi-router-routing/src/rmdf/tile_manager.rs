@@ -1,3 +1,5 @@
+const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
+
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -9,6 +11,10 @@ use super::io::MappedTile;
 pub struct TileManager {
     tile_dir: PathBuf,
     loaded_tiles: HashMap<TileId, MappedTile>,
+    loaded_tile_order: [TileId; MAX_LOADED_TILES],
+    loaded_tile_order_len: usize,
+    #[cfg(test)]
+    loaded_tiles_limit: usize,
     tile_size_degrees: f32,
 }
 
@@ -20,8 +26,6 @@ pub(crate) struct TilePointRule {
 }
 
 impl TileManager {
-    const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
-
     /// Initialize TileManager from directory containing manifest.json
     pub fn new(tile_dir: PathBuf) -> Result<Self> {
         let manifest_path = tile_dir.join("manifest.json");
@@ -30,32 +34,179 @@ impl TileManager {
         let manifest: TileManifest =
             serde_json::from_reader(manifest_file).context("Failed to parse manifest.json")?;
 
-        let tile_size_degrees = manifest.tile_size_degrees;
-
-        Ok(Self {
-            tile_dir,
-            loaded_tiles: HashMap::new(),
-            tile_size_degrees,
-        })
+        Ok(Self::from_manifest(manifest, tile_dir))
     }
 
-    /// Create TileManager from manifest directly (for tests)
     /// Create TileManager from manifest directly
     pub fn from_manifest(manifest: TileManifest, tile_dir: PathBuf) -> Self {
         let tile_size_degrees = manifest.tile_size_degrees;
-        Self {
+        let manager = Self {
             tile_dir,
             loaded_tiles: HashMap::new(),
+            loaded_tile_order: [TileId::default(); MAX_LOADED_TILES],
+            loaded_tile_order_len: 0,
+            #[cfg(test)]
+            loaded_tiles_limit: MAX_LOADED_TILES,
             tile_size_degrees,
-        }
+        };
+        manager.debug_assert_registry_invariants();
+        manager
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_manifest_with_loaded_tiles_limit(
+        manifest: TileManifest,
+        tile_dir: PathBuf,
+        loaded_tiles_limit: usize,
+    ) -> Self {
+        assert!(
+            loaded_tiles_limit > 0,
+            "test loaded tiles limit must be positive"
+        );
+        assert!(
+            loaded_tiles_limit <= MAX_LOADED_TILES,
+            "test loaded tiles limit {} exceeds order capacity {}",
+            loaded_tiles_limit,
+            MAX_LOADED_TILES
+        );
+
+        let mut manager = Self::from_manifest(manifest, tile_dir);
+        manager.loaded_tiles_limit = loaded_tiles_limit;
+        manager
+    }
+
+    #[cfg(test)]
+    fn loaded_tiles_limit(&self) -> usize {
+        self.loaded_tiles_limit
+    }
+
+    #[cfg(not(test))]
+    fn loaded_tiles_limit(&self) -> usize {
+        MAX_LOADED_TILES
     }
 
     /// Compute TileId for given coordinates
     pub fn tile_id_for_coords(&self, lat: f32, lon: f32) -> TileId {
         TileId::from_coords(lat, lon, self.tile_size_degrees)
     }
+
+    fn debug_assert_registry_invariants(&self) {
+        debug_assert_eq!(
+            self.loaded_tiles.len(),
+            self.loaded_tile_order_len,
+            "loaded tile registry order length mismatch"
+        );
+
+        let active_order = &self.loaded_tile_order[..self.loaded_tile_order_len];
+        let mut seen = std::collections::HashSet::with_capacity(active_order.len());
+
+        for &loaded_tile_id in active_order {
+            debug_assert!(
+                seen.insert(loaded_tile_id),
+                "loaded tile registry order contains duplicates: {:?}",
+                loaded_tile_id
+            );
+            debug_assert!(
+                self.loaded_tiles.contains_key(&loaded_tile_id),
+                "loaded tile registry order contains unloaded tile: {:?}",
+                loaded_tile_id
+            );
+        }
+
+        debug_assert_eq!(
+            seen.len(),
+            self.loaded_tiles.len(),
+            "loaded tile registry order does not cover all loaded tiles"
+        );
+    }
+
+    fn append_loaded_tile(&mut self, tile_id: TileId) {
+        debug_assert_eq!(
+            self.loaded_tiles.len(),
+            self.loaded_tile_order_len + 1,
+            "loaded tile registry map/order mismatch before append"
+        );
+        debug_assert!(
+            self.loaded_tiles.contains_key(&tile_id),
+            "appending tile {:?} that is not loaded",
+            tile_id
+        );
+        debug_assert!(
+            self.loaded_tile_order_len < self.loaded_tile_order.len(),
+            "loaded tile registry order overflow before unload"
+        );
+        debug_assert!(
+            !self.loaded_tile_order[..self.loaded_tile_order_len].contains(&tile_id),
+            "tile {:?} already present in loaded tile registry order",
+            tile_id
+        );
+
+        self.loaded_tile_order[self.loaded_tile_order_len] = tile_id;
+        self.loaded_tile_order_len += 1;
+        self.debug_assert_registry_invariants();
+    }
+
+    fn remove_loaded_tile_from_order(&mut self, tile_id: TileId) {
+        self.debug_assert_registry_invariants();
+        let active_len = self.loaded_tile_order_len;
+        let Some(index) = self.loaded_tile_order[..active_len]
+            .iter()
+            .position(|loaded_tile_id| *loaded_tile_id == tile_id)
+        else {
+            panic!(
+                "loaded tile registry order missing tile {:?} during removal",
+                tile_id
+            );
+        };
+
+        if index + 1 < active_len {
+            self.loaded_tile_order[index..active_len].rotate_left(1);
+        }
+        self.loaded_tile_order[active_len - 1] = TileId::default();
+        self.loaded_tile_order_len -= 1;
+    }
+
+    fn mark_tile_recent(&mut self, tile_id: TileId) {
+        self.debug_assert_registry_invariants();
+        let active_len = self.loaded_tile_order_len;
+        let Some(index) = self.loaded_tile_order[..active_len]
+            .iter()
+            .rposition(|loaded_tile_id| *loaded_tile_id == tile_id)
+        else {
+            panic!(
+                "loaded tile registry order missing tile {:?} during recency update",
+                tile_id
+            );
+        };
+
+        if index + 1 < active_len {
+            self.loaded_tile_order[index..active_len].rotate_left(1);
+        }
+        self.debug_assert_registry_invariants();
+    }
+
+    fn unload_if_needed(&mut self) -> Result<()> {
+        self.debug_assert_registry_invariants();
+
+        if self.loaded_tiles.len() <= self.loaded_tiles_limit() {
+            return Ok(());
+        }
+
+        // Phase 1 keeps the existing unload behavior. Later phases will make this true LRU.
+        if let Some(tile_id) = self.loaded_tiles.keys().next().copied() {
+            self.remove_loaded_tile_from_order(tile_id);
+            self.loaded_tiles.remove(&tile_id);
+            tracing::debug!("Unloaded tile {:?}", tile_id);
+        }
+
+        self.debug_assert_registry_invariants();
+        Ok(())
+    }
+
     /// Ensure tile is loaded (load if not already)
     fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()> {
+        self.debug_assert_registry_invariants();
+
         if self.loaded_tiles.contains_key(&tile_id) {
             return Ok(());
         }
@@ -67,6 +218,8 @@ impl TileManager {
             .with_context(|| format!("Failed to load tile: {:?}", filename))?;
 
         self.loaded_tiles.insert(tile_id, mapped_tile);
+        self.append_loaded_tile(tile_id);
+        self.debug_assert_registry_invariants();
 
         Ok(())
     }
@@ -302,26 +455,10 @@ impl TileManager {
             result.push((tile_id, line_idx, other_tile_id, other_osm_id));
         }
 
-        // Evict old tiles if needed
-        self.evict_if_needed()?;
+        // Unload old tiles if needed
+        self.unload_if_needed()?;
 
         Ok(result)
-    }
-
-    /// Evict least recently used tiles if over limit
-    fn evict_if_needed(&mut self) -> Result<()> {
-        if self.loaded_tiles.len() <= Self::MAX_LOADED_TILES {
-            return Ok(());
-        }
-
-        // Simple strategy: remove arbitrary tile
-        // TODO: Implement proper LRU tracking
-        if let Some(tile_id) = self.loaded_tiles.keys().next().cloned() {
-            self.loaded_tiles.remove(&tile_id);
-            tracing::debug!("Evicted tile {:?}", tile_id);
-        }
-
-        Ok(())
     }
 
     fn checked_range(offset: u64, count: u32, len: usize) -> Result<(usize, usize)> {
@@ -364,6 +501,21 @@ impl TileManager {
 
         Ok(*tag_set)
     }
+
+    #[cfg(test)]
+    pub(crate) fn loaded_tile_count(&self) -> usize {
+        self.loaded_tiles.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_tile_loaded(&self, tile_id: TileId) -> bool {
+        self.loaded_tiles.contains_key(&tile_id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn loaded_tile_order_for_test(&self) -> Vec<TileId> {
+        self.loaded_tile_order[..self.loaded_tile_order_len].to_vec()
+    }
 }
 
 #[cfg(test)]
@@ -371,6 +523,16 @@ mod tests {
     use super::*;
     use crate::router::rules::RouterRules;
     use ridi_router_test_support::rmdf::create_missing_neighbor_fixture;
+    fn test_manifest() -> TileManifest {
+        TileManifest {
+            version: "test".to_string(),
+            tile_size_degrees: 1.0,
+            format_version: 1,
+            generated_at: "2026-04-05T00:00:00Z".to_string(),
+            source_files: Vec::new(),
+            tiles: Vec::new(),
+        }
+    }
 
     #[test]
     fn test_load_manifest() {
@@ -384,6 +546,20 @@ mod tests {
         }
 
         let _manager = TileManager::new(tile_dir).expect("Failed to load TileManager");
+    }
+
+    #[test]
+    fn test_registry_foundation_initializes_test_hooks() {
+        let manager = TileManager::from_manifest_with_loaded_tiles_limit(
+            test_manifest(),
+            PathBuf::from("test"),
+            3,
+        );
+
+        assert_eq!(manager.loaded_tile_count(), 0);
+        assert!(!manager.is_tile_loaded(TileId { col: 1, row: 2 }));
+        assert_eq!(manager.loaded_tile_order_for_test(), Vec::<TileId>::new());
+        assert_eq!(manager.loaded_tiles_limit(), 3);
     }
 
     #[test]
