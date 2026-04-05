@@ -206,3 +206,102 @@ impl MappedTile {
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MappedTile;
+    use ridi_router_common::format::{GridCellEntry, LineRecord, PointRecord, TagSetRecord};
+    use ridi_router_test_support::rmdf::{
+        unique_test_dir, write_tile, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
+    };
+
+    #[test]
+    fn loads_synthetic_tile_with_spatial_index_and_tags() {
+        let dir = unique_test_dir("rmdf-io-tag-smoke");
+        let lat = 10.5;
+        let lon = 20.5;
+        let highway_idx = 0;
+        let surface_idx = 1;
+        let smoothness_idx = 2;
+
+        let tile_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: vec![GridCellEntry {
+                    cell_id: GridCellEntry::encode_cell_id(lat, lon, 100),
+                    _padding1: 0,
+                    points_offset: 0,
+                    points_count: 1,
+                    _padding2: 0,
+                }],
+                points: vec![PointRecord {
+                    osm_id: 1,
+                    lat,
+                    lon,
+                    lines_offset: 0,
+                    lines_count: 1,
+                    _padding1: 0,
+                    rules_offset: 0,
+                    rules_count: 0,
+                    flags: 0,
+                    _padding2: 0,
+                }],
+                lines: vec![LineRecord {
+                    point_a_osm_id: 1,
+                    point_a_lat: lat,
+                    point_a_lon: lon,
+                    point_b_osm_id: 2,
+                    point_b_lat: lat + 0.01,
+                    point_b_lon: lon + 0.01,
+                    direction: 0,
+                    _padding1: 0,
+                    _padding2: 0,
+                    tag_set_index: 0,
+                }],
+                line_refs: vec![0],
+                tag_values: vec![
+                    "secondary".to_string(),
+                    "gravel".to_string(),
+                    "bad".to_string(),
+                ],
+                tag_sets: vec![TagSetRecord {
+                    name_idx: TagSetRecord::NONE,
+                    hw_ref_idx: TagSetRecord::NONE,
+                    highway_idx,
+                    surface_idx,
+                    smoothness_idx,
+                }],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile = MappedTile::load(&tile_path).unwrap();
+
+        assert_eq!(tile.header.spatial_grid_cell_count, 1);
+        assert_eq!(tile.header.tag_value_count, 3);
+        assert_eq!(tile.header.tag_set_count, 1);
+
+        let spatial_index = tile.get_spatial_index().unwrap();
+        assert_eq!(spatial_index.len(), 1);
+        assert_eq!(
+            spatial_index[0].cell_id,
+            GridCellEntry::encode_cell_id(lat, lon, 100)
+        );
+        assert_eq!(spatial_index[0].points_offset, 0);
+        assert_eq!(spatial_index[0].points_count, 1);
+
+        assert_eq!(tile.get_tag_value(highway_idx).unwrap(), "secondary");
+        assert_eq!(tile.get_tag_value(surface_idx).unwrap(), "gravel");
+        assert_eq!(tile.get_tag_value(smoothness_idx).unwrap(), "bad");
+
+        let tag_set = tile.get_tag_set(0).unwrap();
+        assert_eq!(tag_set.name_idx, TagSetRecord::NONE);
+        assert_eq!(tag_set.hw_ref_idx, TagSetRecord::NONE);
+        assert_eq!(tag_set.highway_idx, highway_idx);
+        assert_eq!(tag_set.surface_idx, surface_idx);
+        assert_eq!(tag_set.smoothness_idx, smoothness_idx);
+    }
+}

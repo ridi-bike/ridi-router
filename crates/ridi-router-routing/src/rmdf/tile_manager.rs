@@ -645,6 +645,7 @@ mod tests {
                 &TileSpec {
                     tile_id,
                     bounds,
+                    spatial_index: Vec::new(),
                     points: vec![point_record(
                         osm_id,
                         bounds.lat_min + 0.5,
@@ -654,6 +655,8 @@ mod tests {
                     )],
                     lines: Vec::new(),
                     line_refs: Vec::new(),
+                    tag_values: Vec::new(),
+                    tag_sets: Vec::new(),
                     rules: Vec::new(),
                     rule_line_refs: Vec::new(),
                 },
@@ -733,9 +736,12 @@ mod tests {
             &TileSpec {
                 tile_id: tile_a,
                 bounds: bounds_a,
+                spatial_index: Vec::new(),
                 points: tile_a_points,
                 lines: tile_a_lines,
                 line_refs: vec![0, 1, 0],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
                 rules: Vec::new(),
                 rule_line_refs: Vec::new(),
             },
@@ -746,9 +752,12 @@ mod tests {
             &TileSpec {
                 tile_id: tile_b,
                 bounds: bounds_b,
+                spatial_index: Vec::new(),
                 points: vec![point_record(cross_tile_neighbor_osm_id, 10.50, 21.05, 0, 0)],
                 lines: Vec::new(),
                 line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
                 rules: Vec::new(),
                 rule_line_refs: Vec::new(),
             },

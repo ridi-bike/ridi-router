@@ -6,8 +6,10 @@ pub mod rmdf {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use ridi_router_common::format::RmdfHeader;
-    pub use ridi_router_common::format::{LineRecord, PointRecord, RuleRecord, TileBounds, TileId};
+    pub use ridi_router_common::format::{
+        GridCellEntry, LineRecord, PointRecord, RuleRecord, TagSetRecord, TileBounds, TileId,
+    };
+    use ridi_router_common::format::{RmdfHeader, StringEntry};
     pub use ridi_router_common::manifest::{
         TileBounds as ManifestTileBounds, TileManifest, TileMetadata, TileNeighbors,
     };
@@ -29,9 +31,12 @@ pub mod rmdf {
     pub struct TileSpec {
         pub tile_id: TileId,
         pub bounds: TileBounds,
+        pub spatial_index: Vec<GridCellEntry>,
         pub points: Vec<PointRecord>,
         pub lines: Vec<LineRecord>,
         pub line_refs: Vec<u64>,
+        pub tag_values: Vec<String>,
+        pub tag_sets: Vec<TagSetRecord>,
         pub rules: Vec<RuleRecord>,
         pub rule_line_refs: Vec<u64>,
     }
@@ -80,28 +85,31 @@ pub mod rmdf {
     pub fn write_tile(dir: &Path, spec: &TileSpec) -> PathBuf {
         fs::create_dir_all(dir).unwrap();
 
-        let points_offset = RmdfHeader::SIZE as u64;
+        let spatial_index_offset = RmdfHeader::SIZE as u64;
+        let points_offset = spatial_index_offset
+            + std::mem::size_of::<GridCellEntry>() as u64 * spec.spatial_index.len() as u64;
         let lines_offset =
             points_offset + std::mem::size_of::<PointRecord>() as u64 * spec.points.len() as u64;
         let line_refs_offset =
             lines_offset + std::mem::size_of::<LineRecord>() as u64 * spec.lines.len() as u64;
         let tag_values_offset =
             line_refs_offset + std::mem::size_of::<u64>() as u64 * spec.line_refs.len() as u64;
-        let tag_sets_offset = tag_values_offset;
-        let rules_offset = tag_sets_offset;
+        let tag_sets_offset = tag_values_offset + tag_values_section_size(&spec.tag_values);
+        let rules_offset = tag_sets_offset
+            + std::mem::size_of::<TagSetRecord>() as u64 * spec.tag_sets.len() as u64;
 
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RMDF");
-        push_u32(&mut bytes, 1);
+        push_u32(&mut bytes, RmdfHeader::VERSION);
         write_tile_bounds(&mut bytes, spec.bounds);
         push_u64(&mut bytes, spec.points.len() as u64);
         push_u64(&mut bytes, spec.lines.len() as u64);
-        push_u32(&mut bytes, 0);
-        push_u32(&mut bytes, 0);
-        push_u32(&mut bytes, 0);
+        push_u32(&mut bytes, spec.spatial_index.len() as u32);
+        push_u32(&mut bytes, spec.tag_values.len() as u32);
+        push_u32(&mut bytes, spec.tag_sets.len() as u32);
         push_u32(&mut bytes, spec.rules.len() as u32);
         for offset in [
-            points_offset,
+            spatial_index_offset,
             points_offset,
             lines_offset,
             line_refs_offset,
@@ -114,6 +122,9 @@ pub mod rmdf {
 
         assert_eq!(bytes.len() as u64, RmdfHeader::SIZE as u64);
 
+        for grid_cell in &spec.spatial_index {
+            write_grid_cell_entry(&mut bytes, *grid_cell);
+        }
         for point in &spec.points {
             write_point_record(&mut bytes, *point);
         }
@@ -122,6 +133,10 @@ pub mod rmdf {
         }
         for line_ref in &spec.line_refs {
             push_u64(&mut bytes, *line_ref);
+        }
+        write_tag_values_section(&mut bytes, &spec.tag_values);
+        for tag_set in &spec.tag_sets {
+            write_tag_set_record(&mut bytes, *tag_set);
         }
         for rule in &spec.rules {
             write_rule_record(&mut bytes, *rule);
@@ -220,9 +235,12 @@ pub mod rmdf {
             &TileSpec {
                 tile_id: SYNTHETIC_TILE_ID,
                 bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
                 points,
                 lines,
                 line_refs,
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
                 rules: Vec::new(),
                 rule_line_refs: Vec::new(),
             },
@@ -336,9 +354,12 @@ pub mod rmdf {
             &TileSpec {
                 tile_id: tile_a,
                 bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
                 points,
                 lines,
                 line_refs,
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
                 rules: Vec::new(),
                 rule_line_refs: Vec::new(),
             },
@@ -455,6 +476,25 @@ pub mod rmdf {
         buf.extend_from_slice(&value.to_le_bytes());
     }
 
+    fn align_up(value: u64, alignment: usize) -> u64 {
+        let alignment = alignment as u64;
+        if alignment <= 1 {
+            return value;
+        }
+
+        let remainder = value % alignment;
+        if remainder == 0 {
+            value
+        } else {
+            value + (alignment - remainder)
+        }
+    }
+
+    fn pad_to_alignment(buf: &mut Vec<u8>, alignment: usize) {
+        let target_len = align_up(buf.len() as u64, alignment) as usize;
+        buf.resize(target_len, 0);
+    }
+
     fn write_tile_bounds(buf: &mut Vec<u8>, bounds: TileBounds) {
         push_f32(buf, bounds.lat_min);
         push_f32(buf, bounds.lat_max);
@@ -486,6 +526,58 @@ pub mod rmdf {
         buf.push(line._padding1);
         push_u16(buf, line._padding2);
         push_u32(buf, line.tag_set_index);
+    }
+
+    fn tag_values_section_size(tag_values: &[String]) -> u64 {
+        let entry_bytes = std::mem::size_of::<StringEntry>() * tag_values.len();
+        let string_bytes: usize = tag_values.iter().map(|value| value.len()).sum();
+        align_up(
+            (entry_bytes + string_bytes) as u64,
+            std::mem::align_of::<TagSetRecord>(),
+        )
+    }
+
+    fn write_grid_cell_entry(buf: &mut Vec<u8>, grid_cell: GridCellEntry) {
+        push_u32(buf, grid_cell.cell_id);
+        push_u32(buf, grid_cell._padding1);
+        push_u64(buf, grid_cell.points_offset);
+        push_u32(buf, grid_cell.points_count);
+        push_u32(buf, grid_cell._padding2);
+    }
+
+    fn write_string_entry(buf: &mut Vec<u8>, entry: StringEntry) {
+        push_u64(buf, entry.offset);
+        push_u32(buf, entry.length);
+        push_u32(buf, entry._padding);
+    }
+
+    fn write_tag_values_section(buf: &mut Vec<u8>, tag_values: &[String]) {
+        let mut string_offset = 0_u64;
+        for tag_value in tag_values {
+            write_string_entry(
+                buf,
+                StringEntry {
+                    offset: string_offset,
+                    length: u32::try_from(tag_value.len()).unwrap(),
+                    _padding: 0,
+                },
+            );
+            string_offset += tag_value.len() as u64;
+        }
+
+        for tag_value in tag_values {
+            buf.extend_from_slice(tag_value.as_bytes());
+        }
+
+        pad_to_alignment(buf, std::mem::align_of::<TagSetRecord>());
+    }
+
+    fn write_tag_set_record(buf: &mut Vec<u8>, tag_set: TagSetRecord) {
+        push_u32(buf, tag_set.name_idx);
+        push_u32(buf, tag_set.hw_ref_idx);
+        push_u32(buf, tag_set.highway_idx);
+        push_u32(buf, tag_set.surface_idx);
+        push_u32(buf, tag_set.smoothness_idx);
     }
 
     fn write_rule_record(buf: &mut Vec<u8>, rule: RuleRecord) {

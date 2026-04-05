@@ -731,9 +731,12 @@ mod tests {
             &TileSpec {
                 tile_id,
                 bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
                 points,
                 lines,
                 line_refs: vec![0, 0, 1, 2, 1, 2],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
                 rules,
                 rule_line_refs,
             },
