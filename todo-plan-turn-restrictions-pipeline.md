@@ -74,43 +74,129 @@ That test-only mapping is the best reference for first-pass semantics.
 
 ## Chosen direction
 ### Generation side
-Add a restriction collection separate from `GenerationPoint`.
+Use **design C**: store a separate, generation-owned, tile-local restriction collection on `GenerationGraph`, not on `GenerationPoint`.
 
-The exact type can vary, but it should live with the generation model, for example as data owned by `GenerationGraph`.
+> generation stays generation-shaped, but relations are materialized early enough that the writer does not need to re-derive routing semantics from raw OSM relations
 
-It should represent enough information to later serialize RMDF rules without reintroducing old fake runtime surfaces.
+Recommended shape:
+- add a new generation restriction module, e.g. `crates/ridi-router-tiles/src/generation/restriction.rs`
+- extend `GenerationGraph` with:
+  - `way_line_indices: HashMap<u64, Vec<usize>>`
+  - `restrictions_by_via: HashMap<u64, Vec<GenerationRestrictionRule>>`
+- keep `GenerationPoint` unchanged
+
+Recommended first-pass types:
+```rust
+pub enum GenerationRestrictionRuleType {
+    OnlyAllowed,
+    NotAllowed,
+}
+
+pub struct GenerationRestrictionRule {
+    pub relation_id: u64,
+    pub via_node_id: u64,
+    pub rule_type: GenerationRestrictionRuleType,
+    pub from_line_indices: Vec<u32>,
+    pub to_line_indices: Vec<u32>,
+}
+```
+
+Implementation shape:
+1. During `insert_way(...)`, record every generated line index under the source OSM way ID in `way_line_indices`.
+2. During `insert_relation(...)`, parse supported restriction relations and resolve them immediately into **tile-local line indices**.
+3. For each `from` or `to` way, only keep the generated line indices that actually touch the `via` node.
+4. Store the resulting rule under `restrictions_by_via[via_node_id]`.
+
+That keeps generation-side restriction data separate from points, while still being writer-ready.
+
+### First implementation scope
+Support only simple **via-node** turn restrictions with:
+- one or more `from` way members
+- exactly one `via` node member
+- one or more `to` way members
+- `type=restriction`
+- `restriction` values mapped to existing runtime semantics:
+  - `no_left_turn`
+  - `no_right_turn`
+  - `no_straight_on`
+  - `no_u_turn`
+  - `no_entry`
+  - `no_exit`
+  - `only_left_turn`
+  - `only_right_turn`
+  - `only_straight_on`
+  - `only_u_turn`
+
+Out of scope for the first pass:
+- `via` way restrictions
+- conditional restrictions
+- mode-specific restriction variants like `restriction:motorcycle=*`
+- `except=*` handling
+- any relation shape that cannot be resolved into one via-node-centered rule set
+
+Unsupported relations should be **skipped explicitly**, not half-applied.
 
 ### RMDF side
-Serialize restrictions from that generation-side collection into:
-- `PointRecord.rules_offset` / `rules_count`
-- `RuleRecord`
-- any additional flattened rule-line side data that turns out to be necessary
+Keep the existing `RuleRecord`. Do **not** add a new RMDF section for rule line refs in the first implementation.
+
+Serialize rules into the existing `RULES` section as:
+1. `RuleRecord[]`
+2. trailing flattened `u64[]` rule-line-ref payload
+
+Encoding decision:
+- `PointRecord.rules_offset` / `rules_count` index into the `RuleRecord[]` prefix
+- `RuleRecord.from_lines_offset` / `from_lines_count` index into the trailing flattened `u64[]` payload
+- `RuleRecord.to_lines_offset` / `to_lines_count` index into the trailing flattened `u64[]` payload
+- those line refs are tile-local generated line indices
+
+So `RuleRecord` remains enough as-is; the extra data lives as a flattened payload in the same `RULES` section.
+
+### Cross-tile implications
+Do **not** introduce cross-tile rule references for the first pass.
+
+The tile generation pipeline already builds tiles from buffered bounds, so border ways/nodes are duplicated into neighboring tiles. The rule model should use that and stay tile-local:
+- materialize a rule in every tile where the `via` node and the relevant local line copies exist
+- skip a rule in a tile if either side resolves to zero local via-adjacent lines
+- write only tile-local line indices into RMDF
 
 ### Runtime side
-Continue exposing runtime restrictions as:
+Runtime still exposes:
 - `MapDataPoint.rules: Vec<MapDataRule>`
 
-In other words:
-- generation stays generation-shaped
-- runtime stays runtime-shaped
-- RMDF is the bridge
+Hydration shape:
+1. load `RuleRecord`s for the point using `PointRecord.rules_offset` / `rules_count`
+2. load the referenced flattened line-index payload slices
+3. convert each stored line index into `MapDataLineRef::new(point_tile_id, line_index as u64)`
+4. map serialized rule type to `MapDataRuleType::{OnlyAllowed, NotAllowed}`
 
-## Open design questions
-1. What is the cleanest generation-side restriction structure?
-   - via-point keyed records?
-   - temporary way/member references resolved at write time?
-   - writer-ready line references once line indices are known?
-2. Is `RuleRecord` enough as-is, or is an extra flattened line-ref side table needed?
-3. How should cross-tile line references be encoded when a rule touches border lines?
-4. Should the first implementation cover only simple `via`-node restrictions, matching current test helpers?
+So runtime stays runtime-shaped; RMDF remains the bridge between the generation model and `MapDataPoint.rules`.
+
+### Important semantic choice
+For generated tiles, rules should store only the **via-adjacent generated line indices** for the `from` and `to` sides, not every line belonging to the source OSM ways.
+
+That is smaller, more precise, and matches what the walker actually checks at the junction.
+
+## Resolved design questions
+1. Generation-side restriction structure
+   - use via-point keyed, writer-ready restriction records on `GenerationGraph`
+2. `RuleRecord` sufficiency
+   - keep `RuleRecord`; append flattened line refs inside the same `RULES` section
+3. Cross-tile references
+   - do not encode cross-tile rule refs in the first pass; duplicate tile-local rules instead
+4. First implementation scope
+   - support simple via-node restrictions only, with one or more `from` ways and one or more `to` ways
 
 ## Suggested work order
-1. Lift the existing restriction semantics from `crates/ridi-router-routing/src/test_utils.rs` into generation-side code.
-2. Add generation-side restriction storage to `crates/ridi-router-tiles/src/generation/graph.rs`.
-3. Finish writer-side rule serialization in `crates/ridi-router-tiles/src/rmdf/generator/writer.rs`.
-4. Add RMDF rule readers in runtime tile IO.
-5. Hydrate `MapDataPoint.rules` in `crates/ridi-router-routing/src/map_data/graph.rs`.
-6. Add one generated-tile end-to-end routing test.
+1. Lift the supported restriction semantics from `crates/ridi-router-routing/src/test_utils.rs` into generation-side parsing/materialization code.
+2. Add `way_line_indices` and `restrictions_by_via` to `crates/ridi-router-tiles/src/generation/graph.rs`.
+3. Implement `insert_relation(...)` for supported via-node restriction relations only.
+4. Finish the writer-side offset work needed for flattened side tables:
+   - real `lines_offset` / `lines_count` for point line refs
+   - real `rules_offset` / `rules_count` for point rule refs
+5. Finish rule serialization in `crates/ridi-router-tiles/src/rmdf/generator/writer.rs` using `RuleRecord[] + flattened rule line refs`.
+6. Add RMDF rule accessors in runtime tile IO.
+7. Hydrate `MapDataPoint.rules` in `crates/ridi-router-routing/src/map_data/graph.rs`.
+8. Add at least one generated-tile end-to-end routing test proving walker behavior changes because of serialized restrictions.
 
 ## Related narrower todos
 - `todo-review-rmdf-rules-writer.md` — writer slice
