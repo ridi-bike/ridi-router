@@ -907,20 +907,28 @@ impl MultiPbfGenerator {
         &self,
         tile: intermediate::IntermediateTile,
     ) -> GenerationGraph {
+        let intermediate::IntermediateTile {
+            nodes,
+            ways,
+            relations,
+            ..
+        } = tile;
         let mut graph = GenerationGraph::new();
 
         // Insert all nodes (with correct proximity flags from re-evaluation)
-        for (_node_id, node) in tile.nodes {
+        let mut sorted_nodes: Vec<_> = nodes.into_values().collect();
+        sorted_nodes.sort_unstable_by_key(|node| node.id);
+        for node in sorted_nodes {
             graph.insert_node(node);
         }
 
         // Insert all ways
-        for way in tile.ways {
+        for way in ways {
             graph.insert_way(way);
         }
 
         // Materialize supported restriction relations into the generation graph.
-        for relation in tile.relations {
+        for relation in relations {
             graph.insert_relation(relation);
         }
         graph.log_restriction_skip_summary();

@@ -299,17 +299,21 @@ impl GenerationGraph {
             return;
         }
 
-        let from_line_indices = self.resolve_via_adjacent_line_indices(&from_way_ids, via_node_id);
-        if from_line_indices.is_empty() {
+        let Some(from_line_indices) =
+            self.resolve_required_via_adjacent_line_indices(&from_way_ids, via_node_id)
+        else {
             self.warn_and_count_skipped_relation(
                 relation.id,
                 GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                format!("no via-adjacent local from lines found for via node {via_node_id}"),
+                format!(
+                    "at least one from way is missing via-adjacent local lines for via node {via_node_id}; skipping in this tile so an adjacent tile can materialize it"
+                ),
             );
             return;
-        }
+        };
 
-        let Some(to_line_indices) = self.resolve_required_to_line_indices(&to_way_ids, via_node_id)
+        let Some(to_line_indices) =
+            self.resolve_required_via_adjacent_line_indices(&to_way_ids, via_node_id)
         else {
             self.warn_and_count_skipped_relation(
                 relation.id,
@@ -374,18 +378,7 @@ impl GenerationGraph {
         }
     }
 
-    fn resolve_via_adjacent_line_indices(&self, way_ids: &[u64], via_node_id: u64) -> Vec<u32> {
-        let mut line_indices = BTreeSet::new();
-
-        for &way_id in way_ids {
-            line_indices
-                .extend(self.resolve_via_adjacent_line_indices_for_way(way_id, via_node_id));
-        }
-
-        line_indices.into_iter().collect()
-    }
-
-    fn resolve_required_to_line_indices(
+    fn resolve_required_via_adjacent_line_indices(
         &self,
         way_ids: &[u64],
         via_node_id: u64,
@@ -609,6 +602,32 @@ mod tests {
                 relation_node_member(OsmRelationMemberRole::Via, 2),
                 relation_way_member(OsmRelationMemberRole::To, 20),
                 relation_way_member(OsmRelationMemberRole::To, 9999),
+            ],
+            HashMap::new(),
+        ));
+
+        assert!(graph.restrictions_by_via.is_empty());
+        assert_eq!(
+            graph
+                .restriction_skip_stats
+                .malformed_or_unresolved_relations,
+            1
+        );
+    }
+
+    #[test]
+    fn test_insert_relation_skips_when_any_from_member_is_missing_locally() {
+        let mut graph = seeded_graph();
+        insert_base_ways(&mut graph);
+
+        graph.insert_relation(make_relation(
+            302,
+            "no_straight_on",
+            vec![
+                relation_way_member(OsmRelationMemberRole::From, 10),
+                relation_way_member(OsmRelationMemberRole::From, 9999),
+                relation_node_member(OsmRelationMemberRole::Via, 2),
+                relation_way_member(OsmRelationMemberRole::To, 20),
             ],
             HashMap::new(),
         ));

@@ -1,7 +1,8 @@
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     process,
+    sync::{Arc, Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -16,7 +17,13 @@ use osm_io::osm::{
     },
     pbf::{compression_type::CompressionType, file_info::FileInfo, writer::Writer},
 };
-use ridi_router_tiles::{generate_tiles, TileGenerationRequest, TileInputSource};
+use ridi_router_tiles::{
+    generate_tiles, TileGenerationRequest, TileGenerationSummary, TileInputSource,
+};
+use tracing_subscriber::{
+    fmt::{self, MakeWriter},
+    prelude::*,
+};
 
 use crate::{
     map_data::{
@@ -36,6 +43,8 @@ const EXTRA_ALLOWED_EXIT_OSM_ID: u64 = 5;
 const FINISH_OSM_ID: u64 = 6;
 const VIA_LAT: f32 = 10.11;
 const VIA_LON: f32 = 20.10;
+const BORDER_DUPLICATED_VIA_LON: f32 = 20.999;
+const BORDER_DUPLICATED_EAST_TILE_LON: f32 = 21.001;
 
 #[test]
 fn generated_tiles_hydrate_turn_rules_and_change_walker_behavior() {
@@ -99,6 +108,66 @@ fn generated_tiles_hydrate_turn_rules_and_change_walker_behavior() {
     );
 }
 
+#[test]
+fn generated_tiles_hydrate_rules_for_buffer_duplicated_via_point_in_both_tiles() {
+    let dir = TempDir::new("routing-phase4-border-duplicated-restriction");
+    let input_path = dir.path().join("fixture.osm.pbf");
+    let tiles_dir = dir.path().join("tiles");
+    fs::create_dir_all(&tiles_dir).unwrap();
+
+    write_border_duplicated_restriction_fixture_pbf(&input_path);
+
+    let summary = generate_fixture_tiles(input_path, tiles_dir.clone());
+    assert_eq!(summary.tile_count, 2);
+
+    let tile_manager = crate::rmdf::TileManager::new(tiles_dir).unwrap();
+    let graph = MapDataGraph::new(tile_manager);
+    let west_tile_id =
+        crate::rmdf::TileId::from_coords(VIA_LAT, BORDER_DUPLICATED_VIA_LON, TILE_SIZE_DEGREES);
+    let east_tile_id = crate::rmdf::TileId::from_coords(
+        VIA_LAT,
+        BORDER_DUPLICATED_EAST_TILE_LON,
+        TILE_SIZE_DEGREES,
+    );
+
+    for tile_id in [west_tile_id, east_tile_id] {
+        let via_point = graph.get_point_from_tiles(tile_id, VIA_OSM_ID);
+        assert_eq!(via_point.id, VIA_OSM_ID);
+        assert_eq!(via_point.lines.len(), 4);
+        assert_eq!(via_point.rules.len(), 1);
+
+        let rule = &via_point.rules[0];
+        assert_eq!(rule.rule_type, MapDataRuleType::NotAllowed);
+        assert_eq!(
+            line_endpoint_ids(&graph, &rule.from_lines),
+            vec![(START_OSM_ID, VIA_OSM_ID)]
+        );
+        assert_eq!(
+            line_endpoint_ids(&graph, &rule.to_lines),
+            vec![(VIA_OSM_ID, FORBIDDEN_EXIT_OSM_ID)]
+        );
+    }
+}
+
+#[test]
+fn generated_tiles_warn_and_summarize_skipped_unsupported_relations() {
+    let dir = TempDir::new("routing-phase4-unsupported-restriction");
+    let input_path = dir.path().join("fixture.osm.pbf");
+    let tiles_dir = dir.path().join("tiles");
+    fs::create_dir_all(&tiles_dir).unwrap();
+
+    write_unsupported_restriction_fixture_pbf(&input_path);
+
+    let log_buffer = init_test_log_capture();
+    let summary = generate_fixture_tiles(input_path, tiles_dir);
+    assert_eq!(summary.tile_count, 1);
+
+    let output = log_buffer.as_string();
+    assert!(output.contains("Skipping restriction relation 100 [via_way]"));
+    assert!(output.contains("via-way restrictions are not supported"));
+    assert!(output.contains("Skipped restriction relations during tile generation: via_way=1"));
+}
+
 fn line_endpoint_ids(graph: &MapDataGraph, line_refs: &[MapDataLineRef]) -> Vec<(u64, u64)> {
     let mut endpoints = line_refs
         .iter()
@@ -130,14 +199,7 @@ impl GeneratedRestrictionFixture {
 
         write_restriction_fixture_pbf(&input_path);
 
-        let summary = generate_tiles(TileGenerationRequest {
-            input: TileInputSource::File(input_path),
-            output_dir: tiles_dir.clone(),
-            tile_size_deg: TILE_SIZE_DEGREES,
-            db_path: None,
-        })
-        .unwrap();
-
+        let summary = generate_fixture_tiles(input_path, tiles_dir.clone());
         assert_eq!(summary.tile_count, 1);
 
         Self {
@@ -148,7 +210,119 @@ impl GeneratedRestrictionFixture {
     }
 }
 
+fn generate_fixture_tiles(input_path: PathBuf, output_dir: PathBuf) -> TileGenerationSummary {
+    generate_tiles(TileGenerationRequest {
+        input: TileInputSource::File(input_path),
+        output_dir,
+        tile_size_deg: TILE_SIZE_DEGREES,
+        db_path: None,
+    })
+    .unwrap()
+}
+
 fn write_restriction_fixture_pbf(path: &Path) {
+    write_pbf_fixture(
+        path,
+        vec![
+            node(START_OSM_ID as i64, 10.10, 20.10),
+            node(VIA_OSM_ID as i64, VIA_LAT as f64, VIA_LON as f64),
+            node(FORBIDDEN_EXIT_OSM_ID as i64, 10.11, 20.11),
+            node(ALLOWED_EXIT_OSM_ID as i64, 10.11, 20.09),
+            node(EXTRA_ALLOWED_EXIT_OSM_ID as i64, 10.12, 20.10),
+            node(FINISH_OSM_ID as i64, 10.11, 20.08),
+        ],
+        vec![
+            way(10, &[START_OSM_ID as i64, VIA_OSM_ID as i64]),
+            way(20, &[VIA_OSM_ID as i64, FORBIDDEN_EXIT_OSM_ID as i64]),
+            way(
+                30,
+                &[
+                    VIA_OSM_ID as i64,
+                    ALLOWED_EXIT_OSM_ID as i64,
+                    FINISH_OSM_ID as i64,
+                ],
+            ),
+            way(40, &[VIA_OSM_ID as i64, EXTRA_ALLOWED_EXIT_OSM_ID as i64]),
+        ],
+        vec![restriction_relation(
+            100,
+            "no_right_turn",
+            vec![
+                way_member(10, "from"),
+                node_member(VIA_OSM_ID as i64, "via"),
+                way_member(20, "to"),
+            ],
+        )],
+    );
+}
+
+fn write_border_duplicated_restriction_fixture_pbf(path: &Path) {
+    write_pbf_fixture(
+        path,
+        vec![
+            node(START_OSM_ID as i64, 10.10, 20.998),
+            node(
+                VIA_OSM_ID as i64,
+                VIA_LAT as f64,
+                BORDER_DUPLICATED_VIA_LON as f64,
+            ),
+            node(FORBIDDEN_EXIT_OSM_ID as i64, 10.11, 21.002),
+            node(ALLOWED_EXIT_OSM_ID as i64, 10.11, 20.997),
+            node(EXTRA_ALLOWED_EXIT_OSM_ID as i64, 10.12, 20.999),
+            node(FINISH_OSM_ID as i64, 10.11, 20.996),
+        ],
+        vec![
+            way(10, &[START_OSM_ID as i64, VIA_OSM_ID as i64]),
+            way(20, &[VIA_OSM_ID as i64, FORBIDDEN_EXIT_OSM_ID as i64]),
+            way(
+                30,
+                &[
+                    VIA_OSM_ID as i64,
+                    ALLOWED_EXIT_OSM_ID as i64,
+                    FINISH_OSM_ID as i64,
+                ],
+            ),
+            way(40, &[VIA_OSM_ID as i64, EXTRA_ALLOWED_EXIT_OSM_ID as i64]),
+        ],
+        vec![restriction_relation(
+            100,
+            "no_right_turn",
+            vec![
+                way_member(10, "from"),
+                node_member(VIA_OSM_ID as i64, "via"),
+                way_member(20, "to"),
+            ],
+        )],
+    );
+}
+
+fn write_unsupported_restriction_fixture_pbf(path: &Path) {
+    write_pbf_fixture(
+        path,
+        vec![
+            node(START_OSM_ID as i64, 10.10, 20.10),
+            node(VIA_OSM_ID as i64, VIA_LAT as f64, VIA_LON as f64),
+            node(FORBIDDEN_EXIT_OSM_ID as i64, 10.11, 20.11),
+            node(ALLOWED_EXIT_OSM_ID as i64, 10.11, 20.09),
+        ],
+        vec![
+            way(10, &[START_OSM_ID as i64, VIA_OSM_ID as i64]),
+            way(20, &[VIA_OSM_ID as i64, FORBIDDEN_EXIT_OSM_ID as i64]),
+            way(30, &[VIA_OSM_ID as i64, ALLOWED_EXIT_OSM_ID as i64]),
+        ],
+        vec![restriction_relation(
+            100,
+            "no_right_turn",
+            vec![
+                way_member(10, "from"),
+                way_member(20, "via"),
+                way_member(30, "to"),
+            ],
+        )],
+    );
+}
+
+fn write_pbf_fixture(path: &Path, nodes: Vec<Node>, ways: Vec<Way>, relations: Vec<Relation>) {
     let mut file_info = FileInfo::default();
     file_info.with_writingprogram_str("ridi-router-phase4-test");
 
@@ -156,63 +330,50 @@ fn write_restriction_fixture_pbf(path: &Path) {
         Writer::from_file_info(path.to_path_buf(), file_info, CompressionType::Zlib).unwrap();
     writer.write_header().unwrap();
 
-    for node in [
-        node(START_OSM_ID as i64, 10.10, 20.10),
-        node(VIA_OSM_ID as i64, VIA_LAT as f64, VIA_LON as f64),
-        node(FORBIDDEN_EXIT_OSM_ID as i64, 10.11, 20.11),
-        node(ALLOWED_EXIT_OSM_ID as i64, 10.11, 20.09),
-        node(EXTRA_ALLOWED_EXIT_OSM_ID as i64, 10.12, 20.10),
-        node(FINISH_OSM_ID as i64, 10.11, 20.08),
-    ] {
+    for node in nodes {
         writer.write_element(Element::Node { node }).unwrap();
     }
 
-    for way in [
-        way(10, &[START_OSM_ID as i64, VIA_OSM_ID as i64]),
-        way(20, &[VIA_OSM_ID as i64, FORBIDDEN_EXIT_OSM_ID as i64]),
-        way(
-            30,
-            &[
-                VIA_OSM_ID as i64,
-                ALLOWED_EXIT_OSM_ID as i64,
-                FINISH_OSM_ID as i64,
-            ],
-        ),
-        way(40, &[VIA_OSM_ID as i64, EXTRA_ALLOWED_EXIT_OSM_ID as i64]),
-    ] {
+    for way in ways {
         writer.write_element(Element::Way { way }).unwrap();
     }
 
-    writer
-        .write_element(Element::Relation {
-            relation: Relation::new(
-                100,
-                1,
-                0,
-                0,
-                0,
-                String::new(),
-                true,
-                vec![
-                    Member::Way {
-                        member: MemberData::new(10, "from".to_string()),
-                    },
-                    Member::Node {
-                        member: MemberData::new(VIA_OSM_ID as i64, "via".to_string()),
-                    },
-                    Member::Way {
-                        member: MemberData::new(20, "to".to_string()),
-                    },
-                ],
-                vec![
-                    Tag::new("type", "restriction"),
-                    Tag::new("restriction", "no_right_turn"),
-                ],
-            ),
-        })
-        .unwrap();
+    for relation in relations {
+        writer
+            .write_element(Element::Relation { relation })
+            .unwrap();
+    }
 
     writer.close().unwrap();
+}
+
+fn restriction_relation(id: i64, restriction: &str, members: Vec<Member>) -> Relation {
+    Relation::new(
+        id,
+        1,
+        0,
+        0,
+        0,
+        String::new(),
+        true,
+        members,
+        vec![
+            Tag::new("type", "restriction"),
+            Tag::new("restriction", restriction),
+        ],
+    )
+}
+
+fn way_member(id: i64, role: &str) -> Member {
+    Member::Way {
+        member: MemberData::new(id, role.to_string()),
+    }
+}
+
+fn node_member(id: i64, role: &str) -> Member {
+    Member::Node {
+        member: MemberData::new(id, role.to_string()),
+    }
 }
 
 fn node(id: i64, lat: f64, lon: f64) -> Node {
@@ -241,6 +402,69 @@ fn way(id: i64, refs: &[i64]) -> Way {
         refs.to_vec(),
         vec![Tag::new("highway", "primary")],
     )
+}
+
+#[derive(Clone, Default)]
+struct SharedLogBuffer {
+    inner: Arc<Mutex<Vec<u8>>>,
+}
+
+impl SharedLogBuffer {
+    fn clear(&self) {
+        self.inner.lock().unwrap().clear();
+    }
+
+    fn as_string(&self) -> String {
+        String::from_utf8(self.inner.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl<'a> MakeWriter<'a> for SharedLogBuffer {
+    type Writer = SharedLogWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        SharedLogWriter {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+struct SharedLogWriter {
+    inner: Arc<Mutex<Vec<u8>>>,
+}
+
+impl io::Write for SharedLogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn init_test_log_capture() -> SharedLogBuffer {
+    static TEST_LOG_BUFFER: OnceLock<SharedLogBuffer> = OnceLock::new();
+    static TEST_LOG_SUBSCRIBER: OnceLock<()> = OnceLock::new();
+
+    let log_buffer = TEST_LOG_BUFFER
+        .get_or_init(SharedLogBuffer::default)
+        .clone();
+    TEST_LOG_SUBSCRIBER.get_or_init(|| {
+        let subscriber = tracing_subscriber::registry().with(
+            fmt::layer()
+                .without_time()
+                .with_ansi(false)
+                .with_target(false)
+                .with_writer(log_buffer.clone())
+                .with_filter(tracing_subscriber::filter::LevelFilter::WARN),
+        );
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("test log subscriber should only be installed once");
+    });
+    log_buffer.clear();
+    log_buffer
 }
 
 struct TempDir {

@@ -37,3 +37,4 @@ rusty-fork.workspace = true
 ridi-router-test-support = { path = "../ridi-router-test-support" }
 ridi-router-tiles = { path = "../ridi-router-tiles" }
 osm-io = { version = "0.3.0", default-features = false }
+tracing-subscriber.workspace = true

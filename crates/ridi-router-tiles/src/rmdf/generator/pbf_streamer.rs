@@ -403,7 +403,9 @@ impl<'a> PbfStreamer<'a> {
         let mut graph = GenerationGraph::new();
 
         // Insert all nodes (with correct proximity flags)
-        for (_node_id, node) in nodes {
+        let mut sorted_nodes: Vec<_> = nodes.into_values().collect();
+        sorted_nodes.sort_unstable_by_key(|node| node.id);
+        for node in sorted_nodes {
             graph.insert_node(node);
         }
 

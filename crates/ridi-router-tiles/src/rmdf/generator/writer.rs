@@ -69,7 +69,8 @@ impl RmdfWriter {
         }
 
         let mut ordered_points = Vec::new();
-        for (cell_id, points_in_cell) in cells {
+        for (cell_id, mut points_in_cell) in cells {
+            points_in_cell.sort_unstable_by_key(|point| point.id);
             for point in points_in_cell {
                 ordered_points.push((cell_id, point));
             }
@@ -548,6 +549,50 @@ mod tests {
 
         assert_eq!(point_records[4].rules_count, 0);
         assert_eq!(point_records[5].rules_count, 0);
+    }
+
+    #[test]
+    fn test_build_point_layout_sorts_points_within_each_cell_by_osm_id() {
+        let mut graph = GenerationGraph::new();
+
+        for node in [
+            OsmNode {
+                id: 30,
+                lat: 1.0,
+                lon: 1.0,
+                residential_in_proximity: false,
+                nogo_area: false,
+            },
+            OsmNode {
+                id: 10,
+                lat: 1.0,
+                lon: 1.0,
+                residential_in_proximity: false,
+                nogo_area: false,
+            },
+            OsmNode {
+                id: 20,
+                lat: 1.0,
+                lon: 1.0,
+                residential_in_proximity: false,
+                nogo_area: false,
+            },
+        ] {
+            graph.insert_node(node);
+        }
+
+        graph.insert_way(make_way(10, &[30, 10, 20]));
+
+        let point_layout = RmdfWriter::build_point_layout(&graph).unwrap();
+
+        assert_eq!(
+            point_layout
+                .ordered_points
+                .iter()
+                .map(|ordered_point| ordered_point.point.id)
+                .collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
     }
 
     #[test]

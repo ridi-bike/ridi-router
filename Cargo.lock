@@ -1427,6 +1427,7 @@ dependencies = [
  "struct-field-names-as-array",
  "thiserror 2.0.18",
  "tracing",
+ "tracing-subscriber",
  "wide",
 ]
 
