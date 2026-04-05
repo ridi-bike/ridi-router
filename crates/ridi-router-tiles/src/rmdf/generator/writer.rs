@@ -151,14 +151,13 @@ impl RmdfWriter {
     }
 
     fn build_spatial_index(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
-        // Build point-to-lines mapping from the lines themselves
+        // Build point-to-lines mapping from the generation lines themselves.
         let point_lines_map = Self::build_point_lines_map(graph);
 
-        // Group points by grid cell - only include points that have lines connected
+        // Group points by grid cell - only include points that connect to generated lines.
         let mut cells: HashMap<u32, Vec<usize>> = HashMap::new();
 
         for (idx, point) in graph.get_points().iter().enumerate() {
-            // Use the map instead of point.lines
             if !point_lines_map.contains_key(&point.id) {
                 continue;
             }
@@ -198,16 +197,14 @@ impl RmdfWriter {
     }
 
     fn serialize_points(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
-        // Build point-to-lines mapping from the lines themselves
+        // Build point-to-lines mapping from the generation lines themselves.
         let point_lines_map = Self::build_point_lines_map(graph);
         let mut bytes = Vec::new();
 
-        // CRITICAL FIX: Group points by grid cell and sort by cell_id
-        // This ensures point indices match the spatial index offsets
+        // Group points by grid cell and sort by cell_id so point order matches the spatial index.
         let mut cells: HashMap<u32, Vec<&GenerationPoint>> = HashMap::new();
 
         for point in graph.get_points() {
-            // Use the map instead of point.lines
             if !point_lines_map.contains_key(&point.id) {
                 continue;
             }
@@ -300,16 +297,15 @@ impl RmdfWriter {
     }
 
     fn serialize_line_refs(&self, graph: &GenerationGraph) -> Result<Vec<u8>> {
-        // Build point-to-lines mapping from the lines themselves
+        // Build point-to-lines mapping from the generation lines themselves.
         let point_lines_map = Self::build_point_lines_map(graph);
-        // CRITICAL FIX: Must use identical sorting as serialize_points()
-        // Otherwise line_refs indices won't match point indices in the file
+        // Must use identical sorting as serialize_points().
+        // Otherwise line_refs indices won't match point indices in the file.
         let mut line_refs = Vec::new();
 
         let mut cells: HashMap<u32, Vec<&GenerationPoint>> = HashMap::new();
 
         for point in graph.get_points() {
-            // Use the map instead of point.lines
             if !point_lines_map.contains_key(&point.id) {
                 continue;
             }
@@ -378,8 +374,8 @@ impl RmdfWriter {
     }
 
     fn serialize_rules(&self, _graph: &GenerationGraph) -> Result<Vec<u8>> {
-        // Rules serialization - similar to line refs
-        // TODO: restriction/rules materialization stays in the follow-up todo
+        // Rules remain unmaterialized in the generation pipeline for now.
+        // Restriction/rules serialization belongs to the separate follow-up todo.
         Ok(Vec::new())
     }
 
