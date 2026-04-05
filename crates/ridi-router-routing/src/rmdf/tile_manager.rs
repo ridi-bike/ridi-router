@@ -1581,6 +1581,117 @@ mod tests {
     }
 
     #[test]
+    fn test_get_closest_to_coords_disables_allowlist_when_all_allowed_highways_are_avoided() {
+        let candidate_osm_id = 31_200;
+        let rules = RouterRules {
+            highway: Some(HashMap::from([
+                ("primary".to_string(), RulesTagValueAction::Avoid),
+                ("secondary".to_string(), RulesTagValueAction::Avoid),
+            ])),
+            ..RouterRules::default()
+        };
+        let fixture = create_closest_point_fixture(
+            "tile-manager-hw-allowlist-disabled-by-avoid-rules",
+            TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![point_record(candidate_osm_id, 10.1000, 20.1000, 0, 1)],
+                lines: vec![line_record_with_tag_set(
+                    candidate_osm_id,
+                    10.1000,
+                    20.1000,
+                    31_201,
+                    10.1010,
+                    20.1010,
+                    0,
+                )],
+                line_refs: vec![0],
+                tag_values: vec!["track".to_string()],
+                tag_sets: vec![tag_set_record(Some(0), None, None)],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        let closest = manager
+            .get_closest_to_coords(
+                10.1001,
+                20.1000,
+                &rules,
+                false,
+                Some(&["primary", "secondary"]),
+            )
+            .unwrap();
+
+        assert_eq!(closest, Some((fixture.tile_id, candidate_osm_id)));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_highway_allowlist_rejects_points_without_adjacent_highway_tags() {
+        let no_highway_osm_id = 31_300;
+        let allowed_osm_id = 31_400;
+        let fixture = create_closest_point_fixture(
+            "tile-manager-hw-allowlist-rejects-no-highway-tags",
+            TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![
+                    point_record(no_highway_osm_id, 10.1000, 20.1000, 0, 1),
+                    point_record(allowed_osm_id, 10.1030, 20.1000, 1, 1),
+                ],
+                lines: vec![
+                    line_record_with_tag_set(
+                        no_highway_osm_id,
+                        10.1000,
+                        20.1000,
+                        31_301,
+                        10.1010,
+                        20.1010,
+                        0,
+                    ),
+                    line_record_with_tag_set(
+                        allowed_osm_id,
+                        10.1030,
+                        20.1000,
+                        31_401,
+                        10.1040,
+                        20.1010,
+                        1,
+                    ),
+                ],
+                line_refs: vec![0, 1],
+                tag_values: vec!["gravel".to_string(), "secondary".to_string()],
+                tag_sets: vec![
+                    tag_set_record(None, Some(0), None),
+                    tag_set_record(Some(1), None, None),
+                ],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
+        let closest = manager
+            .get_closest_to_coords(
+                10.1001,
+                20.1000,
+                &RouterRules::default(),
+                false,
+                Some(&["secondary"]),
+            )
+            .unwrap();
+
+        assert_eq!(closest, Some((fixture.tile_id, allowed_osm_id)));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
     fn test_find_closest_in_grid_rings_returns_stage_1_match() {
         let candidate_osm_id = 34_000;
         let fixture = create_closest_point_fixture(

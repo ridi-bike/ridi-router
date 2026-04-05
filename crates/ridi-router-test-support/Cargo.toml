@@ -6,3 +6,7 @@ edition.workspace = true
 [dependencies]
 ridi-router-common = { path = "../ridi-router-common" }
 serde_json.workspace = true
+
+
+[dev-dependencies]
+bytemuck.workspace = true

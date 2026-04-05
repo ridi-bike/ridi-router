@@ -41,6 +41,23 @@ pub mod rmdf {
         pub rule_line_refs: Vec<u64>,
     }
 
+    impl Default for TileSpec {
+        fn default() -> Self {
+            Self {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: Vec::new(),
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            }
+        }
+    }
+
     #[derive(Debug, Clone)]
     pub struct LinearSingleTileFixture {
         pub dir: PathBuf,
@@ -595,5 +612,150 @@ pub mod rmdf {
         buf.push(rule.rule_type);
         buf.push(rule._padding2);
         push_u16(buf, rule._padding3);
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use bytemuck::{pod_read_unaligned, Pod};
+        use ridi_router_common::format::RmdfHeader;
+
+        fn read_pod_vec<T: Pod>(bytes: &[u8]) -> Vec<T> {
+            bytes
+                .chunks_exact(std::mem::size_of::<T>())
+                .map(pod_read_unaligned::<T>)
+                .collect()
+        }
+
+        fn decode_string(entry: StringEntry, pool: &[u8]) -> &str {
+            let start = entry.offset as usize;
+            let end = start + entry.length as usize;
+            std::str::from_utf8(&pool[start..end]).unwrap()
+        }
+
+        #[test]
+        fn tile_spec_default_keeps_optional_sections_empty() {
+            let spec = TileSpec::default();
+
+            assert_eq!(spec.tile_id, SYNTHETIC_TILE_ID);
+            assert_eq!(spec.bounds.lat_min, SYNTHETIC_TILE_BOUNDS.lat_min);
+            assert_eq!(spec.bounds.lat_max, SYNTHETIC_TILE_BOUNDS.lat_max);
+            assert_eq!(spec.bounds.lon_min, SYNTHETIC_TILE_BOUNDS.lon_min);
+            assert_eq!(spec.bounds.lon_max, SYNTHETIC_TILE_BOUNDS.lon_max);
+            assert!(spec.spatial_index.is_empty());
+            assert!(spec.points.is_empty());
+            assert!(spec.lines.is_empty());
+            assert!(spec.line_refs.is_empty());
+            assert!(spec.tag_values.is_empty());
+            assert!(spec.tag_sets.is_empty());
+            assert!(spec.rules.is_empty());
+            assert!(spec.rule_line_refs.is_empty());
+        }
+
+        #[test]
+        fn write_tile_serializes_spatial_index_and_tag_sections() {
+            let dir = unique_test_dir("rmdf-test-support-tag-smoke");
+            let lat = 10.5;
+            let lon = 20.5;
+            let highway_idx = 0;
+            let surface_idx = 1;
+            let smoothness_idx = 2;
+
+            let spec = TileSpec {
+                spatial_index: vec![GridCellEntry {
+                    cell_id: GridCellEntry::encode_cell_id(lat, lon, 100),
+                    _padding1: 0,
+                    points_offset: 0,
+                    points_count: 1,
+                    _padding2: 0,
+                }],
+                points: vec![PointRecord {
+                    osm_id: 1,
+                    lat,
+                    lon,
+                    lines_offset: 0,
+                    lines_count: 1,
+                    _padding1: 0,
+                    rules_offset: 0,
+                    rules_count: 0,
+                    flags: 0,
+                    _padding2: 0,
+                }],
+                lines: vec![LineRecord {
+                    point_a_osm_id: 1,
+                    point_a_lat: lat,
+                    point_a_lon: lon,
+                    point_b_osm_id: 2,
+                    point_b_lat: lat + 0.01,
+                    point_b_lon: lon + 0.01,
+                    direction: 0,
+                    _padding1: 0,
+                    _padding2: 0,
+                    tag_set_index: 0,
+                }],
+                line_refs: vec![0],
+                tag_values: vec![
+                    "secondary".to_string(),
+                    "gravel".to_string(),
+                    "bad".to_string(),
+                ],
+                tag_sets: vec![TagSetRecord {
+                    name_idx: TagSetRecord::NONE,
+                    hw_ref_idx: TagSetRecord::NONE,
+                    highway_idx,
+                    surface_idx,
+                    smoothness_idx,
+                }],
+                ..TileSpec::default()
+            };
+
+            let tile_path = write_tile(&dir, &spec);
+            let bytes = fs::read(&tile_path).unwrap();
+            let header = pod_read_unaligned::<RmdfHeader>(&bytes[..RmdfHeader::SIZE]);
+
+            let expected_points_offset =
+                RmdfHeader::SIZE as u64 + std::mem::size_of::<GridCellEntry>() as u64;
+            let expected_lines_offset =
+                expected_points_offset + std::mem::size_of::<PointRecord>() as u64;
+            let expected_line_refs_offset =
+                expected_lines_offset + std::mem::size_of::<LineRecord>() as u64;
+            let expected_tag_values_offset =
+                expected_line_refs_offset + std::mem::size_of::<u64>() as u64;
+            let expected_tag_sets_offset =
+                expected_tag_values_offset + tag_values_section_size(&spec.tag_values);
+            let expected_rules_offset =
+                expected_tag_sets_offset + std::mem::size_of::<TagSetRecord>() as u64;
+
+            assert_eq!(header.spatial_grid_cell_count, 1);
+            assert_eq!(header.tag_value_count, 3);
+            assert_eq!(header.tag_set_count, 1);
+            assert_eq!(header.section_offsets[0], RmdfHeader::SIZE as u64);
+            assert_eq!(header.section_offsets[1], expected_points_offset);
+            assert_eq!(header.section_offsets[2], expected_lines_offset);
+            assert_eq!(header.section_offsets[3], expected_line_refs_offset);
+            assert_eq!(header.section_offsets[4], expected_tag_values_offset);
+            assert_eq!(header.section_offsets[5], expected_tag_sets_offset);
+            assert_eq!(header.section_offsets[6], expected_rules_offset);
+
+            let tag_values_start = header.section_offsets[4] as usize;
+            let tag_sets_start = header.section_offsets[5] as usize;
+            let rules_start = header.section_offsets[6] as usize;
+            let entry_bytes = std::mem::size_of::<StringEntry>() * spec.tag_values.len();
+            let tag_values_section = &bytes[tag_values_start..tag_sets_start];
+            let string_entries = read_pod_vec::<StringEntry>(&tag_values_section[..entry_bytes]);
+            let string_pool = &tag_values_section[entry_bytes..];
+
+            assert_eq!(decode_string(string_entries[0], string_pool), "secondary");
+            assert_eq!(decode_string(string_entries[1], string_pool), "gravel");
+            assert_eq!(decode_string(string_entries[2], string_pool), "bad");
+
+            let tag_sets = read_pod_vec::<TagSetRecord>(&bytes[tag_sets_start..rules_start]);
+            assert_eq!(tag_sets.len(), 1);
+            assert_eq!(tag_sets[0].highway_idx, highway_idx);
+            assert_eq!(tag_sets[0].surface_idx, surface_idx);
+            assert_eq!(tag_sets[0].smoothness_idx, smoothness_idx);
+
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 }

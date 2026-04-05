@@ -1435,6 +1435,7 @@ dependencies = [
 name = "ridi-router-test-support"
 version = "0.8.6"
 dependencies = [
+ "bytemuck",
  "ridi-router-common",
  "serde_json",
 ]
