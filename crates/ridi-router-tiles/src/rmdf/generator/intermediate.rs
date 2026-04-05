@@ -1,4 +1,4 @@
-use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
+use crate::osm_data::{OsmNode, OsmRelation, OsmWay};
 use crate::rmdf::format::TileId;
 use anyhow::Context;
 use bincode;
@@ -472,7 +472,7 @@ pub fn build_combined_grid(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
+    use crate::osm_data::{OsmNode, OsmRelation, OsmWay};
     use crate::rmdf::format::TileId;
 
     fn make_test_tile() -> IntermediateTile {

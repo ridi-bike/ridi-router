@@ -1,5 +1,5 @@
-use crate::map_data::osm::{
-    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberType, OsmWay,
+use crate::osm_data::{
+    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
 };
 use crate::rmdf::format::TileBounds;
 use anyhow::{Context, Result};
@@ -552,7 +552,7 @@ impl InMemoryPbf {
 
                         // Check role (outer or inner)
                         let role_str = match &member.role {
-                            crate::map_data::osm::OsmRelationMemberRole::Other(s) => s.as_str(),
+                            OsmRelationMemberRole::Other(s) => s.as_str(),
                             _ => "",
                         };
 
@@ -836,7 +836,7 @@ impl InMemoryPbf {
 
                                     OsmRelationMember {
                                         member_type,
-                                        role: crate::map_data::osm::OsmRelationMemberRole::Other(
+                                        role: OsmRelationMemberRole::Other(
                                             r.role.to_string(),
                                         ),
                                         member_ref,

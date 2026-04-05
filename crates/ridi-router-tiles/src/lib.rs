@@ -1,3 +1,4 @@
+mod generation;
 mod map_data;
 mod osm_data;
 mod proximity;

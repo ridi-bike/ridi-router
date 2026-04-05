@@ -7,7 +7,7 @@ use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::debug;
 
-use crate::map_data::GenerationGraph;
+use crate::generation::{GenerationError, GenerationGraph, GenerationPoint, LineDirection};
 use crate::rmdf::format::*;
 
 pub struct RmdfWriter {
@@ -20,7 +20,7 @@ impl RmdfWriter {
     }
 
     /// Build a mapping from point OSM IDs to the indices of lines that connect to them.
-    /// This is needed because GenerationGraph doesn't populate point.lines during insertion.
+    /// The generation model keeps line relationships explicit on lines, not on points.
     fn build_point_lines_map(graph: &GenerationGraph) -> HashMap<u64, Vec<usize>> {
         let mut map: HashMap<u64, Vec<usize>> = HashMap::new();
 
@@ -204,7 +204,7 @@ impl RmdfWriter {
 
         // CRITICAL FIX: Group points by grid cell and sort by cell_id
         // This ensures point indices match the spatial index offsets
-        let mut cells: HashMap<u32, Vec<&crate::map_data::point::MapDataPoint>> = HashMap::new();
+        let mut cells: HashMap<u32, Vec<&GenerationPoint>> = HashMap::new();
 
         for point in graph.get_points() {
             // Use the map instead of point.lines
@@ -232,8 +232,8 @@ impl RmdfWriter {
                     lines_offset: 0, // TODO: Calculate from line refs
                     lines_count: line_count,
                     _padding1: 0,
-                    rules_offset: 0, // TODO: Calculate from rules
-                    rules_count: point.rules.len() as u32,
+                    rules_offset: 0,
+                    rules_count: 0,
                     flags: {
                         let mut flags = 0u16;
                         if point.residential_in_proximity {
@@ -265,12 +265,16 @@ impl RmdfWriter {
 
         for line in graph.get_lines() {
             // Look up point data from node IDs
-            let point_a = node_map
-                .get(&line.from_node_id)
-                .ok_or_else(|| anyhow::anyhow!("Point {} not found for line", line.from_node_id))?;
-            let point_b = node_map
-                .get(&line.to_node_id)
-                .ok_or_else(|| anyhow::anyhow!("Point {} not found for line", line.to_node_id))?;
+            let point_a = node_map.get(&line.from_node_id).ok_or_else(|| {
+                GenerationError::MissingPoint {
+                    point_id: line.from_node_id,
+                }
+            })?;
+            let point_b = node_map.get(&line.to_node_id).ok_or_else(|| {
+                GenerationError::MissingPoint {
+                    point_id: line.to_node_id,
+                }
+            })?;
 
             let record = LineRecord {
                 point_a_osm_id: point_a.id,
@@ -280,9 +284,9 @@ impl RmdfWriter {
                 point_b_lat: point_b.lat,
                 point_b_lon: point_b.lon,
                 direction: match line.direction {
-                    crate::map_data::line::LineDirection::BothWays => 0,
-                    crate::map_data::line::LineDirection::OneWay => 1,
-                    crate::map_data::line::LineDirection::Roundabout => 2,
+                    LineDirection::BothWays => 0,
+                    LineDirection::OneWay => 1,
+                    LineDirection::Roundabout => 2,
                 },
                 _padding1: 0,
                 _padding2: 0,
@@ -302,7 +306,7 @@ impl RmdfWriter {
         // Otherwise line_refs indices won't match point indices in the file
         let mut line_refs = Vec::new();
 
-        let mut cells: HashMap<u32, Vec<&crate::map_data::point::MapDataPoint>> = HashMap::new();
+        let mut cells: HashMap<u32, Vec<&GenerationPoint>> = HashMap::new();
 
         for point in graph.get_points() {
             // Use the map instead of point.lines
@@ -375,7 +379,7 @@ impl RmdfWriter {
 
     fn serialize_rules(&self, _graph: &GenerationGraph) -> Result<Vec<u8>> {
         // Rules serialization - similar to line refs
-        // TODO: Implement based on MapDataRule structure
+        // TODO: restriction/rules materialization stays in the follow-up todo
         Ok(Vec::new())
     }
 

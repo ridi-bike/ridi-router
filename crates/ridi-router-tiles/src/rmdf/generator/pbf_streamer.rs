@@ -23,8 +23,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 
-use crate::map_data::generation_graph::GenerationGraph;
-use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
+use crate::generation::GenerationGraph;
+use crate::osm_data::{OsmNode, OsmRelation, OsmRelationMemberType, OsmWay};
 use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
 use crate::rmdf::format::TileId;
 use std::collections::HashMap;
@@ -349,13 +349,13 @@ impl<'a> PbfStreamer<'a> {
                     .members
                     .iter()
                     .any(|member| match member.member_type {
-                        crate::map_data::osm::OsmRelationMemberType::Node => {
+                        OsmRelationMemberType::Node => {
                             node_ids.contains(&member.member_ref)
                         }
-                        crate::map_data::osm::OsmRelationMemberType::Way => {
+                        OsmRelationMemberType::Way => {
                             way_ids.contains(&member.member_ref)
                         }
-                        crate::map_data::osm::OsmRelationMemberType::Relation => true,
+                        OsmRelationMemberType::Relation => true,
                     });
 
             if !has_members_in_tile {
@@ -416,16 +416,12 @@ impl<'a> PbfStreamer<'a> {
 
         // Insert all ways
         for way in ways {
-            graph
-                .insert_way(way)
-                .context("Failed to insert way into generation graph")?;
+            graph.insert_way(way);
         }
 
         // Insert all relations (turn restrictions)
         for relation in relations {
-            graph
-                .insert_relation(relation)
-                .context("Failed to insert relation into generation graph")?;
+            graph.insert_relation(relation);
         }
 
         // Generate point hashes for spatial indexing
