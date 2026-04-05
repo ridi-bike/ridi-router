@@ -870,7 +870,7 @@ impl MultiPbfGenerator {
             tile.deduplicate();
 
             // Build GenerationGraph
-            let graph = self.build_generation_graph_from_tile(tile)?;
+            let graph = self.build_generation_graph_from_tile(tile);
 
             // Write RMDF tile
             self.write_rmdf_tile(*tile_id, graph)?;
@@ -910,7 +910,7 @@ impl MultiPbfGenerator {
     fn build_generation_graph_from_tile(
         &self,
         tile: intermediate::IntermediateTile,
-    ) -> Result<GenerationGraph> {
+    ) -> GenerationGraph {
         let mut graph = GenerationGraph::new();
 
         // Insert all nodes (with correct proximity flags from re-evaluation)
@@ -931,7 +931,7 @@ impl MultiPbfGenerator {
         // Generate point hashes for spatial indexing
         graph.generate_point_hashes();
 
-        Ok(graph)
+        graph
     }
 
     /// Write RMDF tile file from generation graph

@@ -184,10 +184,7 @@ impl<'a> PbfStreamer<'a> {
                 tile_data.nodes,
                 tile_data.ways,
                 tile_data.relations,
-            ).with_context(|| format!(
-                "Failed to build generation graph for tile {:?}",
-                tile_id
-            ))?;
+            );
 
             // Step 4: Write RMDF tile file
             self.write_rmdf_tile(tile_id, graph)
@@ -399,7 +396,7 @@ impl<'a> PbfStreamer<'a> {
         nodes: HashMap<u64, OsmNode>,
         ways: Vec<OsmWay>,
         relations: Vec<OsmRelation>,
-    ) -> Result<GenerationGraph> {
+    ) -> GenerationGraph {
         info!(
             "Building generation graph from {} nodes, {} ways, {} relations",
             nodes.len(),
@@ -427,7 +424,7 @@ impl<'a> PbfStreamer<'a> {
         // Generate point hashes for spatial indexing
         graph.generate_point_hashes();
 
-        Ok(graph)
+        graph
     }
 
     /// Write RMDF tile file from generation graph
