@@ -163,7 +163,12 @@ mod tests {
     use std::{fs, path::PathBuf, sync::OnceLock};
 
     use crate::{map_data::graph::MapDataGraph, router::rules::RouterRules, RoutingContext};
-    use ridi_router_test_support::rmdf::create_linear_single_tile_fixture;
+    use ridi_router_common::format::{LineRecord, PointRecord, TagSetRecord};
+    use ridi_router_test_support::rmdf::{
+        create_linear_single_tile_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
+        write_manifest, write_tile, TileManifest, TileMetadata, TileSpec, SYNTHETIC_TILE_BOUNDS,
+        SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+    };
     use rusty_fork::rusty_fork_test;
 
     use super::{
@@ -277,6 +282,124 @@ mod tests {
         }))
         .unwrap()
     }
+
+    pub(super) fn create_allowlist_start_finish_fixture(prefix: &str) -> PathBuf {
+        fn point_record(
+            osm_id: u64,
+            lat: f32,
+            lon: f32,
+            lines_offset: u64,
+            lines_count: u32,
+        ) -> PointRecord {
+            PointRecord {
+                osm_id,
+                lat,
+                lon,
+                lines_offset,
+                lines_count,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            }
+        }
+
+        fn line_record_with_tag_set(
+            point_a_osm_id: u64,
+            point_a_lat: f32,
+            point_a_lon: f32,
+            point_b_osm_id: u64,
+            point_b_lat: f32,
+            point_b_lon: f32,
+            tag_set_index: u32,
+        ) -> LineRecord {
+            LineRecord {
+                point_a_osm_id,
+                point_a_lat,
+                point_a_lon,
+                point_b_osm_id,
+                point_b_lat,
+                point_b_lon,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index,
+            }
+        }
+
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![
+                    point_record(20_000, 10.1000, 20.1000, 0, 1),
+                    point_record(21_000, 10.1100, 20.1000, 1, 1),
+                    point_record(21_100, 10.1150, 20.1000, 2, 2),
+                    point_record(21_200, 10.1200, 20.1000, 4, 1),
+                    point_record(22_000, 10.1190, 20.1000, 5, 1),
+                    point_record(20_001, 10.1000, 20.1010, 6, 1),
+                    point_record(22_001, 10.1190, 20.1010, 7, 1),
+                ],
+                lines: vec![
+                    line_record_with_tag_set(20_000, 10.1000, 20.1000, 20_001, 10.1000, 20.1010, 0),
+                    line_record_with_tag_set(21_000, 10.1100, 20.1000, 21_100, 10.1150, 20.1000, 1),
+                    line_record_with_tag_set(21_100, 10.1150, 20.1000, 21_200, 10.1200, 20.1000, 1),
+                    line_record_with_tag_set(22_000, 10.1190, 20.1000, 22_001, 10.1190, 20.1010, 0),
+                ],
+                line_refs: vec![0, 1, 1, 2, 2, 3, 0, 3],
+                tag_values: vec!["track".to_string(), "secondary".to_string()],
+                tag_sets: vec![
+                    TagSetRecord {
+                        name_idx: TagSetRecord::NONE,
+                        hw_ref_idx: TagSetRecord::NONE,
+                        highway_idx: 0,
+                        surface_idx: TagSetRecord::NONE,
+                        smoothness_idx: TagSetRecord::NONE,
+                    },
+                    TagSetRecord {
+                        name_idx: TagSetRecord::NONE,
+                        hw_ref_idx: TagSetRecord::NONE,
+                        highway_idx: 1,
+                        surface_idx: TagSetRecord::NONE,
+                        smoothness_idx: TagSetRecord::NONE,
+                    },
+                ],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        write_manifest(
+            &dir,
+            &TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: SYNTHETIC_TILE_SIZE_DEGREES,
+                format_version: 1,
+                generated_at: "2026-04-05T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: vec![TileMetadata {
+                    filename: SYNTHETIC_TILE_ID.to_filename(),
+                    col: SYNTHETIC_TILE_ID.col,
+                    row: SYNTHETIC_TILE_ID.row,
+                    bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
+                    neighbors: empty_neighbors(),
+                    size_bytes: fs::metadata(&tile_path).unwrap().len(),
+                    point_count: 7,
+                    line_count: 4,
+                    checksum: format!("sha256:{prefix}"),
+                    military_geojson_filename: None,
+                }],
+            },
+        );
+
+        dir
+    }
 }
 
 #[cfg(test)]
@@ -312,6 +435,41 @@ mod routing_executor_tests {
 
             assert_eq!(computation.routes.len(), 1);
             assert!(!computation.routes[0].coords.is_empty());
+        }
+
+        #[test]
+        fn routing_executor_generate_start_finish_honors_wp_lookup_allowed_highways() {
+            let tiles_dir = super::tests::create_allowlist_start_finish_fixture(
+                "routing-api-wp-lookup-allowed-highways",
+            );
+            let executor = RoutingExecutor::open(RoutingExecutorConfig {
+                tiles_dir: tiles_dir.clone(),
+            })
+            .unwrap();
+
+            let computation = executor
+                .generate(RouteRequest {
+                    mode: RouteMode::StartFinish {
+                        start: Coords {
+                            lat: 10.1001,
+                            lon: 20.1000,
+                        },
+                        finish: Coords {
+                            lat: 10.1191,
+                            lon: 20.1000,
+                        },
+                    },
+                    rules: synthetic_rules(),
+                })
+                .unwrap();
+
+            assert_eq!(computation.routes.len(), 1);
+            assert_eq!(
+                computation.routes[0].coords,
+                vec![(10.1150, 20.1000), (10.1200, 20.1000)],
+            );
+
+            std::fs::remove_dir_all(tiles_dir).unwrap();
         }
 
         #[test]
