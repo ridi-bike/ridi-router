@@ -6,7 +6,8 @@ mod writer;
 pub use manifest::ManifestGenerator;
 pub use pbf_streamer::PbfStreamer;
 
-use crate::osm_data::in_memory_pbf::InMemoryPbf;
+use crate::generation::GenerationGraph;
+use crate::osm_data::{in_memory_pbf::InMemoryPbf, OsmNode, OsmRelationMemberType};
 use crate::proximity::RasterizedProximityGrid;
 use crate::rmdf::format::{TileBounds, TileId};
 use anyhow::{Context, Result};
@@ -567,13 +568,9 @@ impl MultiPbfGenerator {
                     .members
                     .iter()
                     .any(|member| match member.member_type {
-                        crate::map_data::osm::OsmRelationMemberType::Node => {
-                            node_ids.contains(&member.member_ref)
-                        }
-                        crate::map_data::osm::OsmRelationMemberType::Way => {
-                            way_ids.contains(&member.member_ref)
-                        }
-                        crate::map_data::osm::OsmRelationMemberType::Relation => true,
+                        OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Relation => true,
                     });
 
             if !has_members_in_tile {
@@ -772,7 +769,7 @@ impl MultiPbfGenerator {
         let tile = intermediate::IntermediateTile::load_from_redb(db, tile_id)?;
 
         // Filter nodes that are actually in the overlap zone
-        let nodes_in_zone: HashMap<u64, crate::map_data::osm::OsmNode> = tile
+        let nodes_in_zone: HashMap<u64, OsmNode> = tile
             .nodes
             .iter()
             .filter(|(_, node)| {
@@ -869,7 +866,7 @@ impl MultiPbfGenerator {
             tile.deduplicate();
 
             // Build GenerationGraph
-            let graph = self.build_generation_graph_from_tile(tile)?;
+            let graph = self.build_generation_graph_from_tile(tile);
 
             // Write RMDF tile
             self.write_rmdf_tile(*tile_id, graph)?;
@@ -909,9 +906,7 @@ impl MultiPbfGenerator {
     fn build_generation_graph_from_tile(
         &self,
         tile: intermediate::IntermediateTile,
-    ) -> Result<crate::map_data::generation_graph::GenerationGraph> {
-        use crate::map_data::generation_graph::GenerationGraph;
-
+    ) -> GenerationGraph {
         let mut graph = GenerationGraph::new();
 
         // Insert all nodes (with correct proximity flags from re-evaluation)
@@ -921,30 +916,23 @@ impl MultiPbfGenerator {
 
         // Insert all ways
         for way in tile.ways {
-            graph
-                .insert_way(way)
-                .context("Failed to insert way into generation graph")?;
+            graph.insert_way(way);
         }
 
-        // Insert all relations
+        // Pass collected restriction relations through the generation pipeline.
+        // Actual restriction materialization stays in the later rules/restrictions todo.
         for relation in tile.relations {
-            graph
-                .insert_relation(relation)
-                .context("Failed to insert relation into generation graph")?;
+            graph.insert_relation(relation);
         }
 
         // Generate point hashes for spatial indexing
         graph.generate_point_hashes();
 
-        Ok(graph)
+        graph
     }
 
     /// Write RMDF tile file from generation graph
-    fn write_rmdf_tile(
-        &self,
-        tile_id: TileId,
-        graph: crate::map_data::generation_graph::GenerationGraph,
-    ) -> Result<()> {
+    fn write_rmdf_tile(&self, tile_id: TileId, graph: GenerationGraph) -> Result<()> {
         use crate::rmdf::generator::writer::RmdfWriter;
 
         let output_path = self.output_dir.join(tile_id.to_filename());

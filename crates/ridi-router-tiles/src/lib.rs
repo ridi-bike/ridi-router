@@ -1,4 +1,4 @@
-mod map_data;
+mod generation;
 mod osm_data;
 mod proximity;
 mod rmdf;

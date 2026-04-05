@@ -21,10 +21,10 @@ impl OsmWay {
     #[allow(dead_code)]
     pub fn is_one_way(&self) -> bool {
         if let Some(tags) = &self.tags {
-            tags.get("oneway").map_or(false, |one_way| one_way == "yes")
+            tags.get("oneway").is_some_and(|one_way| one_way == "yes")
                 || tags
                     .get("junction")
-                    .map_or(false, |junction| junction == "roundabout")
+                    .is_some_and(|junction| junction == "roundabout")
         } else {
             false
         }
@@ -34,7 +34,7 @@ impl OsmWay {
     pub fn is_roundabout(&self) -> bool {
         if let Some(tags) = &self.tags {
             tags.get("junction")
-                .map_or(false, |junction| junction == "roundabout")
+                .is_some_and(|junction| junction == "roundabout")
         } else {
             false
         }

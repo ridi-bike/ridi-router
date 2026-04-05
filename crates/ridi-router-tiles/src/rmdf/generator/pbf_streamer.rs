@@ -23,9 +23,9 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 
-use crate::map_data::generation_graph::GenerationGraph;
-use crate::map_data::osm::{OsmNode, OsmRelation, OsmWay};
+use crate::generation::GenerationGraph;
 use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
+use crate::osm_data::{OsmNode, OsmRelation, OsmRelationMemberType, OsmWay};
 use crate::rmdf::format::TileId;
 use std::collections::HashMap;
 
@@ -184,10 +184,7 @@ impl<'a> PbfStreamer<'a> {
                 tile_data.nodes,
                 tile_data.ways,
                 tile_data.relations,
-            ).with_context(|| format!(
-                "Failed to build generation graph for tile {:?}",
-                tile_id
-            ))?;
+            );
 
             // Step 4: Write RMDF tile file
             self.write_rmdf_tile(tile_id, graph)
@@ -349,13 +346,9 @@ impl<'a> PbfStreamer<'a> {
                     .members
                     .iter()
                     .any(|member| match member.member_type {
-                        crate::map_data::osm::OsmRelationMemberType::Node => {
-                            node_ids.contains(&member.member_ref)
-                        }
-                        crate::map_data::osm::OsmRelationMemberType::Way => {
-                            way_ids.contains(&member.member_ref)
-                        }
-                        crate::map_data::osm::OsmRelationMemberType::Relation => true,
+                        OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Relation => true,
                     });
 
             if !has_members_in_tile {
@@ -399,7 +392,7 @@ impl<'a> PbfStreamer<'a> {
         nodes: HashMap<u64, OsmNode>,
         ways: Vec<OsmWay>,
         relations: Vec<OsmRelation>,
-    ) -> Result<GenerationGraph> {
+    ) -> GenerationGraph {
         info!(
             "Building generation graph from {} nodes, {} ways, {} relations",
             nodes.len(),
@@ -416,22 +409,19 @@ impl<'a> PbfStreamer<'a> {
 
         // Insert all ways
         for way in ways {
-            graph
-                .insert_way(way)
-                .context("Failed to insert way into generation graph")?;
+            graph.insert_way(way);
         }
 
-        // Insert all relations (turn restrictions)
+        // Pass collected restriction relations through the generation pipeline.
+        // Actual restriction materialization stays in the later rules/restrictions todo.
         for relation in relations {
-            graph
-                .insert_relation(relation)
-                .context("Failed to insert relation into generation graph")?;
+            graph.insert_relation(relation);
         }
 
         // Generate point hashes for spatial indexing
         graph.generate_point_hashes();
 
-        Ok(graph)
+        graph
     }
 
     /// Write RMDF tile file from generation graph
@@ -441,10 +431,10 @@ impl<'a> PbfStreamer<'a> {
         let output_path = self.output_dir.join(tile_id.to_filename());
         info!("Writing RMDF tile to {:?}", output_path);
 
-        // Create RmdfWriter (reusing existing implementation)
+        // Create the RMDF writer for the generation model.
         let writer = RmdfWriter::new(self.tile_size_degrees);
 
-        // Write tile directly from GenerationGraph
+        // Write tile directly from the generation graph.
         writer
             .write_tile_from_graph(tile_id, graph, &output_path)
             .with_context(|| format!("Failed to write RMDF tile {:?}", tile_id))?;
