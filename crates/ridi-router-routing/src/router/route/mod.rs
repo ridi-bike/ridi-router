@@ -4,7 +4,6 @@ pub mod segment_list;
 
 use std::collections::HashMap;
 
-
 use score::Score;
 use serde::{Deserialize, Serialize};
 
@@ -104,10 +103,7 @@ impl Route {
         };
         self.route_segments[idx_from..].to_vec()
     }
-    pub fn get_junction_before_last_segment(
-        &self,
-        ctx: &RoutingContext<'_>,
-    ) -> Option<&Segment> {
+    pub fn get_junction_before_last_segment(&self, ctx: &RoutingContext<'_>) -> Option<&Segment> {
         match self.get_segment_last() {
             None => None,
             Some(last_segment) => {
@@ -149,9 +145,9 @@ impl Route {
                         let segment_point_ref = segment.get_end_point();
                         let are_points_eq = segment_point_ref == last_segment.get_end_point();
                         let segment_point = ctx.point(segment_point_ref);
-                        let distance_between_points_over_threshold =
-                            segment_point.distance_between(&last_segment_point)
-                                < LOOP_DISTANCE_THRESHOLD;
+                        let distance_between_points_over_threshold = segment_point
+                            .distance_between(&last_segment_point)
+                            < LOOP_DISTANCE_THRESHOLD;
                         let route_segments_between_points_over_threshold =
                             slice_len - idx > LOOP_SEGMENT_THESHOLD;
 
@@ -254,11 +250,7 @@ impl Route {
             .cloned()
     }
 
-    pub fn calc_stats(
-        &self,
-        ctx: &RoutingContext<'_>,
-        rules: &RouterRules,
-    ) -> RouteStats {
+    pub fn calc_stats(&self, ctx: &RoutingContext<'_>, rules: &RouterRules) -> RouteStats {
         fn update_map(tag_val: &Option<String>, line_len: f64, map: &mut HashMap<String, f64>) {
             if let Some(tag_val) = tag_val {
                 if let Some(len) = map.get(tag_val.as_str()) {

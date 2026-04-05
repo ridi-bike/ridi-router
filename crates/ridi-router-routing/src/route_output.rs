@@ -33,10 +33,7 @@ impl ComputedRoute {
 }
 
 impl RouteComputation {
-    pub(crate) fn from_routes(
-        ctx: &RoutingContext<'_>,
-        routes: Vec<RouteWithStats>,
-    ) -> Self {
+    pub(crate) fn from_routes(ctx: &RoutingContext<'_>, routes: Vec<RouteWithStats>) -> Self {
         Self {
             routes: routes
                 .into_iter()

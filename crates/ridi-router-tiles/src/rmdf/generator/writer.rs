@@ -262,16 +262,18 @@ impl RmdfWriter {
 
         for line in graph.get_lines() {
             // Look up point data from node IDs
-            let point_a = node_map.get(&line.from_node_id).ok_or_else(|| {
-                GenerationError::MissingPoint {
-                    point_id: line.from_node_id,
-                }
-            })?;
-            let point_b = node_map.get(&line.to_node_id).ok_or_else(|| {
-                GenerationError::MissingPoint {
-                    point_id: line.to_node_id,
-                }
-            })?;
+            let point_a =
+                node_map
+                    .get(&line.from_node_id)
+                    .ok_or_else(|| GenerationError::MissingPoint {
+                        point_id: line.from_node_id,
+                    })?;
+            let point_b =
+                node_map
+                    .get(&line.to_node_id)
+                    .ok_or_else(|| GenerationError::MissingPoint {
+                        point_id: line.to_node_id,
+                    })?;
 
             let record = LineRecord {
                 point_a_osm_id: point_a.id,

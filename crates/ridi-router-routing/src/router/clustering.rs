@@ -1,5 +1,5 @@
-use crate::RoutingContext;
 use super::route::Route;
+use crate::RoutingContext;
 use hdbscan::{Hdbscan, HdbscanHyperParams};
 use serde::{Deserialize, Serialize};
 use tracing::error;

@@ -836,9 +836,7 @@ impl InMemoryPbf {
 
                                     OsmRelationMember {
                                         member_type,
-                                        role: OsmRelationMemberRole::Other(
-                                            r.role.to_string(),
-                                        ),
+                                        role: OsmRelationMemberRole::Other(r.role.to_string()),
                                         member_ref,
                                     }
                                 })

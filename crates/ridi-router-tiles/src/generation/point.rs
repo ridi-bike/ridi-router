@@ -22,10 +22,7 @@ impl Debug for GenerationPoint {
             .field("id", &self.id)
             .field("lat", &self.lat)
             .field("lon", &self.lon)
-            .field(
-                "residential_in_proximity",
-                &self.residential_in_proximity,
-            )
+            .field("residential_in_proximity", &self.residential_in_proximity)
             .field("nogo_area", &self.nogo_area)
             .finish()
     }

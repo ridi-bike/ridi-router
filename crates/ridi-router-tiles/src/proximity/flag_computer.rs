@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
 
-use crate::osm_data::OsmNode;
 use crate::osm_data::in_memory_pbf::PbfBounds;
+use crate::osm_data::OsmNode;
 
 use super::area_rasterizer::AreaRasterizer;
 use super::rasterized_grid::RasterizedProximityGrid;

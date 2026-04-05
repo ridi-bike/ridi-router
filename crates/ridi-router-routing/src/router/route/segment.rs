@@ -1,7 +1,9 @@
 use std::fmt::Debug;
 
-
-use crate::{map_data::graph::{MapDataLineRef, MapDataPointRef}, RoutingContext};
+use crate::{
+    map_data::graph::{MapDataLineRef, MapDataPointRef},
+    RoutingContext,
+};
 
 #[derive(PartialEq, Clone)]
 pub struct Segment {
@@ -34,7 +36,11 @@ impl Segment {
 
 impl Debug for Segment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Segment(line={}, end_point={})", self.line, self.end_point)
+        write!(
+            f,
+            "Segment(line={}, end_point={})",
+            self.line, self.end_point
+        )
     }
 }
 

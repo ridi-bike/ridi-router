@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-
-use crate::{router::rules::{RouterRules, RulesTagValueAction}, RoutingContext};
+use crate::{
+    router::rules::{RouterRules, RulesTagValueAction},
+    RoutingContext,
+};
 
 use super::Route;
 
@@ -32,11 +34,7 @@ fn get_rule_adjustment(
 }
 
 impl Score {
-    pub fn calc_score(
-        ctx: &RoutingContext<'_>,
-        route: &Route,
-        rules: &RouterRules,
-    ) -> f64 {
+    pub fn calc_score(ctx: &RoutingContext<'_>, route: &Route, rules: &RouterRules) -> f64 {
         let mut prev_bearing: Option<f32> = None;
         let mut tot_bearing_diff_adj: f64 = 0.;
         let mut len_m: f64 = 0.;

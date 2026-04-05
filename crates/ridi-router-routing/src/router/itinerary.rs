@@ -1,6 +1,5 @@
 use std::fmt::Display;
 
-
 use crate::{map_data::graph::MapDataPointRef, RoutingContext};
 
 #[derive(Clone, Debug)]
@@ -100,11 +99,7 @@ impl Itinerary {
         false
     }
 
-    pub fn check_set_next(
-        &mut self,
-        ctx: &RoutingContext<'_>,
-        current: MapDataPointRef,
-    ) -> bool {
+    pub fn check_set_next(&mut self, ctx: &RoutingContext<'_>, current: MapDataPointRef) -> bool {
         let current_point = ctx.point(&current);
         let next_point = ctx.point(&self.next);
         if self.next != self.finish
