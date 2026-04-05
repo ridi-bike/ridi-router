@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod generated_tiles_phase4_tests;
 mod map_data;
 mod rmdf;
 mod route_output;

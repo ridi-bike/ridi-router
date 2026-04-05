@@ -806,16 +806,20 @@ impl InMemoryPbf {
                     if let OsmObj::Relation(relation) = obj {
                         let tags = relation.tags.clone();
 
-                        // Check if this is a multipolygon or area relation
+                        // Keep area relations for proximity extraction and restriction relations
+                        // for tile generation. Unsupported relation semantics are filtered later
+                        // by the generation graph.
                         let is_multipolygon =
                             tags.get("type").map(|v| v.as_str()) == Some("multipolygon");
+                        let is_restriction =
+                            tags.get("type").map(|v| v.as_str()) == Some("restriction");
                         let is_residential =
                             tags.get("landuse").map(|v| v.as_str()) == Some("residential");
                         let is_military = tags.get("landuse").map(|v| v.as_str())
                             == Some("military")
                             || tags.contains_key("military");
 
-                        if is_multipolygon || is_residential || is_military {
+                        if is_multipolygon || is_restriction || is_residential || is_military {
                             let members: Vec<OsmRelationMember> = relation
                                 .refs
                                 .iter()
@@ -836,7 +840,7 @@ impl InMemoryPbf {
 
                                     OsmRelationMember {
                                         member_type,
-                                        role: OsmRelationMemberRole::Other(r.role.to_string()),
+                                        role: Self::map_relation_member_role(&r.role),
                                         member_ref,
                                     }
                                 })
@@ -1091,6 +1095,42 @@ impl InMemoryPbf {
             .locate_in_envelope_intersecting(&envelope)
             .filter_map(|entry| self.relations_by_id.get(&entry.id))
             .collect()
+    }
+}
+
+impl InMemoryPbf {
+    fn map_relation_member_role(role: &str) -> OsmRelationMemberRole {
+        match role {
+            "from" => OsmRelationMemberRole::From,
+            "to" => OsmRelationMemberRole::To,
+            "via" => OsmRelationMemberRole::Via,
+            other => OsmRelationMemberRole::Other(other.to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod relation_role_tests {
+    use super::*;
+
+    #[test]
+    fn map_relation_member_role_preserves_supported_restriction_roles() {
+        assert_eq!(
+            InMemoryPbf::map_relation_member_role("from"),
+            OsmRelationMemberRole::From
+        );
+        assert_eq!(
+            InMemoryPbf::map_relation_member_role("to"),
+            OsmRelationMemberRole::To
+        );
+        assert_eq!(
+            InMemoryPbf::map_relation_member_role("via"),
+            OsmRelationMemberRole::Via
+        );
+        assert_eq!(
+            InMemoryPbf::map_relation_member_role("outer"),
+            OsmRelationMemberRole::Other("outer".to_string())
+        );
     }
 }
 
