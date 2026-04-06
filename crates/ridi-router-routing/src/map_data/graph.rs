@@ -1,6 +1,5 @@
 use std::{
     cmp::Eq,
-    collections::HashMap,
     fmt::{Debug, Display},
     hash::Hash,
     marker::PhantomData,
@@ -77,81 +76,16 @@ pub struct ElementTagSet {
 pub struct ElementTags {
     pub tag_values: Vec<smartstring::alias::String>,
     pub tag_sets: Vec<ElementTagSet>,
-    tag_map: HashMap<smartstring::alias::String, u32>,
-    tag_set_map: HashMap<ElementTagSet, u32>,
 }
 
 impl ElementTags {
     pub fn new() -> Self {
         Self::default()
     }
+
     #[allow(dead_code)]
     pub fn len(&self) -> (usize, usize) {
         (self.tag_values.len(), self.tag_sets.len())
-    }
-    #[allow(dead_code)]
-    pub fn clear_maps(&mut self) {
-        self.tag_set_map = HashMap::new();
-        self.tag_map = HashMap::new();
-    }
-    pub fn get_or_create(
-        &mut self,
-        name: Option<&String>,
-        hw_ref: Option<&String>,
-        highway: Option<&String>,
-        surface: Option<&String>,
-        smoothness: Option<&String>,
-    ) -> ElementTagSetRef {
-        // Test graph generation still deduplicates in-memory tag sets before tile serialization.
-        // Use a placeholder tile ID because these refs are not resolved through tile-backed lookups.
-        let placeholder_tile = TileId { col: 0, row: 0 };
-
-        let name_ref = self.get_tag_value_ref(name, placeholder_tile);
-        let hw_ref_ref = self.get_tag_value_ref(hw_ref, placeholder_tile);
-        let highway_ref = self.get_tag_value_ref(highway, placeholder_tile);
-        let surface_ref = self.get_tag_value_ref(surface, placeholder_tile);
-        let smoothness_ref = self.get_tag_value_ref(smoothness, placeholder_tile);
-
-        let tag_set = ElementTagSet {
-            name: name_ref,
-            hw_ref: hw_ref_ref,
-            highway: highway_ref,
-            surface: surface_ref,
-            smoothness: smoothness_ref,
-        };
-        let idx = match self.tag_set_map.get(&tag_set) {
-            Some(i) => *i,
-            None => {
-                let new_idx = self.tag_sets.len() as u32;
-                self.tag_set_map.insert(tag_set.clone(), new_idx);
-                self.tag_sets.push(tag_set);
-                new_idx
-            }
-        };
-        ElementTagSetRef::new(placeholder_tile, idx)
-    }
-    fn get_tag_value_ref(&mut self, value: Option<&String>, tile_id: TileId) -> ElementTagValueRef {
-        match value {
-            None => ElementTagValueRef::none(tile_id),
-            Some(v) => {
-                let v = if v.ends_with("_link") {
-                    v.replace("_link", "")
-                } else {
-                    v.to_string()
-                };
-                let idx = match self.tag_map.get(&smartstring::alias::String::from(&v)) {
-                    Some(i) => *i,
-                    None => {
-                        let new_idx = self.tag_values.len() as u32;
-                        self.tag_values.push(smartstring::alias::String::from(&v));
-                        self.tag_map
-                            .insert(smartstring::alias::String::from(&v), new_idx);
-                        new_idx
-                    }
-                };
-                ElementTagValueRef::some(tile_id, idx)
-            }
-        }
     }
 }
 
@@ -222,15 +156,13 @@ pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
 
 pub struct MapDataGraph {
     tile_manager: std::sync::RwLock<crate::rmdf::TileManager>,
-    // Tile-backed routing resolves tag data through TileManager.
-    // Keep in-memory tags only for graph generation and test support.
     #[allow(dead_code)]
     tags: std::sync::RwLock<ElementTags>,
     // Test-only: in-memory storage for unit tests
     #[cfg(test)]
-    test_points: std::sync::RwLock<HashMap<u64, MapDataPoint>>,
+    test_points: std::sync::RwLock<std::collections::HashMap<u64, MapDataPoint>>,
     #[cfg(test)]
-    test_lines: std::sync::RwLock<HashMap<u64, MapDataLine>>,
+    test_lines: std::sync::RwLock<std::collections::HashMap<u64, MapDataLine>>,
 }
 
 impl MapDataGraph {
@@ -239,9 +171,9 @@ impl MapDataGraph {
             tile_manager: std::sync::RwLock::new(tile_manager),
             tags: std::sync::RwLock::new(ElementTags::new()),
             #[cfg(test)]
-            test_points: std::sync::RwLock::new(HashMap::new()),
+            test_points: std::sync::RwLock::new(std::collections::HashMap::new()),
             #[cfg(test)]
-            test_lines: std::sync::RwLock::new(HashMap::new()),
+            test_lines: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
@@ -270,8 +202,8 @@ impl MapDataGraph {
         Self {
             tile_manager: std::sync::RwLock::new(tile_manager),
             tags: std::sync::RwLock::new(ElementTags::new()),
-            test_points: std::sync::RwLock::new(HashMap::new()),
-            test_lines: std::sync::RwLock::new(HashMap::new()),
+            test_points: std::sync::RwLock::new(std::collections::HashMap::new()),
+            test_lines: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
@@ -450,7 +382,7 @@ impl MapDataGraph {
             .write()
             .unwrap()
             .get_tag_set_record(tag_set_ref.tile_id, tag_set_ref.tag_set_idx)
-            .unwrap_or_else(|_| TagSetRecord {
+            .unwrap_or(TagSetRecord {
                 name_idx: TagSetRecord::NONE,
                 hw_ref_idx: TagSetRecord::NONE,
                 highway_idx: TagSetRecord::NONE,
