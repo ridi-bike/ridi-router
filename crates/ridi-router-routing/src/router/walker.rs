@@ -618,12 +618,17 @@ mod tests {
 
             walker.set_fork_choice_point_ref(choice1);
 
-            assert!(walker.move_forward_to_next_fork_with_context(&ctx, |p| p == point2) == Ok(WalkerMoveResult::DeadEnd));
+            assert!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == point2)
+                    == Ok(WalkerMoveResult::DeadEnd)
+            );
+            assert!(!walker.get_route().has_looped(&ctx, None));
 
             let choices = match walker.move_backwards_to_prev_fork_with_context(&ctx) {
                 None => panic!("Expected to be back at point 3 with choices"),
                 Some(c) => c,
             };
+            assert!(!walker.get_route().has_looped(&ctx, None));
 
             choices.into_iter().for_each(|route_segment| {
                 assert!(
@@ -641,7 +646,11 @@ mod tests {
             let choice2 = graph.test_get_point_ref_by_id(&4).unwrap();
             walker.set_fork_choice_point_ref(choice2);
 
-            assert!(walker.move_forward_to_next_fork_with_context(&ctx, |p| p == point2) == Ok(WalkerMoveResult::Finish));
+            assert!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == point2)
+                    == Ok(WalkerMoveResult::Finish)
+            );
+            assert!(!walker.get_route().has_looped(&ctx, None));
 
             let route = walker.get_route().clone();
             assert_eq!(route.get_segment_count(), 3);

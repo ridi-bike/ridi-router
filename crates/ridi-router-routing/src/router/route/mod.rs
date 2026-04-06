@@ -1209,6 +1209,30 @@ mod tests {
     }
 
     #[test]
+    fn cloned_route_keeps_detector_state_independent() {
+        let graph = loop_test_graph();
+        let ctx = RoutingContext::new(&graph);
+        let mut route = Route::new();
+        route.add_segment(&ctx, segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
+        for (line_idx, point_id) in filler_specs(FILLER_COUNT) {
+            route.add_segment(&ctx, segment(line_idx, point_id));
+        }
+        route.add_segment(&ctx, segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
+
+        let mut cloned_route = route.clone();
+
+        assert!(route.has_looped(&ctx, None));
+        assert!(cloned_route.has_looped(&ctx, None));
+
+        route.remove_last_segment();
+        assert!(!route.has_looped(&ctx, None));
+        assert!(cloned_route.has_looped(&ctx, None));
+
+        cloned_route.remove_last_segment();
+        assert!(!cloned_route.has_looped(&ctx, None));
+    }
+
+    #[test]
     fn detector_hydrates_loop_meta_on_push() {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
