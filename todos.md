@@ -28,10 +28,22 @@ Validation snapshot:
   - `crates/ridi-router-routing/src/rmdf/tile_manager.rs` still has internal `unwrap()` assumptions after `ensure_tile_loaded(...)`.
   - Corrupt tiles, invalid refs, or wrong-context misuse can still panic instead of returning structured errors.
 
-- Add guardrails against cross-graph ref misuse.
-  - `MapDataPointRef`, `MapDataLineRef`, and tag refs only carry `tile_id` + `element_id`.
-  - They are not tied to a specific `MapDataGraph` / `RoutingContext`, so internal callers can still resolve refs through the wrong graph instance.
-  - Decide whether to use graph identity checks, debug assertions, or fallible resolution APIs.
+- Stop silently masking invalid RMDF tag lookups.
+  - `crates/ridi-router-routing/src/map_data/graph.rs` returns `None` from `get_tag_value(...)` on any tile lookup error and falls back to an all-`NONE` `TagSetRecord` in `get_tag_set(...)`.
+  - That turns corrupt tiles / invalid refs / wrong-context tag lookups into fake "missing tag" data instead of surfacing an error.
+  - Prefer a fallible lookup path (or at least debug assertions) so routing does not quietly continue with scrubbed metadata.
+
+## P1 — Nearest-point query hot path
+
+- Reduce per-candidate allocations in `TileManager::get_closest_to_coords(...)`.
+  - `crates/ridi-router-routing/src/rmdf/tile_manager.rs` builds `Vec<AdjacentLineTags>` for each candidate point and `optional_tag_value(...)` clones tag strings with `to_string()` inside the inner search loop.
+  - This path runs during nearest-point search before every route, so avoid/limit-tag checks currently pay repeated allocation and UTF-8 copy costs.
+  - Prefer comparing tag indices, borrowing `&str` from mapped tiles, or caching decoded adjacent-tag summaries per point.
+
+- Extract nearest-point filter/query context instead of threading 10-11 arguments through helper functions.
+  - `find_closest_in_grid_rings(...)`, `find_closest_in_points(...)`, and `update_closest_for_points(...)` all carry the same large parameter set.
+  - Clippy already flags these signatures as `too_many_arguments`, which is a good sign the search/filter boundary is leaking too much state.
+  - A small query context struct would simplify testing, make future perf work safer, and reduce call-site duplication.
 
 ## P1 — Restriction coverage
 
@@ -54,6 +66,7 @@ Validation snapshot:
 
 ## P2 — Cleanup
 
+
 - Trim warning / dead-code noise reported by `cargo test --workspace -q`.
   - Current warnings include unused exports/imports in `ridi-router-tiles`, dead code in `ridi-router-routing`, and a small `unused_mut` test warning.
   - Good cleanup targets from the latest test run:
@@ -64,6 +77,17 @@ Validation snapshot:
     - `crates/ridi-router-routing/src/rmdf/validation.rs`
     - `crates/ridi-router-routing/src/router/itinerary.rs`
     - `crates/ridi-router-tiles/tests/public_api_success.rs`
+
+- Centralize repeated CLI test helpers / fixtures.
+  - `crates/ridi-router-cli/src/cli/output_dir.rs` and `crates/ridi-router-cli/src/router_runner.rs` both test `prepare_empty_output_dir(...)` directly.
+  - `crates/ridi-router-cli/src/json_writer.rs`, `crates/ridi-router-cli/src/gpx_writer.rs`, and `crates/ridi-router-cli/src/result_writer.rs` each duplicate `unique_test_dir`, route-stat builders, and route fixture helpers.
+  - `crates/ridi-router-cli/tests/generate_route_cli.rs` and `crates/ridi-router-cli/tests/generate_tiles_cli.rs` also hand-roll overlapping command / temp-dir setup logic.
+  - Move the shared pieces into `ridi-router-test-support` or a local test helper module so CLI behavior changes only need one fixture update.
+
+- Reduce peak-memory churn and duplicated pass scaffolding in `InMemoryPbf`.
+  - `crates/ridi-router-tiles/src/osm_data/in_memory_pbf.rs` collects full `Vec<_>`s in `load_nodes(...)`, `load_ways(...)`, and `load_relations(...)` before building the final `HashMap` / `RTree` structures.
+  - The way / relation passes also clone tags and member lists up front, which inflates memory use on large PBF imports.
+  - Consider streaming reducers, pass-specific builders, or shared collection helpers to cut duplicate logic and lower peak allocation pressure.
 
 ## Closed / no longer open
 
