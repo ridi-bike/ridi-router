@@ -1,8 +1,8 @@
-use crate::osm_data::{OsmNode, OsmRelation, OsmWay};
 use crate::rmdf::format::TileId;
 use anyhow::Context;
 use bincode;
 use redb::{Database, ReadableTable, TableDefinition};
+use ridi_router_common::osm::{OsmNode, OsmRelation, OsmWay};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -472,8 +472,8 @@ pub fn build_combined_grid(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::osm_data::{OsmNode, OsmRelation, OsmWay};
     use crate::rmdf::format::TileId;
+    use ridi_router_common::osm::{OsmNode, OsmRelation, OsmWay};
 
     fn make_test_tile() -> IntermediateTile {
         IntermediateTile::new(TileId { col: 0, row: 0 })

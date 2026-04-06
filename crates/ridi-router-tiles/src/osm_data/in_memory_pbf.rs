@@ -1,11 +1,11 @@
-use crate::osm_data::{
-    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
-};
 use crate::rmdf::format::TileBounds;
 use anyhow::{Context, Result};
 use geo::prelude::Contains;
 use geo::{Coord, LineString, MultiPolygon, Point, Polygon};
 use osmpbfreader::{OsmObj, OsmPbfReader};
+use ridi_router_common::osm::{
+    OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
+};
 use rstar::{RTree, RTreeObject, AABB};
 use std::collections::HashMap;
 use std::path::Path;

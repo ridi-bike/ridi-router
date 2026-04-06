@@ -6,7 +6,9 @@ use super::{
     GenerationLine, GenerationPoint, GenerationRestrictionRule, GenerationRestrictionRuleType,
     GenerationRestrictionSkipReason, GenerationRestrictionSkipStats, GenerationTags, LineDirection,
 };
-use crate::osm_data::{OsmNode, OsmRelation, OsmRelationMemberRole, OsmRelationMemberType, OsmWay};
+use ridi_router_common::osm::{
+    OsmNode, OsmRelation, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
+};
 
 pub struct GenerationGraph {
     pub(crate) points: Vec<GenerationPoint>,
@@ -437,7 +439,9 @@ mod tests {
     };
 
     use super::*;
-    use crate::osm_data::{OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType};
+    use ridi_router_common::osm::{
+        OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
+    };
 
     #[test]
     fn test_insert_node_preserves_flags() {

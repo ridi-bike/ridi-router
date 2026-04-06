@@ -25,8 +25,8 @@ use tracing::info;
 
 use crate::generation::GenerationGraph;
 use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
-use crate::osm_data::{OsmNode, OsmRelation, OsmRelationMemberType, OsmWay};
 use crate::rmdf::format::TileId;
+use ridi_router_common::osm::{OsmNode, OsmRelation, OsmRelationMemberType, OsmWay};
 use std::collections::HashMap;
 
 // Allowed highway values for routing

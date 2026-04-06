@@ -510,7 +510,7 @@ mod tests {
 
     use super::*;
     use crate::generation::GenerationRestrictionRuleType;
-    use crate::osm_data::{
+    use ridi_router_common::osm::{
         OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
         OsmWay,
     };

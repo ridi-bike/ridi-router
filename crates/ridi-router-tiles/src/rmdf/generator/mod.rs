@@ -7,7 +7,7 @@ pub use manifest::ManifestGenerator;
 pub use pbf_streamer::PbfStreamer;
 
 use crate::generation::GenerationGraph;
-use crate::osm_data::{in_memory_pbf::InMemoryPbf, OsmNode, OsmRelationMemberType};
+use crate::osm_data::in_memory_pbf::InMemoryPbf;
 use crate::proximity::RasterizedProximityGrid;
 use crate::rmdf::format::{TileBounds, TileId};
 use anyhow::{Context, Result};
@@ -16,6 +16,7 @@ use geo::MultiPolygon;
 use geo::{Intersects, LineString, Polygon};
 use intermediate::GridStorage;
 use rayon::prelude::*;
+use ridi_router_common::osm::{OsmNode, OsmRelationMemberType};
 #[cfg(feature = "debug-polygons")]
 use serde_json::json;
 use std::collections::{HashMap, HashSet};

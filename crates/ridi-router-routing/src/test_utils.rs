@@ -4,12 +4,14 @@ use crate::{
     map_data::{
         graph::{ElementTagSetRef, MapDataGraph, MapDataLineRef, MapDataPointRef},
         line::{LineDirection, MapDataLine},
-        osm::{OsmNode, OsmRelation, OsmWay},
         point::MapDataPoint,
         rule::{MapDataRule, MapDataRuleType},
     },
     router::route::Route,
     RoutingContext,
+};
+use ridi_router_common::osm::{
+    OsmNode, OsmRelation, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
 };
 pub type OsmTestData = (Vec<OsmNode>, Vec<OsmWay>, Vec<OsmRelation>);
 
@@ -474,22 +476,22 @@ pub fn graph_from_test_dataset(test_data: OsmTestData) -> MapDataGraph {
 
         for member in &relation.members {
             match member.role {
-                crate::map_data::osm::OsmRelationMemberRole::From => {
-                    if member.member_type == crate::map_data::osm::OsmRelationMemberType::Way {
+                OsmRelationMemberRole::From => {
+                    if member.member_type == OsmRelationMemberType::Way {
                         from_way_id = Some(member.member_ref);
                     }
                 }
-                crate::map_data::osm::OsmRelationMemberRole::Via => {
-                    if member.member_type == crate::map_data::osm::OsmRelationMemberType::Node {
+                OsmRelationMemberRole::Via => {
+                    if member.member_type == OsmRelationMemberType::Node {
                         via_node_id = Some(member.member_ref);
                     }
                 }
-                crate::map_data::osm::OsmRelationMemberRole::To => {
-                    if member.member_type == crate::map_data::osm::OsmRelationMemberType::Way {
+                OsmRelationMemberRole::To => {
+                    if member.member_type == OsmRelationMemberType::Way {
                         to_way_ids.push(member.member_ref);
                     }
                 }
-                crate::map_data::osm::OsmRelationMemberRole::Other(_) => {}
+                OsmRelationMemberRole::Other(_) => {}
             }
         }
 

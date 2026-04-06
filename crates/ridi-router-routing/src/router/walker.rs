@@ -386,13 +386,7 @@ mod tests {
     use core::panic;
     use std::collections::HashMap;
 
-    use rusty_fork::rusty_fork_test;
-    use tracing::info;
-
     use crate::{
-        map_data::osm::{
-            OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
-        },
         router::{
             route::Route,
             walker::{WalkerError, WalkerMoveResult},
@@ -403,6 +397,11 @@ mod tests {
         },
         RoutingContext,
     };
+    use ridi_router_common::osm::{
+        OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
+    };
+    use rusty_fork::rusty_fork_test;
+    use tracing::info;
 
     use super::Walker;
 
