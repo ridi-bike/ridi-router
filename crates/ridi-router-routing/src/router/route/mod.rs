@@ -50,19 +50,27 @@ struct LoopMeta {
 }
 
 impl LoopMeta {
-    fn from_segment_placeholder(segment: &Segment) -> Self {
-        let point_id = segment.get_end_point().get_element_id();
-        // Phase 2 only wires the detector into Route ownership and push/pop bookkeeping.
-        // Later phases will hydrate coordinates and interned road keys from RoutingContext
-        // before the query path switches over to this structure.
+    fn from_segment(ctx: &RoutingContext<'_>, segment: &Segment) -> Self {
+        let end_point = segment.get_end_point().clone();
+        let point = ctx.point(&end_point);
+        let line = ctx.line(segment.get_line());
+        let line_tags = ctx.tag_set(&line.tags);
+        let hw_ref = ctx
+            .tag_value(&line_tags.hw_ref)
+            .map(|value| RoadKey(value.into()));
+        let name = ctx
+            .tag_value(&line_tags.name)
+            .map(|value| RoadKey(value.into()));
+        let cell_id = CellId::from_lat_lon(point.lat, point.lon);
+
         Self {
-            end_point: segment.get_end_point().clone(),
-            point_id,
-            lat: 0.0,
-            lon: 0.0,
-            hw_ref: None,
-            name: None,
-            cell_id: CellId::from_lat_lon(0.0, 0.0),
+            end_point,
+            point_id: point.id,
+            lat: point.lat,
+            lon: point.lon,
+            hw_ref,
+            name,
+            cell_id,
         }
     }
 }
@@ -81,9 +89,8 @@ struct LoopDetector {
 }
 
 impl LoopDetector {
-    fn push_segment(&mut self, segment: &Segment) {
+    fn push_meta(&mut self, meta: LoopMeta) {
         let idx = self.metas.len();
-        let meta = LoopMeta::from_segment_placeholder(segment);
         self.point_hits
             .entry(meta.end_point.clone())
             .or_default()
@@ -110,6 +117,10 @@ impl LoopDetector {
         self.metas.push(meta);
     }
 
+    fn push_segment(&mut self, ctx: &RoutingContext<'_>, segment: &Segment) {
+        self.push_meta(LoopMeta::from_segment(ctx, segment));
+    }
+
     fn pop(&mut self) {
         let Some(meta) = self.metas.pop() else {
             return;
@@ -127,21 +138,12 @@ impl LoopDetector {
         }
     }
 
-    fn from_segments(segments: &[Segment]) -> Self {
-        let mut detector = Self::default();
-        for segment in segments {
-            detector.push_segment(segment);
-        }
-        detector
-    }
-
     fn remove_cell_hit<K>(
         map: &mut HashMap<K, HashMap<CellId, Vec<usize>>>,
         key: &K,
         cell_id: CellId,
         idx: usize,
-    )
-    where
+    ) where
         K: std::cmp::Eq + std::hash::Hash,
     {
         let mut remove_key = false;
@@ -239,8 +241,8 @@ impl Route {
         }
         segment
     }
-    pub fn add_segment(&mut self, segment: Segment) {
-        self.loop_detector.push_segment(&segment);
+    pub fn add_segment(&mut self, ctx: &RoutingContext<'_>, segment: Segment) {
+        self.loop_detector.push_segment(ctx, &segment);
         self.route_segments.push(segment)
     }
 
@@ -506,7 +508,9 @@ impl Route {
 
 impl From<Vec<Segment>> for Route {
     fn from(route_segments: Vec<Segment>) -> Self {
-        let loop_detector = LoopDetector::from_segments(&route_segments);
+        // Routes built from a pre-existing segment list do not have a RoutingContext available
+        // at construction time, so phase 3 only hydrates detector metadata on incremental push.
+        let loop_detector = LoopDetector::default();
         Route {
             route_segments,
             loop_detector,
@@ -546,7 +550,7 @@ mod tests {
         routing_context::RoutingContext,
     };
 
-    use super::{segment::Segment, Route, LOOP_DISTANCE_THRESHOLD};
+    use super::{segment::Segment, CellId, RoadKey, Route, LOOP_DISTANCE_THRESHOLD};
 
     static LOOP_FIXTURE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -822,12 +826,12 @@ mod tests {
         )
     }
 
-    fn route_from_specs(specs: &[(u64, u64)]) -> Route {
-        specs
-            .iter()
-            .map(|(line_idx, point_id)| segment(*line_idx, *point_id))
-            .collect::<Vec<_>>()
-            .into()
+    fn route_from_specs(ctx: &RoutingContext<'_>, specs: &[(u64, u64)]) -> Route {
+        let mut route = Route::new();
+        for (line_idx, point_id) in specs {
+            route.add_segment(ctx, segment(*line_idx, *point_id));
+        }
+        route
     }
 
     fn filler_specs(count: usize) -> Vec<(u64, u64)> {
@@ -845,11 +849,14 @@ mod tests {
     fn exact_endpoint_revisit_returns_true() {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
-        let route = route_from_specs(&[
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-            (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-        ]);
+        let route = route_from_specs(
+            &ctx,
+            &[
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+                (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+            ],
+        );
 
         assert!(route.has_looped(&ctx, None));
     }
@@ -858,11 +865,14 @@ mod tests {
     fn exact_endpoint_revisit_respects_since_point() {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
-        let route = route_from_specs(&[
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-            (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-        ]);
+        let route = route_from_specs(
+            &ctx,
+            &[
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+                (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+            ],
+        );
 
         assert!(!route.has_looped(&ctx, Some(&point_ref(EXACT_B_POINT_ID))));
     }
@@ -871,11 +881,14 @@ mod tests {
     fn since_point_none_scans_from_start() {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
-        let route = route_from_specs(&[
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-            (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-        ]);
+        let route = route_from_specs(
+            &ctx,
+            &[
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+                (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+            ],
+        );
 
         assert!(route.has_looped(&ctx, None));
     }
@@ -884,11 +897,14 @@ mod tests {
     fn since_point_present_once_behaves_as_expected() {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
-        let route = route_from_specs(&[
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-            (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-        ]);
+        let route = route_from_specs(
+            &ctx,
+            &[
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+                (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+            ],
+        );
 
         assert!(!route.has_looped(&ctx, Some(&point_ref(EXACT_B_POINT_ID))));
     }
@@ -900,7 +916,7 @@ mod tests {
         let mut specs = vec![(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT));
         specs.push((HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(route.has_looped(&ctx, None));
     }
@@ -912,7 +928,7 @@ mod tests {
         let mut specs = vec![(NAME_A_LINE_IDX, NAME_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT));
         specs.push((NAME_CLOSE_LINE_IDX, NAME_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(route.has_looped(&ctx, None));
     }
@@ -924,7 +940,7 @@ mod tests {
         let mut specs = vec![(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT));
         specs.push((HW_REF_OTHER_CLOSE_LINE_IDX, HW_REF_OTHER_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(!route.has_looped(&ctx, None));
     }
@@ -936,7 +952,7 @@ mod tests {
         let mut specs = vec![(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT));
         specs.push((HW_REF_NONE_CLOSE_LINE_IDX, HW_REF_NONE_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(!route.has_looped(&ctx, None));
     }
@@ -948,7 +964,7 @@ mod tests {
         let mut specs = vec![(NAME_A_LINE_IDX, NAME_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT));
         specs.push((NAME_NONE_CLOSE_LINE_IDX, NAME_NONE_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(!route.has_looped(&ctx, None));
     }
@@ -960,7 +976,7 @@ mod tests {
         let mut specs = vec![(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT - 1));
         specs.push((HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(!route.has_looped(&ctx, None));
     }
@@ -976,7 +992,7 @@ mod tests {
         specs.extend(filler_specs(FILLER_COUNT - 1));
         specs.push((SINCE_LINE_IDX, SINCE_POINT_ID));
         specs.push((HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(route.has_looped(&ctx, Some(&point_ref(SINCE_POINT_ID))));
     }
@@ -985,11 +1001,14 @@ mod tests {
     fn repeated_same_point_before_since_point_is_ignored() {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
-        let route = route_from_specs(&[
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-            (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
-            (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
-        ]);
+        let route = route_from_specs(
+            &ctx,
+            &[
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+                (EXACT_B_LINE_IDX, EXACT_B_POINT_ID),
+                (EXACT_A_LINE_IDX, EXACT_A_POINT_ID),
+            ],
+        );
 
         assert!(!route.has_looped(&ctx, Some(&point_ref(EXACT_B_POINT_ID))));
     }
@@ -1001,7 +1020,7 @@ mod tests {
         let mut specs = vec![(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT));
         specs.push((HW_REF_OUTSIDE_LINE_IDX, HW_REF_OUTSIDE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(!route.has_looped(&ctx, None));
     }
@@ -1016,7 +1035,7 @@ mod tests {
         let mut specs = vec![(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID)];
         specs.extend(filler_specs(FILLER_COUNT));
         specs.push((HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
-        let route = route_from_specs(&specs);
+        let route = route_from_specs(&ctx, &specs);
 
         assert!(distance_m < LOOP_DISTANCE_THRESHOLD);
         assert!(route.has_looped(&ctx, None));
@@ -1027,14 +1046,14 @@ mod tests {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
         let mut route = Route::new();
-        route.add_segment(segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
         for (line_idx, point_id) in filler_specs(FILLER_COUNT) {
-            route.add_segment(segment(line_idx, point_id));
+            route.add_segment(&ctx, segment(line_idx, point_id));
         }
 
         assert!(!route.has_looped(&ctx, None));
 
-        route.add_segment(segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
 
         assert!(route.has_looped(&ctx, None));
     }
@@ -1044,11 +1063,11 @@ mod tests {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
         let mut route = Route::new();
-        route.add_segment(segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
         for (line_idx, point_id) in filler_specs(FILLER_COUNT) {
-            route.add_segment(segment(line_idx, point_id));
+            route.add_segment(&ctx, segment(line_idx, point_id));
         }
-        route.add_segment(segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
 
         assert!(route.has_looped(&ctx, None));
 
@@ -1062,28 +1081,30 @@ mod tests {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
         let mut route = Route::new();
-        route.add_segment(segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
         for (line_idx, point_id) in filler_specs(FILLER_COUNT) {
-            route.add_segment(segment(line_idx, point_id));
+            route.add_segment(&ctx, segment(line_idx, point_id));
         }
-        route.add_segment(segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
         assert!(route.has_looped(&ctx, None));
 
         route.remove_last_segment();
         assert!(!route.has_looped(&ctx, None));
 
-        route.add_segment(segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
         assert!(route.has_looped(&ctx, None));
     }
 
     #[test]
     fn detector_state_tracks_route_mutation() {
+        let graph = loop_test_graph();
+        let ctx = RoutingContext::new(&graph);
         let mut route = Route::new();
         let first = segment(EXACT_A_LINE_IDX, EXACT_A_POINT_ID);
         let second = segment(EXACT_B_LINE_IDX, EXACT_B_POINT_ID);
 
-        route.add_segment(first.clone());
-        route.add_segment(second.clone());
+        route.add_segment(&ctx, first.clone());
+        route.add_segment(&ctx, second.clone());
 
         assert_eq!(route.route_segments.len(), 2);
         assert_eq!(route.loop_detector.metas.len(), 2);
@@ -1105,8 +1126,94 @@ mod tests {
             .point_hits
             .contains_key(&point_ref(EXACT_B_POINT_ID)));
         assert_eq!(
-            route.loop_detector.point_hits.get(&point_ref(EXACT_A_POINT_ID)),
+            route
+                .loop_detector
+                .point_hits
+                .get(&point_ref(EXACT_A_POINT_ID)),
             Some(&vec![0])
         );
+    }
+
+    #[test]
+    fn detector_hydrates_loop_meta_on_push() {
+        let graph = loop_test_graph();
+        let ctx = RoutingContext::new(&graph);
+        let mut route = Route::new();
+
+        route.add_segment(&ctx, segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
+
+        let meta = &route.loop_detector.metas[0];
+        assert_eq!(meta.end_point, point_ref(HW_REF_A_POINT_ID));
+        assert_eq!(meta.point_id, HW_REF_A_POINT_ID);
+        assert_eq!(meta.lat, ctx.point(&point_ref(HW_REF_A_POINT_ID)).lat);
+        assert_eq!(meta.lon, ctx.point(&point_ref(HW_REF_A_POINT_ID)).lon);
+        assert_eq!(meta.hw_ref, Some(RoadKey("R1".into())));
+        assert_eq!(meta.name, None);
+        assert_eq!(meta.cell_id, CellId::from_lat_lon(meta.lat, meta.lon),);
+    }
+
+    #[test]
+    fn repeated_point_insertions_are_removed_in_stack_order() {
+        let graph = loop_test_graph();
+        let ctx = RoutingContext::new(&graph);
+        let mut route = Route::new();
+
+        route.add_segment(&ctx, segment(EXACT_A_LINE_IDX, EXACT_A_POINT_ID));
+        route.add_segment(&ctx, segment(EXACT_A_LINE_IDX, EXACT_A_POINT_ID));
+
+        assert_eq!(
+            route
+                .loop_detector
+                .point_hits
+                .get(&point_ref(EXACT_A_POINT_ID)),
+            Some(&vec![0, 1])
+        );
+
+        route.remove_last_segment();
+        assert_eq!(
+            route
+                .loop_detector
+                .point_hits
+                .get(&point_ref(EXACT_A_POINT_ID)),
+            Some(&vec![0])
+        );
+
+        route.remove_last_segment();
+        assert!(!route
+            .loop_detector
+            .point_hits
+            .contains_key(&point_ref(EXACT_A_POINT_ID)));
+    }
+
+    #[test]
+    fn repeated_road_key_insertions_across_multiple_cells_are_reversible() {
+        let graph = loop_test_graph();
+        let ctx = RoutingContext::new(&graph);
+        let mut route = Route::new();
+
+        route.add_segment(&ctx, segment(HW_REF_A_LINE_IDX, HW_REF_A_POINT_ID));
+        route.add_segment(&ctx, segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
+
+        let road_key = RoadKey("R1".into());
+        let first_cell = CellId::from_lat_lon(
+            ctx.point(&point_ref(HW_REF_A_POINT_ID)).lat,
+            ctx.point(&point_ref(HW_REF_A_POINT_ID)).lon,
+        );
+        let second_cell = CellId::from_lat_lon(
+            ctx.point(&point_ref(HW_REF_CLOSE_POINT_ID)).lat,
+            ctx.point(&point_ref(HW_REF_CLOSE_POINT_ID)).lon,
+        );
+
+        let cells = route.loop_detector.hw_ref_cells.get(&road_key).unwrap();
+        assert_eq!(cells.get(&first_cell), Some(&vec![0]));
+        assert_eq!(cells.get(&second_cell), Some(&vec![1]));
+
+        route.remove_last_segment();
+        let cells = route.loop_detector.hw_ref_cells.get(&road_key).unwrap();
+        assert_eq!(cells.get(&first_cell), Some(&vec![0]));
+        assert!(!cells.contains_key(&second_cell));
+
+        route.remove_last_segment();
+        assert!(!route.loop_detector.hw_ref_cells.contains_key(&road_key));
     }
 }

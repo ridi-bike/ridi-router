@@ -272,7 +272,7 @@ impl Walker {
                 }
             };
 
-            self.route_walked.add_segment(current_segment.clone());
+            self.route_walked.add_segment(ctx, current_segment.clone());
         }
     }
 
@@ -338,7 +338,7 @@ impl Walker {
             }
 
             self.move_to_roundabout_exit_with_context(ctx, next_segment.get_end_point());
-            self.route_walked.add_segment(next_segment.clone());
+            self.route_walked.add_segment(ctx, next_segment.clone());
         }
     }
 
