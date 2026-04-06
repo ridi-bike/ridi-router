@@ -58,7 +58,7 @@ cmd_help() {
     echo "  ./dev.sh route riga,latvia cesis,latvia prefer-unpaved"
     echo ""
     echo "Route preset mapping: <preset> -> $RULE_EXAMPLES_DIR/rules-<preset>.json"
-    echo "If no preset is provided, the CLI uses its default all-allowed rules."
+    echo "If no preset is provided, dev.sh uses the fast preset for quicker start-finish routing."
     echo "Available presets: $(list_rule_presets)"
     echo ""
     echo "Available countries: ${!PBF_URLS[*]}"
@@ -217,7 +217,8 @@ cmd_route() {
         fi
         echo "Using rule preset: $rule_file"
     else
-        echo "Using default router rules (all allowed)."
+        rule_file="$RULE_EXAMPLES_DIR/rules-fast.json"
+        echo "Using default fast preset: $rule_file"
     fi
 
     echo "Resolving start via OpenStreetMap: $start_input"

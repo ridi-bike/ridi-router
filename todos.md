@@ -10,6 +10,28 @@ Validation snapshot:
   - `ridi-router-tiles`: pass
   - `ridi-router-cli`: `generate_route_cli` still has 4 failing tests in this checkout
 
+## P0 — Audit follow-up for route-generation fixes
+
+- Make the CLI rule source explicit instead of implicitly reading stdin when `--rule-file` is absent.
+  - Current fix review: treating empty stdin as `RouterRules::default()` is a reasonable guard, but it still leaves "defaults" vs "stdin" environment-dependent in `crates/ridi-router-cli/src/cli/rules.rs`.
+  - Prefer: no `--rule-file` means defaults; stdin should require `--rule-file -` or a dedicated flag, with tests for empty and non-empty stdin.
+
+- Lock down the RMDF packed-format contract and centralize low-level readers.
+  - Current fix review: the unaligned `TagSetRecord` read is the correct fix, not a workaround.
+  - Follow-up: document that RMDF sections are packed/on-disk records, audit other typed mmap reads for alignment assumptions, and reduce reader duplication between `crates/ridi-router-routing/src/rmdf/io.rs` and `crates/ridi-router-cli/src/rmdf/io.rs`.
+
+- Split endpoint snapping policy from waypoint-generation highway preferences.
+  - Current fix review: retrying start/finish snapping without `WP_LOOKUP_ALLOWED_HWS` is a good robustness fix, but it is still coupling endpoint validity to a waypoint-generation heuristic.
+  - Follow-up: introduce an explicit endpoint snapping policy and keep a regression test for "preferred snap misses, fallback snap succeeds" behavior.
+
+- Propagate closest-point lookup failures instead of logging and returning `None`.
+  - Current fix review: warning logs improved debuggability, but this is still masking data/lookup failures as ordinary "point not found" results.
+  - Follow-up: preserve `Result<Option<_>>` through `MapDataGraph` / `RoutingContext` / `routing_api` so real lookup failures do not collapse into `RoutingGenerationError::PointNotFound`.
+
+- Define first-class routing profiles instead of relying on `dev.sh` to swap in `rules-fast.json`.
+  - Current fix review: using the fast preset by default in `dev.sh` is a practical dev-only workaround, not the real product-level default story.
+  - Follow-up: add named profiles such as `fast` / `default` / `thorough`, document when each should be used, and keep explicit test coverage for both the fast profile and the true `RouterRules::default()` path.
+
 ## P0 — Stabilize CLI route fixture tests
 
 - Replace the repo-scoped `map-data/output` dependency in `crates/ridi-router-cli/tests/generate_route_cli.rs`.
@@ -28,10 +50,6 @@ Validation snapshot:
   - `crates/ridi-router-routing/src/rmdf/tile_manager.rs` still has internal `unwrap()` assumptions after `ensure_tile_loaded(...)`.
   - Corrupt tiles, invalid refs, or wrong-context misuse can still panic instead of returning structured errors.
 
-- Stop silently masking invalid RMDF tag lookups.
-  - `crates/ridi-router-routing/src/map_data/graph.rs` returns `None` from `get_tag_value(...)` on any tile lookup error and falls back to an all-`NONE` `TagSetRecord` in `get_tag_set(...)`.
-  - That turns corrupt tiles / invalid refs / wrong-context tag lookups into fake "missing tag" data instead of surfacing an error.
-  - Prefer a fallible lookup path (or at least debug assertions) so routing does not quietly continue with scrubbed metadata.
 
 ## P1 — Nearest-point query hot path
 

@@ -130,7 +130,7 @@ impl MappedTile {
         Ok(cast_slice(slice))
     }
 
-    pub fn get_tag_set(&self, index: u32) -> Result<&TagSetRecord> {
+    pub fn get_tag_set(&self, index: u32) -> Result<TagSetRecord> {
         let offset = self.header.section_offsets[section::TAG_SETS] as usize;
         let record_offset = offset + (index as usize * std::mem::size_of::<TagSetRecord>());
 
@@ -139,7 +139,7 @@ impl MappedTile {
             .get(record_offset..record_offset + std::mem::size_of::<TagSetRecord>())
             .context("Tag set out of bounds")?;
 
-        try_from_bytes(slice).map_err(|_| anyhow::anyhow!("Failed to cast tag set"))
+        Ok(pod_read_unaligned(slice))
     }
 
     pub fn get_tag_value(&self, index: u32) -> Result<&str> {

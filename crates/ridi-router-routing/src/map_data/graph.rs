@@ -6,7 +6,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-
+use tracing::warn;
 use crate::{
     map_data::line::LineDirection,
     rmdf::format::{TagSetRecord, TileId},
@@ -450,18 +450,21 @@ impl MapDataGraph {
     ) -> Option<MapDataPointRef> {
         let mut tm = self.tile_manager.write().unwrap();
 
-        // Query TileManager for closest point
-        let result = tm
-            .get_closest_to_coords(
-                lat,
-                lon,
-                rules,
-                avoid_proximity_to_residential,
-                _limit_to_hw_tags,
-            )
-            .ok()??;
+        let result = match tm.get_closest_to_coords(
+            lat,
+            lon,
+            rules,
+            avoid_proximity_to_residential,
+            _limit_to_hw_tags,
+        ) {
+            Ok(Some(result)) => result,
+            Ok(None) => return None,
+            Err(error) => {
+                warn!(lat, lon, error = ?error, "Closest-point lookup failed");
+                return None;
+            }
+        };
 
-        // Convert to MapDataPointRef
         Some(MapDataPointRef::new(result.0, result.1))
     }
 }

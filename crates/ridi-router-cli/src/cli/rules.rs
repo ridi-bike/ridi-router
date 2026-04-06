@@ -53,6 +53,10 @@ pub fn read_router_rules_from_stdin() -> Result<RouterRules, RuleFileError> {
             text.push_str(&line);
         }
 
+        if text.trim().is_empty() {
+            return Ok(RouterRules::default());
+        }
+
         return serde_json::from_str(&text).map_err(|error| RuleFileError::JsonParse { error });
     }
 

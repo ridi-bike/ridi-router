@@ -112,29 +112,28 @@ impl RoutingExecutor {
 
         let ctx = RoutingContext::new(self.graph.as_ref());
 
-        let start = ctx
-            .closest_to_coords(
-                start_coords.lat,
-                start_coords.lon,
+        let snap_point = |coords: Coords, point: &'static str| {
+            ctx.closest_to_coords(
+                coords.lat,
+                coords.lon,
                 &request.rules,
                 false,
                 Some(&WP_LOOKUP_ALLOWED_HWS),
             )
-            .ok_or(RoutingGenerationError::PointNotFound {
-                point: "start point",
-            })?;
+            .or_else(|| {
+                trace!(
+                    point,
+                    lat = coords.lat,
+                    lon = coords.lon,
+                    "No preferred-highway snap point found, retrying without highway filter"
+                );
+                ctx.closest_to_coords(coords.lat, coords.lon, &request.rules, false, None)
+            })
+            .ok_or(RoutingGenerationError::PointNotFound { point })
+        };
 
-        let finish = ctx
-            .closest_to_coords(
-                finish_coords.lat,
-                finish_coords.lon,
-                &request.rules,
-                false,
-                Some(&WP_LOOKUP_ALLOWED_HWS),
-            )
-            .ok_or(RoutingGenerationError::PointNotFound {
-                point: "finish point",
-            })?;
+        let start = snap_point(start_coords, "start point")?;
+        let finish = snap_point(finish_coords, "finish point")?;
 
         let routes = Generator::new(start, finish, round_trip, request.rules)
             .generate_routes(&ctx)
@@ -142,6 +141,7 @@ impl RoutingExecutor {
 
         Ok(RouteComputation::from_routes(&ctx, routes))
     }
+
 }
 
 fn validate_tiles_manifest(tiles_dir: &Path) -> Result<TileManifest, RoutingOpenError> {

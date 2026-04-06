@@ -836,7 +836,7 @@ impl TileManager {
         let tile = self.loaded_tiles.get(&tile_id).unwrap();
         let tag_set = tile.get_tag_set(tag_set_idx)?;
 
-        Ok(*tag_set)
+        Ok(tag_set)
     }
 
     #[cfg(test)]
