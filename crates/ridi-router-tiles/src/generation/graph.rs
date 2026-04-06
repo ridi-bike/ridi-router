@@ -348,10 +348,6 @@ impl GenerationGraph {
         );
     }
 
-    pub fn generate_point_hashes(&mut self) {
-        // TODO: Implement spatial hashing if needed.
-    }
-
     fn warn_and_count_skipped_relation(
         &mut self,
         relation_id: u64,

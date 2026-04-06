@@ -402,14 +402,14 @@ impl<'a> PbfStreamer<'a> {
 
         let mut graph = GenerationGraph::new();
 
-        // Insert all nodes (with correct proximity flags)
+        // Insert all nodes with proximity flags already set for this tile.
         let mut sorted_nodes: Vec<_> = nodes.into_values().collect();
         sorted_nodes.sort_unstable_by_key(|node| node.id);
         for node in sorted_nodes {
             graph.insert_node(node);
         }
 
-        // Insert all ways
+        // Insert all ways.
         for way in ways {
             graph.insert_way(way);
         }
@@ -420,13 +420,11 @@ impl<'a> PbfStreamer<'a> {
         }
         graph.log_restriction_skip_summary();
 
-        // Generate point hashes for spatial indexing
-        graph.generate_point_hashes();
-
         graph
     }
 
-    /// Write RMDF tile file from generation graph
+    /// Write an RMDF tile and let the writer build the grid-cell spatial index
+    /// directly from graph points, lines, and restrictions.
     fn write_rmdf_tile(&self, tile_id: TileId, graph: GenerationGraph) -> Result<()> {
         use crate::rmdf::generator::writer::RmdfWriter;
 
@@ -436,7 +434,7 @@ impl<'a> PbfStreamer<'a> {
         // Create the RMDF writer for the generation model.
         let writer = RmdfWriter::new(self.tile_size_degrees);
 
-        // Write tile directly from the generation graph.
+        // Write tile directly from GenerationGraph data.
         writer
             .write_tile_from_graph(tile_id, graph, &output_path)
             .with_context(|| format!("Failed to write RMDF tile {:?}", tile_id))?;

@@ -158,13 +158,6 @@ impl GenerationGraph {
         // This will require adding a relations field to GenerationGraph
         Ok(())
     }
-
-    /// Generate point hashes for spatial indexing
-    pub fn generate_point_hashes(&mut self) {
-        // TODO: Implement spatial hashing if needed
-        // This may not be needed if we're relying on the grid cell spatial index
-        // in build_spatial_index() instead
-    }
 }
 
 impl Default for GenerationGraph {
