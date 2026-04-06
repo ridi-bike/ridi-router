@@ -138,6 +138,132 @@ impl LoopDetector {
         }
     }
 
+    fn has_looped(&self, since_point: Option<&MapDataPointRef>) -> bool {
+        let Some((current_idx, current)) =
+            self.metas.len().checked_sub(1).and_then(|current_idx| {
+                self.metas
+                    .get(current_idx)
+                    .map(|current| (current_idx, current))
+            })
+        else {
+            return false;
+        };
+
+        // Preserve the current since_point behavior for compatibility: we start at the first
+        // matching point in route history. That matches the existing `.position(...)` logic,
+        // even though it may not line up with the original waypoint-transition intent when the
+        // same point appears multiple times.
+        let since_idx = since_point
+            .and_then(|point| self.point_hits.get(point))
+            .and_then(|indices| indices.first().copied())
+            .unwrap_or(0);
+
+        if self
+            .point_hits
+            .get(&current.end_point)
+            .is_some_and(|indices| {
+                indices
+                    .iter()
+                    .any(|&candidate_idx| candidate_idx < current_idx && candidate_idx >= since_idx)
+            })
+        {
+            return true;
+        }
+
+        self.has_nearby_same_road_loop(current_idx, current, since_idx)
+    }
+
+    fn has_nearby_same_road_loop(
+        &self,
+        current_idx: usize,
+        current: &LoopMeta,
+        since_idx: usize,
+    ) -> bool {
+        self.has_nearby_same_road_key_loop(
+            current_idx,
+            current,
+            since_idx,
+            current.hw_ref.as_ref(),
+            &self.hw_ref_cells,
+            |candidate| current.hw_ref.is_some() && candidate.hw_ref == current.hw_ref,
+        ) || self.has_nearby_same_road_key_loop(
+            current_idx,
+            current,
+            since_idx,
+            current.name.as_ref(),
+            &self.name_cells,
+            |candidate| current.name.is_some() && candidate.name == current.name,
+        )
+    }
+
+    fn has_nearby_same_road_key_loop(
+        &self,
+        current_idx: usize,
+        current: &LoopMeta,
+        since_idx: usize,
+        road_key: Option<&RoadKey>,
+        cells_by_key: &HashMap<RoadKey, HashMap<CellId, Vec<usize>>>,
+        road_matches: impl Fn(&LoopMeta) -> bool,
+    ) -> bool {
+        let Some(road_key) = road_key else {
+            return false;
+        };
+        let Some(cells) = cells_by_key.get(road_key) else {
+            return false;
+        };
+
+        let neighbor_cells = Self::neighbor_cells(current.cell_id);
+        for cell_id in neighbor_cells {
+            let Some(candidate_indices) = cells.get(&cell_id) else {
+                continue;
+            };
+            for &candidate_idx in candidate_indices {
+                if candidate_idx < since_idx || candidate_idx >= current_idx {
+                    continue;
+                }
+                if current_idx - candidate_idx <= LOOP_SEGMENT_THESHOLD {
+                    continue;
+                }
+
+                let candidate = &self.metas[candidate_idx];
+                if !road_matches(candidate) {
+                    continue;
+                }
+                if Self::squared_distance_m(current, candidate)
+                    < LOOP_DISTANCE_THRESHOLD * LOOP_DISTANCE_THRESHOLD
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    fn neighbor_cells(cell_id: CellId) -> [CellId; 9] {
+        let mut neighbors = [cell_id; 9];
+        let mut idx = 0;
+        for lat_offset in -1..=1 {
+            for lon_offset in -1..=1 {
+                neighbors[idx] = CellId {
+                    lat_bucket: cell_id.lat_bucket + lat_offset,
+                    lon_bucket: cell_id.lon_bucket + lon_offset,
+                };
+                idx += 1;
+            }
+        }
+        neighbors
+    }
+
+    fn squared_distance_m(a: &LoopMeta, b: &LoopMeta) -> f32 {
+        let mean_lat_rad = ((a.lat + b.lat) * 0.5).to_radians();
+        let meters_per_degree_lat = 111_320.0_f32;
+        let meters_per_degree_lon = meters_per_degree_lat * mean_lat_rad.cos();
+        let dy_m = (a.lat - b.lat) * meters_per_degree_lat;
+        let dx_m = (a.lon - b.lon) * meters_per_degree_lon;
+        dx_m * dx_m + dy_m * dy_m
+    }
+
     fn remove_cell_hit<K>(
         map: &mut HashMap<K, HashMap<CellId, Vec<usize>>>,
         key: &K,
@@ -293,62 +419,10 @@ impl Route {
     #[hotpath::measure]
     pub fn has_looped(
         &self,
-        ctx: &RoutingContext<'_>,
+        _ctx: &RoutingContext<'_>,
         since_point: Option<&MapDataPointRef>,
     ) -> bool {
-        // Preserve the current since_point behavior for compatibility: we start at the first
-        // matching point in route history. That matches the existing `.position(...)` logic,
-        // even though it may not line up with the original waypoint-transition intent when the
-        // same point appears multiple times.
-        let since_point_pos = if let Some(since_point) = since_point {
-            self.route_segments
-                .iter()
-                .position(|segment| segment.get_end_point() == since_point)
-                .map_or(0, |position| position)
-        } else {
-            0
-        };
-        let last_segment = self.route_segments.last();
-        if let Some(last_segment) = last_segment {
-            let last_segment_point = ctx.point(last_segment.get_end_point());
-            let last_segment_line = ctx.line(last_segment.get_line());
-            let last_segment_line_tags = ctx.tag_set(&last_segment_line.tags);
-            let last_segment_line_hw_ref = ctx.tag_value(&last_segment_line_tags.hw_ref);
-            let last_segment_line_name = ctx.tag_value(&last_segment_line_tags.name);
-            let end_index = self.route_segments.len().checked_sub(1);
-            if let Some(end_index) = end_index {
-                let slice_len = self.route_segments[since_point_pos..end_index].len();
-                return self.route_segments[since_point_pos..end_index]
-                    .iter()
-                    .enumerate()
-                    .any(|(idx, segment)| {
-                        let segment_point_ref = segment.get_end_point();
-                        let are_points_eq = segment_point_ref == last_segment.get_end_point();
-                        let segment_point = ctx.point(segment_point_ref);
-                        let distance_between_points_over_threshold = segment_point
-                            .distance_between(&last_segment_point)
-                            < LOOP_DISTANCE_THRESHOLD;
-                        let route_segments_between_points_over_threshold =
-                            slice_len - idx > LOOP_SEGMENT_THESHOLD;
-
-                        let segment_line = ctx.line(segment.get_line());
-                        let segment_line_tags = ctx.tag_set(&segment_line.tags);
-                        let segment_line_hw_ref = ctx.tag_value(&segment_line_tags.hw_ref);
-                        let segment_line_name = ctx.tag_value(&segment_line_tags.name);
-
-                        are_points_eq
-                            || (distance_between_points_over_threshold
-                                && route_segments_between_points_over_threshold
-                                && ((segment_line_hw_ref.is_some()
-                                    && last_segment_line_hw_ref.is_some()
-                                    && segment_line_hw_ref == last_segment_line_hw_ref)
-                                    || (segment_line_name.is_some()
-                                        && last_segment_line_name.is_some()
-                                        && segment_line_name == last_segment_line_name)))
-                    });
-            }
-        }
-        false
+        self.loop_detector.has_looped(since_point)
     }
     #[hotpath::measure]
     pub fn is_back_on_road_within_distance(
