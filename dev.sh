@@ -7,6 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PBF_DIR="$SCRIPT_DIR/map-data/pbf"
 INPUT_DIR="$SCRIPT_DIR/map-data/input"
 OUTPUT_DIR="$SCRIPT_DIR/map-data/output"
+ROUTE_DIR="$SCRIPT_DIR/map-data/routes"
+RULE_EXAMPLES_DIR="$SCRIPT_DIR/rule-examples"
+OSM_USER_AGENT="ridi-router-dev-script/1.0 (local development helper)"
 
 # PBF URL mappings
 declare -A PBF_URLS
@@ -15,16 +18,48 @@ PBF_URLS[estonia]="https://download.geofabrik.de/europe/estonia-latest.osm.pbf"
 PBF_URLS[lithuania]="https://download.geofabrik.de/europe/lithuania-latest.osm.pbf"
 PBF_URLS[montenegro]="https://download.geofabrik.de/europe/montenegro-latest.osm.pbf"
 
+list_rule_presets() {
+    local -a presets=()
+    local file
+
+    shopt -s nullglob
+    for file in "$RULE_EXAMPLES_DIR"/rules-*.json; do
+        local preset
+        preset="$(basename "$file")"
+        preset="${preset#rules-}"
+        preset="${preset%.json}"
+        presets+=("$preset")
+    done
+    shopt -u nullglob
+
+    if [[ ${#presets[@]} -eq 0 ]]; then
+        echo "none"
+        return 0
+    fi
+
+    printf '%s\n' "${presets[*]}"
+}
+
 cmd_help() {
     echo "Usage: ./dev.sh <command> [args]"
     echo ""
     echo "Commands:"
-    echo "  pbf <country>              Download PBF file for a country"
-    echo "  generate-tiles <countries> Generate tiles for comma-separated countries"
-    echo "  build                      Build the project"
-    echo "  run                        Run the project"
-    echo "  rmdf-view                  Run the RMDF debug viewer"
-    echo "  test                       Run tests"
+    echo "  pbf <country>                       Download PBF file for a country"
+    echo "  generate-tiles <countries>          Generate tiles for comma-separated countries"
+    echo "  route <start> <finish> [preset]     Generate a GPX route using OSM place lookup"
+    echo "  build                               Build the project"
+    echo "  run                                 Run the CLI"
+    echo "  rmdf-view                           Run the RMDF debug viewer"
+    echo "  test                                Run tests"
+    echo ""
+    echo "Examples:"
+    echo "  ./dev.sh generate-tiles latvia"
+    echo "  ./dev.sh route riga,latvia cesis,latvia"
+    echo "  ./dev.sh route riga,latvia cesis,latvia prefer-unpaved"
+    echo ""
+    echo "Route preset mapping: <preset> -> $RULE_EXAMPLES_DIR/rules-<preset>.json"
+    echo "If no preset is provided, the CLI uses its default all-allowed rules."
+    echo "Available presets: $(list_rule_presets)"
     echo ""
     echo "Available countries: ${!PBF_URLS[*]}"
 }
@@ -50,6 +85,50 @@ download_pbf() {
     echo "Downloading $url..."
     curl -L -o "$filepath" "$url"
     echo "Saved to $filepath"
+}
+
+run_cli_release() {
+    cargo run -p ridi-router-cli --release -- "$@"
+}
+
+run_cli_release_with_features() {
+    local features="$1"
+    shift
+    cargo run -p ridi-router-cli --release --features="$features" -- "$@"
+}
+
+lookup_osm_coords() {
+    local query="$1"
+    local encoded_query
+    local response
+    local parsed
+
+    encoded_query="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$query")"
+    response="$(curl -fsSL -A "$OSM_USER_AGENT" "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=$encoded_query")"
+
+    parsed="$(python3 -c 'import json, sys
+places = json.load(sys.stdin)
+if not places:
+    sys.exit(1)
+place = places[0]
+print(f"{place['"'"'lat'"'"']},{place['"'"'lon'"'"']}\t{place.get('"'"'display_name'"'"', '"'"''"'"')}")
+' <<< "$response")" || {
+        echo "Error: OpenStreetMap lookup returned no match for '$query'" >&2
+        exit 1
+    }
+
+    printf '%s\n' "$parsed"
+}
+
+resolve_route_coords() {
+    local input="$1"
+
+    if [[ "$input" =~ ^-?[0-9]+([.][0-9]+)?,-?[0-9]+([.][0-9]+)?$ ]]; then
+        printf '%s\t%s\n' "$input" "$input"
+        return 0
+    fi
+
+    lookup_osm_coords "$input"
 }
 
 cmd_generate_tiles() {
@@ -97,7 +176,86 @@ cmd_generate_tiles() {
 
     # Run tile generation
     echo "Generating tiles..."
-    cargo run --release --features=debug-polygons -- generate-tiles --input-dir "$INPUT_DIR" --output-dir "$OUTPUT_DIR" --tile-size-deg 0.1
+    run_cli_release_with_features "debug-polygons" generate-tiles --input-dir "$INPUT_DIR" --output "$OUTPUT_DIR" --tile-size-deg 0.1
+}
+
+cmd_route() {
+    local start_input="${1:-}"
+    local finish_input="${2:-}"
+    local preset="${3:-}"
+    local rule_file=""
+    local start_result
+    local finish_result
+    local start_coords
+    local finish_coords
+    local start_name
+    local finish_name
+    local -a route_args
+
+    if [[ -z "$start_input" || -z "$finish_input" ]]; then
+        echo "Error: Missing route locations. Usage: ./dev.sh route riga,latvia cesis,latvia [preset]" >&2
+        exit 1
+    fi
+
+    if [[ $# -gt 3 ]]; then
+        echo "Error: Too many arguments. Usage: ./dev.sh route riga,latvia cesis,latvia [preset]" >&2
+        exit 1
+    fi
+
+    if [[ ! -f "$OUTPUT_DIR/manifest.json" ]]; then
+        echo "Error: Tiles not found in $OUTPUT_DIR. Run ./dev.sh generate-tiles <countries> first." >&2
+        exit 1
+    fi
+
+    if [[ -n "$preset" ]]; then
+        rule_file="$RULE_EXAMPLES_DIR/rules-$preset.json"
+        if [[ ! -f "$rule_file" ]]; then
+            echo "Error: Unknown route preset '$preset'." >&2
+            echo "Expected preset file: $rule_file" >&2
+            echo "Available presets: $(list_rule_presets)" >&2
+            exit 1
+        fi
+        echo "Using rule preset: $rule_file"
+    else
+        echo "Using default router rules (all allowed)."
+    fi
+
+    echo "Resolving start via OpenStreetMap: $start_input"
+    start_result="$(resolve_route_coords "$start_input")"
+    echo "Resolving finish via OpenStreetMap: $finish_input"
+    finish_result="$(resolve_route_coords "$finish_input")"
+
+    start_coords="${start_result%%$'\t'*}"
+    finish_coords="${finish_result%%$'\t'*}"
+    start_name="${start_result#*$'\t'}"
+    finish_name="${finish_result#*$'\t'}"
+
+    echo "Start:  ${start_name:-$start_input} -> $start_coords"
+    echo "Finish: ${finish_name:-$finish_input} -> $finish_coords"
+
+    echo "Cleaning $ROUTE_DIR..."
+    rm -rf "$ROUTE_DIR"
+
+    route_args=(
+        generate-route
+        --tiles "$OUTPUT_DIR"
+        --output-dir "$ROUTE_DIR"
+        --format gpx
+    )
+
+    if [[ -n "$rule_file" ]]; then
+        route_args+=(--rule-file "$rule_file")
+    fi
+
+    route_args+=(
+        start-finish
+        --start "$start_coords"
+        --finish "$finish_coords"
+    )
+
+    echo "Generating route..."
+    run_cli_release "${route_args[@]}"
+    echo "Route files written to $ROUTE_DIR"
 }
 
 cmd_build() {
@@ -105,7 +263,7 @@ cmd_build() {
 }
 
 cmd_run() {
-    cargo run -- "$@"
+    cargo run -p ridi-router-cli -- "$@"
 }
 
 cmd_test() {
@@ -113,7 +271,7 @@ cmd_test() {
 }
 
 cmd_rmdf_view() {
-    cargo run --features rmdf-viewer --release -- rmdf-viewer --input-dir "$OUTPUT_DIR"
+    run_cli_release_with_features "rmdf-viewer" rmdf-viewer --input-dir "$OUTPUT_DIR"
 }
 
 # Main
@@ -123,6 +281,10 @@ case "${1:-}" in
         ;;
     generate-tiles)
         cmd_generate_tiles "${2:-}"
+        ;;
+    route)
+        shift
+        cmd_route "$@"
         ;;
     build)
         cmd_build
