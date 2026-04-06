@@ -91,10 +91,3 @@ Validation snapshot:
 
 ## Closed / no longer open
 
-These were previously tracked in stale review docs, but they are already implemented and should not remain open todos:
-- basic RMDF rule serialization
-- RMDF rule reading on the routing side
-- runtime point rule hydration from tiles
-- nearest-point rules filtering
-- nearest-point highway filtering
-- grid-ring nearest search
