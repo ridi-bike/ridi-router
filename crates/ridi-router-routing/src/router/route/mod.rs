@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use score::Score;
 use serde::{Deserialize, Serialize};
+use smartstring::alias::String as SmartString;
 
 use crate::{
     map_data::{graph::MapDataPointRef, line::MapDataLine, point::MapDataPoint},
@@ -17,6 +18,171 @@ use self::segment::Segment;
 
 const LOOP_DISTANCE_THRESHOLD: f32 = 50.;
 const LOOP_SEGMENT_THESHOLD: usize = 10;
+const LOOP_CELL_SIZE_DEGREES: f32 = 0.0003;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RoadKey(SmartString);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CellId {
+    lat_bucket: i32,
+    lon_bucket: i32,
+}
+
+impl CellId {
+    fn from_lat_lon(lat: f32, lon: f32) -> Self {
+        Self {
+            lat_bucket: (lat / LOOP_CELL_SIZE_DEGREES).floor() as i32,
+            lon_bucket: (lon / LOOP_CELL_SIZE_DEGREES).floor() as i32,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct LoopMeta {
+    end_point: MapDataPointRef,
+    point_id: u64,
+    lat: f32,
+    lon: f32,
+    hw_ref: Option<RoadKey>,
+    name: Option<RoadKey>,
+    cell_id: CellId,
+}
+
+impl LoopMeta {
+    fn from_segment_placeholder(segment: &Segment) -> Self {
+        let point_id = segment.get_end_point().get_element_id();
+        // Phase 2 only wires the detector into Route ownership and push/pop bookkeeping.
+        // Later phases will hydrate coordinates and interned road keys from RoutingContext
+        // before the query path switches over to this structure.
+        Self {
+            end_point: segment.get_end_point().clone(),
+            point_id,
+            lat: 0.0,
+            lon: 0.0,
+            hw_ref: None,
+            name: None,
+            cell_id: CellId::from_lat_lon(0.0, 0.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+struct LoopDetector {
+    // One meta entry per route segment, same index as route_segments.
+    metas: Vec<LoopMeta>,
+
+    // Exact point revisit lookup.
+    point_hits: HashMap<MapDataPointRef, Vec<usize>>,
+
+    // Spatial indexes scoped by road identity.
+    hw_ref_cells: HashMap<RoadKey, HashMap<CellId, Vec<usize>>>,
+    name_cells: HashMap<RoadKey, HashMap<CellId, Vec<usize>>>,
+}
+
+impl LoopDetector {
+    fn push_segment(&mut self, segment: &Segment) {
+        let idx = self.metas.len();
+        let meta = LoopMeta::from_segment_placeholder(segment);
+        self.point_hits
+            .entry(meta.end_point.clone())
+            .or_default()
+            .push(idx);
+
+        if let Some(hw_ref) = meta.hw_ref.clone() {
+            self.hw_ref_cells
+                .entry(hw_ref)
+                .or_default()
+                .entry(meta.cell_id)
+                .or_default()
+                .push(idx);
+        }
+
+        if let Some(name) = meta.name.clone() {
+            self.name_cells
+                .entry(name)
+                .or_default()
+                .entry(meta.cell_id)
+                .or_default()
+                .push(idx);
+        }
+
+        self.metas.push(meta);
+    }
+
+    fn pop(&mut self) {
+        let Some(meta) = self.metas.pop() else {
+            return;
+        };
+        let popped_idx = self.metas.len();
+
+        Self::remove_point_hit(&mut self.point_hits, &meta.end_point, popped_idx);
+
+        if let Some(hw_ref) = meta.hw_ref {
+            Self::remove_cell_hit(&mut self.hw_ref_cells, &hw_ref, meta.cell_id, popped_idx);
+        }
+
+        if let Some(name) = meta.name {
+            Self::remove_cell_hit(&mut self.name_cells, &name, meta.cell_id, popped_idx);
+        }
+    }
+
+    fn from_segments(segments: &[Segment]) -> Self {
+        let mut detector = Self::default();
+        for segment in segments {
+            detector.push_segment(segment);
+        }
+        detector
+    }
+
+    fn remove_cell_hit<K>(
+        map: &mut HashMap<K, HashMap<CellId, Vec<usize>>>,
+        key: &K,
+        cell_id: CellId,
+        idx: usize,
+    )
+    where
+        K: std::cmp::Eq + std::hash::Hash,
+    {
+        let mut remove_key = false;
+        if let Some(cells) = map.get_mut(key) {
+            let mut remove_cell = false;
+            if let Some(indices) = cells.get_mut(&cell_id) {
+                if indices.last().copied() == Some(idx) {
+                    indices.pop();
+                } else if let Some(pos) = indices.iter().rposition(|candidate| *candidate == idx) {
+                    indices.remove(pos);
+                }
+                remove_cell = indices.is_empty();
+            }
+            if remove_cell {
+                cells.remove(&cell_id);
+            }
+            remove_key = cells.is_empty();
+        }
+        if remove_key {
+            map.remove(key);
+        }
+    }
+
+    fn remove_point_hit<K>(map: &mut HashMap<K, Vec<usize>>, key: &K, idx: usize)
+    where
+        K: std::cmp::Eq + std::hash::Hash,
+    {
+        let mut remove_key = false;
+        if let Some(indices) = map.get_mut(key) {
+            if indices.last().copied() == Some(idx) {
+                indices.pop();
+            } else if let Some(pos) = indices.iter().rposition(|candidate| *candidate == idx) {
+                indices.remove(pos);
+            }
+            remove_key = indices.is_empty();
+        }
+        if remove_key {
+            map.remove(key);
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RouteStatElement {
@@ -44,12 +210,14 @@ pub struct RouteStats {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Route {
     route_segments: Vec<Segment>,
+    loop_detector: LoopDetector,
 }
 
 impl Route {
     pub fn new() -> Self {
         Route {
             route_segments: Vec::new(),
+            loop_detector: LoopDetector::default(),
         }
     }
     pub fn get_route_chunk(&self, start: usize, end: usize) -> Vec<Segment> {
@@ -65,9 +233,14 @@ impl Route {
         self.route_segments.len()
     }
     pub fn remove_last_segment(&mut self) -> Option<Segment> {
-        self.route_segments.pop()
+        let segment = self.route_segments.pop();
+        if segment.is_some() {
+            self.loop_detector.pop();
+        }
+        segment
     }
     pub fn add_segment(&mut self, segment: Segment) {
+        self.loop_detector.push_segment(&segment);
         self.route_segments.push(segment)
     }
 
@@ -79,7 +252,7 @@ impl Route {
             .map_or(0, |v| v);
 
         let route_segments = self.route_segments[point_pos..].to_vec();
-        Self { route_segments }
+        Self::from(route_segments)
     }
 
     pub fn get_route_chunk_since_junction_before_last(
@@ -333,7 +506,11 @@ impl Route {
 
 impl From<Vec<Segment>> for Route {
     fn from(route_segments: Vec<Segment>) -> Self {
-        Route { route_segments }
+        let loop_detector = LoopDetector::from_segments(&route_segments);
+        Route {
+            route_segments,
+            loop_detector,
+        }
     }
 }
 
@@ -897,5 +1074,39 @@ mod tests {
 
         route.add_segment(segment(HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
         assert!(route.has_looped(&ctx, None));
+    }
+
+    #[test]
+    fn detector_state_tracks_route_mutation() {
+        let mut route = Route::new();
+        let first = segment(EXACT_A_LINE_IDX, EXACT_A_POINT_ID);
+        let second = segment(EXACT_B_LINE_IDX, EXACT_B_POINT_ID);
+
+        route.add_segment(first.clone());
+        route.add_segment(second.clone());
+
+        assert_eq!(route.route_segments.len(), 2);
+        assert_eq!(route.loop_detector.metas.len(), 2);
+        assert_eq!(
+            route.loop_detector.point_hits.get(first.get_end_point()),
+            Some(&vec![0])
+        );
+        assert_eq!(
+            route.loop_detector.point_hits.get(second.get_end_point()),
+            Some(&vec![1])
+        );
+
+        let removed = route.remove_last_segment();
+        assert_eq!(removed, Some(second));
+        assert_eq!(route.route_segments.len(), 1);
+        assert_eq!(route.loop_detector.metas.len(), 1);
+        assert!(!route
+            .loop_detector
+            .point_hits
+            .contains_key(&point_ref(EXACT_B_POINT_ID)));
+        assert_eq!(
+            route.loop_detector.point_hits.get(&point_ref(EXACT_A_POINT_ID)),
+            Some(&vec![0])
+        );
     }
 }
