@@ -1,54 +1,76 @@
 # Todos
 
-Deferred issues identified during the `ridi-router-tiles` generation-model planning session.
+This file is the source of truth for open follow-up work in this repo.
 
-## Restriction and rules pipeline
+Last audited: 2026-04-06
+Validation snapshot:
+- `cargo test --workspace -q`
+  - `ridi-router-common`: pass
+  - `ridi-router-routing`: pass
+  - `ridi-router-tiles`: pass
+  - `ridi-router-cli`: `generate_route_cli` still has 4 failing tests in this checkout
 
-These were intentionally left out of the generation refactor scope and should be handled later as a separate end-to-end task.
+## P0 — Stabilize CLI route fixture tests
 
-- Implement generation-time turn restriction materialization from collected OSM restriction relations.
-  - Current state: restriction relations are collected upstream, passed into `insert_relation(...)`, and then dropped.
-- Define the generation-side restriction data model that should exist once restrictions are actually supported again.
-  - The refactor plan removes the fake tiles-side rule model instead of pretending it works.
-- Implement RMDF rule serialization.
-  - `serialize_rules(...)` is still a stub.
-  - Point `rules_offset` / `rules_count` bookkeeping is still incomplete.
-- Implement RMDF rule reading on the routing side.
-  - Add read helpers for the `RULES` section.
-  - Add `TileManager` support for loading rules.
-- Hydrate runtime routing points with rule data from tiles instead of hardcoding empty rules.
-- Add tile-backed end-to-end tests proving that generated restriction data changes routing behavior.
+- Replace the repo-scoped `map-data/output` dependency in `crates/ridi-router-cli/tests/generate_route_cli.rs`.
+  - Current state: these tests only check whether `map-data/output/manifest.json` exists, but that is not enough to make them deterministic.
+  - In this checkout, `cargo test --workspace -q` fails in 4 `generate_route_cli` tests with `Routing error: Could not find start point on map` for the hard-coded Latvia coordinates used by the tests.
+  - The problem is that `map-data/output` is treated as an implicit shared fixture, but its contents are not pinned to the test assumptions.
+  - Prefer either:
+    - checked-in deterministic RMDF fixture data that matches the test coordinates, or
+    - synthetic per-test fixture generation like the existing synthetic JSON/GPX route tests.
+  - Avoid tests depending on whatever local dataset last populated `map-data/output`.
 
-Related review files:
-- `todo-review-rules-serialization.md`
-- `todo-review-turn-restrictions-rule-model.md`
+## P1 — Routing robustness
 
-## Post-refactor architecture follow-up
+- Harden tile-backed lookup failures for library use.
+  - `crates/ridi-router-routing/src/map_data/graph.rs` still uses `expect(...)` / `unwrap(...)` for tile-backed point, line, adjacency, and rule lookups.
+  - `crates/ridi-router-routing/src/rmdf/tile_manager.rs` still has internal `unwrap()` assumptions after `ensure_tile_loaded(...)`.
+  - Corrupt tiles, invalid refs, or wrong-context misuse can still panic instead of returning structured errors.
 
-These are worth revisiting after the `generation` refactor lands.
+- Add guardrails against cross-graph ref misuse.
+  - `MapDataPointRef`, `MapDataLineRef`, and tag refs only carry `tile_id` + `element_id`.
+  - They are not tied to a specific `MapDataGraph` / `RoutingContext`, so internal callers can still resolve refs through the wrong graph instance.
+  - Decide whether to use graph identity checks, debug assertions, or fallible resolution APIs.
 
-- Reassess what overlap still exists between `ridi-router-tiles` generation types and `ridi-router-routing` runtime types.
-  - Do this after the tiles crate is generation-shaped.
-  - Do not force a shared crate before that cleanup lands.
-- Re-evaluate whether any remaining shared concepts should move into a common crate later.
-  - Especially low-level non-runtime data types, if any still remain duplicated after the refactor.
+## P1 — Restriction coverage
 
-## Routing/runtime parity checks
+- Extend generation support beyond the currently supported node-based restriction subset.
+  - `crates/ridi-router-tiles/src/generation/graph.rs` currently skips:
+    - via-way restrictions
+    - `*:conditional` restrictions
+    - `except=*` restrictions
+    - `restriction:*` variants
+    - malformed / unresolved restriction relations
+  - Decide what should be supported, what should stay unsupported, and what should be surfaced more clearly to users.
 
-- Verify whether tile-backed routing behavior still differs from in-memory/test-only graph behavior after the generation refactor.
-- Identify any routing tests that currently pass only because they rely on test helpers instead of tile-backed RMDF data.
+- Add end-to-end tile-backed restriction tests.
+  - Current coverage already exists for:
+    - restriction materialization in generation
+    - RMDF rule serialization
+    - RMDF rule hydration in routing
+    - nearest-point filtering behavior in `TileManager`
+  - Still missing: an integration test proving that tile-generated restriction data changes actual routed output end to end.
 
+## P2 — Cleanup
 
-## Test fixture follow-up
+- Trim warning / dead-code noise reported by `cargo test --workspace -q`.
+  - Current warnings include unused exports/imports in `ridi-router-tiles`, dead code in `ridi-router-routing`, and a small `unused_mut` test warning.
+  - Good cleanup targets from the latest test run:
+    - `crates/ridi-router-tiles/src/proximity/mod.rs`
+    - `crates/ridi-router-tiles/src/rmdf/generator/manifest.rs`
+    - `crates/ridi-router-tiles/src/rmdf/mod.rs`
+    - `crates/ridi-router-routing/src/rmdf/io.rs`
+    - `crates/ridi-router-routing/src/rmdf/validation.rs`
+    - `crates/ridi-router-routing/src/router/itinerary.rs`
+    - `crates/ridi-router-tiles/tests/public_api_success.rs`
 
-- Restore or replace the workspace `map-data/output` RMDF fixture expected by `ridi-router-cli` end-to-end tests.
-  - Current state: `cargo test -p ridi-router-cli` fails in this checkout because `map-data/output/manifest.json` is missing.
-  - Prefer a deterministic checked-in synthetic fixture or per-test setup over an implicit local generated dataset.
+## Closed / no longer open
 
-- Document current local bootstrap path for missing fixtures.
-  - `./dev.sh pbf montenegro` creates `map-data/pbf/montenegro-latest.osm.pbf`, which unblocks `crates/ridi-router-cli/tests/generate_tiles_cli.rs`.
-  - `./dev.sh generate-tiles latvia` creates `map-data/output`, which unblocks the route CLI tests that currently expect `map-data/output/manifest.json`.
-  - This path is networked, slow, and mutates shared workspace directories, so it should remain a temporary local bootstrap, not the final stable test-fixture strategy.
-- Replace implicit workspace fixture assumptions in tests with deterministic fixtures.
-  - Prefer checked-in small synthetic RMDF fixtures or per-test fixture generation helpers over relying on `map-data/output` existing locally.
-  - Avoid tests depending on `./dev.sh` side effects or downloaded Geofabrik datasets.
+These were previously tracked in stale review docs, but they are already implemented and should not remain open todos:
+- basic RMDF rule serialization
+- RMDF rule reading on the routing side
+- runtime point rule hydration from tiles
+- nearest-point rules filtering
+- nearest-point highway filtering
+- grid-ring nearest search
