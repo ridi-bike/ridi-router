@@ -17,9 +17,10 @@ use crate::{
 use self::segment::Segment;
 
 const LOOP_DISTANCE_THRESHOLD: f32 = 50.;
-const LOOP_SEGMENT_THESHOLD: usize = 10;
+const LOOP_SEGMENT_THRESHOLD: usize = 10;
+// Roughly 33 m of latitude per bucket. That keeps nearby-loop candidate sets small while
+// a 3x3 neighbor-cell search still comfortably covers the 50 m loop threshold.
 const LOOP_CELL_SIZE_DEGREES: f32 = 0.0003;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RoadKey(SmartString);
 
@@ -221,7 +222,7 @@ impl LoopDetector {
                 if candidate_idx < since_idx || candidate_idx >= current_idx {
                     continue;
                 }
-                if current_idx - candidate_idx <= LOOP_SEGMENT_THESHOLD {
+                if current_idx - candidate_idx <= LOOP_SEGMENT_THRESHOLD {
                     continue;
                 }
 
@@ -256,6 +257,10 @@ impl LoopDetector {
     }
 
     fn squared_distance_m(a: &LoopMeta, b: &LoopMeta) -> f32 {
+        // This intentionally uses a cheap local planar approximation instead of haversine.
+        // For this detector we only compare very small distances against a 50 m threshold,
+        // so the approximation error is not meaningful while the lower cost helps keep the
+        // loop check hot path tiny.
         let mean_lat_rad = ((a.lat + b.lat) * 0.5).to_radians();
         let meters_per_degree_lat = 111_320.0_f32;
         let meters_per_degree_lon = meters_per_degree_lat * mean_lat_rad.cos();
