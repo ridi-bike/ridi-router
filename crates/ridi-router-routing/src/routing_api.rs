@@ -9,7 +9,6 @@ use tracing::trace;
 
 use crate::{
     map_data::graph::MapDataGraph,
-    rmdf::generator::manifest::TileManifest,
     route_output::RouteComputation,
     router::{
         generator::{Generator, GeneratorError, WP_LOOKUP_ALLOWED_HWS},
@@ -17,6 +16,7 @@ use crate::{
     },
     RoutingContext,
 };
+use ridi_router_common::manifest::TileManifest;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Coords {

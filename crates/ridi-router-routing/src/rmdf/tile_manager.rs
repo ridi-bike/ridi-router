@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use crate::router::rules::{RouterRules, RulesTagValueAction};
 
 use super::format::*;
-use super::generator::manifest::TileManifest;
+use ridi_router_common::manifest::TileManifest;
 use super::io::MappedTile;
 
 pub struct TileManager {

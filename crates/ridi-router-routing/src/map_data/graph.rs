@@ -12,6 +12,7 @@ use crate::{
     rmdf::format::{TagSetRecord, TileId},
     router::rules::RouterRules,
 };
+use ridi_router_common::manifest::TileManifest;
 
 use super::{
     line::MapDataLine,
@@ -177,10 +178,7 @@ impl MapDataGraph {
         }
     }
 
-    pub fn open(
-        tiles_dir: std::path::PathBuf,
-        manifest: crate::rmdf::generator::manifest::TileManifest,
-    ) -> Self {
+    pub fn open(tiles_dir: std::path::PathBuf, manifest: TileManifest) -> Self {
         Self::new(crate::rmdf::TileManager::from_manifest(manifest, tiles_dir))
     }
 
@@ -188,7 +186,6 @@ impl MapDataGraph {
     #[cfg(test)]
     pub fn new_test() -> Self {
         // Create a minimal TileManager with an empty manifest
-        use crate::rmdf::generator::manifest::TileManifest;
         let manifest = TileManifest {
             version: "test".to_string(),
             tile_size_degrees: 1.0,
