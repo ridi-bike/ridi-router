@@ -18,6 +18,11 @@ use cli::rendering::render_user_error;
 use router_runner::RouterRunner;
 use tracing::{error_span, Level};
 
+#[hotpath::main(
+    percentiles = [50, 95, 99],
+    limit = 0,
+    report = "functions-timing,functions-alloc"
+ )]
 fn main() {
     let subscriber = if std::io::stdin().is_terminal() {
         let subscriber = tracing_subscriber::fmt()

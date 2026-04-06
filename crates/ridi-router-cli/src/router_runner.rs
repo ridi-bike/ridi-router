@@ -218,6 +218,7 @@ enum CliMode {
 
 pub struct RouterRunner;
 
+#[hotpath::measure_all]
 impl RouterRunner {
     fn build_route_request(routing_mode: &RoutingMode, rules: RouterRules) -> RouteRequest {
         let mode = match routing_mode {

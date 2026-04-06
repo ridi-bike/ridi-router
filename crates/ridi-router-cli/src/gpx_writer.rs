@@ -25,6 +25,7 @@ fn sort_by_longest(map: HashMap<String, RouteStatElement>) -> Vec<(String, Route
     vec
 }
 
+#[hotpath::measure_all]
 impl GpxWriter {
     pub fn new(routes: Vec<ComputedRoute>, output_dir: PathBuf) -> Self {
         Self { routes, output_dir }

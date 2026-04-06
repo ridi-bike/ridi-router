@@ -175,6 +175,7 @@ pub struct Navigator {
     discarded_fork_choices: DiscardedForkChoices,
 }
 
+#[hotpath::measure_all]
 impl Navigator {
     pub fn new(
         itinerary: Itinerary,

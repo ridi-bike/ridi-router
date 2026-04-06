@@ -12,6 +12,7 @@ pub struct Clustering {
     pub labels: Vec<i32>,
 }
 
+#[hotpath::measure_all]
 impl Clustering {
     pub fn generate(ctx: &RoutingContext<'_>, routes: &Vec<Route>) -> Option<Self> {
         let mut approximated_routes = Vec::new();

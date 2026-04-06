@@ -88,12 +88,24 @@ download_pbf() {
 }
 
 run_cli_release() {
-    cargo run -p ridi-router-cli --release -- "$@"
+    local features="${RIDI_ROUTER_CLI_FEATURES:-}"
+    if [[ -n "$features" ]]; then
+        cargo run -p ridi-router-cli --release --features="$features" -- "$@"
+    else
+        cargo run -p ridi-router-cli --release -- "$@"
+    fi
 }
 
 run_cli_release_with_features() {
     local features="$1"
     shift
+    if [[ -n "${RIDI_ROUTER_CLI_FEATURES:-}" ]]; then
+        if [[ -n "$features" ]]; then
+            features="$features,${RIDI_ROUTER_CLI_FEATURES}"
+        else
+            features="${RIDI_ROUTER_CLI_FEATURES}"
+        fi
+    fi
     cargo run -p ridi-router-cli --release --features="$features" -- "$@"
 }
 

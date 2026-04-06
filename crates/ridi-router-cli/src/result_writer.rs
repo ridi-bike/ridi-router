@@ -32,6 +32,7 @@ pub struct RouteOutputRequest {
 }
 
 pub struct ResultWriter;
+#[hotpath::measure_all]
 impl ResultWriter {
     #[tracing::instrument(skip(computation))]
     pub fn write(

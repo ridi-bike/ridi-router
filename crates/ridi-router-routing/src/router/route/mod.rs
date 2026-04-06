@@ -115,6 +115,7 @@ impl Route {
             }
         }
     }
+    #[hotpath::measure]
     pub fn has_looped(
         &self,
         ctx: &RoutingContext<'_>,
@@ -170,6 +171,7 @@ impl Route {
         }
         false
     }
+    #[hotpath::measure]
     pub fn is_back_on_road_within_distance(
         &self,
         ctx: &RoutingContext<'_>,
@@ -250,6 +252,7 @@ impl Route {
             .cloned()
     }
 
+    #[hotpath::measure]
     pub fn calc_stats(&self, ctx: &RoutingContext<'_>, rules: &RouterRules) -> RouteStats {
         fn update_map(tag_val: &Option<String>, line_len: f64, map: &mut HashMap<String, f64>) {
             if let Some(tag_val) = tag_val {

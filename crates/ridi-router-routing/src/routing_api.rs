@@ -86,6 +86,7 @@ pub enum RoutingGenerationError {
     RouteGeneration { error: GeneratorError },
 }
 
+#[hotpath::measure_all]
 impl RoutingExecutor {
     pub(crate) fn new(graph: Arc<MapDataGraph>) -> Self {
         Self { graph }
@@ -132,16 +133,24 @@ impl RoutingExecutor {
             .ok_or(RoutingGenerationError::PointNotFound { point })
         };
 
-        let start = snap_point(start_coords, "start point")?;
-        let finish = snap_point(finish_coords, "finish point")?;
+        let start = hotpath::measure_block!("routing_executor.snap_start", {
+            snap_point(start_coords, "start point")?
+        });
+        let finish = hotpath::measure_block!("routing_executor.snap_finish", {
+            snap_point(finish_coords, "finish point")?
+        });
 
-        let routes = Generator::new(start, finish, round_trip, request.rules)
-            .generate_routes(&ctx)
-            .map_err(|error| RoutingGenerationError::RouteGeneration { error })?;
+        let routes = hotpath::measure_block!("routing_executor.generate_routes", {
+            Generator::new(start, finish, round_trip, request.rules)
+                .generate_routes(&ctx)
+                .map_err(|error| RoutingGenerationError::RouteGeneration { error })?
+        });
 
-        Ok(RouteComputation::from_routes(&ctx, routes))
+        Ok(hotpath::measure_block!(
+            "routing_executor.materialize_route_output",
+            RouteComputation::from_routes(&ctx, routes)
+        ))
     }
-
 }
 
 fn validate_tiles_manifest(tiles_dir: &Path) -> Result<TileManifest, RoutingOpenError> {

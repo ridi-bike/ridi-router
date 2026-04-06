@@ -7,6 +7,9 @@ edition.workspace = true
 default = []
 rule-schema-writer = []
 debug-polygons = []
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
+hotpath-mcp = ["hotpath", "hotpath/hotpath-mcp"]
 
 [dependencies]
 anyhow.workspace = true
@@ -31,6 +34,7 @@ thiserror.workspace = true
 tracing.workspace = true
 wide.workspace = true
 ridi-router-common = { path = "../ridi-router-common" }
+hotpath.workspace = true
 
 [dev-dependencies]
 rusty-fork.workspace = true

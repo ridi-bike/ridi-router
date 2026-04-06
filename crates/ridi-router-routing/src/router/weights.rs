@@ -95,6 +95,7 @@ fn point_is_nogo(
     ctx.point(point).nogo_area
 }
 
+#[hotpath::measure]
 pub fn weight_heading(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_heading");
 
@@ -140,6 +141,7 @@ pub fn weight_heading(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     ))
 }
 
+#[hotpath::measure]
 pub fn weight_prefer_same_road(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_prefer_same_road");
     if !input.rules.basic.prefer_same_road.enabled {
@@ -167,6 +169,7 @@ pub fn weight_prefer_same_road(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_no_loops(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_no_loops");
     if input
@@ -179,6 +182,7 @@ pub fn weight_no_loops(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_no_sharp_turns(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_no_sharp_turns");
 
@@ -200,6 +204,7 @@ pub fn weight_no_sharp_turns(input: WeightCalcInput<'_, '_>) -> WeightCalcResult
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_no_short_detours(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_no_short_detours");
     if !input.rules.basic.no_short_detours.enabled
@@ -222,6 +227,7 @@ pub fn weight_no_short_detours(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_check_distance_to_next(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_check_distance_to_next");
 
@@ -259,6 +265,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput<'_, '_>) -> WeightCa
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_progress_speed(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_progress_speed");
 
@@ -325,6 +332,7 @@ fn is_last_point_near_residential(input: &WeightCalcInput<'_, '_>) -> bool {
     }
 }
 
+#[hotpath::measure]
 pub fn weight_rules_highway(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_rules_highway");
 
@@ -360,6 +368,7 @@ pub fn weight_rules_highway(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_rules_surface(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_rules_surface");
 
@@ -395,6 +404,7 @@ pub fn weight_rules_surface(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_rules_smoothness(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_rules_smoothness");
 
@@ -431,6 +441,7 @@ pub fn weight_rules_smoothness(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
 
+#[hotpath::measure]
 pub fn weight_avoid_nogo_areas(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_avoid_nogo_areas");
     if point_is_nogo(input.ctx, input.current_fork_segment.get_end_point()) {
@@ -474,6 +485,7 @@ where
     false
 }
 
+#[hotpath::measure]
 pub fn weight_check_avoid_rules(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_check_avoid_rules");
 

@@ -36,6 +36,7 @@ impl Display for Itinerary {
     }
 }
 
+#[hotpath::measure_all]
 impl Itinerary {
     pub fn new_start_finish(
         start: MapDataPointRef,

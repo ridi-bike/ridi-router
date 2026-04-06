@@ -18,6 +18,17 @@ rmdf-viewer = [
   "dep:ts-rs",
 ]
 debug-polygons = []
+hotpath = ["hotpath/hotpath", "ridi-router-routing/hotpath"]
+hotpath-alloc = [
+  "hotpath",
+  "hotpath/hotpath-alloc",
+  "ridi-router-routing/hotpath-alloc",
+]
+hotpath-mcp = [
+  "hotpath",
+  "hotpath/hotpath-mcp",
+  "ridi-router-routing/hotpath-mcp",
+]
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
@@ -38,6 +49,7 @@ ts-rs = { workspace = true, optional = true }
 ridi-router-routing = { path = "../ridi-router-routing" }
 ridi-router-common = { path = "../ridi-router-common", optional = true }
 ridi-router-tiles = { path = "../ridi-router-tiles" }
+hotpath.workspace = true
 
 [dev-dependencies]
 rusty-fork.workspace = true

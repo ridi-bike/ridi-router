@@ -45,6 +45,7 @@ tracing-subscriber = { version = "0.3.18", features = ["json"] }
 ts-rs = "10"
 typeshare = { version = "1.0.4", default-features = false }
 wide = "0.7"
+hotpath = "0.14.1"
 num-traits = "0.2"
 wkt = "0.14.0"
 static_vcruntime = "2.0"

@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use crate::router::rules::{RouterRules, RulesTagValueAction};
 
 use super::format::*;
-use ridi_router_common::manifest::TileManifest;
 use super::io::MappedTile;
+use ridi_router_common::manifest::TileManifest;
 
 pub struct TileManager {
     tile_dir: PathBuf,
@@ -44,6 +44,7 @@ struct AdjacentLineTags {
     smoothness: Option<String>,
 }
 
+#[hotpath::measure_all]
 impl TileManager {
     /// Initialize TileManager from directory containing manifest.json
     pub fn new(tile_dir: PathBuf) -> Result<Self> {

@@ -5,14 +5,14 @@ use std::{
     marker::PhantomData,
 };
 
-use serde::{Deserialize, Serialize};
-use tracing::warn;
 use crate::{
     map_data::line::LineDirection,
     rmdf::format::{TagSetRecord, TileId},
     router::rules::RouterRules,
 };
 use ridi_router_common::manifest::TileManifest;
+use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use super::{
     line::MapDataLine,
@@ -166,6 +166,7 @@ pub struct MapDataGraph {
     test_lines: std::sync::RwLock<std::collections::HashMap<u64, MapDataLine>>,
 }
 
+#[hotpath::measure_all]
 impl MapDataGraph {
     pub fn new(tile_manager: crate::rmdf::TileManager) -> Self {
         Self {

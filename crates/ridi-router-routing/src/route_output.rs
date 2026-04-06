@@ -16,6 +16,7 @@ pub struct RouteComputation {
     pub routes: Vec<ComputedRoute>,
 }
 
+#[hotpath::measure_all]
 impl ComputedRoute {
     fn from_route(ctx: &RoutingContext<'_>, route: RouteWithStats) -> Self {
         Self {
@@ -32,6 +33,7 @@ impl ComputedRoute {
     }
 }
 
+#[hotpath::measure_all]
 impl RouteComputation {
     pub(crate) fn from_routes(ctx: &RoutingContext<'_>, routes: Vec<RouteWithStats>) -> Self {
         Self {

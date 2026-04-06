@@ -29,6 +29,7 @@ pub enum WalkerMoveResult {
     Finish,
 }
 
+#[hotpath::measure_all]
 impl Walker {
     pub fn new(start: MapDataPointRef) -> Self {
         Self {
