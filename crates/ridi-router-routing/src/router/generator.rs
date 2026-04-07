@@ -356,11 +356,13 @@ impl Generator {
                 let itinerary_count = itineraries.len();
 
                 let route_gen_start_instant = Instant::now();
+                let graph = ctx.graph();
 
                 let mut routes_new = hotpath::measure_block!("generator.navigate_itineraries", {
                     itineraries
                         .into_par_iter()
                         .map(|itinerary| {
+                            let task_ctx = RoutingContext::new(graph);
                             Navigator::new(
                                 itinerary,
                                 self.rules.clone(),
@@ -428,7 +430,7 @@ impl Generator {
                                 ],
                                 self.round_trip.is_some(),
                             )
-                            .generate_routes_with_context(ctx)
+                            .generate_routes_with_context(&task_ctx)
                         })
                         .filter_map(|nav_route| match nav_route {
                             NavigationResult::Stuck => None,

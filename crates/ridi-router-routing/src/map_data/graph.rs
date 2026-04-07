@@ -45,7 +45,7 @@ impl ElementTagValueRef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagSetRef {
     pub tile_id: TileId,
     pub tag_set_idx: u32,

@@ -68,3 +68,11 @@ Because `RoutingContext` is currently a thin immutable wrapper, the cache plumbi
 
 ## Rollback plan
 If wiring all caches at once is noisy, land point cache first, then line cache, then tag caches in separate commits within this phase.
+
+
+## Implementation notes
+- Added task-local `RoutingContext` caches for `MapDataPoint`, `MapDataLine`, and `ElementTagSet`.
+- Cache keys are `MapDataPointRef`, `MapDataLineRef`, and `ElementTagSetRef`.
+- `Generator` now creates a fresh `RoutingContext` per Rayon itinerary task, so caches stay worker-local and are never shared across threads.
+- Caches are intentionally unbounded in this phase.
+- `tag_value` caching was left out on purpose, per the phase plan, until profiling shows it is still worth adding.
