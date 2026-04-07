@@ -347,6 +347,27 @@ impl TileManager {
             .collect()
     }
 
+    pub(crate) fn get_line_indices_for_point(
+        &mut self,
+        tile_id: TileId,
+        point: &PointRecord,
+    ) -> Result<Vec<u64>> {
+        self.ensure_tile_loaded(tile_id)?;
+
+        let tile = self.loaded_tiles.get(&tile_id).unwrap();
+        let line_refs = tile.get_line_refs()?;
+        let (start, end) =
+            Self::checked_range(point.lines_offset, point.lines_count, line_refs.len())
+                .with_context(|| {
+                    format!(
+                        "Line slice for point {} is out of bounds in tile {:?}",
+                        point.osm_id, tile_id
+                    )
+                })?;
+
+        Ok(line_refs[start..end].to_vec())
+    }
+
     /// Get closest point to coordinates with filtering
     /// Returns (TileId, osm_id) tuple
     pub fn get_closest_to_coords(

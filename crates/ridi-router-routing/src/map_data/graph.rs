@@ -280,43 +280,48 @@ impl MapDataGraph {
 
         let mut tm = self.tile_manager.write().unwrap();
 
-        // Get point data
         let point_record = tm
             .get_point_by_id(tile_id, osm_id)
             .expect("Failed to get point from tile");
 
-        // Get adjacent lines for this point
-        let adjacent = tm
-            .get_adjacent_by_id(tile_id, osm_id)
-            .expect("Failed to get adjacent lines");
+        let lines = if point_record.lines_count == 0 {
+            Vec::new()
+        } else {
+            let line_indices = tm
+                .get_line_indices_for_point(tile_id, &point_record)
+                .expect("Failed to get line refs from tile");
+            let mut lines = Vec::with_capacity(point_record.lines_count as usize);
+            for line_index in line_indices {
+                lines.push(MapDataLineRef::new(tile_id, line_index));
+            }
+            lines
+        };
 
-        let lines: Vec<MapDataLineRef> = adjacent
-            .iter()
-            .map(|(line_tile_id, line_index, _, _)| {
-                MapDataLineRef::new(*line_tile_id, *line_index as u64)
-            })
-            .collect();
+        let rules = if point_record.rules_count == 0 {
+            Vec::new()
+        } else {
+            let point_rules = tm
+                .get_rules_for_point(tile_id, &point_record)
+                .expect("Failed to get rules from tile");
+            let mut rules = Vec::with_capacity(point_record.rules_count as usize);
+            for rule in point_rules {
+                rules.push(MapDataRule {
+                    from_lines: rule
+                        .from_line_indices
+                        .into_iter()
+                        .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                        .collect(),
+                    to_lines: rule
+                        .to_line_indices
+                        .into_iter()
+                        .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                        .collect(),
+                    rule_type: Self::deserialize_rule_type(rule.rule_type),
+                });
+            }
+            rules
+        };
 
-        let rules: Vec<MapDataRule> = tm
-            .get_rules_for_point(tile_id, &point_record)
-            .expect("Failed to get rules from tile")
-            .into_iter()
-            .map(|rule| MapDataRule {
-                from_lines: rule
-                    .from_line_indices
-                    .into_iter()
-                    .map(|line_index| MapDataLineRef::new(tile_id, line_index))
-                    .collect(),
-                to_lines: rule
-                    .to_line_indices
-                    .into_iter()
-                    .map(|line_index| MapDataLineRef::new(tile_id, line_index))
-                    .collect(),
-                rule_type: Self::deserialize_rule_type(rule.rule_type),
-            })
-            .collect();
-
-        // Convert to MapDataPoint
         MapDataPoint {
             id: point_record.osm_id,
             lat: point_record.lat,
@@ -477,7 +482,7 @@ mod tests {
     use super::*;
     use ridi_router_test_support::rmdf::{
         empty_neighbors, manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord,
-        PointRecord, RuleRecord, TileId, TileManifest, TileMetadata, TileSpec,
+        PointRecord, RuleRecord, TileId, TileManifest, TileMetadata, TileNeighbors, TileSpec,
         SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
     };
 
@@ -489,7 +494,14 @@ mod tests {
         let point = graph.get_point_from_tiles(fixture.tile_id, fixture.via_osm_id);
 
         assert_eq!(point.id, fixture.via_osm_id);
-        assert_eq!(point.lines.len(), 3);
+        assert_eq!(
+            point.lines,
+            vec![
+                MapDataLineRef::new(fixture.tile_id, 0),
+                MapDataLineRef::new(fixture.tile_id, 1),
+                MapDataLineRef::new(fixture.tile_id, 2),
+            ]
+        );
         assert_eq!(point.rules.len(), 2);
 
         assert_eq!(point.rules[0].rule_type, MapDataRuleType::OnlyAllowed);
@@ -529,11 +541,56 @@ mod tests {
         fs::remove_dir_all(fixture.dir).unwrap();
     }
 
+    #[test]
+    fn test_get_point_from_tiles_keeps_points_without_lines() {
+        let fixture = create_rule_fixture("map-data-graph-no-lines");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let point = graph.get_point_from_tiles(fixture.tile_id, fixture.isolated_osm_id);
+
+        assert_eq!(point.id, fixture.isolated_osm_id);
+        assert!(point.lines.is_empty());
+        assert!(point.rules.is_empty());
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_adjacent_keeps_cross_tile_behavior() {
+        let fixture = create_cross_tile_fixture("map-data-graph-cross-tile-adjacent");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let adjacent =
+            graph.get_adjacent(MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id));
+
+        assert_eq!(adjacent.len(), 2);
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_a, 0),
+            MapDataPointRef::new(fixture.tile_a, fixture.in_tile_neighbor_osm_id),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_a, 1),
+            MapDataPointRef::new(fixture.tile_b, fixture.cross_tile_neighbor_osm_id),
+        )));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
     struct RuleFixture {
         dir: std::path::PathBuf,
         tile_id: TileId,
         via_osm_id: u64,
         to_osm_id: u64,
+        isolated_osm_id: u64,
+    }
+
+    struct CrossTileFixture {
+        dir: std::path::PathBuf,
+        tile_a: TileId,
+        tile_b: TileId,
+        center_osm_id: u64,
+        in_tile_neighbor_osm_id: u64,
+        cross_tile_neighbor_osm_id: u64,
     }
 
     fn create_rule_fixture(prefix: &str) -> RuleFixture {
@@ -544,6 +601,7 @@ mod tests {
         let via_osm_id = 2001;
         let to_osm_id = 2002;
         let side_osm_id = 2003;
+        let isolated_osm_id = 2004;
 
         let points = vec![
             PointRecord {
@@ -590,6 +648,18 @@ mod tests {
                 lines_count: 1,
                 _padding1: 0,
                 rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+            PointRecord {
+                osm_id: isolated_osm_id,
+                lat: 10.13,
+                lon: 20.12,
+                lines_offset: 6,
+                lines_count: 0,
+                _padding1: 0,
+                rules_offset: 2,
                 rules_count: 0,
                 flags: 0,
                 _padding2: 0,
@@ -690,7 +760,7 @@ mod tests {
                     bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
                     neighbors: empty_neighbors(),
                     size_bytes: fs::metadata(&tile_path).unwrap().len(),
-                    point_count: 4,
+                    point_count: 5,
                     line_count: 3,
                     checksum: "sha256:test".to_string(),
                     military_geojson_filename: None,
@@ -703,6 +773,190 @@ mod tests {
             tile_id,
             via_osm_id,
             to_osm_id,
+            isolated_osm_id,
+        }
+    }
+
+    fn create_cross_tile_fixture(prefix: &str) -> CrossTileFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let center_osm_id = 20_000;
+        let in_tile_neighbor_osm_id = 20_001;
+        let cross_tile_neighbor_osm_id = 20_002;
+
+        let bounds_a = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 20.0,
+            lon_max: 21.0,
+        };
+        let bounds_b = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 21.0,
+            lon_max: 22.0,
+        };
+
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                spatial_index: Vec::new(),
+                points: vec![
+                    PointRecord {
+                        osm_id: center_osm_id,
+                        lat: 10.50,
+                        lon: 20.95,
+                        lines_offset: 0,
+                        lines_count: 2,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: in_tile_neighbor_osm_id,
+                        lat: 10.60,
+                        lon: 20.80,
+                        lines_offset: 2,
+                        lines_count: 1,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                ],
+                lines: vec![
+                    LineRecord {
+                        point_a_osm_id: center_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.95,
+                        point_b_osm_id: in_tile_neighbor_osm_id,
+                        point_b_lat: 10.60,
+                        point_b_lon: 20.80,
+                        direction: 0,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                    LineRecord {
+                        point_a_osm_id: center_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.95,
+                        point_b_osm_id: cross_tile_neighbor_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 21.05,
+                        direction: 0,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                ],
+                line_refs: vec![0, 1, 0],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                spatial_index: Vec::new(),
+                points: vec![PointRecord {
+                    osm_id: cross_tile_neighbor_osm_id,
+                    lat: 10.50,
+                    lon: 21.05,
+                    lines_offset: 0,
+                    lines_count: 0,
+                    _padding1: 0,
+                    rules_offset: 0,
+                    rules_count: 0,
+                    flags: 0,
+                    _padding2: 0,
+                }],
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_a_filename = tile_a.to_filename();
+        let tile_b_filename = tile_b.to_filename();
+        write_manifest(
+            &dir,
+            &TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: 1.0,
+                format_version: 1,
+                generated_at: "2026-04-05T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: vec![
+                    TileMetadata {
+                        filename: tile_a_filename.clone(),
+                        col: tile_a.col,
+                        row: tile_a.row,
+                        bounds: manifest_bounds(bounds_a),
+                        neighbors: TileNeighbors {
+                            north: None,
+                            south: None,
+                            east: Some(tile_b_filename.clone()),
+                            west: None,
+                            northeast: None,
+                            northwest: None,
+                            southeast: None,
+                            southwest: None,
+                        },
+                        size_bytes: fs::metadata(&tile_a_path).unwrap().len(),
+                        point_count: 2,
+                        line_count: 2,
+                        checksum: "sha256:graph-cross-a".to_string(),
+                        military_geojson_filename: None,
+                    },
+                    TileMetadata {
+                        filename: tile_b_filename,
+                        col: tile_b.col,
+                        row: tile_b.row,
+                        bounds: manifest_bounds(bounds_b),
+                        neighbors: TileNeighbors {
+                            north: None,
+                            south: None,
+                            east: None,
+                            west: Some(tile_a_filename),
+                            northeast: None,
+                            northwest: None,
+                            southeast: None,
+                            southwest: None,
+                        },
+                        size_bytes: fs::metadata(&tile_b_path).unwrap().len(),
+                        point_count: 1,
+                        line_count: 0,
+                        checksum: "sha256:graph-cross-b".to_string(),
+                        military_geojson_filename: None,
+                    },
+                ],
+            },
+        );
+
+        CrossTileFixture {
+            dir,
+            tile_a,
+            tile_b,
+            center_osm_id,
+            in_tile_neighbor_osm_id,
+            cross_tile_neighbor_osm_id,
         }
     }
 }
