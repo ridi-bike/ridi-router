@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use geo::{Distance, Haversine, Point};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
     map_data::{
@@ -19,11 +20,32 @@ use super::format::*;
 use super::io::MappedTile;
 use ridi_router_common::manifest::TileManifest;
 
+struct LoadedTile {
+    tile: MappedTile,
+    last_used: AtomicU64,
+}
+
+impl LoadedTile {
+    fn new(tile: MappedTile, last_used: u64) -> Self {
+        Self {
+            tile,
+            last_used: AtomicU64::new(last_used),
+        }
+    }
+
+    fn touch(&self, access_epoch: u64) {
+        self.last_used.store(access_epoch, Ordering::Relaxed);
+    }
+
+    fn last_used(&self) -> u64 {
+        self.last_used.load(Ordering::Relaxed)
+    }
+}
+
 pub struct TileManager {
     tile_dir: PathBuf,
-    loaded_tiles: HashMap<TileId, MappedTile>,
-    loaded_tile_order: [TileId; MAX_LOADED_TILES],
-    loaded_tile_order_len: usize,
+    loaded_tiles: HashMap<TileId, LoadedTile>,
+    access_epoch: AtomicU64,
     #[cfg(test)]
     loaded_tiles_limit: usize,
     tile_size_degrees: f32,
@@ -58,18 +80,14 @@ impl TileManager {
 
     /// Create TileManager from manifest directly
     pub fn from_manifest(manifest: TileManifest, tile_dir: PathBuf) -> Self {
-        let tile_size_degrees = manifest.tile_size_degrees;
-        let manager = Self {
+        Self {
             tile_dir,
             loaded_tiles: HashMap::new(),
-            loaded_tile_order: [TileId::default(); MAX_LOADED_TILES],
-            loaded_tile_order_len: 0,
+            access_epoch: AtomicU64::new(0),
             #[cfg(test)]
             loaded_tiles_limit: MAX_LOADED_TILES,
-            tile_size_degrees,
-        };
-        manager.debug_assert_registry_invariants();
-        manager
+            tile_size_degrees: manifest.tile_size_degrees,
+        }
     }
 
     #[cfg(test)]
@@ -84,7 +102,7 @@ impl TileManager {
         );
         assert!(
             loaded_tiles_limit <= MAX_LOADED_TILES,
-            "test loaded tiles limit {} exceeds order capacity {}",
+            "test loaded tiles limit {} exceeds capacity {}",
             loaded_tiles_limit,
             MAX_LOADED_TILES
         );
@@ -109,137 +127,43 @@ impl TileManager {
         TileId::from_coords(lat, lon, self.tile_size_degrees)
     }
 
-    fn debug_assert_registry_invariants(&self) {
-        debug_assert_eq!(
-            self.loaded_tiles.len(),
-            self.loaded_tile_order_len,
-            "loaded tile registry order length mismatch"
-        );
-
-        let active_order = &self.loaded_tile_order[..self.loaded_tile_order_len];
-        let mut seen = std::collections::HashSet::with_capacity(active_order.len());
-
-        for &loaded_tile_id in active_order {
-            debug_assert!(
-                seen.insert(loaded_tile_id),
-                "loaded tile registry order contains duplicates: {:?}",
-                loaded_tile_id
-            );
-            debug_assert!(
-                self.loaded_tiles.contains_key(&loaded_tile_id),
-                "loaded tile registry order contains unloaded tile: {:?}",
-                loaded_tile_id
-            );
-        }
-
-        debug_assert_eq!(
-            seen.len(),
-            self.loaded_tiles.len(),
-            "loaded tile registry order does not cover all loaded tiles"
-        );
+    fn next_access_epoch(&self) -> u64 {
+        self.access_epoch.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    fn append_loaded_tile(&mut self, tile_id: TileId) -> Option<TileId> {
-        debug_assert_eq!(
-            self.loaded_tiles.len(),
-            self.loaded_tile_order_len + 1,
-            "loaded tile registry map/order mismatch before append"
-        );
-        debug_assert!(
-            self.loaded_tiles.contains_key(&tile_id),
-            "appending tile {:?} that is not loaded",
-            tile_id
-        );
-        debug_assert!(
-            !self.loaded_tile_order[..self.loaded_tile_order_len].contains(&tile_id),
-            "tile {:?} already present in loaded tile registry order",
-            tile_id
-        );
-        debug_assert!(
-            self.loaded_tiles_limit() <= self.loaded_tile_order.len(),
-            "loaded tile registry limit {} exceeds order capacity {}",
-            self.loaded_tiles_limit(),
-            self.loaded_tile_order.len()
-        );
-
-        if self.loaded_tile_order_len < self.loaded_tiles_limit() {
-            self.loaded_tile_order[self.loaded_tile_order_len] = tile_id;
-            self.loaded_tile_order_len += 1;
-            self.debug_assert_registry_invariants();
-            return None;
-        }
-
-        debug_assert_eq!(
-            self.loaded_tile_order_len,
-            self.loaded_tiles_limit(),
-            "loaded tile registry order must be at logical capacity before replacement append"
-        );
-        debug_assert!(
-            self.loaded_tile_order_len > 0,
-            "loaded tile registry replacement append requires a positive limit"
-        );
-
-        let unloaded_tile_id = self.loaded_tile_order[0];
-        self.loaded_tile_order[..self.loaded_tile_order_len].rotate_left(1);
-        self.loaded_tile_order[self.loaded_tile_order_len - 1] = tile_id;
-        Some(unloaded_tile_id)
+    fn touch_loaded_tile(&self, loaded_tile: &LoadedTile) {
+        loaded_tile.touch(self.next_access_epoch());
     }
 
-    fn mark_tile_recent(&mut self, tile_id: TileId) {
-        self.debug_assert_registry_invariants();
-        let active_len = self.loaded_tile_order_len;
-        let Some(index) = self.loaded_tile_order[..active_len]
-            .iter()
-            .rposition(|loaded_tile_id| *loaded_tile_id == tile_id)
-        else {
-            panic!(
-                "loaded tile registry order missing tile {:?} during recency update",
-                tile_id
-            );
-        };
-
-        if index + 1 < active_len {
-            self.loaded_tile_order[index..active_len].rotate_left(1);
-        }
-        self.debug_assert_registry_invariants();
+    fn loaded_tile(&self, tile_id: TileId) -> Option<&LoadedTile> {
+        let loaded_tile = self.loaded_tiles.get(&tile_id)?;
+        self.touch_loaded_tile(loaded_tile);
+        Some(loaded_tile)
     }
 
-    fn unload_if_needed(&mut self, replaced_tile_id: Option<TileId>) -> Result<()> {
-        if let Some(tile_id) = replaced_tile_id {
-            let removed_tile = self.loaded_tiles.remove(&tile_id);
-            debug_assert!(
-                removed_tile.is_some(),
-                "replaced tile {:?} was missing from loaded tiles registry",
-                tile_id
-            );
-            tracing::debug!("Unloaded tile {:?}", tile_id);
-            self.debug_assert_registry_invariants();
-            return Ok(());
-        }
-
-        self.debug_assert_registry_invariants();
+    fn unload_if_needed(&mut self) -> Result<()> {
         if self.loaded_tiles.len() <= self.loaded_tiles_limit() {
             return Ok(());
         }
 
-        let tile_id = self.loaded_tile_order[0];
-        self.loaded_tiles.remove(&tile_id);
-        self.loaded_tile_order[..self.loaded_tile_order_len].rotate_left(1);
-        self.loaded_tile_order[self.loaded_tile_order_len - 1] = TileId::default();
-        self.loaded_tile_order_len -= 1;
-        tracing::debug!("Unloaded tile {:?}", tile_id);
+        let Some(tile_id) = self
+            .loaded_tiles
+            .iter()
+            .min_by_key(|(_, loaded_tile)| loaded_tile.last_used())
+            .map(|(tile_id, _)| *tile_id)
+        else {
+            return Ok(());
+        };
 
-        self.debug_assert_registry_invariants();
+        self.loaded_tiles.remove(&tile_id);
+        tracing::debug!(?tile_id, "Unloaded tile");
         Ok(())
     }
 
     /// Ensure tile is loaded (load if not already)
     fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()> {
-        self.debug_assert_registry_invariants();
-
-        if self.loaded_tiles.contains_key(&tile_id) {
-            self.mark_tile_recent(tile_id);
-            self.debug_assert_registry_invariants();
+        if let Some(loaded_tile) = self.loaded_tiles.get(&tile_id) {
+            self.touch_loaded_tile(loaded_tile);
             return Ok(());
         }
 
@@ -248,11 +172,10 @@ impl TileManager {
 
         let mapped_tile = MappedTile::load(&filepath)
             .with_context(|| format!("Failed to load tile: {:?}", filename))?;
+        let loaded_tile = LoadedTile::new(mapped_tile, self.next_access_epoch());
 
-        self.loaded_tiles.insert(tile_id, mapped_tile);
-        let replaced_tile_id = self.append_loaded_tile(tile_id);
-        self.unload_if_needed(replaced_tile_id)?;
-        self.debug_assert_registry_invariants();
+        self.loaded_tiles.insert(tile_id, loaded_tile);
+        self.unload_if_needed()?;
 
         Ok(())
     }
@@ -260,36 +183,46 @@ impl TileManager {
     /// Get point by OSM ID within a specific tile
     pub fn get_point_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<PointRecord> {
         self.ensure_tile_loaded(tile_id)?;
+        self.get_point_by_id_if_loaded(tile_id, osm_id)?
+            .with_context(|| format!("Point {} not found in tile {:?}", osm_id, tile_id))
+    }
 
-        let tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let points = tile.get_points()?;
+    pub(crate) fn get_point_by_id_if_loaded(
+        &self,
+        tile_id: TileId,
+        osm_id: u64,
+    ) -> Result<Option<PointRecord>> {
+        let Some(loaded_tile) = self.loaded_tile(tile_id) else {
+            return Ok(None);
+        };
+        let points = loaded_tile.tile.get_points()?;
 
-        // Linear search for now (could optimize with binary search if sorted)
-        for point in points {
-            if point.osm_id == osm_id {
-                return Ok(*point);
-            }
-        }
-
-        anyhow::bail!("Point {} not found in tile {:?}", osm_id, tile_id)
+        Ok(points.iter().find(|point| point.osm_id == osm_id).copied())
     }
 
     /// Get line by index within a specific tile
     pub fn get_line_by_index(&mut self, tile_id: TileId, line_index: usize) -> Result<LineRecord> {
         self.ensure_tile_loaded(tile_id)?;
+        self.get_line_by_index_if_loaded(tile_id, line_index)?
+            .with_context(|| {
+                format!(
+                    "Line index {} out of bounds in tile {:?}",
+                    line_index, tile_id
+                )
+            })
+    }
 
-        let tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let lines = tile.get_lines()?;
+    pub(crate) fn get_line_by_index_if_loaded(
+        &self,
+        tile_id: TileId,
+        line_index: usize,
+    ) -> Result<Option<LineRecord>> {
+        let Some(loaded_tile) = self.loaded_tile(tile_id) else {
+            return Ok(None);
+        };
+        let lines = loaded_tile.tile.get_lines()?;
 
-        if line_index < lines.len() {
-            Ok(lines[line_index])
-        } else {
-            anyhow::bail!(
-                "Line index {} out of bounds in tile {:?}",
-                line_index,
-                tile_id
-            )
-        }
+        Ok(lines.get(line_index).copied())
     }
 
     pub(crate) fn get_rules_for_point(
@@ -298,8 +231,19 @@ impl TileManager {
         point: &PointRecord,
     ) -> Result<Vec<MapDataRule>> {
         self.ensure_tile_loaded(tile_id)?;
+        self.get_rules_for_point_if_loaded(tile_id, point)?
+            .with_context(|| format!("Tile {:?} not loaded after point rule lookup", tile_id))
+    }
 
-        let tile = self.loaded_tiles.get(&tile_id).unwrap();
+    pub(crate) fn get_rules_for_point_if_loaded(
+        &self,
+        tile_id: TileId,
+        point: &PointRecord,
+    ) -> Result<Option<Vec<MapDataRule>>> {
+        let Some(loaded_tile) = self.loaded_tile(tile_id) else {
+            return Ok(None);
+        };
+        let tile = &loaded_tile.tile;
         let rule_records = tile.get_rules()?;
         let payload = tile.get_rule_line_refs_payload()?;
         let (rules_start, rules_end) =
@@ -345,7 +289,7 @@ impl TileManager {
             });
         }
 
-        Ok(rules)
+        Ok(Some(rules))
     }
 
     pub(crate) fn get_line_indices_for_point(
@@ -354,9 +298,19 @@ impl TileManager {
         point: &PointRecord,
     ) -> Result<Vec<u64>> {
         self.ensure_tile_loaded(tile_id)?;
+        self.get_line_indices_for_point_if_loaded(tile_id, point)?
+            .with_context(|| format!("Tile {:?} not loaded after point line lookup", tile_id))
+    }
 
-        let tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let line_refs = tile.get_line_refs()?;
+    pub(crate) fn get_line_indices_for_point_if_loaded(
+        &self,
+        tile_id: TileId,
+        point: &PointRecord,
+    ) -> Result<Option<Vec<u64>>> {
+        let Some(loaded_tile) = self.loaded_tile(tile_id) else {
+            return Ok(None);
+        };
+        let line_refs = loaded_tile.tile.get_line_refs()?;
         let (start, end) =
             Self::checked_range(point.lines_offset, point.lines_count, line_refs.len())
                 .with_context(|| {
@@ -366,7 +320,7 @@ impl TileManager {
                     )
                 })?;
 
-        Ok(line_refs[start..end].to_vec())
+        Ok(Some(line_refs[start..end].to_vec()))
     }
 
     /// Get closest point to coordinates with filtering
@@ -382,7 +336,8 @@ impl TileManager {
         let tile_id = TileId::from_coords(lat, lon, self.tile_size_degrees);
         self.ensure_tile_loaded(tile_id)?;
 
-        let tile = self.loaded_tiles.get(&tile_id).unwrap();
+        let loaded_tile = self.loaded_tiles.get(&tile_id).unwrap();
+        let tile = &loaded_tile.tile;
         let points = tile.get_points()?;
         let line_refs = tile.get_line_refs()?;
         let avoid_tags = Self::collect_avoid_tags(rules);
@@ -741,7 +696,8 @@ impl TileManager {
         // First, collect information from the current tile
         // We need to clone/copy the data to avoid holding references while loading other tiles
         let line_indices_and_data: Vec<(usize, u64, f32, f32, u64, f32, f32)> = {
-            let tile = self.loaded_tiles.get(&tile_id).unwrap();
+            let loaded_tile = self.loaded_tiles.get(&tile_id).unwrap();
+            let tile = &loaded_tile.tile;
             let points = tile.get_points()?;
 
             // Find the point in the tile
@@ -857,11 +813,21 @@ impl TileManager {
     /// Get tag value string from tile
     pub fn get_tag_value(&mut self, tile_id: TileId, tag_value_idx: u32) -> Result<String> {
         self.ensure_tile_loaded(tile_id)?;
+        self.get_tag_value_if_loaded(tile_id, tag_value_idx)?
+            .with_context(|| format!("Tile {:?} not loaded after tag value lookup", tile_id))
+    }
 
-        let tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let value_str = tile.get_tag_value(tag_value_idx)?;
+    pub fn get_tag_value_if_loaded(
+        &self,
+        tile_id: TileId,
+        tag_value_idx: u32,
+    ) -> Result<Option<String>> {
+        let Some(loaded_tile) = self.loaded_tile(tile_id) else {
+            return Ok(None);
+        };
+        let value_str = loaded_tile.tile.get_tag_value(tag_value_idx)?;
 
-        Ok(value_str.to_string())
+        Ok(Some(value_str.to_string()))
     }
 
     /// Get tag set record from tile
@@ -871,11 +837,21 @@ impl TileManager {
         tag_set_idx: u32,
     ) -> Result<TagSetRecord> {
         self.ensure_tile_loaded(tile_id)?;
+        self.get_tag_set_record_if_loaded(tile_id, tag_set_idx)?
+            .with_context(|| format!("Tile {:?} not loaded after tag set lookup", tile_id))
+    }
 
-        let tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let tag_set = tile.get_tag_set(tag_set_idx)?;
+    pub fn get_tag_set_record_if_loaded(
+        &self,
+        tile_id: TileId,
+        tag_set_idx: u32,
+    ) -> Result<Option<TagSetRecord>> {
+        let Some(loaded_tile) = self.loaded_tile(tile_id) else {
+            return Ok(None);
+        };
+        let tag_set = loaded_tile.tile.get_tag_set(tag_set_idx)?;
 
-        Ok(tag_set)
+        Ok(Some(tag_set))
     }
 
     #[cfg(test)]
@@ -906,7 +882,20 @@ impl TileManager {
 
     #[cfg(test)]
     pub(crate) fn loaded_tile_order_for_test(&self) -> Vec<TileId> {
-        self.loaded_tile_order[..self.loaded_tile_order_len].to_vec()
+        let mut entries = self
+            .loaded_tiles
+            .iter()
+            .map(|(tile_id, loaded_tile)| (*tile_id, loaded_tile.last_used()))
+            .collect::<Vec<_>>();
+        entries.sort_by(
+            |(left_tile_id, left_last_used), (right_tile_id, right_last_used)| {
+                left_last_used
+                    .cmp(right_last_used)
+                    .then_with(|| left_tile_id.row.cmp(&right_tile_id.row))
+                    .then_with(|| left_tile_id.col.cmp(&right_tile_id.col))
+            },
+        );
+        entries.into_iter().map(|(tile_id, _)| tile_id).collect()
     }
 }
 
@@ -1926,7 +1915,8 @@ mod tests {
         let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
         manager.ensure_tile_loaded(fixture.tile_id).unwrap();
 
-        let tile = manager.loaded_tiles.get(&fixture.tile_id).unwrap();
+        let loaded_tile = manager.loaded_tiles.get(&fixture.tile_id).unwrap();
+        let tile = &loaded_tile.tile;
         let points = tile.get_points().unwrap();
         let line_refs = tile.get_line_refs().unwrap();
         let avoid_tags = TileManager::collect_avoid_tags(&RouterRules::default());

@@ -266,8 +266,52 @@ impl MapDataGraph {
             return point;
         }
 
-        let mut tm = self.tile_manager.write().unwrap();
+        if let Some(point) = self
+            .tile_manager
+            .read()
+            .unwrap()
+            .get_point_by_id_if_loaded(tile_id, osm_id)
+            .expect("Failed to get point from loaded tile")
+            .map(|point_record| {
+                let lines = if point_record.lines_count == 0 {
+                    Vec::new()
+                } else {
+                    self.tile_manager
+                        .read()
+                        .unwrap()
+                        .get_line_indices_for_point_if_loaded(tile_id, &point_record)
+                        .expect("Failed to get line refs from loaded tile")
+                        .expect("Loaded tile disappeared during point line lookup")
+                        .into_iter()
+                        .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                        .collect()
+                };
+                let rules = if point_record.rules_count == 0 {
+                    Vec::new()
+                } else {
+                    self.tile_manager
+                        .read()
+                        .unwrap()
+                        .get_rules_for_point_if_loaded(tile_id, &point_record)
+                        .expect("Failed to get rules from loaded tile")
+                        .expect("Loaded tile disappeared during point rule lookup")
+                };
 
+                MapDataPoint {
+                    id: point_record.osm_id,
+                    lat: point_record.lat,
+                    lon: point_record.lon,
+                    lines,
+                    rules,
+                    residential_in_proximity: point_record.residential_in_proximity(),
+                    nogo_area: point_record.nogo_area(),
+                }
+            })
+        {
+            return point;
+        }
+
+        let mut tm = self.tile_manager.write().unwrap();
         let point_record = tm
             .get_point_by_id(tile_id, osm_id)
             .expect("Failed to get point from tile");
@@ -275,14 +319,11 @@ impl MapDataGraph {
         let lines = if point_record.lines_count == 0 {
             Vec::new()
         } else {
-            let line_indices = tm
-                .get_line_indices_for_point(tile_id, &point_record)
-                .expect("Failed to get line refs from tile");
-            let mut lines = Vec::with_capacity(point_record.lines_count as usize);
-            for line_index in line_indices {
-                lines.push(MapDataLineRef::new(tile_id, line_index));
-            }
-            lines
+            tm.get_line_indices_for_point(tile_id, &point_record)
+                .expect("Failed to get line refs from tile")
+                .into_iter()
+                .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                .collect()
         };
 
         let rules = if point_record.rules_count == 0 {
@@ -315,6 +356,31 @@ impl MapDataGraph {
             return line;
         }
 
+        {
+            let tm = self.tile_manager.read().unwrap();
+            if let Some(line_record) = tm
+                .get_line_by_index_if_loaded(tile_id, line_index)
+                .expect("Failed to get line from loaded tile")
+            {
+                return MapDataLine {
+                    points: (
+                        MapDataPointRef::new(tile_id, line_record.point_a_osm_id),
+                        MapDataPointRef::new(
+                            tm.tile_id_for_coords(line_record.point_b_lat, line_record.point_b_lon),
+                            line_record.point_b_osm_id,
+                        ),
+                    ),
+                    direction: match line_record.direction {
+                        0 => LineDirection::BothWays,
+                        1 => LineDirection::OneWay,
+                        2 => LineDirection::Roundabout,
+                        _ => LineDirection::BothWays,
+                    },
+                    tags: ElementTagSetRef::new(tile_id, line_record.tag_set_index),
+                };
+            }
+        }
+
         let mut tm = self.tile_manager.write().unwrap();
         let line_record = tm
             .get_line_by_index(tile_id, line_index)
@@ -342,6 +408,17 @@ impl MapDataGraph {
             return None;
         }
 
+        if let Some(value) = self
+            .tile_manager
+            .read()
+            .unwrap()
+            .get_tag_value_if_loaded(tag_value_ref.tile_id, tag_value_ref.tag_value_idx)
+            .ok()
+            .flatten()
+        {
+            return Some(value);
+        }
+
         self.tile_manager
             .write()
             .unwrap()
@@ -352,9 +429,18 @@ impl MapDataGraph {
     pub fn get_tag_set(&self, tag_set_ref: &ElementTagSetRef) -> ElementTagSet {
         let tag_set_record = self
             .tile_manager
-            .write()
+            .read()
             .unwrap()
-            .get_tag_set_record(tag_set_ref.tile_id, tag_set_ref.tag_set_idx)
+            .get_tag_set_record_if_loaded(tag_set_ref.tile_id, tag_set_ref.tag_set_idx)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                self.tile_manager
+                    .write()
+                    .unwrap()
+                    .get_tag_set_record(tag_set_ref.tile_id, tag_set_ref.tag_set_idx)
+                    .ok()
+            })
             .unwrap_or(TagSetRecord {
                 name_idx: TagSetRecord::NONE,
                 hw_ref_idx: TagSetRecord::NONE,
@@ -447,7 +533,7 @@ impl MapDataGraph {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, sync::Arc, thread};
 
     use super::*;
     use crate::map_data::rule::MapDataRuleType;
@@ -522,6 +608,38 @@ mod tests {
         assert_eq!(point.id, fixture.isolated_osm_id);
         assert!(point.lines.is_empty());
         assert!(point.rules.is_empty());
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_point_from_tiles_allows_concurrent_loaded_tile_hits() {
+        let fixture = create_rule_fixture("map-data-graph-concurrent-loaded-point-hits");
+        let graph = Arc::new(MapDataGraph::new(
+            crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap(),
+        ));
+
+        let warmed = graph.get_point_from_tiles(fixture.tile_id, fixture.via_osm_id);
+        assert_eq!(warmed.id, fixture.via_osm_id);
+
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let graph = Arc::clone(&graph);
+            let tile_id = fixture.tile_id;
+            let osm_id = fixture.via_osm_id;
+            workers.push(thread::spawn(move || {
+                for _ in 0..100 {
+                    let point = graph.get_point_from_tiles(tile_id, osm_id);
+                    assert_eq!(point.id, osm_id);
+                    assert_eq!(point.lines.len(), 3);
+                    assert_eq!(point.rules.len(), 2);
+                }
+            }));
+        }
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
