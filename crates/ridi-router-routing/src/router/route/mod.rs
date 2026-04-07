@@ -1320,3 +1320,7 @@ mod tests {
         assert!(!route.loop_detector.hw_ref_cells.contains_key(&road_key));
     }
 }
+
+#[cfg(test)]
+#[path = "phase1_tests.rs"]
+mod phase1_tests;

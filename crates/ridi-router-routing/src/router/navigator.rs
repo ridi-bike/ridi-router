@@ -530,3 +530,7 @@ mod test {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "navigator_phase1_tests.rs"]
+mod phase1_tests;

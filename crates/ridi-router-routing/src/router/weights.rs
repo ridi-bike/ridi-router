@@ -542,3 +542,7 @@ mod test {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "weights_phase1_tests.rs"]
+mod phase1_tests;
