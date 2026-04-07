@@ -11,7 +11,7 @@ use super::{
     itinerary::Itinerary,
     route::Route,
     walker::{Walker, WalkerMoveResult},
-    weights::{WeightCalc, WeightCalcInput},
+    weights::{WeightCalc, WeightCalcInput, WeightCalcStage},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -222,15 +222,45 @@ impl Navigator {
                     self.discarded_fork_choices.set_new_next();
                 }
 
-                let fork_weights = fork_choices.clone().into_iter().fold(
-                    ForkWeights::new(),
-                    |mut fork_weights, fork_route_segment| {
-                        if !fork_weights.discard_fork {
+                let mut discard_fork = false;
+                if let Some(representative_fork_segment) = fork_choices.get_first_segment() {
+                    for weight_calc in self
+                        .weight_calcs
+                        .iter()
+                        .filter(|weight_calc| weight_calc.stage == WeightCalcStage::RouteOnce)
+                    {
+                        let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
+                            route: self.walker.get_route(),
+                            itinerary: &self.itinerary,
+                            current_fork_segment: representative_fork_segment,
+                            walker_from_fork: Walker::new(
+                                representative_fork_segment.get_end_point().clone(),
+                            ),
+                            rules: &self.rules,
+                            ctx,
+                        });
+                        if weight_calc_result == WeightCalcResult::LastSegmentDoNotUse {
+                            discard_fork = true;
+                            break;
+                        }
+                    }
+                }
+
+                let mut fork_weights = ForkWeights::new();
+                if discard_fork {
+                    fork_weights.discard_fork = true;
+                } else {
+                    fork_weights = fork_choices.clone().into_iter().fold(
+                        ForkWeights::new(),
+                        |mut fork_weights, fork_route_segment| {
                             let fork_weight_calc_results = self
                                 .weight_calcs
                                 .iter()
+                                .filter(|weight_calc| {
+                                    weight_calc.stage == WeightCalcStage::PerForkChoice
+                                })
                                 .map(|weight_calc| {
-                                    let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
+                                    (weight_calc.calc)(WeightCalcInput {
                                         route: self.walker.get_route(),
                                         itinerary: &self.itinerary,
                                         current_fork_segment: &fork_route_segment,
@@ -239,8 +269,7 @@ impl Navigator {
                                         ),
                                         rules: &self.rules,
                                         ctx,
-                                    });
-                                    weight_calc_result
+                                    })
                                 })
                                 .collect::<Vec<_>>();
 
@@ -248,11 +277,11 @@ impl Navigator {
                                 fork_route_segment.get_end_point(),
                                 &fork_weight_calc_results,
                             );
-                        }
 
-                        fork_weights
-                    },
-                );
+                            fork_weights
+                        },
+                    );
+                }
 
                 let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
 
@@ -303,7 +332,7 @@ mod test {
             itinerary::Itinerary,
             navigator::{NavigationResult, WeightCalcResult},
             rules::RouterRules,
-            weights::{WeightCalc, WeightCalcInput},
+            weights::{WeightCalc, WeightCalcInput, WeightCalcStage},
         },
         test_utils::{route_matches_ids, test_dataset_1, RoutingTestContext},
     };
@@ -335,7 +364,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary.clone(),
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight, name:"weight".to_string()}],
+                vec![WeightCalc{calc: weight, name:"weight".to_string(), stage: WeightCalcStage::PerForkChoice}],
                 false
             );
             let route = match navigator.generate_routes_with_context(&ctx) {
@@ -364,7 +393,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc:weight2, name:"weight2".to_string() }],
+                vec![WeightCalc{ calc:weight2, name:"weight2".to_string(), stage: WeightCalcStage::PerForkChoice }],
                 false
             );
             let route = match navigator.generate_routes_with_context(&ctx) {
@@ -412,7 +441,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc: weight, name:"weight".to_string() }],
+                vec![WeightCalc{ calc: weight, name:"weight".to_string(), stage: WeightCalcStage::PerForkChoice }],
                 false,
             );
             let route = match navigator.generate_routes_with_context(&ctx) {
@@ -442,7 +471,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight, name:"weight".to_string()}],
+                vec![WeightCalc{calc: weight, name:"weight".to_string(), stage: WeightCalcStage::PerForkChoice}],
                 false,
             );
 
@@ -470,7 +499,7 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{ calc: weight, name:"weight".to_string()}],
+                vec![WeightCalc{ calc: weight, name:"weight".to_string(), stage: WeightCalcStage::PerForkChoice}],
                 false
             );
             if let NavigationResult::Finished(_) = navigator.generate_routes_with_context(&ctx) {
@@ -516,7 +545,10 @@ mod test {
             let navigator = Navigator::new(
                 itinerary,
                 RouterRules::default(),
-                vec![WeightCalc{calc: weight1, name:"weight1".to_string()}, WeightCalc{ calc: weight2, name:"weight2".to_string()}],
+                vec![
+                    WeightCalc{calc: weight1, name:"weight1".to_string(), stage: WeightCalcStage::PerForkChoice},
+                    WeightCalc{ calc: weight2, name:"weight2".to_string(), stage: WeightCalcStage::PerForkChoice},
+                ],
                 false,
             );
             let route = match navigator.generate_routes_with_context(&ctx) {

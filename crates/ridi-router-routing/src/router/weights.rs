@@ -24,9 +24,16 @@ pub struct WeightCalcInput<'a, 'ctx> {
     pub ctx: &'a RoutingContext<'ctx>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeightCalcStage {
+    RouteOnce,
+    PerForkChoice,
+}
+
 pub struct WeightCalc {
     #[allow(dead_code)]
     pub name: String,
+    pub stage: WeightCalcStage,
     pub calc: for<'a, 'ctx> fn(input: WeightCalcInput<'a, 'ctx>) -> WeightCalcResult,
 }
 

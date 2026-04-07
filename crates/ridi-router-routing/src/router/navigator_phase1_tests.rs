@@ -7,7 +7,7 @@ use crate::{
         itinerary::Itinerary,
         navigator::{NavigationResult, WeightCalcResult},
         rules::RouterRules,
-        weights::{WeightCalc, WeightCalcInput},
+        weights::{WeightCalc, WeightCalcInput, WeightCalcStage},
     },
     test_utils::{test_dataset_1, RoutingTestContext},
 };
@@ -56,7 +56,7 @@ rusty_fork_test! {
     #![rusty_fork(timeout_ms = 2000)]
 
     #[test]
-    fn last_segment_gate_still_runs_later_weights_for_the_first_evaluated_choice() {
+    fn route_level_last_segment_gate_runs_once_and_skips_per_fork_weights() {
         reset_counts();
 
         let test_ctx = RoutingTestContext::new(test_dataset_1());
@@ -69,10 +69,12 @@ rusty_fork_test! {
                 WeightCalc {
                     calc: route_gate_last_segment_do_not_use,
                     name: "route_gate_last_segment_do_not_use".to_string(),
+                    stage: WeightCalcStage::RouteOnce,
                 },
                 WeightCalc {
                     calc: per_fork_counter,
                     name: "per_fork_counter".to_string(),
+                    stage: WeightCalcStage::PerForkChoice,
                 },
             ],
             false,
@@ -80,7 +82,7 @@ rusty_fork_test! {
 
         assert!(matches!(navigator.generate_routes_with_context(&ctx), NavigationResult::Stuck));
         assert_eq!(ROUTE_GATE_CALLS.load(Ordering::SeqCst), 1);
-        assert_eq!(PER_FORK_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(PER_FORK_CALLS.load(Ordering::SeqCst), 0);
     }
 }
 
@@ -88,7 +90,7 @@ rusty_fork_test! {
     #![rusty_fork(timeout_ms = 2000)]
 
     #[test]
-    fn multiple_route_level_gates_do_not_short_circuit_within_the_first_choice_today() {
+    fn multiple_route_level_gates_short_circuit_before_later_route_gates() {
         reset_counts();
 
         let test_ctx = RoutingTestContext::new(test_dataset_1());
@@ -101,10 +103,12 @@ rusty_fork_test! {
                 WeightCalc {
                     calc: route_gate_last_segment_do_not_use,
                     name: "route_gate_last_segment_do_not_use".to_string(),
+                    stage: WeightCalcStage::RouteOnce,
                 },
                 WeightCalc {
                     calc: second_route_gate_last_segment_do_not_use,
                     name: "second_route_gate_last_segment_do_not_use".to_string(),
+                    stage: WeightCalcStage::RouteOnce,
                 },
             ],
             false,
@@ -112,7 +116,7 @@ rusty_fork_test! {
 
         assert!(matches!(navigator.generate_routes_with_context(&ctx), NavigationResult::Stuck));
         assert_eq!(ROUTE_GATE_CALLS.load(Ordering::SeqCst), 1);
-        assert_eq!(SECOND_ROUTE_GATE_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(SECOND_ROUTE_GATE_CALLS.load(Ordering::SeqCst), 0);
     }
 }
 
@@ -120,7 +124,7 @@ rusty_fork_test! {
     #![rusty_fork(timeout_ms = 2000)]
 
     #[test]
-    fn passing_route_level_and_per_fork_weights_run_once_per_choice_in_current_baseline() {
+    fn passing_route_level_weights_run_once_per_fork_event() {
         reset_counts();
 
         let test_ctx = RoutingTestContext::new(test_dataset_1());
@@ -133,17 +137,22 @@ rusty_fork_test! {
                 WeightCalc {
                     calc: route_gate_pass,
                     name: "route_gate_pass".to_string(),
+                    stage: WeightCalcStage::RouteOnce,
                 },
                 WeightCalc {
                     calc: per_fork_counter,
                     name: "per_fork_counter".to_string(),
+                    stage: WeightCalcStage::PerForkChoice,
                 },
             ],
             false,
         );
 
-        assert!(matches!(navigator.generate_routes_with_context(&ctx), NavigationResult::Finished(_)));
-        assert_eq!(ROUTE_GATE_CALLS.load(Ordering::SeqCst), 3);
+        assert!(matches!(
+            navigator.generate_routes_with_context(&ctx),
+            NavigationResult::Finished(_)
+        ));
+        assert_eq!(ROUTE_GATE_CALLS.load(Ordering::SeqCst), 1);
         assert_eq!(PER_FORK_CALLS.load(Ordering::SeqCst), 3);
     }
 }

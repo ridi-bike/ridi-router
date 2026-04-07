@@ -18,7 +18,7 @@ use super::{
         weight_avoid_nogo_areas, weight_check_distance_to_next, weight_heading, weight_no_loops,
         weight_no_sharp_turns, weight_no_short_detours, weight_prefer_same_road,
         weight_progress_speed, weight_rules_highway, weight_rules_smoothness, weight_rules_surface,
-        WeightCalc,
+        WeightCalc, WeightCalcStage,
     },
 };
 
@@ -367,50 +367,62 @@ impl Generator {
                                 vec![
                                     WeightCalc {
                                         name: "weight_avoid_nogo_areas".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_avoid_nogo_areas,
                                     },
                                     WeightCalc {
                                         name: "weight_no_sharp_turns".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_no_sharp_turns,
                                     },
                                     WeightCalc {
                                         name: "weight_no_short_detours".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_no_short_detours,
                                     },
                                     WeightCalc {
                                         name: "weight_progress_speed".to_string(),
+                                        stage: WeightCalcStage::RouteOnce,
                                         calc: weight_progress_speed,
                                     },
                                     WeightCalc {
                                         name: "weight_check_distance_to_next".to_string(),
+                                        stage: WeightCalcStage::RouteOnce,
                                         calc: weight_check_distance_to_next,
                                     },
                                     WeightCalc {
                                         name: "weight_prefer_same_road".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_prefer_same_road,
                                     },
                                     WeightCalc {
                                         name: "weight_no_loops".to_string(),
+                                        stage: WeightCalcStage::RouteOnce,
                                         calc: weight_no_loops,
                                     },
                                     WeightCalc {
                                         name: "weight_heading".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_heading,
                                     },
                                     WeightCalc {
                                         name: "weight_rules_highway".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_rules_highway,
                                     },
                                     WeightCalc {
                                         name: "weight_rules_surface".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_rules_surface,
                                     },
                                     WeightCalc {
                                         name: "weight_rules_smoothness".to_string(),
+                                        stage: WeightCalcStage::PerForkChoice,
                                         calc: weight_rules_smoothness,
                                     },
                                     WeightCalc {
                                         name: "weight_check_avoid_rules".to_string(),
+                                        stage: WeightCalcStage::RouteOnce,
                                         calc: weight_check_avoid_rules,
                                     },
                                 ],
