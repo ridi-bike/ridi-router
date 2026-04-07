@@ -253,11 +253,11 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput<'_, '_>) -> WeightCa
         .switched_wps_on
         .last()
         .map_or(&input.itinerary.start, |value| &value.on_point);
-    let distance_to_next_junctions_back = match input
-        .route
-        .split_at_point(check_from)
-        .get_junctions_from_end(input.ctx, check_junctions_back)
-    {
+    let distance_to_next_junctions_back = match input.route.nth_junction_from_end_since_point(
+        input.ctx,
+        check_from,
+        check_junctions_back,
+    ) {
         None => return WeightCalcResult::ForkChoiceUseWithWeight(0),
         Some(segment) => point_distance(input.ctx, segment.get_end_point(), &input.itinerary.next),
     };

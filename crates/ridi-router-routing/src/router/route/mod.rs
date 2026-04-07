@@ -376,6 +376,12 @@ impl Route {
         self.loop_detector.push_segment(ctx, &segment);
         self.route_segments.push(segment)
     }
+    pub fn route_index_first_for_point(&self, point: &MapDataPointRef) -> Option<usize> {
+        self.loop_detector
+            .point_hits
+            .get(point)
+            .and_then(|indices| indices.first().copied())
+    }
 
     pub fn split_at_point(&self, point: &MapDataPointRef) -> Self {
         let point_pos = self
@@ -386,6 +392,43 @@ impl Route {
 
         let route_segments = self.route_segments[point_pos..].to_vec();
         Self::from(route_segments)
+    }
+
+    pub fn nth_junction_from_end_since_idx(
+        &self,
+        ctx: &RoutingContext<'_>,
+        since_idx: usize,
+        num_of_junctions: usize,
+    ) -> Option<&Segment> {
+        if self.route_segments.len().saturating_sub(since_idx) < num_of_junctions + 1 {
+            return None;
+        }
+
+        let mut segment_num = 0;
+        for segment in self.route_segments[since_idx..].iter().rev() {
+            if ctx.point(segment.get_end_point()).is_junction() {
+                segment_num += 1;
+            }
+            if segment_num == num_of_junctions {
+                return Some(segment);
+            }
+        }
+
+        None
+    }
+
+    pub fn nth_junction_from_end_since_point(
+        &self,
+        ctx: &RoutingContext<'_>,
+        since_point: &MapDataPointRef,
+        num_of_junctions: usize,
+    ) -> Option<&Segment> {
+        // Preserve the current split_at_point(...).position(...) behavior for compatibility: when
+        // the same point appears multiple times, we intentionally start at the first match in
+        // route history, even if that differs from the conceptual waypoint-switch boundary.
+        let since_idx = self.route_index_first_for_point(since_point).unwrap_or(0);
+
+        self.nth_junction_from_end_since_idx(ctx, since_idx, num_of_junctions)
     }
 
     pub fn get_route_chunk_since_junction_before_last(
@@ -485,21 +528,8 @@ impl Route {
         ctx: &RoutingContext<'_>,
         num_of_junctions: usize,
     ) -> Option<Segment> {
-        if self.route_segments.len() < num_of_junctions + 1 {
-            return None;
-        }
-
-        let mut segment_num = 0;
-        for segment in self.route_segments.iter().rev() {
-            if ctx.point(segment.get_end_point()).is_junction() {
-                segment_num += 1;
-            }
-            if segment_num == num_of_junctions {
-                return Some(segment.clone());
-            }
-        }
-
-        None
+        self.nth_junction_from_end_since_idx(ctx, 0, num_of_junctions)
+            .cloned()
     }
     pub fn get_segments_from_end(&self, num_of_segments: usize) -> Option<Segment> {
         if self.route_segments.len() < num_of_segments + 1 {
