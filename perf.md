@@ -1,306 +1,198 @@
 # Route generation performance report
 
-## What I changed
-
-- Added `hotpath` to the workspace and wired these crate features:
-  - `hotpath`
-  - `hotpath-alloc`
-  - `hotpath-mcp`
-- Instrumented the CLI and routing code with `#[hotpath::main]`, `#[hotpath::measure_all]`, `#[hotpath::measure]`, and a few phase-level `measure_block!` spans.
-- Added project-local MCP config at `.pi/mcp.json` for Hotpath:
-  - `http://localhost:6771/mcp`
-- Updated `dev.sh` so profiling features can be injected via:
-  - `RIDI_FEATURES=...`
-
-## How I profiled it
-
-The repo script currently requires the `route` subcommand, so I ran the supported equivalent of the requested route command:
+## Current profiling command
 
 ```bash
-RIDI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' \
-./dev.sh route riga,latvia sigulda,latvia
+RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia fast
+HOTPATH_ALLOC_SELF=true RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia fast
 ```
 
-I also ran an allocation-focused pass with exclusive allocation accounting:
+Hotpath runtime from the current runs:
 
-```bash
-HOTPATH_ALLOC_SELF=true \
-RIDI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' \
-./dev.sh route riga,latvia sigulda,latvia
-```
+- normal profiling run: **4.75s**
+- alloc-self run: **4.36s**
 
-Output route:
+Note: shell wall-clock for the first run can be much higher if Cargo rebuilds first. The numbers above are the in-process Hotpath timings.
 
-- `map-data/routes/001-67km.gpx`
-- Length: `67.15 km`
-- Junctions: `245`
-- Route points written: `1382`
+## Current output
 
-## High-level result
+- Route file: `map-data/routes/001-67km.gpx`
+- Length: **67.11 km**
+- Junctions: **237**
+- Route points written: **1287**
+- Preset: `fast`
 
-End-to-end profiled runtime for route generation was about **49.1s**.
+## Current overall status
 
-The runtime is dominated by the actual navigation/search loop, not by startup, clustering, or GPX writing.
+Route generation is now in a good place overall.
 
-## Main timing findings
+The route search still dominates runtime, but the profile is now much clearer and more focused:
 
-### Top phases
+- the main CPU hotspot is now `weights::weight_check_distance_to_next`
+- the main structural cost is repeated point + adjacency + rule hydration
+- the main allocation hotspot is `tile_manager::get_rules_for_point`
 
-- `generator.navigate_itineraries`: **48.43s**
-- `navigator::generate_routes_with_context`: **48.43s**
-- `routing_api::open`: **0.37s**
-- `generator.score_routes`: **0.31s**
-- `clustering::generate`: **0.04s**
-- `gpx_writer::write_gpx`: **0.01s**
+## Biggest current times
 
-So almost all time is spent inside the route search itself.
+Top timings from the current normal profiled run:
 
-### Biggest timing hotspots
-
-Inclusive timing from the second run:
-
-| Function | Total | Notes |
+| Function | Total | Why it matters |
 |---|---:|---|
-| `graph::get_point_from_tiles` | 44.08s | Dominant repeated point hydration |
-| `weights::weight_no_loops` | 41.76s | Calls `route::has_looped` |
-| `route::has_looped` | 41.76s | Biggest algorithmic hotspot |
-| `tile_manager::get_adjacent_by_id` | 23.43s | Rebuilds adjacency repeatedly |
-| `tile_manager::get_point_by_id` | 16.60s | Repeated point lookup |
-| `tile_manager::ensure_tile_loaded` | 5.43s | Fast per-call, huge call count |
-| `weights::weight_check_distance_to_next` | 4.62s | Secondary but still significant |
-| `tile_manager::get_rules_for_point` | 3.48s | Also the main allocation hotspot |
-| `tile_manager::mark_tile_recent` | 2.20s | LRU bookkeeping overhead |
-| `graph::get_tag_value` / `graph::get_line_from_tiles` / `graph::get_tag_set` | ~1.1-1.4s each | Repeated metadata hydration |
+| `graph::get_point_from_tiles` | **4.27s** | dominant inclusive point hydration cost |
+| `generator.navigate_itineraries` | **4.01s** | route search still dominates end-to-end runtime |
+| `navigator::generate_routes_with_context` | **4.01s** | same search loop at the API boundary |
+| `weights::weight_check_distance_to_next` | **3.07s** | clearest algorithmic CPU hotspot |
+| `tile_manager::get_adjacent_by_id` | **2.29s** | repeated adjacency lookup remains expensive |
+| `tile_manager::get_point_by_id` | **1.58s** | low-level point lookup still costs a lot due to call volume |
+| `tile_manager::get_rules_for_point` | **374.10 ms** | smaller CPU cost than the items above, but still very allocation-heavy |
+| `generator.score_routes` | **307.17 ms** | now large enough to notice, but not the first target |
+| `route::calc_stats` | **306.44 ms** | visible, but not urgent |
+| `weights::weight_no_short_detours` | **190.48 ms** | secondary algorithmic hotspot |
+| `route::is_back_on_road_within_distance` | **179.22 ms** | related backward-scan work |
+| `weights::weight_heading` | **162.64 ms** | not dominant, but part of the remaining routing cost |
+| `tile_manager::ensure_tile_loaded` | **320.14 ms** | individually cheap, expensive in aggregate |
+| `tile_manager::mark_tile_recent` | **126.08 ms** | LRU bookkeeping overhead from very high call count |
 
-Important: these are **inclusive** Hotpath timings, so they overlap. The real story is:
-
-1. `route::has_looped` is too expensive.
-2. It drives massive repeated `ctx.point()` / point hydration work.
-3. That cascades into repeated adjacency, rules, tag, and tile-cache lookups.
-
-## Main allocation findings
+## Biggest current allocation hotspots
 
 Exclusive allocation pass (`HOTPATH_ALLOC_SELF=true`):
 
-| Function | Total alloc | Notes |
+| Function | Total alloc | Why it matters |
 |---|---:|---|
-| `tile_manager::get_rules_for_point` | **32.1 GB** | By far the biggest allocator |
-| `tile_manager::get_adjacent_by_id` | 298.6 MB | Repeated adjacency Vec creation |
-| `graph::get_point_from_tiles` | 61.8 MB | Small exclusive cost; most alloc is nested |
-| `weights::weight_check_distance_to_next` | 36.9 MB | Route-slice cloning / helper work |
-| `tile_manager::get_tag_value` | 24.5 MB | String materialization |
-| `tile_manager::adjacent_line_tags` | 5.8 MB | Small but frequent |
-| `gpx_writer::build_gpx` | 1.5 MB | Not important overall |
+| `tile_manager::get_rules_for_point` | **3.6 GB** | by far the biggest remaining allocator |
+| `tile_manager::get_adjacent_by_id` | **28.5 MB** | repeated adjacency Vec creation |
+| `weights::weight_check_distance_to_next` | **8.8 MB** | meaningful remaining algorithmic allocation cost |
+| `graph::get_point_from_tiles` | **6.0 MB** | most of its remaining alloc is nested under rule hydration |
+| `tile_manager::adjacent_line_tags` | **5.8 MB** | small per-call, large aggregate |
+| `gpx_writer::build_gpx` | **1.5 MB** | not important overall |
+| `routing_api::open` | **1.4 MB** | startup cost is modest |
+| `generator.score_routes` | **1.1 MB** | visible but not a top problem |
 
-This is the clearest memory conclusion:
+Cumulative allocation from the normal run:
 
-> **The biggest allocation problem is repeated rule hydration in `tile_manager::get_rules_for_point`, triggered indirectly by repeated point hydration.**
+- total cumulative alloc recorded by Hotpath: **3.7 GB**
+- biggest cumulative allocator: `tile_manager::get_rules_for_point` at **3.6 GB**
+- `weights::weight_check_distance_to_next` also drives substantial cumulative work because it sits on top of repeated point/rule access
 
-## Interpretation
+## Biggest current areas for improvement
 
-### 1) `route::has_looped` is the main CPU bottleneck
-
-`weight_no_loops` and `route::has_looped` account for ~**41.8s** of a ~49s run.
-
-That strongly suggests the loop-detection logic is effectively rescanning too much route state on every decision. It also repeatedly calls into:
-
-- `ctx.point(...)`
-- `ctx.line(...)`
-- `ctx.tag_set(...)`
-- `ctx.tag_value(...)`
-
-That compounds the cost badly.
-
-### 2) `ctx.point()` is too expensive for how often it is used
-
-`graph::get_point_from_tiles` is called about **1.67 million** times.
-
-Today, a point lookup hydrates a lot:
-
-- point record
-- adjacent lines
-- rules
-- multiple owned vectors
-
-That is far too heavy for a hot-path primitive.
-
-### 3) Rules are being decoded far too often
-
-`tile_manager::get_rules_for_point` allocates **32.1 GB exclusive** during a single route generation.
-
-That is the biggest actionable memory issue in the profile.
-
-### 4) `weight_check_distance_to_next` is the second meaningful algorithmic hotspot
-
-At **4.62s**, it is not the top issue, but it is large enough to matter after fixing loop detection.
-
-The allocation data also suggests it is doing avoidable route-structure copying/work.
-
-### 5) Startup, clustering, and output are not the problem
-
-- open: ~0.37s
-- clustering: ~0.04s
-- GPX output: ~0.01s
-
-Do not optimize these first.
-
-## Ranked improvement suggestions
-
-### 1. Rewrite `Route::has_looped` to use incremental state
+### 1. `weights::weight_check_distance_to_next`
 
 **Priority: highest**
 
-Current behavior looks like repeated route rescanning.
+This is the clearest current CPU hotspot.
 
-Better options:
+What to look for:
 
-- Track `last_seen_segment_idx` per point id
-- Track `last_seen_segment_idx` per road identity (`hw_ref` / name / maybe line id)
-- Track cumulative route distance so loop checks can use index + distance arithmetic
-- Keep this state in `Walker` or `Route` as the route grows
+- route slicing or route cloning
+- repeated backward scans over route history
+- repeated point/line/tag lookups inside the same check
+- opportunities to switch to index-based or cached route state
 
-Goal: turn loop detection from "scan most of the route again" into near O(1) or amortized O(1) per step.
+Expected payoff: **very high**.
 
-Expected impact: **very large**.
-
-### 2. Split `ctx.point()` / `graph::get_point_from_tiles()` into lightweight vs full hydration APIs
+### 2. `tile_manager::get_rules_for_point`
 
 **Priority: highest**
 
-A lot of call sites only need:
+This is the dominant allocation problem.
 
-- lat/lon
-- point id
-- junction flag
-- residential/nogo flags
+The current profile says rule hydration is still too expensive and too repetitive.
 
-They do **not** need adjacency and fully decoded rules every time.
+Good next steps:
 
-Suggested direction:
+- cache decoded rules per point
+- avoid rebuilding owned structures on every lookup
+- separate cheap metadata access from full rule decoding
+- return borrowed or memoized data where possible
 
-- Add a lightweight point accessor for basic point metadata
-- Add separate lazy accessors for adjacency and rules
-- Avoid building owned `Vec`s unless the caller actually needs them
+Expected payoff: **very high**, especially for memory pressure.
 
-Expected impact: **very large** on both CPU and allocs.
-
-### 3. Cache decoded point rules and adjacency by `(tile_id, osm_id)`
+### 3. `graph::get_point_from_tiles`
 
 **Priority: highest**
 
-The same points are clearly being revisited over and over.
+This remains the biggest inclusive structural cost.
 
-Cache candidates:
+It likely does too much for common hot-path callers.
 
-- decoded rules
-- adjacency lists
-- maybe fully decoded point metadata
+Good next steps:
 
-Even a simple in-process memoization layer in `MapDataGraph` or `TileManager` would likely help a lot.
+- split lightweight point access from full hydration
+- keep adjacency and rules lazy
+- avoid constructing data the caller does not need
 
-Expected impact: **very large**, especially because `get_rules_for_point` dominates exclusive allocs.
+Expected payoff: **very high**.
 
-### 4. Stop doing release-time work in `debug_assert_registry_invariants`
-
-**Priority: high, very low risk**
-
-This function still costs about **0.51s** total.
-
-It should probably be compiled out almost entirely in release.
-
-Suggested fix:
-
-- guard the whole body with `#[cfg(debug_assertions)]`
-- or make it an empty inline function in release builds
-
-This is an easy win.
-
-### 5. Avoid allocating `String` in hot tag lookups
+### 4. `tile_manager::get_adjacent_by_id`
 
 **Priority: high**
 
-`tile_manager::get_tag_value` still allocates ~**24.5 MB** exclusive.
+This is still expensive in both time and allocation.
 
-Prefer one of:
+Good next steps:
 
-- compare tag indices directly
-- return borrowed values instead of owned `String`
-- intern tag values once per tile and compare interned ids
+- cache adjacency by point id
+- avoid allocating a new Vec on every lookup
+- consider borrowed slices or memoized adjacency records
 
-Expected impact: moderate, and it also reduces pressure on the allocator.
+Expected payoff: **high**.
 
-### 6. Remove route cloning/slicing in `weight_check_distance_to_next`
+### 5. `route::is_back_on_road_within_distance` and `weights::weight_no_short_detours`
 
 **Priority: medium-high**
 
-This function allocates **36.9 MB exclusive**.
+These are now the next clear route-logic hotspots after `weight_check_distance_to_next`.
 
-The likely culprit is route slicing/cloning helpers like `split_at_point(...)`.
+Good next steps:
 
-Prefer index-based or slice-based helpers that borrow route data instead of cloning vectors.
+- reduce backward rescans
+- reuse incremental route state
+- avoid repeated metadata lookups for already-seen route segments
 
-Expected impact: moderate.
+Expected payoff: **moderate to high**.
 
-### 7. Rework `is_back_on_road_within_distance` similarly
-
-**Priority: medium**
-
-This is another backward scan over route history with repeated metadata lookups.
-
-It should likely use maintained route state instead of rescanning.
-
-Expected impact: moderate.
-
-### 8. Reduce `ensure_tile_loaded` / `mark_tile_recent` churn
+### 6. Tile-cache churn: `ensure_tile_loaded` and `mark_tile_recent`
 
 **Priority: medium**
 
-They are individually cheap but called millions of times.
+These are cheap per call, but very frequent.
 
-Potential ideas:
+Good next steps:
 
-- fast path for same-tile repeated lookups
-- avoid LRU recency updates for every tiny read in a tight loop
-- batch related tile reads where possible
+- reduce repeated same-tile lookups
+- avoid recency updates for every tiny read if possible
+- batch related reads where practical
 
-Expected impact: moderate after the bigger structural fixes.
+Expected payoff: **moderate** after the bigger structural fixes.
 
-## Concrete code areas worth changing first
+## Areas that are not the problem right now
 
-Start here:
+These are visible, but they are not where the next big wins are:
 
-1. `crates/ridi-router-routing/src/router/route/mod.rs`
-   - `Route::has_looped`
-   - helpers used by `weight_check_distance_to_next`
+- `routing_api::open`: ~**292 ms**
+- `generator.score_routes`: ~**307 ms**
+- `route::calc_stats`: ~**306 ms**
+- clustering: ~**37 ms**
+- GPX writing: ~**9 ms**
 
-2. `crates/ridi-router-routing/src/map_data/graph.rs`
-   - `get_point_from_tiles`
-   - split lightweight vs full point hydration
+Do not optimize these first.
 
-3. `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
-   - `get_rules_for_point`
-   - `get_adjacent_by_id`
-   - `debug_assert_registry_invariants`
-   - `get_tag_value`
+## Recommended next optimization order
 
-4. `crates/ridi-router-routing/src/router/weights.rs`
-   - `weight_no_loops`
-   - `weight_check_distance_to_next`
-   - `weight_no_short_detours`
+1. `weights::weight_check_distance_to_next`
+2. `tile_manager::get_rules_for_point`
+3. `graph::get_point_from_tiles`
+4. `tile_manager::get_adjacent_by_id`
+5. `route::is_back_on_road_within_distance`
+6. tile-cache churn (`ensure_tile_loaded`, `mark_tile_recent`)
 
-## Suggested next profiling loop
+## Bottom line
 
-After the first round of fixes, rerun the same command and check whether:
+Current route generation is about **4.75s** in the profiled run.
 
-- `route::has_looped` drops dramatically
-- `graph::get_point_from_tiles` call cost drops
-- `tile_manager::get_rules_for_point` allocs collapse
-- `weight_check_distance_to_next` becomes the next dominant hotspot
+The remaining performance story is now simple:
 
-That would confirm the biggest structural problem is solved.
-
-## MCP note
-
-Project-local Hotpath MCP config is in `.pi/mcp.json`.
-
-The current Pi session did not hot-reload the new MCP server list, so using the MCP tools from this same session still requires a Pi restart/reload. The profiled binary was run with `hotpath-mcp` enabled, so the server endpoint is ready when the app runs under a reloaded Pi session.
+- **CPU:** `weights::weight_check_distance_to_next`
+- **allocations:** `tile_manager::get_rules_for_point`
+- **structural lookup cost:** `graph::get_point_from_tiles` and `tile_manager::get_adjacent_by_id`
