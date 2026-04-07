@@ -22,15 +22,24 @@ use ridi_router_common::manifest::TileManifest;
 
 struct LoadedTile {
     tile: MappedTile,
+    point_index: HashMap<u64, usize>,
     last_used: AtomicU64,
 }
 
 impl LoadedTile {
-    fn new(tile: MappedTile, last_used: u64) -> Self {
-        Self {
+    fn new(tile: MappedTile, last_used: u64) -> Result<Self> {
+        let point_index = tile
+            .get_points()?
+            .iter()
+            .enumerate()
+            .map(|(idx, point)| (point.osm_id, idx))
+            .collect();
+
+        Ok(Self {
             tile,
+            point_index,
             last_used: AtomicU64::new(last_used),
-        }
+        })
     }
 
     fn touch(&self, access_epoch: u64) {
@@ -39,6 +48,13 @@ impl LoadedTile {
 
     fn last_used(&self) -> u64 {
         self.last_used.load(Ordering::Relaxed)
+    }
+
+    fn point(&self, osm_id: u64) -> Result<Option<PointRecord>> {
+        let Some(&point_idx) = self.point_index.get(&osm_id) else {
+            return Ok(None);
+        };
+        Ok(self.tile.get_points()?.get(point_idx).copied())
     }
 }
 
@@ -172,7 +188,7 @@ impl TileManager {
 
         let mapped_tile = MappedTile::load(&filepath)
             .with_context(|| format!("Failed to load tile: {:?}", filename))?;
-        let loaded_tile = LoadedTile::new(mapped_tile, self.next_access_epoch());
+        let loaded_tile = LoadedTile::new(mapped_tile, self.next_access_epoch())?;
 
         self.loaded_tiles.insert(tile_id, loaded_tile);
         self.unload_if_needed()?;
@@ -195,9 +211,8 @@ impl TileManager {
         let Some(loaded_tile) = self.loaded_tile(tile_id) else {
             return Ok(None);
         };
-        let points = loaded_tile.tile.get_points()?;
 
-        Ok(points.iter().find(|point| point.osm_id == osm_id).copied())
+        loaded_tile.point(osm_id)
     }
 
     /// Get line by index within a specific tile
@@ -698,23 +713,20 @@ impl TileManager {
         let line_indices_and_data: Vec<(usize, u64, f32, f32, u64, f32, f32)> = {
             let loaded_tile = self.loaded_tiles.get(&tile_id).unwrap();
             let tile = &loaded_tile.tile;
-            let points = tile.get_points()?;
-
-            // Find the point in the tile
-            let point = points
-                .iter()
-                .find(|p| p.osm_id == osm_id)
+            let point = loaded_tile
+                .point(osm_id)?
                 .context("Point not found in tile")?;
 
             let lines = tile.get_lines()?;
             let line_refs_array = tile.get_line_refs()?;
 
-            // Get line references for this point
-            let point_line_refs =
-                &line_refs_array[point.lines_offset as usize..][..point.lines_count as usize];
+            let (start, end) =
+                Self::checked_range(point.lines_offset, point.lines_count, line_refs_array.len())
+                    .context("Point line slice out of bounds in tile")?;
 
             // Collect the data we need from each line
-            point_line_refs
+            line_refs_array[start..end]
+                // Collect the data we need from each line
                 .iter()
                 .map(|&line_idx| {
                     let line = &lines[line_idx as usize];

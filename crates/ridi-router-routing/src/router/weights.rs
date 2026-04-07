@@ -78,10 +78,10 @@ fn point_distance_approx(
     from: &crate::map_data::graph::MapDataPointRef,
     to: &crate::map_data::graph::MapDataPointRef,
 ) -> f32 {
-    let from = ctx.point(from);
-    let to = ctx.point(to);
+    let (from_lat, from_lon) = ctx.point_coords(from);
+    let (to_lat, to_lon) = ctx.point_coords(to);
 
-    point_distance_approx_from_coords(from.lat, from.lon, to.lat, to.lon)
+    point_distance_approx_from_coords(from_lat, from_lon, to_lat, to_lon)
 }
 
 fn should_use_exact_distance_fallback(distance_a_approx: f32, distance_b_approx: f32) -> bool {
@@ -133,14 +133,14 @@ fn point_near_residential(
     ctx: &RoutingContext<'_>,
     point: &crate::map_data::graph::MapDataPointRef,
 ) -> bool {
-    ctx.point(point).residential_in_proximity
+    ctx.point_near_residential(point)
 }
 
 fn point_is_nogo(
     ctx: &RoutingContext<'_>,
     point: &crate::map_data::graph::MapDataPointRef,
 ) -> bool {
-    ctx.point(point).nogo_area
+    ctx.point_is_nogo(point)
 }
 
 #[hotpath::measure]
@@ -166,17 +166,17 @@ pub fn weight_heading(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
         Some(last_segment) => last_segment,
         None => input.current_fork_segment,
     };
-    let fork_point = input.ctx.point(fork_segment.get_end_point());
-    let fork_point_geo = Point::new(fork_point.lon, fork_point.lat);
-    let next_point = input.ctx.point(&input.itinerary.next);
-    let next_point_geo = Point::new(next_point.lon, next_point.lat);
+    let (fork_lat, fork_lon) = input.ctx.point_coords(fork_segment.get_end_point());
+    let fork_point_geo = Point::new(fork_lon, fork_lat);
+    let (next_lat, next_lon) = input.ctx.point_coords(&input.itinerary.next);
+    let next_point_geo = Point::new(next_lon, next_lat);
 
     let next_bearing = Haversine.bearing(fork_point_geo, next_point_geo);
     let fork_line = input.ctx.line(fork_segment.get_line());
-    let fork_line_0 = input.ctx.point(&fork_line.points.0);
-    let fork_line_1 = input.ctx.point(&fork_line.points.1);
-    let fork_line_0_geo = Point::new(fork_line_0.lon, fork_line_0.lat);
-    let fork_line_1_geo = Point::new(fork_line_1.lon, fork_line_1.lat);
+    let (fork_line_0_lat, fork_line_0_lon) = input.ctx.point_coords(&fork_line.points.0);
+    let (fork_line_1_lat, fork_line_1_lon) = input.ctx.point_coords(&fork_line.points.1);
+    let fork_line_0_geo = Point::new(fork_line_0_lon, fork_line_0_lat);
+    let fork_line_1_geo = Point::new(fork_line_1_lon, fork_line_1_lat);
     let fork_bearing = if &fork_line.points.1 == fork_segment.get_end_point() {
         Haversine.bearing(fork_line_0_geo, fork_line_1_geo)
     } else {

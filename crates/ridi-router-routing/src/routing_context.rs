@@ -9,11 +9,13 @@ use crate::{
         line::MapDataLine,
         point::MapDataPoint,
     },
+    rmdf::format::PointRecord,
     router::rules::RouterRules,
 };
 
 #[derive(Default)]
 struct RoutingCaches {
+    point_records: HashMap<MapDataPointRef, PointRecord>,
     points: HashMap<MapDataPointRef, MapDataPoint>,
     lines: HashMap<MapDataLineRef, MapDataLine>,
     tag_sets: HashMap<ElementTagSetRef, ElementTagSet>,
@@ -41,6 +43,22 @@ impl<'a> RoutingContext<'a> {
         Self::new(self.graph)
     }
 
+    fn point_record(&self, point_ref: &MapDataPointRef) -> PointRecord {
+        if let Some(point_record) = self.caches.borrow().point_records.get(point_ref).copied() {
+            return point_record;
+        }
+
+        let point_record = self
+            .graph
+            .get_point_record_from_tiles(point_ref.get_tile_id(), point_ref.get_element_id())
+            .expect("point record should exist for point ref");
+        self.caches
+            .borrow_mut()
+            .point_records
+            .insert(point_ref.clone(), point_record);
+        point_record
+    }
+
     pub(crate) fn point(&self, point_ref: &MapDataPointRef) -> MapDataPoint {
         if let Some(point) = self.caches.borrow().points.get(point_ref).cloned() {
             return point;
@@ -54,6 +72,31 @@ impl<'a> RoutingContext<'a> {
             .points
             .insert(point_ref.clone(), point.clone());
         point
+    }
+
+    pub(crate) fn point_id(&self, point_ref: &MapDataPointRef) -> u64 {
+        point_ref.get_element_id()
+    }
+
+    pub(crate) fn point_coords(&self, point_ref: &MapDataPointRef) -> (f32, f32) {
+        let point = self.point_record(point_ref);
+        (point.lat, point.lon)
+    }
+
+    pub(crate) fn point_degree(&self, point_ref: &MapDataPointRef) -> usize {
+        self.point_record(point_ref).lines_count as usize
+    }
+
+    pub(crate) fn point_is_junction(&self, point_ref: &MapDataPointRef) -> bool {
+        self.point_degree(point_ref) > 2
+    }
+
+    pub(crate) fn point_near_residential(&self, point_ref: &MapDataPointRef) -> bool {
+        self.point_record(point_ref).residential_in_proximity()
+    }
+
+    pub(crate) fn point_is_nogo(&self, point_ref: &MapDataPointRef) -> bool {
+        self.point_record(point_ref).nogo_area()
     }
 
     pub(crate) fn line(&self, line_ref: &MapDataLineRef) -> MapDataLine {
@@ -113,9 +156,10 @@ impl<'a> RoutingContext<'a> {
     }
 
     #[cfg(test)]
-    fn cache_sizes(&self) -> (usize, usize, usize) {
+    fn cache_sizes(&self) -> (usize, usize, usize, usize) {
         let caches = self.caches.borrow();
         (
+            caches.point_records.len(),
             caches.points.len(),
             caches.lines.len(),
             caches.tag_sets.len(),
@@ -125,7 +169,7 @@ impl<'a> RoutingContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, hint::black_box, time::Instant};
 
     use crate::{
         map_data::{
@@ -166,13 +210,13 @@ mod tests {
         );
 
         let ctx = RoutingContext::new(&graph);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0));
 
         assert_eq!(ctx.point(&point_ref).id, 1);
         assert_eq!(ctx.point(&point_ref).id, 1);
         assert_eq!(ctx.line(&line_ref).points.0, point_ref);
         assert_eq!(ctx.line(&line_ref).points.0.get_element_id(), 1);
-        assert_eq!(ctx.cache_sizes(), (1, 1, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0));
     }
 
     #[test]
@@ -191,14 +235,34 @@ mod tests {
 
         let parent = RoutingContext::new(&graph);
         parent.point(&point_ref);
-        assert_eq!(parent.cache_sizes(), (1, 0, 0));
+        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0));
 
         let task_ctx = parent.for_route_generation_task();
-        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0));
+        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0));
 
         task_ctx.point(&point_ref);
-        assert_eq!(task_ctx.cache_sizes(), (1, 0, 0));
-        assert_eq!(parent.cache_sizes(), (1, 0, 0));
+        assert_eq!(task_ctx.cache_sizes(), (0, 1, 0, 0));
+        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0));
+    }
+
+    #[test]
+    fn caches_point_records_for_field_level_access() {
+        let fixture = create_linear_single_tile_fixture("routing-context-point-record-cache");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let point_ref = MapDataPointRef::new(fixture.tile_id, fixture.start_osm_id);
+
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0));
+        assert_eq!(ctx.point_id(&point_ref), fixture.start_osm_id);
+        assert_eq!(ctx.point_degree(&point_ref), 1);
+        assert!(!ctx.point_is_junction(&point_ref));
+        assert_eq!(
+            ctx.point_coords(&point_ref),
+            (fixture.start_lat, fixture.start_lon)
+        );
+        assert_eq!(ctx.cache_sizes(), (1, 0, 0, 0));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
     }
 
     #[test]
@@ -209,13 +273,51 @@ mod tests {
         let line_ref = MapDataLineRef::new(fixture.tile_id, 0);
         let line = ctx.line(&line_ref);
 
-        assert_eq!(ctx.cache_sizes(), (0, 1, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 0));
 
         let first = ctx.tag_set(&line.tags);
         let second = ctx.tag_set(&line.tags);
 
         assert_eq!(first, second);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 1));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 1));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "micro-benchmark"]
+    fn microbench_repeated_same_point_hydration() {
+        let fixture = create_linear_single_tile_fixture("routing-context-same-point-bench");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let point_ref = MapDataPointRef::new(fixture.tile_id, fixture.start_osm_id);
+
+        let started = Instant::now();
+        for _ in 0..50_000 {
+            black_box(ctx.point(&point_ref));
+        }
+        eprintln!("same-point hydration bench: {:?}", started.elapsed());
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "micro-benchmark"]
+    fn microbench_many_points_hydration_within_one_tile() {
+        let fixture = create_linear_single_tile_fixture("routing-context-many-points-bench");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let point_refs = (fixture.start_osm_id..=fixture.finish_osm_id)
+            .map(|osm_id| MapDataPointRef::new(fixture.tile_id, osm_id))
+            .collect::<Vec<_>>();
+
+        let started = Instant::now();
+        for _ in 0..10_000 {
+            for point_ref in &point_refs {
+                black_box(ctx.point(point_ref));
+            }
+        }
+        eprintln!("many-points hydration bench: {:?}", started.elapsed());
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }

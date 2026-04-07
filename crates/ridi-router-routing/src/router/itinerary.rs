@@ -76,13 +76,13 @@ impl Itinerary {
     pub fn id(&self, ctx: &RoutingContext<'_>) -> String {
         format!(
             "{}-{}-{}",
-            ctx.point(&self.start).id,
+            ctx.point_id(&self.start),
             self.waypoints
                 .iter()
-                .map(|point| format!("{}", ctx.point(point).id))
+                .map(|point| format!("{}", ctx.point_id(point)))
                 .collect::<Vec<_>>()
                 .join("-"),
-            ctx.point(&self.finish).id
+            ctx.point_id(&self.finish)
         )
     }
 

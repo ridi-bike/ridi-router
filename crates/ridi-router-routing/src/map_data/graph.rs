@@ -266,82 +266,89 @@ impl MapDataGraph {
             return point;
         }
 
-        if let Some(point) = self
+        if let Some(point_record) = self.get_point_record_from_tiles(tile_id, osm_id) {
+            let lines = if point_record.lines_count == 0 {
+                Vec::new()
+            } else {
+                self.tile_manager
+                    .read()
+                    .unwrap()
+                    .get_line_indices_for_point_if_loaded(tile_id, &point_record)
+                    .expect("Failed to get line refs from loaded tile")
+                    .expect("Loaded tile disappeared during point line lookup")
+                    .into_iter()
+                    .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                    .collect()
+            };
+            let rules = if point_record.rules_count == 0 {
+                Vec::new()
+            } else {
+                self.tile_manager
+                    .read()
+                    .unwrap()
+                    .get_rules_for_point_if_loaded(tile_id, &point_record)
+                    .expect("Failed to get rules from loaded tile")
+                    .expect("Loaded tile disappeared during point rule lookup")
+            };
+
+            return MapDataPoint {
+                id: point_record.osm_id,
+                lat: point_record.lat,
+                lon: point_record.lon,
+                lines,
+                rules,
+                residential_in_proximity: point_record.residential_in_proximity(),
+                nogo_area: point_record.nogo_area(),
+            };
+        }
+
+        unreachable!("point should exist after tile-backed point lookup")
+    }
+
+    pub(crate) fn get_point_record_from_tiles(
+        &self,
+        tile_id: crate::rmdf::TileId,
+        osm_id: u64,
+    ) -> Option<crate::rmdf::format::PointRecord> {
+        #[cfg(test)]
+        if let Some(point) = self.get_test_point(osm_id) {
+            let mut flags = 0;
+            if point.residential_in_proximity {
+                flags |= crate::rmdf::format::PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
+            }
+            if point.nogo_area {
+                flags |= crate::rmdf::format::PointRecord::NOGO_AREA_FLAG;
+            }
+
+            return Some(crate::rmdf::format::PointRecord {
+                osm_id: point.id,
+                lat: point.lat,
+                lon: point.lon,
+                lines_offset: 0,
+                lines_count: point.lines.len() as u32,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: point.rules.len() as u32,
+                flags,
+                _padding2: 0,
+            });
+        }
+
+        if let Some(point_record) = self
             .tile_manager
             .read()
             .unwrap()
             .get_point_by_id_if_loaded(tile_id, osm_id)
             .expect("Failed to get point from loaded tile")
-            .map(|point_record| {
-                let lines = if point_record.lines_count == 0 {
-                    Vec::new()
-                } else {
-                    self.tile_manager
-                        .read()
-                        .unwrap()
-                        .get_line_indices_for_point_if_loaded(tile_id, &point_record)
-                        .expect("Failed to get line refs from loaded tile")
-                        .expect("Loaded tile disappeared during point line lookup")
-                        .into_iter()
-                        .map(|line_index| MapDataLineRef::new(tile_id, line_index))
-                        .collect()
-                };
-                let rules = if point_record.rules_count == 0 {
-                    Vec::new()
-                } else {
-                    self.tile_manager
-                        .read()
-                        .unwrap()
-                        .get_rules_for_point_if_loaded(tile_id, &point_record)
-                        .expect("Failed to get rules from loaded tile")
-                        .expect("Loaded tile disappeared during point rule lookup")
-                };
-
-                MapDataPoint {
-                    id: point_record.osm_id,
-                    lat: point_record.lat,
-                    lon: point_record.lon,
-                    lines,
-                    rules,
-                    residential_in_proximity: point_record.residential_in_proximity(),
-                    nogo_area: point_record.nogo_area(),
-                }
-            })
         {
-            return point;
+            return Some(point_record);
         }
 
-        let mut tm = self.tile_manager.write().unwrap();
-        let point_record = tm
+        self.tile_manager
+            .write()
+            .unwrap()
             .get_point_by_id(tile_id, osm_id)
-            .expect("Failed to get point from tile");
-
-        let lines = if point_record.lines_count == 0 {
-            Vec::new()
-        } else {
-            tm.get_line_indices_for_point(tile_id, &point_record)
-                .expect("Failed to get line refs from tile")
-                .into_iter()
-                .map(|line_index| MapDataLineRef::new(tile_id, line_index))
-                .collect()
-        };
-
-        let rules = if point_record.rules_count == 0 {
-            Vec::new()
-        } else {
-            tm.get_rules_for_point(tile_id, &point_record)
-                .expect("Failed to get rules from tile")
-        };
-
-        MapDataPoint {
-            id: point_record.osm_id,
-            lat: point_record.lat,
-            lon: point_record.lon,
-            lines,
-            rules,
-            residential_in_proximity: point_record.residential_in_proximity(),
-            nogo_area: point_record.nogo_area(),
-        }
+            .ok()
     }
 
     // Get line data from tiles (or test storage in test mode)

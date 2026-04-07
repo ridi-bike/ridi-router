@@ -5,7 +5,7 @@ use crate::{
     router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
     RoutingContext,
 };
-use geo::{Destination, Haversine, Point};
+use geo::{Bearing, Destination, Haversine, Point};
 use hdbscan::{Hdbscan, HdbscanError, HdbscanHyperParams};
 use rayon::prelude::*;
 use tracing::{error, info, trace};
@@ -71,10 +71,10 @@ impl Generator {
         from: &MapDataPointRef,
         to: &MapDataPointRef,
     ) -> f32 {
-        let from = ctx.point(from);
-        let to = ctx.point(to);
+        let (from_lat, from_lon) = ctx.point_coords(from);
+        let (to_lat, to_lon) = ctx.point_coords(to);
 
-        from.bearing(&to)
+        Haversine.bearing(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
     }
 
     fn create_waypoints_around(
@@ -84,8 +84,8 @@ impl Generator {
         bearing: &f32,
         avoid_residential: bool,
     ) -> Vec<MapDataPointRef> {
-        let point = ctx.point(point);
-        let point_geo = Point::new(point.lon, point.lat);
+        let (point_lat, point_lon) = ctx.point_coords(point);
+        let point_geo = Point::new(point_lon, point_lat);
 
         self.rules
             .generation
@@ -124,8 +124,8 @@ impl Generator {
         round_trip_bearing_adjustment: Option<f32>,
     ) -> Vec<Itinerary> {
         if let Some(round_trip) = self.round_trip {
-            let start = ctx.point(&self.start);
-            let start_geo = Point::new(start.lon, start.lat);
+            let (start_lat, start_lon) = ctx.point_coords(&self.start);
+            let start_geo = Point::new(start_lon, start_lat);
 
             return self
                 .rules
@@ -275,8 +275,8 @@ impl Generator {
                     .waypoints
                     .iter()
                     .flat_map(|point_ref| {
-                        let point = ctx.point(point_ref);
-                        [point.lat, point.lon]
+                        let (lat, lon) = ctx.point_coords(point_ref);
+                        [lat, lon]
                     })
                     .collect(),
             );
