@@ -166,7 +166,7 @@ impl MappedTile {
         std::str::from_utf8(string_slice).context("Invalid UTF-8 in tag value")
     }
 
-    pub fn get_rules(&self) -> Result<Vec<RuleRecord>> {
+    pub fn get_rules(&self) -> Result<&[RuleRecord]> {
         let offset = self.header.section_offsets[section::RULES] as usize;
         let count = self.header.rule_count as usize;
         let size = count * std::mem::size_of::<RuleRecord>();
@@ -176,13 +176,10 @@ impl MappedTile {
             .get(offset..offset + size)
             .context("Rules section out of bounds")?;
 
-        Ok(slice
-            .chunks_exact(std::mem::size_of::<RuleRecord>())
-            .map(pod_read_unaligned)
-            .collect())
+        Ok(cast_slice(slice))
     }
 
-    pub fn get_rule_line_refs_payload(&self) -> Result<Vec<u64>> {
+    pub fn get_rule_line_refs_payload(&self) -> Result<&[u64]> {
         let rules_offset = self.header.section_offsets[section::RULES] as usize;
         let rule_record_bytes = self.header.rule_count as usize * std::mem::size_of::<RuleRecord>();
         let payload_offset = rules_offset + rule_record_bytes;
@@ -200,17 +197,16 @@ impl MappedTile {
             );
         }
 
-        Ok(slice
-            .chunks_exact(std::mem::size_of::<u64>())
-            .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
-            .collect())
+        Ok(cast_slice(slice))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::MappedTile;
-    use ridi_router_common::format::{GridCellEntry, LineRecord, PointRecord, TagSetRecord};
+    use ridi_router_common::format::{
+        GridCellEntry, LineRecord, PointRecord, RuleRecord, TagSetRecord,
+    };
     use ridi_router_test_support::rmdf::{
         unique_test_dir, write_tile, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
     };
@@ -303,5 +299,69 @@ mod tests {
         assert_eq!(tag_set.highway_idx, highway_idx);
         assert_eq!(tag_set.surface_idx, surface_idx);
         assert_eq!(tag_set.smoothness_idx, smoothness_idx);
+    }
+
+    #[test]
+    fn loads_rule_sections_as_borrowed_slices() {
+        let dir = unique_test_dir("rmdf-io-rule-slices");
+        let tile_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![PointRecord {
+                    osm_id: 1,
+                    lat: 10.5,
+                    lon: 20.5,
+                    lines_offset: 0,
+                    lines_count: 0,
+                    _padding1: 0,
+                    rules_offset: 0,
+                    rules_count: 2,
+                    flags: 0,
+                    _padding2: 0,
+                }],
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: vec![
+                    RuleRecord {
+                        from_lines_offset: 0,
+                        from_lines_count: 1,
+                        _padding1: 0,
+                        to_lines_offset: 1,
+                        to_lines_count: 2,
+                        rule_type: 0,
+                        _padding2: 0,
+                        _padding3: 0,
+                    },
+                    RuleRecord {
+                        from_lines_offset: 3,
+                        from_lines_count: 0,
+                        _padding1: 0,
+                        to_lines_offset: 3,
+                        to_lines_count: 0,
+                        rule_type: 1,
+                        _padding2: 0,
+                        _padding3: 0,
+                    },
+                ],
+                rule_line_refs: vec![10, 11, 12],
+            },
+        );
+
+        let tile = MappedTile::load(&tile_path).unwrap();
+        let rules = tile.get_rules().unwrap();
+        let payload = tile.get_rule_line_refs_payload().unwrap();
+
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].from_lines_offset, 0);
+        assert_eq!(rules[0].from_lines_count, 1);
+        assert_eq!(rules[0].to_lines_offset, 1);
+        assert_eq!(rules[0].to_lines_count, 2);
+        assert_eq!(rules[1].rule_type, 1);
+        assert_eq!(payload, &[10, 11, 12]);
     }
 }

@@ -14,11 +14,7 @@ use ridi_router_common::manifest::TileManifest;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::{
-    line::MapDataLine,
-    point::MapDataPoint,
-    rule::{MapDataRule, MapDataRuleType},
-};
+use super::{line::MapDataLine, point::MapDataPoint};
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagValueRef {
@@ -205,14 +201,6 @@ impl MapDataGraph {
         }
     }
 
-    fn deserialize_rule_type(rule_type: u8) -> MapDataRuleType {
-        match rule_type {
-            0 => MapDataRuleType::OnlyAllowed,
-            1 => MapDataRuleType::NotAllowed,
-            _ => panic!("Unknown serialized rule type {rule_type}"),
-        }
-    }
-
     /// Test-only: Insert a point for testing
     #[cfg(test)]
     pub fn test_insert_point(&self, point: MapDataPoint) {
@@ -300,26 +288,8 @@ impl MapDataGraph {
         let rules = if point_record.rules_count == 0 {
             Vec::new()
         } else {
-            let point_rules = tm
-                .get_rules_for_point(tile_id, &point_record)
-                .expect("Failed to get rules from tile");
-            let mut rules = Vec::with_capacity(point_record.rules_count as usize);
-            for rule in point_rules {
-                rules.push(MapDataRule {
-                    from_lines: rule
-                        .from_line_indices
-                        .into_iter()
-                        .map(|line_index| MapDataLineRef::new(tile_id, line_index))
-                        .collect(),
-                    to_lines: rule
-                        .to_line_indices
-                        .into_iter()
-                        .map(|line_index| MapDataLineRef::new(tile_id, line_index))
-                        .collect(),
-                    rule_type: Self::deserialize_rule_type(rule.rule_type),
-                });
-            }
-            rules
+            tm.get_rules_for_point(tile_id, &point_record)
+                .expect("Failed to get rules from tile")
         };
 
         MapDataPoint {
@@ -480,6 +450,7 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::map_data::rule::MapDataRuleType;
     use ridi_router_test_support::rmdf::{
         empty_neighbors, manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord,
         PointRecord, RuleRecord, TileId, TileManifest, TileMetadata, TileNeighbors, TileSpec,

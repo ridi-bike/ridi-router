@@ -7,7 +7,13 @@ use geo::{Distance, Haversine, Point};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use crate::router::rules::{RouterRules, RulesTagValueAction};
+use crate::{
+    map_data::{
+        graph::MapDataLineRef,
+        rule::{MapDataRule, MapDataRuleType},
+    },
+    router::rules::{RouterRules, RulesTagValueAction},
+};
 
 use super::format::*;
 use super::io::MappedTile;
@@ -21,13 +27,6 @@ pub struct TileManager {
     #[cfg(test)]
     loaded_tiles_limit: usize,
     tile_size_degrees: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TilePointRule {
-    pub from_line_indices: Vec<u64>,
-    pub to_line_indices: Vec<u64>,
-    pub rule_type: u8,
 }
 
 #[derive(Debug, Default)]
@@ -297,7 +296,7 @@ impl TileManager {
         &mut self,
         tile_id: TileId,
         point: &PointRecord,
-    ) -> Result<Vec<TilePointRule>> {
+    ) -> Result<Vec<MapDataRule>> {
         self.ensure_tile_loaded(tile_id)?;
 
         let tile = self.loaded_tiles.get(&tile_id).unwrap();
@@ -312,39 +311,41 @@ impl TileManager {
                     )
                 })?;
 
-        rule_records[rules_start..rules_end]
-            .iter()
-            .map(|rule_record| {
-                let from_line_indices = Self::slice_rule_line_refs(
-                    &payload,
-                    rule_record.from_lines_offset,
-                    rule_record.from_lines_count,
-                )
-                .with_context(|| {
-                    format!(
-                        "from-lines slice for point {} rule is out of bounds in tile {:?}",
-                        point.osm_id, tile_id
-                    )
-                })?;
-                let to_line_indices = Self::slice_rule_line_refs(
-                    &payload,
-                    rule_record.to_lines_offset,
-                    rule_record.to_lines_count,
-                )
-                .with_context(|| {
-                    format!(
-                        "to-lines slice for point {} rule is out of bounds in tile {:?}",
-                        point.osm_id, tile_id
-                    )
-                })?;
+        let selected_rules = &rule_records[rules_start..rules_end];
+        let mut rules = Vec::with_capacity(selected_rules.len());
 
-                Ok(TilePointRule {
-                    from_line_indices,
-                    to_line_indices,
-                    rule_type: rule_record.rule_type,
-                })
-            })
-            .collect()
+        for rule_record in selected_rules {
+            let from_line_indices = Self::slice_rule_line_refs(
+                payload,
+                rule_record.from_lines_offset,
+                rule_record.from_lines_count,
+            )
+            .with_context(|| {
+                format!(
+                    "from-lines slice for point {} rule is out of bounds in tile {:?}",
+                    point.osm_id, tile_id
+                )
+            })?;
+            let to_line_indices = Self::slice_rule_line_refs(
+                payload,
+                rule_record.to_lines_offset,
+                rule_record.to_lines_count,
+            )
+            .with_context(|| {
+                format!(
+                    "to-lines slice for point {} rule is out of bounds in tile {:?}",
+                    point.osm_id, tile_id
+                )
+            })?;
+
+            rules.push(MapDataRule {
+                from_lines: Self::map_rule_line_refs(tile_id, from_line_indices),
+                to_lines: Self::map_rule_line_refs(tile_id, to_line_indices),
+                rule_type: Self::deserialize_rule_type(rule_record.rule_type),
+            });
+        }
+
+        Ok(rules)
     }
 
     pub(crate) fn get_line_indices_for_point(
@@ -832,9 +833,25 @@ impl TileManager {
         Ok((start, end))
     }
 
-    fn slice_rule_line_refs(payload: &[u64], offset: u64, count: u32) -> Result<Vec<u64>> {
+    fn slice_rule_line_refs<'a>(payload: &'a [u64], offset: u64, count: u32) -> Result<&'a [u64]> {
         let (start, end) = Self::checked_range(offset, count, payload.len())?;
-        Ok(payload[start..end].to_vec())
+        Ok(&payload[start..end])
+    }
+
+    fn map_rule_line_refs(tile_id: TileId, line_indices: &[u64]) -> Vec<MapDataLineRef> {
+        let mut line_refs = Vec::with_capacity(line_indices.len());
+        for &line_index in line_indices {
+            line_refs.push(MapDataLineRef::new(tile_id, line_index));
+        }
+        line_refs
+    }
+
+    fn deserialize_rule_type(rule_type: u8) -> MapDataRuleType {
+        match rule_type {
+            0 => MapDataRuleType::OnlyAllowed,
+            1 => MapDataRuleType::NotAllowed,
+            _ => panic!("Unknown serialized rule type {rule_type}"),
+        }
     }
 
     /// Get tag value string from tile
@@ -896,7 +913,9 @@ impl TileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map_data::rule::MapDataRuleType;
     use crate::router::rules::{RouterRules, RulesTagValueAction};
+    use ridi_router_common::format::RuleRecord;
     use ridi_router_test_support::rmdf::{
         create_missing_neighbor_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
         write_manifest, write_tile, LineRecord, PointRecord, TagSetRecord, TileBounds, TileId,
@@ -1037,6 +1056,61 @@ mod tests {
             surface_idx: surface_idx.unwrap_or(TagSetRecord::NONE),
             smoothness_idx: smoothness_idx.unwrap_or(TagSetRecord::NONE),
         }
+    }
+
+    fn create_rule_tile_manager_fixture(
+        prefix: &str,
+        point: PointRecord,
+        rules: Vec<RuleRecord>,
+        rule_line_refs: Vec<u64>,
+    ) -> (PathBuf, TileId, TileManager) {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points: vec![point],
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules,
+                rule_line_refs,
+            },
+        );
+
+        write_manifest(
+            &dir,
+            &TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: SYNTHETIC_TILE_SIZE_DEGREES,
+                format_version: 1,
+                generated_at: "2026-04-05T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: vec![TileMetadata {
+                    filename: SYNTHETIC_TILE_ID.to_filename(),
+                    col: SYNTHETIC_TILE_ID.col,
+                    row: SYNTHETIC_TILE_ID.row,
+                    bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
+                    neighbors: empty_neighbors(),
+                    size_bytes: fs::metadata(&tile_path).unwrap().len(),
+                    point_count: 1,
+                    line_count: 0,
+                    checksum: "sha256:test".to_string(),
+                    military_geojson_filename: None,
+                }],
+            },
+        );
+
+        (
+            dir.clone(),
+            SYNTHETIC_TILE_ID,
+            TileManager::new(dir).unwrap(),
+        )
     }
 
     fn create_single_point_tile_fixture(prefix: &str, tile_count: usize) -> SyntheticLruFixture {
@@ -1382,6 +1456,115 @@ mod tests {
             manager.loaded_tile_order_for_test(),
             vec![tiles[2], tiles[0], tiles[3]]
         );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_rules_for_point_hydrates_selected_rules_only() {
+        let point = PointRecord {
+            osm_id: 77,
+            lat: 10.5,
+            lon: 20.5,
+            lines_offset: 0,
+            lines_count: 0,
+            _padding1: 0,
+            rules_offset: 1,
+            rules_count: 2,
+            flags: 0,
+            _padding2: 0,
+        };
+        let rules = vec![
+            RuleRecord {
+                from_lines_offset: 0,
+                from_lines_count: 1,
+                _padding1: 0,
+                to_lines_offset: 1,
+                to_lines_count: 1,
+                rule_type: 1,
+                _padding2: 0,
+                _padding3: 0,
+            },
+            RuleRecord {
+                from_lines_offset: 2,
+                from_lines_count: 2,
+                _padding1: 0,
+                to_lines_offset: 4,
+                to_lines_count: 1,
+                rule_type: 0,
+                _padding2: 0,
+                _padding3: 0,
+            },
+            RuleRecord {
+                from_lines_offset: 5,
+                from_lines_count: 0,
+                _padding1: 0,
+                to_lines_offset: 5,
+                to_lines_count: 0,
+                rule_type: 1,
+                _padding2: 0,
+                _padding3: 0,
+            },
+        ];
+        let (dir, tile_id, mut manager) = create_rule_tile_manager_fixture(
+            "tile-manager-rule-hydration",
+            point,
+            rules,
+            vec![9, 10, 20, 21, 30],
+        );
+
+        let hydrated = manager
+            .get_rules_for_point(tile_id, &point)
+            .expect("rules should hydrate");
+
+        assert_eq!(hydrated.len(), 2);
+        assert_eq!(hydrated[0].rule_type, MapDataRuleType::OnlyAllowed);
+        assert_eq!(
+            hydrated[0].from_lines,
+            vec![
+                MapDataLineRef::new(tile_id, 20),
+                MapDataLineRef::new(tile_id, 21)
+            ]
+        );
+        assert_eq!(hydrated[0].to_lines, vec![MapDataLineRef::new(tile_id, 30)]);
+        assert_eq!(hydrated[1].rule_type, MapDataRuleType::NotAllowed);
+        assert!(hydrated[1].from_lines.is_empty());
+        assert!(hydrated[1].to_lines.is_empty());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_rules_for_point_rejects_out_of_bounds_payload_slice() {
+        let point = PointRecord {
+            osm_id: 88,
+            lat: 10.5,
+            lon: 20.5,
+            lines_offset: 0,
+            lines_count: 0,
+            _padding1: 0,
+            rules_offset: 0,
+            rules_count: 1,
+            flags: 0,
+            _padding2: 0,
+        };
+        let rules = vec![RuleRecord {
+            from_lines_offset: 0,
+            from_lines_count: 2,
+            _padding1: 0,
+            to_lines_offset: 2,
+            to_lines_count: 0,
+            rule_type: 0,
+            _padding2: 0,
+            _padding3: 0,
+        }];
+        let (dir, tile_id, mut manager) =
+            create_rule_tile_manager_fixture("tile-manager-rule-bounds", point, rules, vec![42]);
+
+        let error = manager.get_rules_for_point(tile_id, &point).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("from-lines slice for point 88 rule is out of bounds"));
 
         fs::remove_dir_all(dir).unwrap();
     }
