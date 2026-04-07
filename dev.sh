@@ -61,6 +61,9 @@ cmd_help() {
     echo "If no preset is provided, dev.sh uses the fast preset for quicker start-finish routing."
     echo "Available presets: $(list_rule_presets)"
     echo ""
+    echo "Profiling: RIDI_FEATURES=perf expands to hotpath,hotpath-alloc,hotpath-mcp."
+    echo "./dev.sh run also switches to --release when perf is requested."
+    echo ""
     echo "Available countries: ${!PBF_URLS[*]}"
 }
 
@@ -87,26 +90,121 @@ download_pbf() {
     echo "Saved to $filepath"
 }
 
-run_cli_release() {
-    local features="${RIDI_ROUTER_CLI_FEATURES:-}"
-    if [[ -n "$features" ]]; then
-        cargo run -p ridi-router-cli --release --features="$features" -- "$@"
-    else
-        cargo run -p ridi-router-cli --release -- "$@"
+run_cli_feature_set() {
+    local raw_features="$1"
+    local -a requested_features=()
+    local -a resolved_features=()
+    local feature
+    local perf_feature
+    local -A seen_features=()
+
+    if [[ -z "$raw_features" ]]; then
+        return 0
     fi
+
+    IFS=',' read -ra requested_features <<< "$raw_features"
+    for feature in "${requested_features[@]}"; do
+        feature=$(echo "$feature" | xargs)
+        if [[ -z "$feature" ]]; then
+            continue
+        fi
+
+        if [[ "$feature" == "perf" ]]; then
+            for perf_feature in hotpath hotpath-alloc hotpath-mcp; do
+                if [[ -z "${seen_features[$perf_feature]:-}" ]]; then
+                    resolved_features+=("$perf_feature")
+                    seen_features["$perf_feature"]=1
+                fi
+            done
+            continue
+        fi
+
+        if [[ -z "${seen_features[$feature]:-}" ]]; then
+            resolved_features+=("$feature")
+            seen_features["$feature"]=1
+        fi
+    done
+
+    if [[ ${#resolved_features[@]} -gt 0 ]]; then
+        local IFS=,
+        printf '%s\n' "${resolved_features[*]}"
+    fi
+}
+
+merge_cli_feature_sets() {
+    local base_features="$1"
+    local env_features="$2"
+    local merged_features=""
+    local expanded_features
+
+    expanded_features="$(run_cli_feature_set "$base_features")"
+    if [[ -n "$expanded_features" ]]; then
+        merged_features="$expanded_features"
+    fi
+
+    expanded_features="$(run_cli_feature_set "$env_features")"
+    if [[ -n "$expanded_features" ]]; then
+        if [[ -n "$merged_features" ]]; then
+            merged_features="$(run_cli_feature_set "$merged_features,$expanded_features")"
+        else
+            merged_features="$expanded_features"
+        fi
+    fi
+
+    printf '%s\n' "$merged_features"
+}
+
+cli_perf_requested() {
+    local -a requested_features=()
+    local feature
+    local raw_features="${RIDI_FEATURES:-}"
+
+    if [[ -z "$raw_features" ]]; then
+        return 1
+    fi
+
+    IFS=',' read -ra requested_features <<< "$raw_features"
+    for feature in "${requested_features[@]}"; do
+        feature=$(echo "$feature" | xargs)
+        if [[ "$feature" == "perf" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+run_cli() {
+    local profile="$1"
+    local extra_features="$2"
+    shift 2
+
+    local features
+    local -a cargo_args
+
+    features="$(merge_cli_feature_sets "$extra_features" "${RIDI_FEATURES:-}")"
+    cargo_args=(cargo run -p ridi-router-cli)
+
+    if [[ "$profile" == "release" ]]; then
+        cargo_args+=(--release)
+    fi
+
+    if [[ -n "$features" ]]; then
+        cargo_args+=(--features "$features")
+    fi
+
+    cargo_args+=(-- "$@")
+    "${cargo_args[@]}"
+}
+
+run_cli_release() {
+    run_cli release "" "$@"
 }
 
 run_cli_release_with_features() {
     local features="$1"
     shift
-    if [[ -n "${RIDI_ROUTER_CLI_FEATURES:-}" ]]; then
-        if [[ -n "$features" ]]; then
-            features="$features,${RIDI_ROUTER_CLI_FEATURES}"
-        else
-            features="${RIDI_ROUTER_CLI_FEATURES}"
-        fi
-    fi
-    cargo run -p ridi-router-cli --release --features="$features" -- "$@"
+    run_cli release "$features" "$@"
 }
 
 lookup_osm_coords() {
@@ -229,7 +327,7 @@ cmd_route() {
         fi
         echo "Using rule preset: $rule_file"
     else
-        rule_file="$RULE_EXAMPLES_DIR/rules-fast.json"
+        rule_file="$RULE_EXAMPLES_DIR/rules-empty.json"
         echo "Using default fast preset: $rule_file"
     fi
 
@@ -276,7 +374,11 @@ cmd_build() {
 }
 
 cmd_run() {
-    cargo run -p ridi-router-cli -- "$@"
+    if cli_perf_requested; then
+        run_cli release "" "$@"
+    else
+        run_cli debug "" "$@"
+    fi
 }
 
 cmd_test() {

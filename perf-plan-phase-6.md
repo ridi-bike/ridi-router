@@ -64,8 +64,8 @@ A measured result and a cleaned-up implementation.
 > Profile command used:
 
 > ```bash
-> RIDI_ROUTER_CLI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' ./dev.sh route riga,latvia sigulda,latvia
-> HOTPATH_ALLOC_SELF=true RIDI_ROUTER_CLI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' ./dev.sh route riga,latvia sigulda,latvia
+> RIDI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' ./dev.sh route riga,latvia sigulda,latvia
+> HOTPATH_ALLOC_SELF=true RIDI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' ./dev.sh route riga,latvia sigulda,latvia
 > ```
 
 > Compared with the earlier baseline in `perf.md`.

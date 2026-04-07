@@ -10,14 +10,14 @@
 - Added project-local MCP config at `.pi/mcp.json` for Hotpath:
   - `http://localhost:6771/mcp`
 - Updated `dev.sh` so profiling features can be injected via:
-  - `RIDI_ROUTER_CLI_FEATURES=...`
+  - `RIDI_FEATURES=...`
 
 ## How I profiled it
 
 The repo script currently requires the `route` subcommand, so I ran the supported equivalent of the requested route command:
 
 ```bash
-RIDI_ROUTER_CLI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' \
+RIDI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' \
 ./dev.sh route riga,latvia sigulda,latvia
 ```
 
@@ -25,7 +25,7 @@ I also ran an allocation-focused pass with exclusive allocation accounting:
 
 ```bash
 HOTPATH_ALLOC_SELF=true \
-RIDI_ROUTER_CLI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' \
+RIDI_FEATURES='hotpath,hotpath-alloc,hotpath-mcp' \
 ./dev.sh route riga,latvia sigulda,latvia
 ```
 
