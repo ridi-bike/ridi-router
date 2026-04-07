@@ -58,6 +58,47 @@ fn point_distance(
     from.distance_between(&to)
 }
 
+fn point_distance_approx_from_coords(
+    from_lat: f32,
+    from_lon: f32,
+    to_lat: f32,
+    to_lon: f32,
+) -> f32 {
+    let mean_lat_rad = ((from_lat + to_lat) * 0.5).to_radians();
+    let meters_per_degree_lat = 111_320.0_f32;
+    let meters_per_degree_lon = meters_per_degree_lat * mean_lat_rad.cos();
+    let dy_m = (from_lat - to_lat) * meters_per_degree_lat;
+    let dx_m = (from_lon - to_lon) * meters_per_degree_lon;
+
+    (dx_m * dx_m + dy_m * dy_m).sqrt()
+}
+
+fn point_distance_approx(
+    ctx: &RoutingContext<'_>,
+    from: &crate::map_data::graph::MapDataPointRef,
+    to: &crate::map_data::graph::MapDataPointRef,
+) -> f32 {
+    let from = ctx.point(from);
+    let to = ctx.point(to);
+
+    point_distance_approx_from_coords(from.lat, from.lon, to.lat, to.lon)
+}
+
+fn should_use_exact_distance_fallback(distance_a_approx: f32, distance_b_approx: f32) -> bool {
+    const EXACT_FALLBACK_RATIO: f32 = 0.03;
+
+    let larger_distance = distance_a_approx.max(distance_b_approx);
+    if larger_distance <= f32::EPSILON {
+        return true;
+    }
+
+    // Keep the exact haversine fallback when the cheap planar comparison is within 3%.
+    // The 3% guard came from the phase-5 approximation review: it keeps close-call
+    // decisions exact while still avoiding most of the expensive distance work on the
+    // longer, clearly-separated cases this phone-focused router cares about.
+    (distance_a_approx - distance_b_approx).abs() <= larger_distance * EXACT_FALLBACK_RATIO
+}
+
 fn segment_name(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<String> {
     let line = ctx.line(segment.get_line());
     let tags = ctx.tag_set(&line.tags);
@@ -243,9 +284,9 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput<'_, '_>) -> WeightCa
     }
     let check_junctions_back = input.rules.basic.progression_direction.check_junctions_back;
 
-    let distance_to_next_current = match input.route.get_segment_last() {
+    let current_point = match input.route.get_segment_last() {
         None => return WeightCalcResult::ForkChoiceUseWithWeight(0),
-        Some(segment) => point_distance(input.ctx, segment.get_end_point(), &input.itinerary.next),
+        Some(segment) => segment.get_end_point(),
     };
 
     let check_from = input
@@ -253,16 +294,38 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput<'_, '_>) -> WeightCa
         .switched_wps_on
         .last()
         .map_or(&input.itinerary.start, |value| &value.on_point);
-    let distance_to_next_junctions_back = match input.route.nth_junction_from_end_since_point(
+    let junctions_back_point = match input.route.nth_junction_from_end_since_point(
         input.ctx,
         check_from,
         check_junctions_back,
     ) {
         None => return WeightCalcResult::ForkChoiceUseWithWeight(0),
-        Some(segment) => point_distance(input.ctx, segment.get_end_point(), &input.itinerary.next),
+        Some(segment) => segment.get_end_point(),
+    };
+
+    let distance_to_next_current_approx =
+        point_distance_approx(input.ctx, current_point, &input.itinerary.next);
+    let distance_to_next_junctions_back_approx =
+        point_distance_approx(input.ctx, junctions_back_point, &input.itinerary.next);
+    let use_exact_fallback = should_use_exact_distance_fallback(
+        distance_to_next_current_approx,
+        distance_to_next_junctions_back_approx,
+    );
+    let (distance_to_next_current, distance_to_next_junctions_back) = if use_exact_fallback {
+        (
+            point_distance(input.ctx, current_point, &input.itinerary.next),
+            point_distance(input.ctx, junctions_back_point, &input.itinerary.next),
+        )
+    } else {
+        (
+            distance_to_next_current_approx,
+            distance_to_next_junctions_back_approx,
+        )
     };
     trace!(
-        distance = distance_to_next_junctions_back,
+        used_exact_fallback = use_exact_fallback,
+        current_distance = distance_to_next_current,
+        historical_distance = distance_to_next_junctions_back,
         "distance to next"
     );
 
@@ -521,7 +584,12 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput<'_, '_>) -> WeightCalcRes
 #[cfg(test)]
 mod test {
 
-    use super::get_priority_from_headings;
+    use geo::{Distance, Haversine, Point};
+
+    use super::{
+        get_priority_from_headings, point_distance_approx_from_coords,
+        should_use_exact_distance_fallback,
+    };
 
     #[test]
     fn get_prio_from_headings() {
@@ -547,6 +615,62 @@ mod test {
             let res = get_priority_from_headings(test.0, test.1);
             assert_eq!(test.2, res);
         }
+    }
+
+    fn exact_distance_m(from: (f32, f32), to: (f32, f32)) -> f32 {
+        Haversine.distance(Point::new(from.1, from.0), Point::new(to.1, to.0))
+    }
+
+    fn approx_distance_m(from: (f32, f32), to: (f32, f32)) -> f32 {
+        point_distance_approx_from_coords(from.0, from.1, to.0, to.1)
+    }
+
+    #[test]
+    fn guarded_distance_comparison_falls_back_and_matches_exact_on_close_call() {
+        let current = (-80.0, -170.0);
+        let historical = (-80.0, -165.0);
+        let target = (-80.0, 15.0);
+        let current_approx = approx_distance_m(current, target);
+        let historical_approx = approx_distance_m(historical, target);
+        let current_exact = exact_distance_m(current, target);
+        let historical_exact = exact_distance_m(historical, target);
+
+        let guarded_order = if should_use_exact_distance_fallback(current_approx, historical_approx)
+        {
+            current_exact > historical_exact
+        } else {
+            current_approx > historical_approx
+        };
+
+        assert_ne!(
+            current_approx > historical_approx,
+            current_exact > historical_exact
+        );
+        assert!(should_use_exact_distance_fallback(
+            current_approx,
+            historical_approx,
+        ));
+        assert_eq!(guarded_order, current_exact > historical_exact);
+    }
+
+    #[test]
+    fn guarded_distance_comparison_skips_exact_when_approx_gap_is_clear() {
+        let current = (56.95, 24.1);
+        let historical = (56.2, 23.2);
+        let target = (57.3, 25.3);
+        let current_approx = approx_distance_m(current, target);
+        let historical_approx = approx_distance_m(historical, target);
+        let current_exact = exact_distance_m(current, target);
+        let historical_exact = exact_distance_m(historical, target);
+
+        assert!(!should_use_exact_distance_fallback(
+            current_approx,
+            historical_approx,
+        ));
+        assert_eq!(
+            current_approx > historical_approx,
+            current_exact > historical_exact
+        );
     }
 }
 
