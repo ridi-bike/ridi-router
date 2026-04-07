@@ -14,8 +14,10 @@ usage() {
     cat <<'EOF'
 Usage: ./ralph-phases.sh [--model <model>] [--thinking <level>] [--start-at <n>] [--end-at <n>] [--pi-bin <path>]
 
-Loops through ./perf-plan-phase-[num].md files in numeric order and asks pi to
+Loops through ./impl-phase-[num].md files in numeric order and asks pi to
 implement each phase against ./perf-plan.md.
+
+Also accepts legacy ./perf-plan-phase-[num].md files.
 
 After each successful phase run, the script creates a git commit for that phase.
 
@@ -103,12 +105,12 @@ fi
 extract_phase_num() {
     local phase_file="$1"
 
-    if [[ ! "$phase_file" =~ ^perf-plan-phase-([0-9]+)\.md$ ]]; then
+    if [[ ! "$phase_file" =~ ^(impl-phase|perf-plan-phase)-([0-9]+)\.md$ ]]; then
         echo "Error: unexpected phase filename: $phase_file" >&2
         return 1
     fi
 
-    printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
+    printf '%d\n' "$((10#${BASH_REMATCH[2]}))"
 }
 
 ensure_tracked_clean() {
@@ -202,15 +204,19 @@ run_one() {
         return 1
     fi
 
-    git commit -m "Implement perf plan phase $phase_num"
+    git commit -m "Implement phase $phase_num"
 
     echo "[ ok ] phase $phase_num committed"
 }
 
-mapfile -t ALL_PHASE_FILES < <(find . -maxdepth 1 -type f -name 'perf-plan-phase-*.md' -printf '%f\n' | sort -V)
+mapfile -t ALL_PHASE_FILES < <(
+    find . -maxdepth 1 -type f \(
+        -name 'impl-phase-*.md' -o -name 'perf-plan-phase-*.md' \
+    \) -printf '%f\n' | sort -V
+)
 
 if [[ ${#ALL_PHASE_FILES[@]} -eq 0 ]]; then
-    echo "No perf-plan-phase-*.md files found."
+    echo "No impl-phase-*.md or perf-plan-phase-*.md files found."
     exit 0
 fi
 
