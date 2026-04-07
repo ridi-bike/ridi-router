@@ -4,8 +4,8 @@ examine the review docs, examine the codebase, consider possible implementation 
 ASK ME QUESTIONS until all unclear aspects are clarified and all decisions have been reviewed with me.
 after this process delete the original review file. either the plan file becomes the source of truth going forward or we've determined that the todo is not relevant and does not require further work
 
-please read @./todo-plan-remove-stale-point-hashing-hook.md
-implement ONLY phase 1 in @./impl-phase-1.md
+please read @./perf-plan.md
+implement ONLY phase 1 in @./perf-plan-phase-1.md
 ASK if there are unexpected or unclear issues in the implementation that need clarification
 
 please read @./todo-plan-remove-stale-point-hashing-hook.md
