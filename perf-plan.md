@@ -1,372 +1,362 @@
-# Perf improvement plan: `weights::weight_check_distance_to_next`
+# `graph::get_point_from_tiles` performance review
 
-## Goal
+## Scope
 
-Reduce the CPU and allocation cost of `weights::weight_check_distance_to_next` without changing routing behaviour, except for any explicitly approved distance-approximation change.
+From `perf.md`:
 
-## Out of scope
+- `graph::get_point_from_tiles`: **2,891,151 calls**, **463.03 s** cumulative time, **57.8 GB** cumulative allocation
+- `tile_manager::get_rules_for_point`: **57.2 GB** cumulative allocation
 
-- lightweight graph/point hydration APIs
-- broader tile manager refactors
-- changing rule semantics unless explicitly agreed
 
-## Key findings from the current code
+## Confirmed constraints and design choices
 
-1. `weight_check_distance_to_next` is currently evaluated inside the per-fork-choice loop.
-2. The weight does **not** depend on `current_fork_segment` or `walker_from_fork`.
-3. Today, `LastSegmentDoNotUse` only helps **after** one fork choice has already evaluated all weights.
-   - It prevents later fork choices from being evaluated.
-   - It does **not** stop the remaining weights for the first evaluated choice.
-4. `weight_check_distance_to_next` currently does unnecessary route work:
-   - `split_at_point(check_from)`
-   - clone suffix into a new `Vec<Segment>`
-   - reverse scan over the cloned suffix
-5. That reverse scan checks junction-ness via `ctx.point(...)`, which is relatively expensive.
-6. The existing loop-detector metadata already contains useful route-history infrastructure:
-   - one meta entry per route segment
-   - `point_hits: HashMap<MapDataPointRef, Vec<usize>>`
-   - cached lat/lon
-   - cached road identity
+- keep routing behavior unchanged; this is a perf-only plan
+- if a large win seems to require subtle behavior changes, stop and discuss before implementing
+- internal API changes are fine; external routing API changes are undesirable
+- trade more resident memory for lower CPU time / allocation churn
+- use **approximate** recency, not exact per-hit LRU, as long as eviction stays roughly reasonable
+- apply the same read-mostly ideas not only to points, but also to nearby hot readers like line and tag access where it stays clean
+- use **route-generation-task-local caches**, not graph-level shared caches, to avoid shared-cache write contention on mostly-new-point exploration
+- start those task-local caches **unbounded** and only add eviction if profiling later shows memory pressure
 
-## Final planning decisions
+## Non-goals / rejected starting points
 
-1. Start with **tests first** to lock down current behaviour.
-2. Apply a **route-once gate stage** for these route-level `LastSegmentDoNotUse` weights:
-   - `weight_no_loops`
-   - `weight_progress_speed`
-   - `weight_check_distance_to_next`
-   - `weight_check_avoid_rules`
-3. Replace `split_at_point(...).get_junctions_from_end(...)` with a **single no-allocation route query**.
-4. Reuse and extend the existing **loop-detector route metadata** instead of introducing a separate cache.
-5. Preserve the current repeated-point boundary behaviour and add a **code comment** documenting the caveat after the refactor.
-6. Use a **pure 3% guarded exact fallback** for the distance comparison in `weight_check_distance_to_next`.
-7. No code changes are part of this document; this file is the planning artifact.
+- do **not** keep exact per-hit LRU ordering if it forces a write on every successful read
+- do **not** start with a graph-level shared point cache; for the current workload, shared-cache write contention is expected to outweigh most cross-route reuse
+- do **not** change external routing APIs as part of this work
+- do **not** accept functional routing changes as an implicit side effect of a perf refactor
+## What the function does today
 
----
+`crates/ridi-router-routing/src/map_data/graph.rs:274-329`
 
-## Phase 0: Behaviour-locking tests first
+For every lookup it:
 
-### A. Add focused unit tests for `weight_check_distance_to_next`
+1. takes the `tile_manager` **write lock**
+2. finds the point with `get_point_by_id(...)`
+3. fetches adjacent lines with `get_adjacent_by_id(...)`
+4. fetches and hydrates turn rules with `get_rules_for_point(...)`
+5. allocates fresh `Vec`s for `lines` and `rules`
+6. returns a fully-owned `MapDataPoint`
 
-Add tests that cover the current semantics before any refactor.
+That is expensive by itself. The bigger problem is that several of those steps do more work than this function actually needs.
 
-Suggested cases:
+## Main problems
 
-1. **disabled rule returns zero weight**
-   - `progression_direction.enabled = false`
-   - expect `ForkChoiceUseWithWeight(0)`
+### 1. `get_point_from_tiles` asks adjacency code for more than it needs
 
-2. **empty route returns zero weight**
-   - no last segment
-   - expect `ForkChoiceUseWithWeight(0)`
+`graph::get_point_from_tiles` only needs the current point's `MapDataLineRef`s.
 
-3. **not enough junctions back returns zero weight**
-   - fewer than `check_junctions_back + 1` junctions since the boundary
-   - expect `ForkChoiceUseWithWeight(0)`
+But it calls `tile_manager::get_adjacent_by_id(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:712-799`), which:
 
-4. **returns `LastSegmentDoNotUse` when current endpoint is farther from `next` than the chosen historical junction**
+- linearly searches the point again
+- loads the tile's line table
+- walks every connected line
+- resolves the **other endpoint** of each line
+- computes the **other tile id**
+- may `ensure_tile_loaded(...)` for border crossings
+- allocates a `Vec<(TileId, usize, TileId, u64)>`
 
-5. **returns zero when current endpoint is not farther**
+Then `get_point_from_tiles` throws away half of that data and keeps only the line refs.
 
-6. **respects `switched_wps_on.last().on_point` as the lower boundary**
-   - ensure the check only considers the route suffix after the active boundary
+This is a clear over-fetch path.
 
-7. **document repeated-point boundary behaviour**
-   - important because current code finds the boundary by point search
-   - if the same point appears multiple times, current semantics may not match the conceptual waypoint-switch boundary
-   - add a test to pin the current behaviour before refactoring
+### 2. Rule hydration copies whole rule sections on every point lookup
 
-### B. Add route-query equivalence tests in `route/mod.rs`
+This is likely the biggest allocator.
 
-Before replacing the implementation, add tests that compare:
+`tile_manager::get_rules_for_point(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:296-347`) calls:
 
-- current behaviour:
-  - `route.split_at_point(boundary).get_junctions_from_end(ctx, n)`
-- new behaviour:
-  - `route.nth_junction_from_end_since_...(ctx, boundary_or_idx, n)`
+- `MappedTile::get_rules()` (`crates/ridi-router-routing/src/rmdf/io.rs:169-183`)
+- `MappedTile::get_rule_line_refs_payload()` (`crates/ridi-router-routing/src/rmdf/io.rs:185-207`)
 
-Suggested cases:
+Both return freshly allocated `Vec`s for the **entire tile section**, not borrowed slices.
 
-1. no boundary match
-2. boundary at start
-3. boundary in the middle
-4. not enough junctions
-5. repeated boundary point
+So one point lookup can clone:
 
-### C. Add navigator execution-count tests
+- all rule records in the tile
+- all rule line-ref payload in the tile
+- then the selected rule's `from`/`to` slices again
+- then `get_point_from_tiles` maps those into new `Vec<MapDataLineRef>` again
 
-Add tests that prove route-level gates are evaluated once per fork event, while fork-dependent weights are still evaluated per choice.
+That matches the profile: the alloc hotspot under `get_point_from_tiles` is almost mirrored by `tile_manager::get_rules_for_point`.
 
-Suggested cases:
+### 3. No fast path for points with no rules
 
-1. route-level weight returning `LastSegmentDoNotUse`
-   - called once
-   - per-fork weights are not called
+`PointRecord` already contains `rules_count` and `lines_count` (`crates/ridi-router-common/src/format.rs:77-88`).
 
-2. multiple route-level weights
-   - if the first returns `LastSegmentDoNotUse`, later route-level weights are not called
+But `get_point_from_tiles` always calls `get_rules_for_point(...)`, even when `rules_count == 0`.
 
-3. passing route-level weights + per-fork weights
-   - route-level weights called once
-   - per-fork weights called once per choice
+That means even rule-free points still pay the full rule-loading path.
 
-These tests should be added before the navigator refactor.
+### 4. Point lookup is linear, and it happens repeatedly
 
----
+`tile_manager::get_point_by_id(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:262-276`) does a linear scan through the tile's points.
 
-## Phase 1: Apply `LastSegmentDoNotUse` as a true route-once gate
+`get_adjacent_by_id(...)` then linearly finds the same point again (`tile_manager.rs:721-729`).
 
-### Why
+With ~2.9M calls, even “small” linear scans add up.
 
-These weights are route-only and can invalidate the whole current route state:
+### 5. Repeated lookups rehydrate the same immutable point over and over
 
-- `weight_no_loops`
-- `weight_progress_speed`
-- `weight_check_distance_to_next`
-- `weight_check_avoid_rules`
+`RoutingContext::point(...)` is just a thin wrapper over `get_point_from_tiles(...)` (`crates/ridi-router-routing/src/routing_context.rs:22-25`).
 
-They should be executed once per fork event, not once per fork choice.
+There are many hot-path call sites that only need cheap point facts like:
 
-### Implementation direction
+- point id
+- lat/lon
+- junction check (`lines.len() > 2`)
+- flags like `residential_in_proximity` / `nogo_area`
 
-Introduce explicit weight staging.
+So the code often rebuilds a full `MapDataPoint` when it only needs a tiny part of it.
 
-Possible shape:
+### 6. Parallel route generation still funnels through a write lock
 
-- extend `WeightCalc` with a scope/stage flag, for example:
-  - `RouteOnce`
-  - `PerForkChoice`
+`MapDataGraph` stores `tile_manager` behind `RwLock<TileManager>`, and `get_point_from_tiles(...)` currently takes the **write** lock (`graph.rs:281`).
 
-Then in `Navigator::generate_routes_with_context`:
+That is not only because of tile loads. Even a loaded-tile hit still goes through mutable `ensure_tile_loaded(...)`, which updates recency via `mark_tile_recent(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:237-258`, `189-206`).
 
-1. when a fork is reached, run all `RouteOnce` weights once
-2. if any returns `LastSegmentDoNotUse`, prune immediately
-3. otherwise evaluate only `PerForkChoice` weights for each candidate choice
+At the same time, route generation uses Rayon (`crates/ridi-router-routing/src/router/generator.rs:360-438`).
 
-### Notes
+So many concurrent point lookups still serialize through one mutable tile-manager path. That does not directly explain the allocation spike, but it can cap throughput and amplify the cost of repeated hydration.
 
-- This is stronger than the current behaviour.
-- Today the code only skips later fork choices after the first evaluated choice reports `LastSegmentDoNotUse`.
-- After the refactor, route-level pruning happens before any per-choice scoring work.
+## Recommended changes
 
-### Expected benefit
+## Priority 1: stop using `get_adjacent_by_id` inside `get_point_from_tiles`
 
-- removes repeated work for all route-only gate weights
-- should directly reduce `weight_check_distance_to_next`
-- should also help `weight_no_loops`, `weight_progress_speed`, and `weight_check_avoid_rules`
+This is the cleanest low-risk fix.
 
----
+Use the already-loaded `PointRecord` fields directly:
 
-## Phase 2: Replace route slicing with a no-allocation route query
+- `point_record.lines_offset`
+- `point_record.lines_count`
+- `tile.get_line_refs()`
 
-### Current problem
+Build `Vec<MapDataLineRef>` from that slice only.
 
-`weight_check_distance_to_next` currently does:
+Why this should help:
 
-1. find `check_from`
-2. `split_at_point(check_from)`
-3. clone route suffix
-4. reverse scan for the Nth junction
+- removes the second point lookup
+- removes border-crossing logic from a path that does not need it
+- avoids building then remapping an adjacency tuple vector
+- avoids possible neighbor-tile loads for a simple point hydration
 
-This creates avoidable allocations and duplicate scans.
+This keeps the external behavior of `MapDataPoint.lines` the same, because the current adjacency function already returns the current tile id for line refs.
 
-### New route API
+## Priority 2: add a zero-rules fast path
 
-Add a route helper that directly scans the existing route history.
+Before calling `get_rules_for_point(...)`, check:
 
-Likely shape:
-
-- `Route::get_junctions_from_end_since_idx(...)`
-- or `Route::nth_junction_from_end_since_idx(...)`
-
-Recommended return value:
-
-- `Option<&Segment>`
-- or `Option<usize>` if later logic should work directly with metadata indices
-
-### Planned behaviour
-
-Given:
-
-- `since_idx` = inclusive lower bound in route history
-- `num_of_junctions`
-
-The method should:
-
-1. scan `route_segments` from the end toward `since_idx`
-2. count junction endpoints
-3. return the segment at the Nth junction from the end
-4. perform no allocation and no cloning
-
-### Why index-based is better here
-
-- avoids `position(...)` + clone + second scan
-- lets us use existing route metadata directly
-- makes it much easier to reuse loop-detector state
-
----
-
-## Phase 3: Reuse and extend the existing route metadata
-
-### Reuse from loop detector
-
-The current `LoopDetector` already stores one meta entry per segment.
-
-We should reuse or extend that metadata instead of creating a separate cache just for this weight.
-
-### Candidate extension
-
-Add `is_junction` to the existing meta entry.
-
-That allows the new route query to count junctions without repeated `ctx.point(...).is_junction()` calls.
-
-### Candidate helper accessors
-
-Expose minimal route/history helpers backed by existing metadata, for example:
-
-- `route.route_index_first_for_point(point_ref)`
-- `route.route_index_last_for_point(point_ref)`
-- `route.segment_meta(idx)`
-- `route.nth_junction_from_end_since_idx(...)`
-
-### Important caveat
-
-The existing `point_hits` map can help find route indices for a point, but it does **not** automatically encode the exact waypoint-switch moment.
-
-If the same point appears multiple times, there are two possible semantics:
-
-1. **preserve current behaviour**
-   - use the same effective boundary as the existing `split_at_point(...).position(...)` behaviour
-   - add a code comment after the refactor documenting that repeated points can make this differ from the conceptual waypoint-switch boundary
-2. **preserve conceptual waypoint-switch intent**
-   - store the exact route index when the switch happened
-
-For this pass, preserve current behaviour and document the caveat in code.
-
----
-
-## Distance calculation: haversine vs approximation
-
-## Current state
-
-`weight_check_distance_to_next` currently uses haversine distance through `MapDataPoint::distance_between`.
-
-The loop detector already uses a cheaper planar approximation for a different purpose.
-
-## Important difference from `has_looped`
-
-The approximation used in `has_looped` is safe there because:
-
-- distances are very small
-- the threshold is small and local (`50 m`)
-- it only needs a near/far check
-
-For `weight_check_distance_to_next`, the distances to `itinerary.next` can be much larger.
-
-That means approximation error matters more, especially when the two compared distances are close.
-
-## Measured approximation results
-
-The planar approximation used by `has_looped` is **not** safe enough to reuse blindly for this weight at continental scale.
-
-The useful result from the analysis was a **relative threshold**, not an absolute-meter threshold.
-
-## Practical thresholds from the comparison work
-
-Treat these as practical guidance based on straight-line separation between:
-
-- the current endpoint
-- the historical comparison point used by the check
-
-This is not exactly “route distance since waypoint”, but it is the right proxy for when the approximation starts to drift enough to flip the decision.
-
-### 1% rule
-
-- `0–150 km` since waypoint is OK
-- `150–200 km` is borderline
-- `>200 km` starts to break down
-- `>300 km` is not OK
-
-### 2% rule
-
-- `0–300 km` since waypoint is OK
-- `300–500 km` is borderline
-- `>500 km` starts to break down
-- `>800 km` is not OK
-
-### 3% rule
-
-- `0–500 km` since waypoint is OK
-- `500–800 km` is borderline
-- `>800 km` starts to break down
-- `>1000 km` is not OK
-
-## Decision for this plan
-
-Use a **pure 3% guarded exact fallback** for `weight_check_distance_to_next`.
-
-Reasoning: the project targets phone route generation, older phones are in scope, and waypoint-to-waypoint spans above roughly `800 km` are already considered impractical for the intended use case.
-
-Implementation shape:
-
-1. compute the cheap approximate distances
-2. compare the two approximate distances
-3. if the difference is within **3%**, switch to exact haversine for the final decision
-4. otherwise trust the approximate comparison
-
-Add a code comment explaining why `3%` was chosen.
-
-## Validation sequence
-
-### Before implementation
-
-1. add tests for current behaviour
-2. run the new focused test set and save the baseline result
-
-### After Phase 1
-
-1. run the same focused tests
-2. confirm navigator call counts changed as intended
-
-### After Phase 2 and 3
-
-1. run the same focused tests again
-2. confirm route-query equivalence
-
-### After any approximation change
-
-1. run all previous tests
-2. run exact-vs-approx comparison tests
-3. document any accepted behaviour delta
-
-### Perf validation
-
-Re-run:
-
-```bash
-RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia fast
-HOTPATH_ALLOC_SELF=true RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia fast
+```rust
+if point_record.rules_count == 0 {
+    rules = Vec::new();
+}
 ```
 
-Track at least:
+This is tiny, safe, and likely helps a lot if most visited points have no turn restrictions.
 
-- `weights::weight_check_distance_to_next`
-- `weights::weight_no_loops`
-- `weights::weight_progress_speed`
-- `weights::weight_check_avoid_rules`
+Do the same for line refs if `lines_count == 0`, although that is probably less important.
+
+## Priority 3: make tile rule access zero-copy
+
+This is probably the biggest allocation win.
+
+Change `MappedTile` so these return borrowed slices instead of owned `Vec`s:
+
+- `get_rules() -> Result<&[RuleRecord]>`
+- `get_rule_line_refs_payload() -> Result<&[u64]>`
+
+Then update `TileManager::get_rules_for_point(...)` to slice directly from those borrowed sections.
+
+Better versions, in increasing ambition:
+
+1. **Good:** keep returning owned `TilePointRule`, but only allocate for the selected point's rules
+2. **Better:** return borrowed slices / lightweight views and let `graph` materialize only once
+3. **Best:** hydrate directly into the final output with exact capacities, skipping the temporary `TilePointRule` layer entirely
+
+This change directly targets the `57.2 GB` allocation hotspot.
+
+## Priority 4: make loaded-tile access read-mostly
+
+This is the lock strategy change I would pick.
+
+Use **Option B**:
+
+- keep a read-only fast path for already-loaded tiles
+- take the write lock only when a tile miss requires load / eviction
+- replace exact per-hit LRU rotation with cheap per-tile recency metadata, e.g. `last_used: AtomicU64` or similar
+- let eviction consult those timestamps under the write lock
+
+Why this is a good fit here:
+
+- loaded tiles stay cheap to read
+- boundary / tile-miss handling still works
+- Rayon workers stop serializing on every successful hit
+- eviction remains good enough without exact LRU writes on every access
+
+Important note: exact LRU and read-only hits fight each other. If we want the common case to avoid the write lock, recency updates cannot keep mutating the global order array on every access.
+
+A practical shape is:
+
+1. take read lock
+2. if tile is already loaded, hydrate directly from the mapped tile and atomically bump recency
+3. on miss, drop read lock, take write lock, load tile, update eviction state, retry
+
+This should be paired with the `get_point_from_tiles` rewrite above, so the read-only path does not accidentally trigger boundary loads via `get_adjacent_by_id(...)`.
+
+After the point path is working, extend the same pattern to nearby hot readers where possible:
+
+- `get_line_from_tiles`
+- `get_tag_set`
+- `get_tag_value`
+
+Those paths look like good candidates for the same split between read-only loaded-tile access and write-only tile miss handling.
+
+They are also good candidates for task-local caching, especially tags and lines:
+
+- many points and segments on the same road share the same street name / surface / smoothness data
+- repeated line hydration is already visible in the profile
+- a route-generation-task-local cache for lines and tag sets should capture that reuse without adding cross-thread contention
+
+## Priority 5: add route-generation-task-local caches
+
+The graph is immutable during routing, and each route-generation task revisits nearby data often enough that local caching should help without shared synchronization.
+
+Use a **route-generation-task-local cache** design:
+
+- each route-generation task owns its own caches
+- caches are not shared across tasks or threads
+- caches can be mutated freely without locks
+- start unbounded for now
+
+Recommended cache set:
+
+- point cache keyed by `MapDataPointRef` or `(TileId, osm_id)`
+- line cache keyed by `MapDataLineRef` or `(TileId, line_index)`
+- tag-set cache keyed by `ElementTagSetRef`
+- optionally tag-value cache keyed by `ElementTagValueRef` if profiling shows string lookup churn remains significant
+
+Recommended value types:
+
+- start with plain owned values (`MapDataPoint`, `MapDataLine`, `ElementTagSet`, maybe `String`)
+- switch individual caches to `Arc<_>` only if profiling shows clone cost becomes noticeable
+
+Why this matches the routing shape better:
+
+- route generation runs many routes in parallel
+- those routes often explore different areas and discover mostly new points
+- a graph-level shared cache would see many misses and many inserts
+- the synchronization cost of shared-cache writes could erase the hydration win
+- task-local caches keep the hot path mutation-only and lock-free for that worker
+
+Why line and tag caching are worth planning up front:
+
+- every road contributes many points and segments
+- those points and segments often reuse the same line or tag information repeatedly
+- road metadata such as street name, pavement, highway class, and smoothness naturally has high local reuse
+
+Lookup flow:
+
+1. check the task-local cache
+2. if miss, hydrate from tile data
+3. insert into the task-local cache
+4. return the cached value
+
+Tradeoffs:
+
+- less reuse across unrelated routes
+- more duplicate cached values across workers
+- higher total memory use than a single shared cache
+
+Given the stated workload, those tradeoffs are acceptable if they remove synchronization from the common case. If later profiling shows heavy cross-route overlap, a shared cache can be revisited as an optional second phase, but it should not be the starting plan.
+
+## Priority 6: add a point index per loaded tile
+
+Build a lookup index once when a tile is loaded:
+
+- `HashMap<u64, usize>`
+- or a sorted `(osm_id, index)` vector with binary search
+
+Use it in both:
+
+- `get_point_by_id(...)`
+- `get_adjacent_by_id(...)`
+
+This removes the repeated linear scans.
+
+If tile point counts are modest, even a compact sorted vector may be enough and cheaper than a hash map.
+
+## Priority 7: stop hydrating full points when the caller only needs a field
+
+This is a broader cleanup, but it will pay off.
+
+Examples from hot code:
+
+- replace `ctx.point(point_ref).id` with `point_ref.get_element_id()` where semantics allow it
+- add cheap accessors for coordinates and flags
+- add a cheap `point_degree(...)` / `is_junction_ref(...)` path based on `lines_count`
+
+That avoids constructing `MapDataPoint` for read-only metadata checks.
+
+## Suggested implementation order
+
+1. **Rewrite `get_point_from_tiles` to read line refs directly from `PointRecord`**
+2. **Skip rule hydration when `rules_count == 0`**
+3. **Make `MappedTile` rule getters return borrowed slices**
+4. **Add a read-only loaded-tile fast path for point reads**
+5. **Switch recency tracking from exact per-hit LRU mutation to atomic last-used metadata (Option B)**
+6. **Extend the same read-mostly pattern to nearby hot readers (`get_line_from_tiles`, `get_tag_set`, `get_tag_value`)**
+7. **Simplify `get_rules_for_point` to avoid intermediate allocations**
+8. **Add route-generation-task-local caches for points, lines, and tags**
+9. **Add a per-tile point index**
+10. **Audit hot call sites that only need id/coords/flags**
+
+## Expected impact
+
+### Biggest likely allocation win
+
+**Borrowed rule slices + zero-rules fast path**
+
+Reason: the current rule-loading stack copies whole tile rule data on each lookup.
+
+### Biggest likely time win with low risk
+
+**Stop using `get_adjacent_by_id` for point hydration**
+
+Reason: it removes duplicated lookup and cross-tile adjacency work from a path that only needs line refs.
+
+### Biggest longer-term combined win
+
+**Task-local caching for points, lines, and tags**
+
+Reason: the same roads, lines, and metadata are likely to be revisited repeatedly within one route-generation task, and local caches avoid both re-hydration and shared-cache contention.
+
+## Validation plan
+
+After each step, re-run the same perf workflow and compare at least:
+
 - `graph::get_point_from_tiles`
+- `tile_manager::get_rules_for_point`
 - `tile_manager::get_adjacent_by_id`
-- allocation attributed to route-weight logic
+- `graph::get_line_from_tiles`
+- wall-clock route generation time
 
----
+I would also add a focused micro-benchmark for repeated hydration of the same point and another for repeated hydration of many points from the same tile.
 
-## Proposed implementation order
+## Short version
 
-1. add behaviour-locking tests
-2. add navigator route-once gating for route-only `LastSegmentDoNotUse` weights
-3. add the no-allocation route query for Nth junction from end since boundary
-4. extend/reuse loop-detector route metadata with `is_junction`
-5. preserve the current repeated-point boundary semantics and add a code comment documenting the caveat
-6. add the pure `3%` guarded exact fallback for the distance comparison, with a code comment explaining the threshold choice
-7. re-run focused tests after each step
-8. re-run the perf workflow and compare hotspot numbers
+The hotspot is not just “too many point lookups”.
+
+`get_point_from_tiles` currently:
+
+- does unnecessary adjacency work
+- forces whole-tile rule copying
+- repeats linear point scans
+- rebuilds the same immutable point data again and again
+- takes the write lock even on loaded-tile hits because recency bookkeeping mutates on every access
+
+If I had to pick the first two fixes, I would do these:
+
+1. **Read line refs directly from `PointRecord` instead of calling `get_adjacent_by_id`**
+2. **Make rule access borrow from the mmap instead of allocating whole-tile `Vec`s per lookup**
+
+Those two changes are the clearest match for the current profile.
