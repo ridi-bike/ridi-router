@@ -48,6 +48,7 @@ struct LoopMeta {
     hw_ref: Option<RoadKey>,
     name: Option<RoadKey>,
     cell_id: CellId,
+    is_junction: bool,
 }
 
 impl LoopMeta {
@@ -63,6 +64,7 @@ impl LoopMeta {
             .tag_value(&line_tags.name)
             .map(|value| RoadKey(value.into()));
         let cell_id = CellId::from_lat_lon(point.lat, point.lon);
+        let is_junction = point.is_junction();
 
         Self {
             end_point,
@@ -72,6 +74,7 @@ impl LoopMeta {
             hw_ref,
             name,
             cell_id,
+            is_junction,
         }
     }
 }
@@ -383,6 +386,10 @@ impl Route {
             .and_then(|indices| indices.first().copied())
     }
 
+    fn segment_meta(&self, idx: usize) -> Option<&LoopMeta> {
+        self.loop_detector.metas.get(idx)
+    }
+
     pub fn split_at_point(&self, point: &MapDataPointRef) -> Self {
         let point_pos = self
             .route_segments
@@ -404,13 +411,21 @@ impl Route {
             return None;
         }
 
-        let mut segment_num = 0;
-        for segment in self.route_segments[since_idx..].iter().rev() {
-            if ctx.point(segment.get_end_point()).is_junction() {
-                segment_num += 1;
+        let mut junction_count = 0;
+        for idx in (since_idx..self.route_segments.len()).rev() {
+            let is_junction = self
+                .segment_meta(idx)
+                .map(|meta| meta.is_junction)
+                .unwrap_or_else(|| {
+                    ctx.point(self.route_segments[idx].get_end_point())
+                        .is_junction()
+                });
+
+            if is_junction {
+                junction_count += 1;
             }
-            if segment_num == num_of_junctions {
-                return Some(segment);
+            if junction_count == num_of_junctions {
+                return self.route_segments.get(idx);
             }
         }
 
@@ -1282,7 +1297,19 @@ mod tests {
         assert_eq!(meta.lon, ctx.point(&point_ref(HW_REF_A_POINT_ID)).lon);
         assert_eq!(meta.hw_ref, Some(RoadKey("R1".into())));
         assert_eq!(meta.name, None);
-        assert_eq!(meta.cell_id, CellId::from_lat_lon(meta.lat, meta.lon),);
+        assert_eq!(meta.cell_id, CellId::from_lat_lon(meta.lat, meta.lon));
+        assert!(!meta.is_junction);
+    }
+
+    #[test]
+    fn detector_hydrates_junction_flag_on_push() {
+        let graph = loop_test_graph();
+        let ctx = RoutingContext::new(&graph);
+        let mut route = Route::new();
+
+        route.add_segment(&ctx, segment(EXACT_A_LINE_IDX, SOURCE_POINT_ID));
+
+        assert!(route.loop_detector.metas[0].is_junction);
     }
 
     #[test]
