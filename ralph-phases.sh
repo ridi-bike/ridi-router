@@ -209,11 +209,20 @@ run_one() {
     echo "[ ok ] phase $phase_num committed"
 }
 
-mapfile -t ALL_PHASE_FILES < <(
-    find . -maxdepth 1 -type f \(
-        -name 'impl-phase-*.md' -o -name 'perf-plan-phase-*.md' \
-    \) -printf '%f\n' | sort -V
-)
+shopt -s nullglob
+ALL_PHASE_FILES=( ./impl-phase-*.md )
+if [[ ${#ALL_PHASE_FILES[@]} -eq 0 ]]; then
+    ALL_PHASE_FILES=( ./perf-plan-phase-*.md )
+fi
+shopt -u nullglob
+
+for i in "${!ALL_PHASE_FILES[@]}"; do
+    ALL_PHASE_FILES[$i]="${ALL_PHASE_FILES[$i]#./}"
+done
+
+if [[ ${#ALL_PHASE_FILES[@]} -gt 1 ]]; then
+    mapfile -t ALL_PHASE_FILES < <(printf '%s\n' "${ALL_PHASE_FILES[@]}" | sort -V)
+fi
 
 if [[ ${#ALL_PHASE_FILES[@]} -eq 0 ]]; then
     echo "No impl-phase-*.md or perf-plan-phase-*.md files found."
