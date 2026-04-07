@@ -24,6 +24,11 @@
 			"priority": 60
 		}
 	},
+	"generation": {
+		"route_generation_retry": {
+			"avoid_residential": [true]
+		}
+	},
 	"highway": null,
 	"surface": null,
 	"smoothness": null
