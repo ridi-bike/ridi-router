@@ -5,6 +5,7 @@ use std::{
     marker::PhantomData,
 };
 
+use super::{line::MapDataLine, point::MapDataPoint};
 use crate::{
     map_data::line::LineDirection,
     rmdf::format::{TagSetRecord, TileId},
@@ -12,9 +13,8 @@ use crate::{
 };
 use ridi_router_common::manifest::TileManifest;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use tracing::warn;
-
-use super::{line::MapDataLine, point::MapDataPoint};
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Serialize, Deserialize)]
 pub struct ElementTagValueRef {
@@ -468,6 +468,7 @@ impl MapDataGraph {
         }
     }
 
+    const ADJACENT_INLINE_CAPACITY: usize = 8;
     pub fn get_adjacent(
         &self,
         center_point: MapDataPointRef,
@@ -509,7 +510,9 @@ impl MapDataGraph {
                 .expect("Failed to get adjacent points")
         });
 
-        adjacent
+        let adjacent: SmallVec<
+            [(MapDataLineRef, MapDataPointRef); Self::ADJACENT_INLINE_CAPACITY],
+        > = adjacent
             .iter()
             .map(|(line_tile_id, line_index, other_tile_id, other_osm_id)| {
                 (
@@ -517,7 +520,9 @@ impl MapDataGraph {
                     MapDataPointRef::new(*other_tile_id, *other_osm_id),
                 )
             })
-            .collect()
+            .collect();
+
+        adjacent.into_vec()
     }
 
     pub fn get_closest_to_coords(

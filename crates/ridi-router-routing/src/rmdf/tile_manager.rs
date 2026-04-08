@@ -2,12 +2,6 @@ const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
 const GRID_CELL_PRECISION: u32 = 100;
 const GRID_SEARCH_RING_RADIUS: i16 = 20;
 
-use anyhow::{Context, Result};
-use geo::{Distance, Haversine, Point};
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use crate::{
     map_data::{
         graph::MapDataLineRef,
@@ -15,6 +9,12 @@ use crate::{
     },
     router::rules::{RouterRules, RulesTagValueAction},
 };
+use anyhow::{Context, Result};
+use geo::{Distance, Haversine, Point};
+use smallvec::SmallVec;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::format::*;
 use super::io::MappedTile;
@@ -80,6 +80,10 @@ struct AdjacentLineTags {
     surface: Option<String>,
     smoothness: Option<String>,
 }
+
+type AdjacentLineData = (usize, u64, f32, f32, u64, f32, f32);
+type AdjacentByIdEntry = (TileId, usize, TileId, u64);
+const ADJACENT_INLINE_CAPACITY: usize = 8;
 
 #[hotpath::measure_all]
 impl TileManager {
@@ -707,14 +711,16 @@ impl TileManager {
         &self,
         tile_id: TileId,
         osm_id: u64,
-    ) -> Result<Option<Vec<(TileId, usize, TileId, u64)>>> {
+    ) -> Result<Option<Vec<AdjacentByIdEntry>>> {
         let Some(line_indices_and_data) =
             self.collect_adjacent_line_data_if_loaded(tile_id, osm_id)?
         else {
             return Ok(None);
         };
 
-        let mut result = Vec::with_capacity(line_indices_and_data.len());
+        let mut result = SmallVec::<[AdjacentByIdEntry; ADJACENT_INLINE_CAPACITY]>::with_capacity(
+            line_indices_and_data.len(),
+        );
 
         for (
             line_idx,
@@ -741,7 +747,7 @@ impl TileManager {
             result.push((tile_id, line_idx, other_tile_id, other_osm_id));
         }
 
-        Ok(Some(result))
+        Ok(Some(result.into_vec()))
     }
 
     /// Get adjacent lines and points from a point (handles border crossing)
@@ -750,14 +756,16 @@ impl TileManager {
         &mut self,
         tile_id: TileId,
         osm_id: u64,
-    ) -> Result<Vec<(TileId, usize, TileId, u64)>> {
+    ) -> Result<Vec<AdjacentByIdEntry>> {
         self.ensure_tile_loaded(tile_id)?;
 
         let line_indices_and_data = self
             .collect_adjacent_line_data_if_loaded(tile_id, osm_id)?
             .with_context(|| format!("Tile {:?} not loaded after adjacency lookup", tile_id))?;
 
-        let mut result = Vec::with_capacity(line_indices_and_data.len());
+        let mut result = SmallVec::<[AdjacentByIdEntry; ADJACENT_INLINE_CAPACITY]>::with_capacity(
+            line_indices_and_data.len(),
+        );
 
         for (
             line_idx,
@@ -800,14 +808,14 @@ impl TileManager {
             result.push((tile_id, line_idx, other_tile_id, other_osm_id));
         }
 
-        Ok(result)
+        Ok(result.into_vec())
     }
 
     fn collect_adjacent_line_data_if_loaded(
         &self,
         tile_id: TileId,
         osm_id: u64,
-    ) -> Result<Option<Vec<(usize, u64, f32, f32, u64, f32, f32)>>> {
+    ) -> Result<Option<SmallVec<[AdjacentLineData; ADJACENT_INLINE_CAPACITY]>>> {
         let Some(loaded_tile) = self.loaded_tile(tile_id) else {
             return Ok(None);
         };
@@ -823,23 +831,23 @@ impl TileManager {
             Self::checked_range(point.lines_offset, point.lines_count, line_refs_array.len())
                 .context("Point line slice out of bounds in tile")?;
 
-        Ok(Some(
-            line_refs_array[start..end]
-                .iter()
-                .map(|&line_idx| {
-                    let line = &lines[line_idx as usize];
-                    (
-                        line_idx as usize,
-                        line.point_a_osm_id,
-                        line.point_a_lat,
-                        line.point_a_lon,
-                        line.point_b_osm_id,
-                        line.point_b_lat,
-                        line.point_b_lon,
-                    )
-                })
-                .collect(),
-        ))
+        let mut adjacent_line_data =
+            SmallVec::<[AdjacentLineData; ADJACENT_INLINE_CAPACITY]>::with_capacity(end - start);
+
+        for &line_idx in &line_refs_array[start..end] {
+            let line = &lines[line_idx as usize];
+            adjacent_line_data.push((
+                line_idx as usize,
+                line.point_a_osm_id,
+                line.point_a_lat,
+                line.point_a_lon,
+                line.point_b_osm_id,
+                line.point_b_lat,
+                line.point_b_lon,
+            ));
+        }
+
+        Ok(Some(adjacent_line_data))
     }
 
     fn checked_range(offset: u64, count: u32, len: usize) -> Result<(usize, usize)> {

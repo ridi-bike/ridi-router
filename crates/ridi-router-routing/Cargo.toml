@@ -29,6 +29,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 smartstring.workspace = true
+smallvec.workspace = true
 struct-field-names-as-array.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
