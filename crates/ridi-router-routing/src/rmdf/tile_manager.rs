@@ -699,6 +699,51 @@ impl TileManager {
         Haversine.distance(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
     }
 
+    /// Get adjacent lines and points from a point using only already loaded tiles.
+    /// Returns Ok(None) if the center tile is not loaded or if a cross-tile neighbor would
+    /// require loading another tile.
+    /// Returns Vec<(line_tile_id, line_index, other_point_tile_id, other_point_osm_id)>
+    pub fn get_adjacent_by_id_if_loaded(
+        &self,
+        tile_id: TileId,
+        osm_id: u64,
+    ) -> Result<Option<Vec<(TileId, usize, TileId, u64)>>> {
+        let Some(line_indices_and_data) =
+            self.collect_adjacent_line_data_if_loaded(tile_id, osm_id)?
+        else {
+            return Ok(None);
+        };
+
+        let mut result = Vec::with_capacity(line_indices_and_data.len());
+
+        for (
+            line_idx,
+            point_a_osm_id,
+            point_a_lat,
+            point_a_lon,
+            point_b_osm_id,
+            point_b_lat,
+            point_b_lon,
+        ) in line_indices_and_data
+        {
+            let (other_osm_id, other_lat, other_lon) = if point_a_osm_id == osm_id {
+                (point_b_osm_id, point_b_lat, point_b_lon)
+            } else {
+                (point_a_osm_id, point_a_lat, point_a_lon)
+            };
+
+            let other_tile_id = TileId::from_coords(other_lat, other_lon, self.tile_size_degrees);
+
+            if other_tile_id != tile_id && self.loaded_tile(other_tile_id).is_none() {
+                return Ok(None);
+            }
+
+            result.push((tile_id, line_idx, other_tile_id, other_osm_id));
+        }
+
+        Ok(Some(result))
+    }
+
     /// Get adjacent lines and points from a point (handles border crossing)
     /// Returns Vec<(line_tile_id, line_index, other_point_tile_id, other_point_osm_id)>
     pub fn get_adjacent_by_id(
@@ -708,42 +753,11 @@ impl TileManager {
     ) -> Result<Vec<(TileId, usize, TileId, u64)>> {
         self.ensure_tile_loaded(tile_id)?;
 
-        // First, collect information from the current tile
-        // We need to clone/copy the data to avoid holding references while loading other tiles
-        let line_indices_and_data: Vec<(usize, u64, f32, f32, u64, f32, f32)> = {
-            let loaded_tile = self.loaded_tiles.get(&tile_id).unwrap();
-            let tile = &loaded_tile.tile;
-            let point = loaded_tile
-                .point(osm_id)?
-                .context("Point not found in tile")?;
+        let line_indices_and_data = self
+            .collect_adjacent_line_data_if_loaded(tile_id, osm_id)?
+            .with_context(|| format!("Tile {:?} not loaded after adjacency lookup", tile_id))?;
 
-            let lines = tile.get_lines()?;
-            let line_refs_array = tile.get_line_refs()?;
-
-            let (start, end) =
-                Self::checked_range(point.lines_offset, point.lines_count, line_refs_array.len())
-                    .context("Point line slice out of bounds in tile")?;
-
-            // Collect the data we need from each line
-            line_refs_array[start..end]
-                // Collect the data we need from each line
-                .iter()
-                .map(|&line_idx| {
-                    let line = &lines[line_idx as usize];
-                    (
-                        line_idx as usize,
-                        line.point_a_osm_id,
-                        line.point_a_lat,
-                        line.point_a_lon,
-                        line.point_b_osm_id,
-                        line.point_b_lat,
-                        line.point_b_lon,
-                    )
-                })
-                .collect()
-        }; // Drop all tile references here
-
-        let mut result = Vec::new();
+        let mut result = Vec::with_capacity(line_indices_and_data.len());
 
         for (
             line_idx,
@@ -787,6 +801,45 @@ impl TileManager {
         }
 
         Ok(result)
+    }
+
+    fn collect_adjacent_line_data_if_loaded(
+        &self,
+        tile_id: TileId,
+        osm_id: u64,
+    ) -> Result<Option<Vec<(usize, u64, f32, f32, u64, f32, f32)>>> {
+        let Some(loaded_tile) = self.loaded_tile(tile_id) else {
+            return Ok(None);
+        };
+        let tile = &loaded_tile.tile;
+        let Some(point) = loaded_tile.point(osm_id)? else {
+            return Ok(None);
+        };
+
+        let lines = tile.get_lines()?;
+        let line_refs_array = tile.get_line_refs()?;
+
+        let (start, end) =
+            Self::checked_range(point.lines_offset, point.lines_count, line_refs_array.len())
+                .context("Point line slice out of bounds in tile")?;
+
+        Ok(Some(
+            line_refs_array[start..end]
+                .iter()
+                .map(|&line_idx| {
+                    let line = &lines[line_idx as usize];
+                    (
+                        line_idx as usize,
+                        line.point_a_osm_id,
+                        line.point_a_lat,
+                        line.point_a_lon,
+                        line.point_b_osm_id,
+                        line.point_b_lat,
+                        line.point_b_lon,
+                    )
+                })
+                .collect(),
+        ))
     }
 
     fn checked_range(offset: u64, count: u32, len: usize) -> Result<(usize, usize)> {
@@ -2231,6 +2284,78 @@ mod tests {
 
         let mut manager = TileManager::new(dir.clone()).unwrap();
         let adjacent = manager.get_adjacent_by_id(tile_a, center_osm_id).unwrap();
+
+        assert_eq!(adjacent.len(), 2);
+        assert!(adjacent.contains(&(tile_a, 0, tile_a, in_tile_neighbor_osm_id)));
+        assert!(adjacent.contains(&(tile_a, 1, tile_b, cross_tile_neighbor_osm_id)));
+        assert_eq!(manager.loaded_tile_count(), 2);
+        assert_eq!(manager.loaded_tile_order_for_test(), vec![tile_a, tile_b]);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_adjacent_by_id_if_loaded_returns_none_when_center_tile_is_cold() {
+        let SyntheticCrossTileFixture {
+            dir,
+            tile_a,
+            center_osm_id,
+            ..
+        } = create_cross_tile_fixture("tile-manager-adjacent-if-loaded-cold-center");
+
+        let manager = TileManager::new(dir.clone()).unwrap();
+
+        let adjacent = manager
+            .get_adjacent_by_id_if_loaded(tile_a, center_osm_id)
+            .unwrap();
+
+        assert_eq!(adjacent, None);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_adjacent_by_id_if_loaded_returns_none_when_cross_tile_neighbor_is_cold() {
+        let SyntheticCrossTileFixture {
+            dir,
+            tile_a,
+            center_osm_id,
+            ..
+        } = create_cross_tile_fixture("tile-manager-adjacent-if-loaded-cold-neighbor");
+
+        let mut manager = TileManager::new(dir.clone()).unwrap();
+        manager.ensure_tile_loaded(tile_a).unwrap();
+
+        let adjacent = manager
+            .get_adjacent_by_id_if_loaded(tile_a, center_osm_id)
+            .unwrap();
+
+        assert_eq!(adjacent, None);
+        assert_eq!(manager.loaded_tile_count(), 1);
+        assert_eq!(manager.loaded_tile_order_for_test(), vec![tile_a]);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_adjacent_by_id_if_loaded_returns_some_once_required_tiles_are_warm() {
+        let SyntheticCrossTileFixture {
+            dir,
+            tile_a,
+            tile_b,
+            center_osm_id,
+            in_tile_neighbor_osm_id,
+            cross_tile_neighbor_osm_id,
+        } = create_cross_tile_fixture("tile-manager-adjacent-if-loaded-warm");
+
+        let mut manager = TileManager::new(dir.clone()).unwrap();
+        manager.ensure_tile_loaded(tile_a).unwrap();
+        manager.ensure_tile_loaded(tile_b).unwrap();
+
+        let adjacent = manager
+            .get_adjacent_by_id_if_loaded(tile_a, center_osm_id)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(adjacent.len(), 2);
         assert!(adjacent.contains(&(tile_a, 0, tile_a, in_tile_neighbor_osm_id)));

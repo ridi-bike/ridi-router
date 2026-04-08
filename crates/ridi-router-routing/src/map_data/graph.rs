@@ -494,10 +494,21 @@ impl MapDataGraph {
             }
         }
 
-        let mut tm = self.tile_manager.write().unwrap();
-        let adjacent = tm
-            .get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
-            .expect("Failed to get adjacent points");
+        let adjacent = {
+            let tm = self.tile_manager.read().unwrap();
+            tm.get_adjacent_by_id_if_loaded(
+                center_point.get_tile_id(),
+                center_point.get_element_id(),
+            )
+            .expect("Failed to get adjacent points")
+        };
+
+        let adjacent = adjacent.unwrap_or_else(|| {
+            let mut tm = self.tile_manager.write().unwrap();
+            tm.get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
+                .expect("Failed to get adjacent points")
+        });
+
         adjacent
             .iter()
             .map(|(line_tile_id, line_index, other_tile_id, other_osm_id)| {
@@ -669,6 +680,63 @@ mod tests {
             MapDataLineRef::new(fixture.tile_a, 1),
             MapDataPointRef::new(fixture.tile_b, fixture.cross_tile_neighbor_osm_id),
         )));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_adjacent_uses_loaded_only_fast_path_for_warm_same_tile_lookup() {
+        let fixture = create_rule_fixture("map-data-graph-warm-same-tile-adjacent");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let warmed = graph.get_point_from_tiles(fixture.tile_id, fixture.via_osm_id);
+        assert_eq!(warmed.id, fixture.via_osm_id);
+
+        let adjacent =
+            graph.get_adjacent(MapDataPointRef::new(fixture.tile_id, fixture.via_osm_id));
+
+        assert_eq!(adjacent.len(), 3);
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_id, 0),
+            MapDataPointRef::new(fixture.tile_id, 2000),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_id, 1),
+            MapDataPointRef::new(fixture.tile_id, fixture.to_osm_id),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_id, 2),
+            MapDataPointRef::new(fixture.tile_id, 2003),
+        )));
+        assert_eq!(graph.tile_manager.read().unwrap().loaded_tile_count(), 1);
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_adjacent_uses_loaded_only_fast_path_for_warm_cross_tile_lookup() {
+        let fixture = create_cross_tile_fixture("map-data-graph-warm-cross-tile-adjacent");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let warmed_a = graph.get_point_from_tiles(fixture.tile_a, fixture.center_osm_id);
+        assert_eq!(warmed_a.id, fixture.center_osm_id);
+        let warmed_b =
+            graph.get_point_from_tiles(fixture.tile_b, fixture.cross_tile_neighbor_osm_id);
+        assert_eq!(warmed_b.id, fixture.cross_tile_neighbor_osm_id);
+
+        let adjacent =
+            graph.get_adjacent(MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id));
+
+        assert_eq!(adjacent.len(), 2);
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_a, 0),
+            MapDataPointRef::new(fixture.tile_a, fixture.in_tile_neighbor_osm_id),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_a, 1),
+            MapDataPointRef::new(fixture.tile_b, fixture.cross_tile_neighbor_osm_id),
+        )));
+        assert_eq!(graph.tile_manager.read().unwrap().loaded_tile_count(), 2);
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
