@@ -54,7 +54,8 @@ struct LoopMeta {
 impl LoopMeta {
     fn from_segment(ctx: &RoutingContext<'_>, segment: &Segment) -> Self {
         let end_point = segment.get_end_point().clone();
-        let point = ctx.point(&end_point);
+        let point_id = ctx.point_id(&end_point);
+        let (lat, lon) = ctx.point_coords(&end_point);
         let line = ctx.line(segment.get_line());
         let line_tags = ctx.tag_set(&line.tags);
         let hw_ref = ctx
@@ -63,14 +64,14 @@ impl LoopMeta {
         let name = ctx
             .tag_value(&line_tags.name)
             .map(|value| RoadKey(value.into()));
-        let cell_id = CellId::from_lat_lon(point.lat, point.lon);
-        let is_junction = point.is_junction();
+        let cell_id = CellId::from_lat_lon(lat, lon);
+        let is_junction = ctx.point_is_junction(&end_point);
 
         Self {
             end_point,
-            point_id: point.id,
-            lat: point.lat,
-            lon: point.lon,
+            point_id,
+            lat,
+            lon,
             hw_ref,
             name,
             cell_id,
@@ -416,10 +417,7 @@ impl Route {
             let is_junction = self
                 .segment_meta(idx)
                 .map(|meta| meta.is_junction)
-                .unwrap_or_else(|| {
-                    ctx.point(self.route_segments[idx].get_end_point())
-                        .is_junction()
-                });
+                .unwrap_or_else(|| ctx.point_is_junction(self.route_segments[idx].get_end_point()));
 
             if is_junction {
                 junction_count += 1;
@@ -453,14 +451,14 @@ impl Route {
         let idx_from = match self.get_segment_last() {
             None => 0,
             Some(last_segment) => {
-                let last_point_id = ctx.point(last_segment.get_end_point()).id;
+                let last_point_id = ctx.point_id(last_segment.get_end_point());
                 self.route_segments
                     .iter()
                     .enumerate()
                     .rev()
                     .find(|(_idx, route_segment)| {
-                        let point = ctx.point(route_segment.get_end_point());
-                        point.is_junction() && point.id != last_point_id
+                        ctx.point_is_junction(route_segment.get_end_point())
+                            && ctx.point_id(route_segment.get_end_point()) != last_point_id
                     })
                     .map_or(0, |value| value.0)
             }
@@ -471,10 +469,10 @@ impl Route {
         match self.get_segment_last() {
             None => None,
             Some(last_segment) => {
-                let last_point_id = ctx.point(last_segment.get_end_point()).id;
+                let last_point_id = ctx.point_id(last_segment.get_end_point());
                 self.route_segments.iter().rev().find(|route_segment| {
-                    let point = ctx.point(route_segment.get_end_point());
-                    point.is_junction() && point.id != last_point_id
+                    ctx.point_is_junction(route_segment.get_end_point())
+                        && ctx.point_id(route_segment.get_end_point()) != last_point_id
                 })
             }
         }
@@ -601,7 +599,7 @@ impl Route {
             let point_b = ctx.point(&line.points.1);
             let line_len: f64 = line.len_m(&point_a, &point_b).into();
             len_m += line_len;
-            if ctx.point(segment.get_end_point()).is_junction() {
+            if ctx.point_is_junction(segment.get_end_point()) {
                 junction_count += 1;
             }
             let line_tags = ctx.tag_set(&line.tags);

@@ -23,10 +23,7 @@ impl ComputedRoute {
             coords: route
                 .route
                 .into_iter()
-                .map(|segment| {
-                    let point = ctx.point(segment.get_end_point());
-                    (point.lat, point.lon)
-                })
+                .map(|segment| ctx.point_coords(segment.get_end_point()))
                 .collect(),
             stats: route.stats,
         }

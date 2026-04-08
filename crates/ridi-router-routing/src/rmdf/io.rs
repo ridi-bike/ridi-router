@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
-use bytemuck::{cast_slice, pod_read_unaligned, try_from_bytes};
+use bytemuck::{pod_read_unaligned, try_cast_slice, try_from_bytes, Pod};
 use memmap2::Mmap;
-use std::fs::File;
-use std::path::Path;
+use std::{fs::File, path::Path, sync::OnceLock};
 
 use super::format::*;
 
@@ -12,6 +11,12 @@ pub struct MappedTile {
     data_end: usize,
     pub header: &'static RmdfHeader,
     pub tile_id: TileId,
+    spatial_index_cache: OnceLock<Box<[GridCellEntry]>>,
+    points_cache: OnceLock<Box<[PointRecord]>>,
+    lines_cache: OnceLock<Box<[LineRecord]>>,
+    line_refs_cache: OnceLock<Box<[u64]>>,
+    rules_cache: OnceLock<Box<[RuleRecord]>>,
+    rule_line_refs_payload_cache: OnceLock<Box<[u64]>>,
 }
 
 impl MappedTile {
@@ -55,6 +60,12 @@ impl MappedTile {
             data_end,
             header: header_static,
             tile_id,
+            spatial_index_cache: OnceLock::new(),
+            points_cache: OnceLock::new(),
+            lines_cache: OnceLock::new(),
+            line_refs_cache: OnceLock::new(),
+            rules_cache: OnceLock::new(),
+            rule_line_refs_payload_cache: OnceLock::new(),
         })
     }
 
@@ -77,6 +88,25 @@ impl MappedTile {
 
         Ok(TileId { col, row })
     }
+    fn cast_or_copy_pod_slice<'a, T: Pod + Copy>(
+        &'a self,
+        slice: &'a [u8],
+        cache: &'a OnceLock<Box<[T]>>,
+    ) -> &'a [T] {
+        if let Ok(aligned) = try_cast_slice(slice) {
+            return aligned;
+        }
+
+        cache
+            .get_or_init(|| {
+                slice
+                    .chunks_exact(std::mem::size_of::<T>())
+                    .map(pod_read_unaligned)
+                    .collect::<Vec<T>>()
+                    .into_boxed_slice()
+            })
+            .as_ref()
+    }
 
     pub fn get_spatial_index(&self) -> Result<&[GridCellEntry]> {
         let offset = self.header.section_offsets[section::SPATIAL_INDEX] as usize;
@@ -88,7 +118,7 @@ impl MappedTile {
             .get(offset..offset + size)
             .context("Spatial index section out of bounds")?;
 
-        Ok(cast_slice(slice))
+        Ok(self.cast_or_copy_pod_slice(slice, &self.spatial_index_cache))
     }
 
     pub fn get_points(&self) -> Result<&[PointRecord]> {
@@ -101,7 +131,7 @@ impl MappedTile {
             .get(offset..offset + size)
             .context("Points section out of bounds")?;
 
-        Ok(cast_slice(slice))
+        Ok(self.cast_or_copy_pod_slice(slice, &self.points_cache))
     }
 
     pub fn get_lines(&self) -> Result<&[LineRecord]> {
@@ -114,7 +144,7 @@ impl MappedTile {
             .get(offset..offset + size)
             .context("Lines section out of bounds")?;
 
-        Ok(cast_slice(slice))
+        Ok(self.cast_or_copy_pod_slice(slice, &self.lines_cache))
     }
 
     pub fn get_line_refs(&self) -> Result<&[u64]> {
@@ -127,7 +157,7 @@ impl MappedTile {
             .get(offset..next_offset)
             .context("Line refs section out of bounds")?;
 
-        Ok(cast_slice(slice))
+        Ok(self.cast_or_copy_pod_slice(slice, &self.line_refs_cache))
     }
 
     pub fn get_tag_set(&self, index: u32) -> Result<TagSetRecord> {
@@ -176,7 +206,7 @@ impl MappedTile {
             .get(offset..offset + size)
             .context("Rules section out of bounds")?;
 
-        Ok(cast_slice(slice))
+        Ok(self.cast_or_copy_pod_slice(slice, &self.rules_cache))
     }
 
     pub fn get_rule_line_refs_payload(&self) -> Result<&[u64]> {
@@ -197,7 +227,7 @@ impl MappedTile {
             );
         }
 
-        Ok(cast_slice(slice))
+        Ok(self.cast_or_copy_pod_slice(slice, &self.rule_line_refs_payload_cache))
     }
 }
 

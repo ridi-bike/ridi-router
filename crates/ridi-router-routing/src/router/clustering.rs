@@ -29,10 +29,7 @@ impl Clustering {
                         );
                         let sum_point = route_chunk
                             .iter()
-                            .map(|segment| {
-                                let point = ctx.point(segment.get_end_point());
-                                (point.lat, point.lon)
-                            })
+                            .map(|segment| ctx.point_coords(segment.get_end_point()))
                             .fold((0., 0.), |acc, point| (acc.0 + point.0, acc.1 + point.1));
                         [
                             sum_point.0 / route_chunk.len() as f32,

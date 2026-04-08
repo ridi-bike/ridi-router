@@ -311,7 +311,7 @@ impl TileManager {
         &mut self,
         tile_id: TileId,
         point: &PointRecord,
-    ) -> Result<Vec<u64>> {
+    ) -> Result<&[u64]> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_line_indices_for_point_if_loaded(tile_id, point)?
             .with_context(|| format!("Tile {:?} not loaded after point line lookup", tile_id))
@@ -321,7 +321,7 @@ impl TileManager {
         &self,
         tile_id: TileId,
         point: &PointRecord,
-    ) -> Result<Option<Vec<u64>>> {
+    ) -> Result<Option<&[u64]>> {
         let Some(loaded_tile) = self.loaded_tile(tile_id) else {
             return Ok(None);
         };
@@ -335,7 +335,7 @@ impl TileManager {
                     )
                 })?;
 
-        Ok(Some(line_refs[start..end].to_vec()))
+        Ok(Some(&line_refs[start..end]))
     }
 
     /// Get closest point to coordinates with filtering

@@ -102,10 +102,10 @@ impl Walker {
         {
             self.route_walked
                 .get_segment_by_index(idx)
-                .map(|segment| ctx.point(segment.get_end_point()).id)
-                .unwrap_or_else(|| ctx.point(&self.start).id)
+                .map(|segment| ctx.point_id(segment.get_end_point()))
+                .unwrap_or_else(|| ctx.point_id(&self.start))
         } else {
-            ctx.point(&self.start).id
+            ctx.point_id(&self.start)
         };
 
         let center_point_data = ctx.point(center_point);
@@ -130,7 +130,7 @@ impl Walker {
         ctx.adjacent(center_point)
             .into_iter()
             .filter(|(line_next_ref, point_next_ref)| {
-                if ctx.point(point_next_ref).id == prev_point_id {
+                if ctx.point_id(point_next_ref) == prev_point_id {
                     return false;
                 }
 
@@ -309,11 +309,11 @@ impl Walker {
             let next_segment = if let Some(next_point) = self.next_fork_choice_point.take() {
                 if !available_segments.has_segment_with_point(&next_point) {
                     return Err(WalkerError::WrongForkChoice {
-                        id: ctx.point(&next_point).id,
+                        id: ctx.point_id(&next_point),
                         available_fork_ids: available_segments
                             .get_all_segment_points()
                             .iter()
-                            .map(|point_ref| ctx.point(point_ref).id)
+                            .map(|point_ref| ctx.point_id(point_ref))
                             .collect(),
                     });
                 }
@@ -330,7 +330,7 @@ impl Walker {
                 Some(segment) => segment,
             };
 
-            if ctx.point(next_segment.get_end_point()).is_junction() {
+            if ctx.point_is_junction(next_segment.get_end_point()) {
                 if visited_junction.contains(next_segment.get_end_point()) {
                     return Ok(WalkerMoveResult::DeadEnd);
                 }
@@ -351,7 +351,7 @@ impl Walker {
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
-                if (ctx.point(last_segment.get_end_point()).is_junction()
+                if (ctx.point_is_junction(last_segment.get_end_point())
                     && self
                         .get_fork_segments_for_segment_with_context(ctx, last_segment)
                         .get_segment_count()

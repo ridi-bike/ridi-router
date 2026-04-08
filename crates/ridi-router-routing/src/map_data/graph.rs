@@ -270,14 +270,13 @@ impl MapDataGraph {
             let lines = if point_record.lines_count == 0 {
                 Vec::new()
             } else {
-                self.tile_manager
-                    .read()
-                    .unwrap()
+                let tile_manager = self.tile_manager.read().unwrap();
+                tile_manager
                     .get_line_indices_for_point_if_loaded(tile_id, &point_record)
                     .expect("Failed to get line refs from loaded tile")
                     .expect("Loaded tile disappeared during point line lookup")
-                    .into_iter()
-                    .map(|line_index| MapDataLineRef::new(tile_id, line_index))
+                    .iter()
+                    .map(|&line_index| MapDataLineRef::new(tile_id, line_index))
                     .collect()
             };
             let rules = if point_record.rules_count == 0 {
@@ -434,13 +433,14 @@ impl MapDataGraph {
     }
 
     pub fn get_tag_set(&self, tag_set_ref: &ElementTagSetRef) -> ElementTagSet {
-        let tag_set_record = self
-            .tile_manager
-            .read()
-            .unwrap()
-            .get_tag_set_record_if_loaded(tag_set_ref.tile_id, tag_set_ref.tag_set_idx)
-            .ok()
-            .flatten()
+        let loaded_tag_set_record = {
+            let tile_manager = self.tile_manager.read().unwrap();
+            tile_manager
+                .get_tag_set_record_if_loaded(tag_set_ref.tile_id, tag_set_ref.tag_set_idx)
+                .ok()
+                .flatten()
+        };
+        let tag_set_record = loaded_tag_set_record
             .or_else(|| {
                 self.tile_manager
                     .write()
