@@ -1,362 +1,305 @@
-# `graph::get_point_from_tiles` performance review
+# `graph::get_adjacent` improvement plan
 
-## Scope
+## Goal
+Reduce time, lock contention, and allocation churn in the adjacency lookup path without changing routing behavior.
 
-From `perf.md`:
+Hotspot from `perf.md`:
 
-- `graph::get_point_from_tiles`: **2,891,151 calls**, **463.03 s** cumulative time, **57.8 GB** cumulative allocation
-- `tile_manager::get_rules_for_point`: **57.2 GB** cumulative allocation
+- `graph::get_adjacent`: **18,791,470 calls**, **329.08 s**, **4.6 GB alloc**
+- `tile_manager::get_adjacent_by_id`: **18,791,471 calls**, **30.19 s**, **3.3 GB alloc**
 
+## Current shape
+Today the hot path looks like this:
 
-## Confirmed constraints and design choices
+1. `walker` calls `RoutingContext::adjacent(...)`
+2. `RoutingContext` forwards directly to `MapDataGraph::get_adjacent(...)`
+3. `MapDataGraph::get_adjacent(...)` takes a **write lock** on `tile_manager`
+4. `TileManager::get_adjacent_by_id(...)` builds a temporary raw tuple vec
+5. `MapDataGraph::get_adjacent(...)` maps that into another vec of refs
 
-- keep routing behavior unchanged; this is a perf-only plan
-- if a large win seems to require subtle behavior changes, stop and discuss before implementing
-- internal API changes are fine; external routing API changes are undesirable
-- trade more resident memory for lower CPU time / allocation churn
-- use **approximate** recency, not exact per-hit LRU, as long as eviction stays roughly reasonable
-- apply the same read-mostly ideas not only to points, but also to nearby hot readers like line and tag access where it stays clean
-- use **route-generation-task-local caches**, not graph-level shared caches, to avoid shared-cache write contention on mostly-new-point exploration
-- start those task-local caches **unbounded** and only add eviction if profiling later shows memory pressure
+That gives us three clear options.
 
-## Non-goals / rejected starting points
+---
 
-- do **not** keep exact per-hit LRU ordering if it forces a write on every successful read
-- do **not** start with a graph-level shared point cache; for the current workload, shared-cache write contention is expected to outweigh most cross-route reuse
-- do **not** change external routing APIs as part of this work
-- do **not** accept functional routing changes as an implicit side effect of a perf refactor
-## What the function does today
+## Option 1: task-local adjacency cache in `RoutingContext`
 
-`crates/ridi-router-routing/src/map_data/graph.rs:274-329`
+### Objective
+Stop recomputing adjacency for the same point within one route search.
 
-For every lookup it:
+### Why this is promising
+The walker revisits the same points during:
 
-1. takes the `tile_manager` **write lock**
-2. finds the point with `get_point_by_id(...)`
-3. fetches adjacent lines with `get_adjacent_by_id(...)`
-4. fetches and hydrates turn rules with `get_rules_for_point(...)`
-5. allocates fresh `Vec`s for `lines` and `rules`
-6. returns a fully-owned `MapDataPoint`
+- fork exploration
+- backtracking
+- roundabout scans
+- retry paths
 
-That is expensive by itself. The bigger problem is that several of those steps do more work than this function actually needs.
+`RoutingContext` already caches:
 
-## Main problems
+- point records
+- points
+- lines
+- tag sets
 
-### 1. `get_point_from_tiles` asks adjacency code for more than it needs
+Adjacency fits the same pattern well.
 
-`graph::get_point_from_tiles` only needs the current point's `MapDataLineRef`s.
+### Important design choice
+Do **not** move `LoadedTile.point_index` into `RoutingContext`.
 
-But it calls `tile_manager::get_adjacent_by_id(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:712-799`), which:
+Keep the current split:
 
-- linearly searches the point again
-- loads the tile's line table
-- walks every connected line
-- resolves the **other endpoint** of each line
-- computes the **other tile id**
-- may `ensure_tile_loaded(...)` for border crossings
-- allocates a `Vec<(TileId, usize, TileId, u64)>`
+- `LoadedTile.point_index` stays in tile manager as shared tile metadata
+- `RoutingContext` keeps task-local search caches
+- adjacency becomes another task-local cached value
 
-Then `get_point_from_tiles` throws away half of that data and keeps only the line refs.
+### Implementation sketch
+Files:
 
-This is a clear over-fetch path.
+- `crates/ridi-router-routing/src/routing_context.rs`
 
-### 2. Rule hydration copies whole rule sections on every point lookup
-
-This is likely the biggest allocator.
-
-`tile_manager::get_rules_for_point(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:296-347`) calls:
-
-- `MappedTile::get_rules()` (`crates/ridi-router-routing/src/rmdf/io.rs:169-183`)
-- `MappedTile::get_rule_line_refs_payload()` (`crates/ridi-router-routing/src/rmdf/io.rs:185-207`)
-
-Both return freshly allocated `Vec`s for the **entire tile section**, not borrowed slices.
-
-So one point lookup can clone:
-
-- all rule records in the tile
-- all rule line-ref payload in the tile
-- then the selected rule's `from`/`to` slices again
-- then `get_point_from_tiles` maps those into new `Vec<MapDataLineRef>` again
-
-That matches the profile: the alloc hotspot under `get_point_from_tiles` is almost mirrored by `tile_manager::get_rules_for_point`.
-
-### 3. No fast path for points with no rules
-
-`PointRecord` already contains `rules_count` and `lines_count` (`crates/ridi-router-common/src/format.rs:77-88`).
-
-But `get_point_from_tiles` always calls `get_rules_for_point(...)`, even when `rules_count == 0`.
-
-That means even rule-free points still pay the full rule-loading path.
-
-### 4. Point lookup is linear, and it happens repeatedly
-
-`tile_manager::get_point_by_id(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:262-276`) does a linear scan through the tile's points.
-
-`get_adjacent_by_id(...)` then linearly finds the same point again (`tile_manager.rs:721-729`).
-
-With ~2.9M calls, even “small” linear scans add up.
-
-### 5. Repeated lookups rehydrate the same immutable point over and over
-
-`RoutingContext::point(...)` is just a thin wrapper over `get_point_from_tiles(...)` (`crates/ridi-router-routing/src/routing_context.rs:22-25`).
-
-There are many hot-path call sites that only need cheap point facts like:
-
-- point id
-- lat/lon
-- junction check (`lines.len() > 2`)
-- flags like `residential_in_proximity` / `nogo_area`
-
-So the code often rebuilds a full `MapDataPoint` when it only needs a tiny part of it.
-
-### 6. Parallel route generation still funnels through a write lock
-
-`MapDataGraph` stores `tile_manager` behind `RwLock<TileManager>`, and `get_point_from_tiles(...)` currently takes the **write** lock (`graph.rs:281`).
-
-That is not only because of tile loads. Even a loaded-tile hit still goes through mutable `ensure_tile_loaded(...)`, which updates recency via `mark_tile_recent(...)` (`crates/ridi-router-routing/src/rmdf/tile_manager.rs:237-258`, `189-206`).
-
-At the same time, route generation uses Rayon (`crates/ridi-router-routing/src/router/generator.rs:360-438`).
-
-So many concurrent point lookups still serialize through one mutable tile-manager path. That does not directly explain the allocation spike, but it can cap throughput and amplify the cost of repeated hydration.
-
-## Recommended changes
-
-## Priority 1: stop using `get_adjacent_by_id` inside `get_point_from_tiles`
-
-This is the cleanest low-risk fix.
-
-Use the already-loaded `PointRecord` fields directly:
-
-- `point_record.lines_offset`
-- `point_record.lines_count`
-- `tile.get_line_refs()`
-
-Build `Vec<MapDataLineRef>` from that slice only.
-
-Why this should help:
-
-- removes the second point lookup
-- removes border-crossing logic from a path that does not need it
-- avoids building then remapping an adjacency tuple vector
-- avoids possible neighbor-tile loads for a simple point hydration
-
-This keeps the external behavior of `MapDataPoint.lines` the same, because the current adjacency function already returns the current tile id for line refs.
-
-## Priority 2: add a zero-rules fast path
-
-Before calling `get_rules_for_point(...)`, check:
+Add to `RoutingCaches`:
 
 ```rust
-if point_record.rules_count == 0 {
-    rules = Vec::new();
-}
+adjacent: HashMap<MapDataPointRef, Vec<(MapDataLineRef, MapDataPointRef)>>,
 ```
 
-This is tiny, safe, and likely helps a lot if most visited points have no turn restrictions.
+Then change `RoutingContext::adjacent(...)` to:
 
-Do the same for line refs if `lines_count == 0`, although that is probably less important.
+1. look in the cache
+2. return cloned cached result on hit
+3. fetch from `graph.get_adjacent(...)` on miss
+4. store and return
 
-## Priority 3: make tile rule access zero-copy
+### Scope
+- no change to graph or tile-manager API
+- no behavior change
+- no lock strategy change
+- no file-format change
 
-This is probably the biggest allocation win.
+### Expected benefit
+- lower `graph::get_adjacent` call count
+- lower `tile_manager::get_adjacent_by_id` call count
+- lower adjacency recomputation inside walker loops
 
-Change `MappedTile` so these return borrowed slices instead of owned `Vec`s:
+### Main limitation
+The cache is per `RoutingContext`, so it helps within one itinerary/task only.
 
-- `get_rules() -> Result<&[RuleRecord]>`
-- `get_rule_line_refs_payload() -> Result<&[u64]>`
+It does **not** share results across parallel itinerary tasks.
 
-Then update `TileManager::get_rules_for_point(...)` to slice directly from those borrowed sections.
+### Risk
+Low.
 
-Better versions, in increasing ambition:
+### Validation
+Measure before and after:
 
-1. **Good:** keep returning owned `TilePointRule`, but only allocate for the selected point's rules
-2. **Better:** return borrowed slices / lightweight views and let `graph` materialize only once
-3. **Best:** hydrate directly into the final output with exact capacities, skipping the temporary `TilePointRule` layer entirely
-
-This change directly targets the `57.2 GB` allocation hotspot.
-
-## Priority 4: make loaded-tile access read-mostly
-
-This is the lock strategy change I would pick.
-
-Use **Option B**:
-
-- keep a read-only fast path for already-loaded tiles
-- take the write lock only when a tile miss requires load / eviction
-- replace exact per-hit LRU rotation with cheap per-tile recency metadata, e.g. `last_used: AtomicU64` or similar
-- let eviction consult those timestamps under the write lock
-
-Why this is a good fit here:
-
-- loaded tiles stay cheap to read
-- boundary / tile-miss handling still works
-- Rayon workers stop serializing on every successful hit
-- eviction remains good enough without exact LRU writes on every access
-
-Important note: exact LRU and read-only hits fight each other. If we want the common case to avoid the write lock, recency updates cannot keep mutating the global order array on every access.
-
-A practical shape is:
-
-1. take read lock
-2. if tile is already loaded, hydrate directly from the mapped tile and atomically bump recency
-3. on miss, drop read lock, take write lock, load tile, update eviction state, retry
-
-This should be paired with the `get_point_from_tiles` rewrite above, so the read-only path does not accidentally trigger boundary loads via `get_adjacent_by_id(...)`.
-
-After the point path is working, extend the same pattern to nearby hot readers where possible:
-
-- `get_line_from_tiles`
-- `get_tag_set`
-- `get_tag_value`
-
-Those paths look like good candidates for the same split between read-only loaded-tile access and write-only tile miss handling.
-
-They are also good candidates for task-local caching, especially tags and lines:
-
-- many points and segments on the same road share the same street name / surface / smoothness data
-- repeated line hydration is already visible in the profile
-- a route-generation-task-local cache for lines and tag sets should capture that reuse without adding cross-thread contention
-
-## Priority 5: add route-generation-task-local caches
-
-The graph is immutable during routing, and each route-generation task revisits nearby data often enough that local caching should help without shared synchronization.
-
-Use a **route-generation-task-local cache** design:
-
-- each route-generation task owns its own caches
-- caches are not shared across tasks or threads
-- caches can be mutated freely without locks
-- start unbounded for now
-
-Recommended cache set:
-
-- point cache keyed by `MapDataPointRef` or `(TileId, osm_id)`
-- line cache keyed by `MapDataLineRef` or `(TileId, line_index)`
-- tag-set cache keyed by `ElementTagSetRef`
-- optionally tag-value cache keyed by `ElementTagValueRef` if profiling shows string lookup churn remains significant
-
-Recommended value types:
-
-- start with plain owned values (`MapDataPoint`, `MapDataLine`, `ElementTagSet`, maybe `String`)
-- switch individual caches to `Arc<_>` only if profiling shows clone cost becomes noticeable
-
-Why this matches the routing shape better:
-
-- route generation runs many routes in parallel
-- those routes often explore different areas and discover mostly new points
-- a graph-level shared cache would see many misses and many inserts
-- the synchronization cost of shared-cache writes could erase the hydration win
-- task-local caches keep the hot path mutation-only and lock-free for that worker
-
-Why line and tag caching are worth planning up front:
-
-- every road contributes many points and segments
-- those points and segments often reuse the same line or tag information repeatedly
-- road metadata such as street name, pavement, highway class, and smoothness naturally has high local reuse
-
-Lookup flow:
-
-1. check the task-local cache
-2. if miss, hydrate from tile data
-3. insert into the task-local cache
-4. return the cached value
-
-Tradeoffs:
-
-- less reuse across unrelated routes
-- more duplicate cached values across workers
-- higher total memory use than a single shared cache
-
-Given the stated workload, those tradeoffs are acceptable if they remove synchronization from the common case. If later profiling shows heavy cross-route overlap, a shared cache can be revisited as an optional second phase, but it should not be the starting plan.
-
-## Priority 6: add a point index per loaded tile
-
-Build a lookup index once when a tile is loaded:
-
-- `HashMap<u64, usize>`
-- or a sorted `(osm_id, index)` vector with binary search
-
-Use it in both:
-
-- `get_point_by_id(...)`
-- `get_adjacent_by_id(...)`
-
-This removes the repeated linear scans.
-
-If tile point counts are modest, even a compact sorted vector may be enough and cheaper than a hash map.
-
-## Priority 7: stop hydrating full points when the caller only needs a field
-
-This is a broader cleanup, but it will pay off.
-
-Examples from hot code:
-
-- replace `ctx.point(point_ref).id` with `point_ref.get_element_id()` where semantics allow it
-- add cheap accessors for coordinates and flags
-- add a cheap `point_degree(...)` / `is_junction_ref(...)` path based on `lines_count`
-
-That avoids constructing `MapDataPoint` for read-only metadata checks.
-
-## Suggested implementation order
-
-1. **Rewrite `get_point_from_tiles` to read line refs directly from `PointRecord`**
-2. **Skip rule hydration when `rules_count == 0`**
-3. **Make `MappedTile` rule getters return borrowed slices**
-4. **Add a read-only loaded-tile fast path for point reads**
-5. **Switch recency tracking from exact per-hit LRU mutation to atomic last-used metadata (Option B)**
-6. **Extend the same read-mostly pattern to nearby hot readers (`get_line_from_tiles`, `get_tag_set`, `get_tag_value`)**
-7. **Simplify `get_rules_for_point` to avoid intermediate allocations**
-8. **Add route-generation-task-local caches for points, lines, and tags**
-9. **Add a per-tile point index**
-10. **Audit hot call sites that only need id/coords/flags**
-
-## Expected impact
-
-### Biggest likely allocation win
-
-**Borrowed rule slices + zero-rules fast path**
-
-Reason: the current rule-loading stack copies whole tile rule data on each lookup.
-
-### Biggest likely time win with low risk
-
-**Stop using `get_adjacent_by_id` for point hydration**
-
-Reason: it removes duplicated lookup and cross-tile adjacency work from a path that only needs line refs.
-
-### Biggest longer-term combined win
-
-**Task-local caching for points, lines, and tags**
-
-Reason: the same roads, lines, and metadata are likely to be revisited repeatedly within one route-generation task, and local caches avoid both re-hydration and shared-cache contention.
-
-## Validation plan
-
-After each step, re-run the same perf workflow and compare at least:
-
-- `graph::get_point_from_tiles`
-- `tile_manager::get_rules_for_point`
+- `graph::get_adjacent`
 - `tile_manager::get_adjacent_by_id`
-- `graph::get_line_from_tiles`
-- wall-clock route generation time
+- walker hotspots that call adjacency repeatedly
 
-I would also add a focused micro-benchmark for repeated hydration of the same point and another for repeated hydration of many points from the same tile.
+---
 
-## Short version
+## Option 2: read-fast-path before taking the tile-manager write lock
 
-The hotspot is not just “too many point lookups”.
+### Objective
+Avoid exclusive locking when adjacency can be answered from already loaded tiles.
 
-`get_point_from_tiles` currently:
+### Why this is promising
+`MapDataGraph::get_adjacent(...)` currently does this on every call:
 
-- does unnecessary adjacency work
-- forces whole-tile rule copying
-- repeats linear point scans
-- rebuilds the same immutable point data again and again
-- takes the write lock even on loaded-tile hits because recency bookkeeping mutates on every access
+- `self.tile_manager.write().unwrap()`
 
-If I had to pick the first two fixes, I would do these:
+That is expensive in a hot path, and especially bad with parallel itinerary generation.
 
-1. **Read line refs directly from `PointRecord` instead of calling `get_adjacent_by_id`**
-2. **Make rule access borrow from the mmap instead of allocating whole-tile `Vec`s per lookup**
+### Implementation sketch
+Files:
 
-Those two changes are the clearest match for the current profile.
+- `crates/ridi-router-routing/src/map_data/graph.rs`
+- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
+
+Add a loaded-only method to tile manager, for example:
+
+```rust
+pub fn get_adjacent_by_id_if_loaded(
+    &self,
+    tile_id: TileId,
+    osm_id: u64,
+) -> Result<Option<Vec<(TileId, usize, TileId, u64)>>>;
+```
+
+Behavior:
+
+- return `Ok(None)` if the center tile is not loaded
+- return `Ok(None)` if a cross-tile neighbor is needed but not loaded
+- return `Ok(Some(...))` if the full answer is available from loaded tiles only
+
+Then change `MapDataGraph::get_adjacent(...)` to:
+
+1. take `tile_manager.read()`
+2. try `get_adjacent_by_id_if_loaded(...)`
+3. if that succeeds, map and return
+4. otherwise fall back to `tile_manager.write()` + `get_adjacent_by_id(...)`
+
+### Scope
+- no behavior change
+- no route-search API change
+- no file-format change
+- mostly lock strategy and lookup-path cleanup
+
+### Expected benefit
+- less write-lock contention
+- better scaling across Rayon tasks
+- faster hot-path lookups when tiles are already warm
+
+### Main limitation
+This does not reduce repeated same-point lookups by itself.
+
+It makes each call cheaper under warm-cache conditions, but it does not remove the calls.
+
+### Risk
+Low to medium.
+
+Main care point:
+
+- the loaded-only path must preserve current cross-tile behavior
+- the fallback boundary must be correct and easy to reason about
+
+### Validation
+Compare before and after:
+
+- `graph::get_adjacent`
+- `tile_manager::get_adjacent_by_id`
+- wall time under the same profiled route generation run
+- any changes in parallel worker behavior
+
+---
+
+## Option 3: reduce adjacency allocations and double materialization
+
+### Objective
+Shrink per-call heap churn in the adjacency path.
+
+### Why this is promising
+Current path often allocates twice per lookup:
+
+1. raw tuple vec in `tile_manager::get_adjacent_by_id(...)`
+2. mapped ref vec in `graph::get_adjacent(...)`
+
+The profile shows this clearly:
+
+- `graph::get_adjacent`: **4.6 GB alloc**
+- `tile_manager::get_adjacent_by_id`: **3.3 GB alloc**
+
+### Implementation sketch
+Files:
+
+- `Cargo.toml`
+- `crates/ridi-router-routing/Cargo.toml`
+- `crates/ridi-router-routing/src/map_data/graph.rs`
+- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
+
+#### Step 3A: add `smallvec`
+Workspace dependency:
+
+```toml
+smallvec = "1"
+```
+
+Crate dependency:
+
+```toml
+smallvec.workspace = true
+```
+
+#### Step 3B: replace hot small vecs
+Use `SmallVec` for adjacency containers, for example:
+
+- raw adjacency temp buffer in tile manager
+- final adjacency ref buffer in graph
+
+Road degree is usually small, so many calls should stay inline.
+
+#### Step 3C: collapse one materialization layer if practical
+If the first two steps are not enough, consider returning final ref tuples directly from tile manager so graph no longer remaps every entry.
+
+That could look like:
+
+```rust
+Result<SmallVec<[(MapDataLineRef, MapDataPointRef); 8]>>
+```
+
+or a caller-filled buffer API.
+
+### Scope
+- local plumbing cleanup
+- no route-behavior change
+- no format change
+
+### Expected benefit
+- lower alloc churn in both adjacency functions
+- less per-call mapping work
+- smaller pressure on allocator and profiler-visible inclusive alloc totals
+
+### Main limitation
+This does not cut call count by itself.
+
+If repeated same-point lookups are the real main story, option 1 will usually matter more.
+
+### Risk
+Low to medium.
+
+Main care points:
+
+- avoid spreading `SmallVec` churn through too many APIs at once
+- keep the first change local and measurable
+
+### Validation
+Compare before and after:
+
+- inclusive alloc for `graph::get_adjacent`
+- inclusive alloc for `tile_manager::get_adjacent_by_id`
+- total route-generation time
+
+---
+
+## Recommended order
+
+### Phase A
+1. **Option 1**: task-local adjacency cache
+2. measure
+
+### Phase B
+3. **Option 2**: read-fast-path before write lock
+4. measure
+
+### Phase C
+5. **Option 3**: `SmallVec` and allocation cleanup
+6. measure
+
+Why this order:
+
+- option 1 tests the highest-confidence hypothesis: repeated same-point lookups
+- option 2 improves lock shape and parallel behavior
+- option 3 trims alloc churn after we know how much call count remains
+
+---
+
+## What I would not do yet
+I would **not** start with eager per-tile precompute of adjacency for every point.
+
+Given your concern, that looks too blunt for tiles with tens of thousands of points. If we ever revisit that direction, it should be a **lazy shared memoization** design, not full eager precompute.
+
+---
+
+## Success criteria
+A good outcome from options 1-3 would look like:
+
+- `graph::get_adjacent` time materially down
+- `tile_manager::get_adjacent_by_id` time materially down
+- adjacency alloc totals materially down
+- walker hotspots shrink with them
+- route generation wall time improves on the same benchmark run
+
+## Decision rule
+If the quick and dirty version of option 1 shows a clear win, do the proper version first.
+
+If option 1 barely moves the numbers, option 2 becomes more important, and option 3 becomes the cleanup pass afterward.
