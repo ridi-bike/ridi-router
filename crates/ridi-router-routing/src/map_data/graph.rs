@@ -545,9 +545,10 @@ mod tests {
     use super::*;
     use crate::map_data::rule::MapDataRuleType;
     use ridi_router_test_support::rmdf::{
-        empty_neighbors, manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord,
-        PointRecord, RuleRecord, TileId, TileManifest, TileMetadata, TileNeighbors, TileSpec,
-        SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+        create_missing_neighbor_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
+        write_manifest, write_tile, LineRecord, PointRecord, RuleRecord, TileId, TileManifest,
+        TileMetadata, TileNeighbors, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
+        SYNTHETIC_TILE_SIZE_DEGREES,
     };
 
     #[test]
@@ -668,6 +669,27 @@ mod tests {
             MapDataLineRef::new(fixture.tile_a, 1),
             MapDataPointRef::new(fixture.tile_b, fixture.cross_tile_neighbor_osm_id),
         )));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_adjacent_filters_missing_neighbor_edges_without_failing() {
+        let fixture = create_missing_neighbor_fixture("map-data-graph-missing-neighbor");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let adjacent =
+            graph.get_adjacent(MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id));
+
+        assert_eq!(adjacent.len(), 1);
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_a, 0),
+            MapDataPointRef::new(fixture.tile_a, fixture.in_tile_neighbor_osm_id),
+        )));
+        assert!(!adjacent.iter().any(|(_, other_point_ref)| {
+            other_point_ref.get_tile_id() == fixture.missing_tile
+                || other_point_ref.get_element_id() == fixture.missing_neighbor_osm_id
+        }));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }

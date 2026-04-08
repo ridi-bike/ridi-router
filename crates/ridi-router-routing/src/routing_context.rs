@@ -19,6 +19,7 @@ struct RoutingCaches {
     points: HashMap<MapDataPointRef, MapDataPoint>,
     lines: HashMap<MapDataLineRef, MapDataLine>,
     tag_sets: HashMap<ElementTagSetRef, ElementTagSet>,
+    adjacent: HashMap<MapDataPointRef, Vec<(MapDataLineRef, MapDataPointRef)>>,
 }
 
 pub(crate) struct RoutingContext<'a> {
@@ -135,7 +136,16 @@ impl<'a> RoutingContext<'a> {
         &self,
         point_ref: &MapDataPointRef,
     ) -> Vec<(MapDataLineRef, MapDataPointRef)> {
-        self.graph.get_adjacent(point_ref.clone())
+        if let Some(adjacent) = self.caches.borrow().adjacent.get(point_ref).cloned() {
+            return adjacent;
+        }
+
+        let adjacent = self.graph.get_adjacent(point_ref.clone());
+        self.caches
+            .borrow_mut()
+            .adjacent
+            .insert(point_ref.clone(), adjacent.clone());
+        adjacent
     }
 
     pub(crate) fn closest_to_coords(
@@ -156,13 +166,14 @@ impl<'a> RoutingContext<'a> {
     }
 
     #[cfg(test)]
-    fn cache_sizes(&self) -> (usize, usize, usize, usize) {
+    fn cache_sizes(&self) -> (usize, usize, usize, usize, usize) {
         let caches = self.caches.borrow();
         (
             caches.point_records.len(),
             caches.points.len(),
             caches.lines.len(),
             caches.tag_sets.len(),
+            caches.adjacent.len(),
         )
     }
 }
@@ -180,7 +191,9 @@ mod tests {
         rmdf::TileManager,
         RoutingContext,
     };
-    use ridi_router_test_support::rmdf::{create_linear_single_tile_fixture, SYNTHETIC_TILE_ID};
+    use ridi_router_test_support::rmdf::{
+        create_linear_single_tile_fixture, create_missing_neighbor_fixture, SYNTHETIC_TILE_ID,
+    };
 
     #[test]
     fn caches_point_and_line_lookups_within_one_context() {
@@ -210,13 +223,13 @@ mod tests {
         );
 
         let ctx = RoutingContext::new(&graph);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 0));
 
         assert_eq!(ctx.point(&point_ref).id, 1);
         assert_eq!(ctx.point(&point_ref).id, 1);
         assert_eq!(ctx.line(&line_ref).points.0, point_ref);
         assert_eq!(ctx.line(&line_ref).points.0.get_element_id(), 1);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0, 0));
     }
 
     #[test]
@@ -235,14 +248,14 @@ mod tests {
 
         let parent = RoutingContext::new(&graph);
         parent.point(&point_ref);
-        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0));
+        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0, 0));
 
         let task_ctx = parent.for_route_generation_task();
-        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0));
+        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0, 0));
 
         task_ctx.point(&point_ref);
-        assert_eq!(task_ctx.cache_sizes(), (0, 1, 0, 0));
-        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0));
+        assert_eq!(task_ctx.cache_sizes(), (0, 1, 0, 0, 0));
+        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0, 0));
     }
 
     #[test]
@@ -252,7 +265,7 @@ mod tests {
         let ctx = RoutingContext::new(&graph);
         let point_ref = MapDataPointRef::new(fixture.tile_id, fixture.start_osm_id);
 
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 0));
         assert_eq!(ctx.point_id(&point_ref), fixture.start_osm_id);
         assert_eq!(ctx.point_degree(&point_ref), 1);
         assert!(!ctx.point_is_junction(&point_ref));
@@ -260,7 +273,7 @@ mod tests {
             ctx.point_coords(&point_ref),
             (fixture.start_lat, fixture.start_lon)
         );
-        assert_eq!(ctx.cache_sizes(), (1, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (1, 0, 0, 0, 0));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
@@ -273,13 +286,59 @@ mod tests {
         let line_ref = MapDataLineRef::new(fixture.tile_id, 0);
         let line = ctx.line(&line_ref);
 
-        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 0, 0));
 
         let first = ctx.tag_set(&line.tags);
         let second = ctx.tag_set(&line.tags);
 
         assert_eq!(first, second);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 1));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 1, 0));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn caches_adjacency_within_one_context() {
+        let fixture = create_missing_neighbor_fixture("routing-context-adjacent-cache");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let point_ref = MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id);
+
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 0));
+
+        let first = ctx.adjacent(&point_ref);
+        assert_eq!(first.len(), 1);
+        assert!(first.contains(&(
+            MapDataLineRef::new(fixture.tile_a, 0),
+            MapDataPointRef::new(fixture.tile_a, fixture.in_tile_neighbor_osm_id),
+        )));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+
+        let second = ctx.adjacent(&point_ref);
+        assert_eq!(second, first);
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn route_generation_task_context_does_not_reuse_parent_adjacency_cache() {
+        let fixture =
+            create_missing_neighbor_fixture("routing-context-adjacent-cache-task-isolation");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let parent = RoutingContext::new(&graph);
+        let point_ref = MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id);
+
+        let expected = parent.adjacent(&point_ref);
+        assert_eq!(parent.cache_sizes(), (0, 0, 0, 0, 1));
+
+        let task_ctx = parent.for_route_generation_task();
+        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0, 0));
+
+        let actual = task_ctx.adjacent(&point_ref);
+        assert_eq!(actual, expected);
+        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0, 1));
+        assert_eq!(parent.cache_sizes(), (0, 0, 0, 0, 1));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
