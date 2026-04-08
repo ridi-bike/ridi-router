@@ -1,66 +1,82 @@
-# Implementation Phase 2: zero-copy rule access and direct rule hydration
+# Implementation Phase 2: add a loaded-only read fast path before the tile-manager write lock
 
 ## Goal
-Remove the largest allocation hotspot by stopping whole-tile rule copies on every point lookup.
+Make warm adjacency lookups cheaper by avoiding the tile-manager write lock when already loaded tiles can answer the request.
 
 ## Why this is phase 2
-Phase 1 removes wasted work first. Phase 2 then attacks the biggest allocator with a tighter, more invasive refactor.
+Phase 1 attacks repeated calls. Phase 2 attacks the cost of the calls that remain.
+
+The current `MapDataGraph::get_adjacent(...)` always takes `self.tile_manager.write().unwrap()`, even when the needed tiles are already in memory. That is a bad shape for a hot path under Rayon parallelism.
 
 ## Scope
 
 ### In scope
-1. Change `MappedTile` rule accessors from owned vectors to borrowed section views:
-   - `get_rules() -> Result<&[RuleRecord]>`
-   - `get_rule_line_refs_payload() -> Result<&[u64]>`
-2. Update `TileManager::get_rules_for_point(...)` to slice directly from borrowed rule sections.
-3. Remove intermediate whole-section allocation from rule hydration.
-4. Prefer exact-capacity allocation for only the selected point rules.
-5. If clean, replace `TilePointRule` temporary allocation with a borrowed/lightweight view or direct final hydration path.
+1. Add a loaded-only adjacency method in `crates/ridi-router-routing/src/rmdf/tile_manager.rs`:
+   ```rust
+   pub fn get_adjacent_by_id_if_loaded(
+       &self,
+       tile_id: TileId,
+       osm_id: u64,
+   ) -> Result<Option<Vec<(TileId, usize, TileId, u64)>>>;
+   ```
+2. Define exact loaded-only behavior:
+   - `Ok(None)` if the center tile is not loaded
+   - `Ok(None)` if the answer requires another tile that is not loaded
+   - `Ok(Some(...))` only when the full answer can be built from loaded tiles only
+3. Change `MapDataGraph::get_adjacent(...)` in `crates/ridi-router-routing/src/map_data/graph.rs` to:
+   - take `tile_manager.read()` first
+   - try `get_adjacent_by_id_if_loaded(...)`
+   - map and return on success
+   - fall back to `tile_manager.write()` plus `get_adjacent_by_id(...)` on miss
+4. Add tests for warm same-tile and cross-tile adjacency behavior.
+5. Add loaded-only path tests that verify:
+   - `Ok(None)` when a required tile is not yet loaded
+   - `Ok(Some(...))` once both needed tiles are warmed
+6. Keep current missing-neighbor behavior unchanged on the fallback path.
 
 ### Explicitly out of scope
-- read-mostly locking changes
-- task-local caches
-- call-site API cleanup
+- route-search API changes
+- shared caches
+- `SmallVec`
+- file-format changes
 
 ## Expected code touch points
-- `crates/ridi-router-routing/src/rmdf/io.rs`
-- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
 - `crates/ridi-router-routing/src/map_data/graph.rs`
-- RMDF IO tests and graph rule hydration tests
+- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
+- graph cross-tile adjacency tests
+- tile-manager synthetic cross-tile tests
 
-## Implementation notes
-Preferred order:
-1. make mmap-backed getters borrow safely
-2. make `get_rules_for_point` slice selected rules only
-3. only after that, simplify the final materialization path
-
-If a borrowed-view API becomes awkward, use this fallback:
-- keep `get_rules_for_point` returning owned data
-- but allocate only for the selected point's rules and line-ref slices
-- do not rebuild the entire tile rule section per call
-
-## Deliverables
-- no full `Vec<RuleRecord>` allocation per point lookup
-- no full `Vec<u64>` rule payload allocation per point lookup
-- smaller per-point allocations proportional to that point's actual rule count
-- tests covering bounds, empty slices, and equivalent hydrated rules
+## Implementation steps
+1. Extract the loaded-only portion of `get_adjacent_by_id(...)` so it can run from `&self` without loading tiles.
+2. Reuse the existing loaded-tile helpers and `LoadedTile.point_index` instead of duplicating lookup logic.
+3. In the loaded-only path, stop immediately with `Ok(None)` when a required tile is not already loaded.
+4. Keep the current write-path implementation as the correctness fallback.
+5. Add tests that warm the needed tiles first, then confirm the loaded-only path returns the same adjacency.
+6. Add focused loaded-only tests for the boundary cases:
+   - center tile missing from the loaded set
+   - cross-tile neighbor tile not yet loaded
+   - both tiles loaded, returning `Ok(Some(...))`
+7. Add at least one test proving graph-level behavior still matches `test_get_adjacent_keeps_cross_tile_behavior`.
 
 ## Validation
-1. Run RMDF IO tests.
-2. Run routing crate tests that cover rule hydration.
-3. Run `cargo check --workspace`.
-4. Re-run perf and compare:
-   - `tile_manager::get_rules_for_point`
-   - `graph::get_point_from_tiles`
-   - cumulative allocation totals for both
+1. `cargo test -p ridi-router-routing map_data::graph`
+2. `cargo test -p ridi-router-routing rmdf::tile_manager`
+3. `cargo check --workspace`
+4. Profile run:
+   ```bash
+   RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
+   ```
+5. Compare at minimum:
+   - `graph::get_adjacent`
+   - `tile_manager::get_adjacent_by_id`
+   - route wall time
+   - any lock-heavy tile-manager helpers that show up in Hotpath
+6. Specifically verify the new loaded-only tests cover both `Ok(None)` and `Ok(Some(...))` boundary cases.
 
 ## Exit criteria
-- rule access is zero-copy from the mmap until the final needed materialization step
-- allocation totals for `get_rules_for_point` drop sharply
-- point rule behavior is unchanged
+- warm adjacency lookups no longer require the write lock
+- cross-tile behavior stays identical
+- the fallback boundary is simple and easy to reason about
 
 ## Main risk
-Borrowed mmap-backed slices can make lifetimes and helper APIs trickier. Keep the design narrow and local to tile/rule access.
-
-## Rollback plan
-Land borrowed getters first. If direct final hydration adds too much complexity, stop at "selected-point-only owned allocation" and profile again.
+Low to medium. The key risk is getting the loaded-only boundary wrong for cross-tile cases and accidentally changing behavior instead of only changing lock shape.

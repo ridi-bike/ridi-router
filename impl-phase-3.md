@@ -1,68 +1,59 @@
-# Implementation Phase 3: read-mostly loaded-tile access for point, line, and tag readers
+# Implementation Phase 3: reduce adjacency allocation churn with local `SmallVec` cleanup
 
 ## Goal
-Stop serializing loaded-tile hits through a write lock.
+Shrink heap churn in the adjacency path without broad API redesign.
 
 ## Why this is phase 3
-This is the first concurrency-shape change. It should come after the point/rule hydration waste is reduced, so the new read path is simpler and easier to reason about.
+After phases 1 and 2, we should know how much adjacency call volume remains. This phase then targets the still-visible allocation cost called out in `perf-plan.md`:
+- `graph::get_adjacent`: 4.6 GB alloc
+- `tile_manager::get_adjacent_by_id`: 3.3 GB alloc
+
+This phase should stay local and measurable.
 
 ## Scope
 
 ### In scope
-1. Split tile access into:
-   - read-only fast path for already loaded tiles
-   - write path only for load / miss / eviction work
-2. Replace exact per-hit LRU mutation with approximate recency metadata suitable for read hits, for example:
-   - `last_used: AtomicU64`
-   - or similar cheap per-tile recency state
-3. Apply the read-mostly pattern first to point reads.
-4. Extend the same pattern to nearby hot readers where it stays clean:
-   - `get_line_from_tiles`
-   - `get_tag_set`
-   - `get_tag_value`
-5. Keep eviction decisions under the write lock.
+1. Add `smallvec = "1"` to the workspace and `smallvec.workspace = true` to `ridi-router-routing`.
+2. Replace the hottest temporary adjacency containers with `SmallVec` where road degree is usually small.
+3. Start with local/internal buffers only, not a full adjacency API redesign.
+4. Keep behavior and route-search APIs unchanged.
 
 ### Explicitly out of scope
-- shared graph-level caches
-- exact per-hit global LRU ordering
-- route-generation task-local caches
+- collapsing tile-manager and graph into one shared adjacency return type
+- caller-filled buffer APIs
+- route behavior changes
 
 ## Expected code touch points
-- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
+- `Cargo.toml`
+- `crates/ridi-router-routing/Cargo.toml`
 - `crates/ridi-router-routing/src/map_data/graph.rs`
-- possibly tile registry / loaded-tile bookkeeping structs
+- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
 
-## Design target
-Common path:
-1. take read lock
-2. if tile already loaded, hydrate directly and atomically bump recency
-3. if tile missing, drop read lock
-4. take write lock, load tile, update eviction metadata, retry
-
-## Deliverables
-- loaded-tile point reads no longer require the write lock
-- line and tag reads follow the same loaded-hit pattern where practical
-- eviction remains roughly recency-based, not exact LRU
-- tests covering repeated hits, misses, and basic concurrent access safety
+## Implementation steps
+1. Add `smallvec` dependencies.
+2. Change the raw adjacency temp buffer in `TileManager::get_adjacent_by_id(...)` from `Vec` to `SmallVec`.
+3. Change the mapped adjacency temp buffer in `MapDataGraph::get_adjacent(...)` from `Vec` to `SmallVec` where that stays local and simple.
+4. Keep the public return type unchanged if that avoids ripple. Convert only at the boundary.
+5. Use a conservative inline size such as 8, matching the expected small road degree.
+6. Add focused tests only where needed to lock in identical outputs.
 
 ## Validation
-1. Run `cargo check --workspace` and full routing tests.
-2. Add or run concurrency-focused tests for repeated loaded-tile hits.
-3. Re-run perf and compare:
-   - wall-clock route generation time
-   - `graph::get_point_from_tiles`
-   - `graph::get_line_from_tiles`
-   - `graph::get_tag_set`
-   - `tile_manager` lock-heavy helpers
-4. Watch for regressions in tile miss handling and eviction behavior.
+1. `cargo test -p ridi-router-routing map_data::graph`
+2. `cargo test -p ridi-router-routing rmdf::tile_manager`
+3. `cargo check --workspace`
+4. Profile run:
+   ```bash
+   RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
+   ```
+5. Compare at minimum:
+   - alloc totals for `graph::get_adjacent`
+   - alloc totals for `tile_manager::get_adjacent_by_id`
+   - total route-generation time
 
 ## Exit criteria
-- common loaded-tile reads are read-mostly
-- Rayon workers are no longer forced through one write path on every hit
-- approximate recency is in place and eviction still behaves reasonably
+- adjacency alloc totals drop materially
+- the change stays local and easy to back out
+- no new wide API churn appears just to support `SmallVec`
 
 ## Main risk
-This phase changes synchronization behavior. The biggest risk is making loaded-tile reads fast but subtly unsafe or making eviction bookkeeping inconsistent.
-
-## Rollback plan
-If extending to line/tag reads is too broad, land point-read fast path first, then extend the same pattern in follow-up commits inside this phase.
+Low to medium. The main risk is spreading `SmallVec` through too many layers at once and turning a local cleanup into a broad refactor.

@@ -1,78 +1,64 @@
-# Implementation Phase 4: route-generation task-local caches
+# Implementation Phase 4: conditional collapse of the double materialization layer and final perf sweep
 
 ## Goal
-Exploit repeated within-route reuse without adding shared-cache contention.
+Only if phases 1-3 leave adjacency as a first-order hotspot, remove the remaining double-materialization overhead between tile manager and graph.
 
 ## Why this is phase 4
-After phases 1-3, hydration should already be cheaper. This phase then removes repeated re-hydration of immutable graph objects inside each route-generation task.
+This is the most invasive part of option 3. It should happen only after we have numbers from the earlier phases.
+
+By then we will know whether the remaining cost is mostly:
+- repeated calls
+- lock contention
+- or the fact that adjacency still gets built twice per lookup
 
 ## Scope
 
 ### In scope
-1. Add per-route-generation-task caches, not graph-global caches.
-2. Start caches unbounded.
-3. Initial cache set:
-   - point cache
-   - line cache
-   - tag-set cache
-4. Add tag-value cache only if profiling still shows meaningful string lookup churn.
-5. Keep cache ownership local to a single route-generation task / worker.
+1. Decide from fresh profiling whether adjacency still needs a deeper refactor.
+2. If yes, collapse one materialization layer by choosing one of these bounded designs:
+   - tile manager returns final adjacency refs directly, or
+   - graph and tile manager share one adjacency container type alias
+3. Keep the redesign narrow to adjacency only.
+4. Finish with a full perf re-run and compare against the original baseline from `perf.md`.
 
-### Suggested cache keys
-- point: `MapDataPointRef` or `(TileId, osm_id)`
-- line: `MapDataLineRef` or `(TileId, line_index)`
-- tag set: `ElementTagSetRef`
-- optional tag value: `ElementTagValueRef`
-
-### Suggested cache values
-Start with plain owned values:
-- `MapDataPoint`
-- `MapDataLine`
-- `ElementTagSet`
-- optional `String`
-
-Only switch specific caches to `Arc<_>` if clone cost shows up after profiling.
-
-## Likely integration point
-Introduce cache state into the per-task routing context used inside Rayon route-generation work, instead of adding shared mutable state to `MapDataGraph`.
+### Explicitly out of scope
+- eager per-tile adjacency precompute
+- broad graph API redesign unrelated to adjacency
+- speculative shared memoization beyond what the profile proves necessary
 
 ## Expected code touch points
-- `crates/ridi-router-routing/src/routing_context.rs`
-- `crates/ridi-router-routing/src/router/generator.rs`
-- possibly navigator / walker call chains if the context API needs mutable or interior-mutable cache access
+- `crates/ridi-router-routing/src/map_data/graph.rs`
+- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
+- possibly `crates/ridi-router-routing/src/routing_context.rs` if the final adjacency container type changes
 
-## Deliverables
-- repeated point/line/tag lookups within one route-generation task hit local caches
-- no cross-thread cache sharing
-- no additional lock contention in the common path
-- tests or focused checks proving cache hits preserve identical results
+## Implementation steps
+1. Re-profile after phase 3.
+2. If adjacency is no longer first-order, skip the code refactor and keep this phase as measurement plus closeout.
+3. If adjacency still matters, pick one narrow design:
+   - `TileManager` returns final `(MapDataLineRef, MapDataPointRef)` pairs directly, or
+   - introduce a shared adjacency type alias and remove one conversion layer
+4. Update tests covering:
+   - same-tile adjacency
+   - cross-tile adjacency
+   - missing-neighbor behavior
+5. Run a final before/after summary against the original baseline.
 
 ## Validation
-1. Run routing tests.
-2. Run `cargo check --workspace`.
-3. Re-run perf and compare:
-   - `graph::get_point_from_tiles`
-   - `graph::get_line_from_tiles`
-   - `graph::get_tag_set`
-   - `graph::get_tag_value`
-   - wall-clock route generation time
-4. Track RSS and basic cache growth during long runs.
+1. `cargo test -p ridi-router-routing`
+2. `cargo check --workspace`
+3. Final profile run:
+   ```bash
+   RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
+   ```
+4. Compare the original baseline to the final state for:
+   - `graph::get_adjacent`
+   - `tile_manager::get_adjacent_by_id`
+   - walker hotspot totals
+   - route-generation wall time
 
 ## Exit criteria
-- repeated immutable hydrations within one worker are measurably reduced
-- no shared-cache synchronization was introduced
-- memory growth is acceptable for the current workloads
+- either adjacency is no longer worth deeper work and phase 4 is skipped cleanly,
+- or one materialization layer is removed with behavior unchanged and a measurable perf gain.
 
 ## Main risk
-Because `RoutingContext` is currently a thin immutable wrapper, the cache plumbing may require API reshaping or interior mutability. Keep the cache surface narrow.
-
-## Rollback plan
-If wiring all caches at once is noisy, land point cache first, then line cache, then tag caches in separate commits within this phase.
-
-
-## Implementation notes
-- Added task-local `RoutingContext` caches for `MapDataPoint`, `MapDataLine`, and `ElementTagSet`.
-- Cache keys are `MapDataPointRef`, `MapDataLineRef`, and `ElementTagSetRef`.
-- `Generator` now creates a fresh `RoutingContext` per Rayon itinerary task, so caches stay worker-local and are never shared across threads.
-- Caches are intentionally unbounded in this phase.
-- `tag_value` caching was left out on purpose, per the phase plan, until profiling shows it is still worth adding.
+Medium. This is where the code can get more coupled if the final adjacency type crosses too many boundaries. Keep the design narrow and stop once the profile says the hotspot is no longer first-order.
