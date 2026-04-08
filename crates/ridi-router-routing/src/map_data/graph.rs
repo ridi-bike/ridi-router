@@ -150,6 +150,9 @@ impl<T> Debug for MapDataElementRef<T> {
 
 pub type MapDataLineRef = MapDataElementRef<MapDataLine>;
 pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
+pub(crate) const ADJACENT_INLINE_CAPACITY: usize = 8;
+pub(crate) type AdjacentRef = (MapDataLineRef, MapDataPointRef);
+pub(crate) type AdjacentRefs = SmallVec<[AdjacentRef; ADJACENT_INLINE_CAPACITY]>;
 
 pub struct MapDataGraph {
     tile_manager: std::sync::RwLock<crate::rmdf::TileManager>,
@@ -468,11 +471,7 @@ impl MapDataGraph {
         }
     }
 
-    const ADJACENT_INLINE_CAPACITY: usize = 8;
-    pub fn get_adjacent(
-        &self,
-        center_point: MapDataPointRef,
-    ) -> Vec<(MapDataLineRef, MapDataPointRef)> {
+    pub fn get_adjacent(&self, center_point: MapDataPointRef) -> Vec<(MapDataLineRef, MapDataPointRef)> {
         // In test mode, check test storage first
         #[cfg(test)]
         {
@@ -509,18 +508,6 @@ impl MapDataGraph {
             tm.get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
                 .expect("Failed to get adjacent points")
         });
-
-        let adjacent: SmallVec<
-            [(MapDataLineRef, MapDataPointRef); Self::ADJACENT_INLINE_CAPACITY],
-        > = adjacent
-            .iter()
-            .map(|(line_tile_id, line_index, other_tile_id, other_osm_id)| {
-                (
-                    MapDataLineRef::new(*line_tile_id, *line_index as u64),
-                    MapDataPointRef::new(*other_tile_id, *other_osm_id),
-                )
-            })
-            .collect();
 
         adjacent.into_vec()
     }

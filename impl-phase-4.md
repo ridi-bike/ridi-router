@@ -11,6 +11,14 @@ By then we will know whether the remaining cost is mostly:
 - lock contention
 - or the fact that adjacency still gets built twice per lookup
 
+## Implemented outcome
+
+This phase used the narrower refactor path:
+- `TileManager::{get_adjacent_by_id_if_loaded,get_adjacent_by_id}` now build final `(MapDataLineRef, MapDataPointRef)` pairs directly
+- `map_data::graph` owns the shared adjacency type alias and inline-capacity constant
+- `MapDataGraph::get_adjacent(...)` now forwards the already-materialized adjacency container without remapping every entry
+
+That removes the remaining graph-side adjacency conversion layer while keeping the public route-search behavior unchanged.
 ## Scope
 
 ### In scope
@@ -42,6 +50,13 @@ By then we will know whether the remaining cost is mostly:
    - cross-tile adjacency
    - missing-neighbor behavior
 5. Run a final before/after summary against the original baseline.
+
+## Validation status
+
+Completed in this implementation pass:
+- `cargo test -p ridi-router-routing`
+- `cargo check --workspace`
+- attempted `RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia` in this environment; the run exceeded the interactive timeout before finishing, so no final before/after numbers are recorded here
 
 ## Validation
 1. `cargo test -p ridi-router-routing`

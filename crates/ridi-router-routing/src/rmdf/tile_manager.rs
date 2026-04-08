@@ -4,7 +4,9 @@ const GRID_SEARCH_RING_RADIUS: i16 = 20;
 
 use crate::{
     map_data::{
-        graph::MapDataLineRef,
+        graph::{
+            ADJACENT_INLINE_CAPACITY, AdjacentRefs, MapDataLineRef, MapDataPointRef,
+        },
         rule::{MapDataRule, MapDataRuleType},
     },
     router::rules::{RouterRules, RulesTagValueAction},
@@ -82,8 +84,6 @@ struct AdjacentLineTags {
 }
 
 type AdjacentLineData = (usize, u64, f32, f32, u64, f32, f32);
-type AdjacentByIdEntry = (TileId, usize, TileId, u64);
-const ADJACENT_INLINE_CAPACITY: usize = 8;
 
 #[hotpath::measure_all]
 impl TileManager {
@@ -706,21 +706,18 @@ impl TileManager {
     /// Get adjacent lines and points from a point using only already loaded tiles.
     /// Returns Ok(None) if the center tile is not loaded or if a cross-tile neighbor would
     /// require loading another tile.
-    /// Returns Vec<(line_tile_id, line_index, other_point_tile_id, other_point_osm_id)>
     pub fn get_adjacent_by_id_if_loaded(
         &self,
         tile_id: TileId,
         osm_id: u64,
-    ) -> Result<Option<Vec<AdjacentByIdEntry>>> {
+    ) -> Result<Option<AdjacentRefs>> {
         let Some(line_indices_and_data) =
             self.collect_adjacent_line_data_if_loaded(tile_id, osm_id)?
         else {
             return Ok(None);
         };
 
-        let mut result = SmallVec::<[AdjacentByIdEntry; ADJACENT_INLINE_CAPACITY]>::with_capacity(
-            line_indices_and_data.len(),
-        );
+        let mut result = AdjacentRefs::with_capacity(line_indices_and_data.len());
 
         for (
             line_idx,
@@ -744,28 +741,28 @@ impl TileManager {
                 return Ok(None);
             }
 
-            result.push((tile_id, line_idx, other_tile_id, other_osm_id));
+            result.push((
+                MapDataLineRef::new(tile_id, line_idx as u64),
+                MapDataPointRef::new(other_tile_id, other_osm_id),
+            ));
         }
 
-        Ok(Some(result.into_vec()))
+        Ok(Some(result))
     }
 
     /// Get adjacent lines and points from a point (handles border crossing)
-    /// Returns Vec<(line_tile_id, line_index, other_point_tile_id, other_point_osm_id)>
     pub fn get_adjacent_by_id(
         &mut self,
         tile_id: TileId,
         osm_id: u64,
-    ) -> Result<Vec<AdjacentByIdEntry>> {
+    ) -> Result<AdjacentRefs> {
         self.ensure_tile_loaded(tile_id)?;
 
         let line_indices_and_data = self
             .collect_adjacent_line_data_if_loaded(tile_id, osm_id)?
             .with_context(|| format!("Tile {:?} not loaded after adjacency lookup", tile_id))?;
 
-        let mut result = SmallVec::<[AdjacentByIdEntry; ADJACENT_INLINE_CAPACITY]>::with_capacity(
-            line_indices_and_data.len(),
-        );
+        let mut result = AdjacentRefs::with_capacity(line_indices_and_data.len());
 
         for (
             line_idx,
@@ -805,10 +802,13 @@ impl TileManager {
                 }
             }
 
-            result.push((tile_id, line_idx, other_tile_id, other_osm_id));
+            result.push((
+                MapDataLineRef::new(tile_id, line_idx as u64),
+                MapDataPointRef::new(other_tile_id, other_osm_id),
+            ));
         }
 
-        Ok(result.into_vec())
+        Ok(result)
     }
 
     fn collect_adjacent_line_data_if_loaded(
@@ -2294,8 +2294,14 @@ mod tests {
         let adjacent = manager.get_adjacent_by_id(tile_a, center_osm_id).unwrap();
 
         assert_eq!(adjacent.len(), 2);
-        assert!(adjacent.contains(&(tile_a, 0, tile_a, in_tile_neighbor_osm_id)));
-        assert!(adjacent.contains(&(tile_a, 1, tile_b, cross_tile_neighbor_osm_id)));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(tile_a, 0),
+            MapDataPointRef::new(tile_a, in_tile_neighbor_osm_id),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(tile_a, 1),
+            MapDataPointRef::new(tile_b, cross_tile_neighbor_osm_id),
+        )));
         assert_eq!(manager.loaded_tile_count(), 2);
         assert_eq!(manager.loaded_tile_order_for_test(), vec![tile_a, tile_b]);
 
@@ -2366,8 +2372,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(adjacent.len(), 2);
-        assert!(adjacent.contains(&(tile_a, 0, tile_a, in_tile_neighbor_osm_id)));
-        assert!(adjacent.contains(&(tile_a, 1, tile_b, cross_tile_neighbor_osm_id)));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(tile_a, 0),
+            MapDataPointRef::new(tile_a, in_tile_neighbor_osm_id),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(tile_a, 1),
+            MapDataPointRef::new(tile_b, cross_tile_neighbor_osm_id),
+        )));
         assert_eq!(manager.loaded_tile_count(), 2);
         assert_eq!(manager.loaded_tile_order_for_test(), vec![tile_a, tile_b]);
 
@@ -2399,9 +2411,9 @@ mod tests {
         assert!(adjacent.len() > 0);
 
         // Check if any cross tile boundary
-        let crosses_boundary = adjacent
-            .iter()
-            .any(|(line_tile_id, _, other_tile_id, _)| *line_tile_id != *other_tile_id);
+        let crosses_boundary = adjacent.iter().any(|(line_ref, other_point_ref)| {
+            line_ref.get_tile_id() != other_point_ref.get_tile_id()
+        });
         // May or may not cross depending on location
         let _ = crosses_boundary;
     }
@@ -2426,14 +2438,12 @@ mod tests {
             "missing tile edge should be filtered out"
         );
         assert!(adjacent.contains(&(
-            fixture.tile_a,
-            0,
-            fixture.tile_a,
-            fixture.in_tile_neighbor_osm_id,
+            MapDataLineRef::new(fixture.tile_a, 0),
+            MapDataPointRef::new(fixture.tile_a, fixture.in_tile_neighbor_osm_id),
         )));
-        assert!(!adjacent.iter().any(|(_, _, other_tile_id, other_osm_id)| {
-            *other_tile_id == fixture.missing_tile
-                || *other_osm_id == fixture.missing_neighbor_osm_id
+        assert!(!adjacent.iter().any(|(_, other_point_ref)| {
+            other_point_ref.get_tile_id() == fixture.missing_tile
+                || other_point_ref.get_element_id() == fixture.missing_neighbor_osm_id
         }));
         assert_eq!(manager.loaded_tile_count(), 1);
         assert_eq!(manager.loaded_tile_order_for_test(), vec![fixture.tile_a]);
