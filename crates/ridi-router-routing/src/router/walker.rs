@@ -1,7 +1,12 @@
 use std::{collections::HashSet, fmt::Debug};
 
+use smallvec::SmallVec;
+
 use crate::{
-    map_data::{graph::MapDataPointRef, rule::MapDataRuleType},
+    map_data::{
+        graph::{MapDataLineRef, MapDataPointRef},
+        rule::{MapDataRule, MapDataRuleType},
+    },
     RoutingContext,
 };
 
@@ -29,6 +34,40 @@ pub enum WalkerMoveResult {
     Finish,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum NextStepClass {
+    None,
+    One(Segment),
+    Many(SmallVec<[Segment; 4]>),
+}
+
+impl NextStepClass {
+    fn push(&mut self, segment: Segment) {
+        match self {
+            NextStepClass::None => *self = NextStepClass::One(segment),
+            NextStepClass::One(_) => {
+                let first = match std::mem::replace(self, NextStepClass::None) {
+                    NextStepClass::One(first) => first,
+                    _ => unreachable!("only One can reach this branch"),
+                };
+                let mut many = SmallVec::<[Segment; 4]>::new();
+                many.push(first);
+                many.push(segment);
+                *self = NextStepClass::Many(many);
+            }
+            NextStepClass::Many(many) => many.push(segment),
+        }
+    }
+
+    fn into_segment_list(self) -> SegmentList {
+        match self {
+            NextStepClass::None => SegmentList::new(),
+            NextStepClass::One(segment) => SegmentList::from(vec![segment]),
+            NextStepClass::Many(segments) => SegmentList::from(segments.into_vec()),
+        }
+    }
+}
+
 #[hotpath::measure_all]
 impl Walker {
     pub fn new(start: MapDataPointRef) -> Self {
@@ -48,54 +87,101 @@ impl Walker {
         last_point
     }
 
+    fn start_point_segment_blocked_by_not_allowed_rule(
+        rules: &[MapDataRule],
+        segments: &[(MapDataLineRef, MapDataPointRef)],
+        candidate_line_ref: &MapDataLineRef,
+    ) -> bool {
+        rules
+            .iter()
+            .filter(|rule| {
+                rule.rule_type == MapDataRuleType::NotAllowed
+                    && rule.to_lines.contains(candidate_line_ref)
+            })
+            .any(|rule| {
+                segments
+                    .iter()
+                    .filter(|(other_line_ref, _)| other_line_ref != candidate_line_ref)
+                    .all(|(other_line_ref, _)| rule.to_lines.contains(other_line_ref))
+            })
+    }
+
+    fn continuation_allowed_by_rules(
+        rules: &[MapDataRule],
+        center_line: &MapDataLineRef,
+        line_next_ref: &MapDataLineRef,
+    ) -> bool {
+        if rules.is_empty() {
+            return true;
+        }
+
+        let mut has_only_allowed_rule = false;
+        let mut allowed_by_only_allowed_rule = false;
+
+        for rule in rules {
+            if !rule.from_lines.contains(center_line) {
+                continue;
+            }
+
+            match rule.rule_type {
+                MapDataRuleType::NotAllowed => {
+                    if rule.to_lines.contains(line_next_ref) {
+                        return false;
+                    }
+                }
+                MapDataRuleType::OnlyAllowed => {
+                    has_only_allowed_rule = true;
+                    if rule.to_lines.contains(line_next_ref) {
+                        allowed_by_only_allowed_rule = true;
+                    }
+                }
+            }
+        }
+
+        !has_only_allowed_rule || allowed_by_only_allowed_rule
+    }
+
+    fn classify_segments_for_point_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        center_point: &MapDataPointRef,
+    ) -> NextStepClass {
+        let rules = ctx.with_point(center_point, |center_point_data| {
+            center_point_data.rules.clone()
+        });
+        let segments = ctx.adjacent(center_point);
+        let mut next_steps = NextStepClass::None;
+
+        for (line_ref, point_ref) in &segments {
+            let line = ctx.line(line_ref);
+            if line.is_one_way() && &line.points.1 == center_point {
+                continue;
+            }
+
+            if Self::start_point_segment_blocked_by_not_allowed_rule(&rules, &segments, line_ref) {
+                continue;
+            }
+
+            next_steps.push(Segment::new(line_ref.clone(), point_ref.clone()));
+        }
+
+        next_steps
+    }
+
     fn get_segments_for_point_with_context(
         &self,
         ctx: &RoutingContext<'_>,
         center_point: &MapDataPointRef,
     ) -> SegmentList {
-        let center_point_data = ctx.point(center_point);
-        let not_allow_rules = center_point_data
-            .rules
-            .iter()
-            .filter(|rule| rule.rule_type == MapDataRuleType::NotAllowed)
-            .collect::<Vec<_>>();
-        let segments = ctx.adjacent(center_point);
-
-        segments
-            .iter()
-            .filter_map(|(line_ref, point_ref)| {
-                let line = ctx.line(line_ref);
-                if line.is_one_way() && &line.points.1 == center_point {
-                    return None;
-                }
-                if !not_allow_rules.is_empty() {
-                    let not_allow_rules_for_segment = not_allow_rules
-                        .iter()
-                        .filter(|rule| rule.to_lines.contains(line_ref))
-                        .collect::<Vec<_>>();
-                    let other_segments = segments
-                        .iter()
-                        .filter(|segment| &segment.0 != line_ref)
-                        .collect::<Vec<_>>();
-
-                    if not_allow_rules_for_segment.iter().any(|rule| {
-                        other_segments
-                            .iter()
-                            .all(|segment| rule.to_lines.contains(&segment.0))
-                    }) {
-                        return None;
-                    }
-                }
-                Some(Segment::new(line_ref.clone(), point_ref.clone()))
-            })
-            .collect()
+        self.classify_segments_for_point_with_context(ctx, center_point)
+            .into_segment_list()
     }
 
-    fn get_fork_segments_for_segment_with_context(
+    fn classify_fork_segments_for_segment_with_context(
         &self,
         ctx: &RoutingContext<'_>,
         segment: &Segment,
-    ) -> SegmentList {
+    ) -> NextStepClass {
         let center_point = segment.get_end_point();
         let center_line = segment.get_line();
         let prev_point_id = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2)
@@ -107,59 +193,39 @@ impl Walker {
         } else {
             ctx.point_id(&self.start)
         };
+        let rules = ctx.with_point(center_point, |center_point_data| {
+            center_point_data.rules.clone()
+        });
+        let adjacent = ctx.adjacent(center_point);
+        let mut next_steps = NextStepClass::None;
 
-        let center_point_data = ctx.point(center_point);
-        let only_allow_rules = center_point_data
-            .rules
-            .iter()
-            .filter(|rule| {
-                rule.rule_type == MapDataRuleType::OnlyAllowed
-                    && rule.from_lines.contains(center_line)
-            })
-            .collect::<Vec<_>>();
+        for (line_next_ref, point_next_ref) in adjacent {
+            if ctx.point_id(&point_next_ref) == prev_point_id {
+                continue;
+            }
 
-        let not_allow_rules = center_point_data
-            .rules
-            .iter()
-            .filter(|rule| {
-                rule.rule_type == MapDataRuleType::NotAllowed
-                    && rule.from_lines.contains(center_line)
-            })
-            .collect::<Vec<_>>();
+            let line_next = ctx.line(&line_next_ref);
+            if line_next.is_one_way() && &line_next.points.1 == center_point {
+                continue;
+            }
 
-        ctx.adjacent(center_point)
-            .into_iter()
-            .filter(|(line_next_ref, point_next_ref)| {
-                if ctx.point_id(point_next_ref) == prev_point_id {
-                    return false;
-                }
+            if !Self::continuation_allowed_by_rules(&rules, center_line, &line_next_ref) {
+                continue;
+            }
 
-                let line_next = ctx.line(line_next_ref);
-                if line_next.is_one_way() && &line_next.points.1 == center_point {
-                    return false;
-                }
+            next_steps.push(Segment::new(line_next_ref, point_next_ref));
+        }
 
-                if center_point_data.rules.is_empty() {
-                    return true;
-                }
+        next_steps
+    }
 
-                if not_allow_rules
-                    .iter()
-                    .any(|rule| rule.to_lines.contains(line_next_ref))
-                {
-                    return false;
-                }
-
-                if !only_allow_rules.is_empty() {
-                    return only_allow_rules
-                        .iter()
-                        .any(|rule| rule.to_lines.contains(line_next_ref));
-                }
-
-                true
-            })
-            .map(|(line_ref, end_point_ref)| Segment::new(line_ref, end_point_ref))
-            .collect()
+    fn get_fork_segments_for_segment_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        segment: &Segment,
+    ) -> SegmentList {
+        self.classify_fork_segments_for_segment_with_context(ctx, segment)
+            .into_segment_list()
     }
 
     pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) {
