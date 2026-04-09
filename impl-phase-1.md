@@ -1,82 +1,86 @@
-# Implementation Phase 1: validate and land the `RoutingContext` adjacency cache
+# Implementation Phase 1: Lock down current behavior with tests
 
 ## Goal
-Cut repeated same-point adjacency lookups inside one route search before touching lock strategy or adjacency plumbing.
+Create a safety net before any hot-path refactor. This phase exists to preserve external behavior while later phases change internals.
 
-## Why this is phase 1
-This is the highest-confidence, lowest-risk change in `perf-plan.md`:
-- `RoutingContext` already owns task-local caches
-- the hot path already goes through `RoutingContext::adjacent(...)`
-- the change stays local to one file first, so perf results are easy to interpret
+## Why this is a separate phase
+The performance plan explicitly favors a larger refactor, but only after current semantics are pinned down. This phase reduces the main project risk: semantic drift.
 
-It also gives a clean decision gate for the rest of the plan.
+## Rollout note
+These phases are for implementation order and logical separation inside a single PR.
+Do not treat them as separate PR boundaries.
 
-## Scope
+## In scope
+- Keep all relevant existing tests green
+- Add or strengthen non-roundabout behavior tests in:
+  - `crates/ridi-router-routing/src/router/walker.rs`
+  - `crates/ridi-router-routing/src/router/weights_phase1_tests.rs` or a dedicated heading-look-ahead test file
+  - `crates/ridi-router-routing/src/routing_context.rs`
+- Add test fixtures/helpers only when needed to express behavior clearly
+- Document any current behavior that looks odd but is intentionally preserved
 
-### In scope
-1. Before changing behavior, add characterization tests for current adjacency semantics:
-   - graph-level missing-neighbor adjacency still succeeds and filters the missing edge
-   - adjacency is cached within one `RoutingContext`
-   - route-generation child contexts do not reuse a parent adjacency cache
-2. Add adjacency caching to `RoutingCaches` in `crates/ridi-router-routing/src/routing_context.rs`.
-3. Change `RoutingContext::adjacent(...)` to:
-   - check cache
-   - return cloned cached result on hit
-   - call `graph.get_adjacent(...)` on miss
-   - store and return the result
-4. Extend tests in `routing_context.rs` to prove results stay identical to the uncached path.
-5. Run the existing profiled route command from `perf.md` before and after.
+## Out of scope
+- No production refactor yet
+- No roundabout redesign
+- No performance-driven behavior changes
 
-### Explicitly out of scope
-- `MapDataGraph` API redesign
-- `TileManager` changes
-- lock behavior changes
-- `SmallVec`
-- shared cross-task caches
+## Required test coverage
+### Keep existing coverage green
+- `walker_same_start_end`
+- `walker_error_on_wrong_choice`
+- `walker_choose_path`
+- `walker_reach_dead_end_walk_back`
+- `handle_roundabout`
+- `follow_one_way`
+- existing `rule_test(...)` coverage in `walker.rs`
+- existing `weights_phase1_tests.rs` coverage that touches routing/weight behavior
 
-## Expected code touch points
-- `crates/ridi-router-routing/src/routing_context.rs`
-- `crates/ridi-router-routing/src/map_data/graph.rs`
-- existing `RoutingContext` tests
-- graph adjacency tests for missing-neighbor behavior
-- optional ignored microbench for repeated adjacency lookups if it helps local validation
+### Add or strengthen walker tests
+1. `walker_moves_through_single_choice_corridor_until_finish`
+2. `walker_returns_fork_after_single_choice_corridor`
+3. `walker_returns_dead_end_after_single_choice_corridor`
+4. `walker_follows_explicit_choice_after_corridor`
+5. `walker_wrong_choice_after_corridor_returns_same_available_points`
+6. `walker_filters_reverse_edge_from_incoming_segment`
+7. `walker_respects_one_way_after_corridor`
+8. `walker_respects_only_allowed_rule_after_corridor`
+9. `walker_respects_not_allowed_rule_after_corridor`
+10. `walker_start_point_rule_filtering_matches_current_behavior`
+11. `move_backwards_to_prev_fork_still_returns_expected_choices_after_refactor`
 
-## Implementation steps
-1. Add a graph-level characterization test for missing-neighbor adjacency so later lock/refactor work cannot silently change current behavior.
-2. Add a new cache field:
-   ```rust
-   adjacent: HashMap<MapDataPointRef, Vec<(MapDataLineRef, MapDataPointRef)>>,
-   ```
-3. Update `RoutingContext::adjacent(...)` to use that cache.
-4. Expand `cache_sizes()` or add a focused helper so tests can see adjacency cache growth.
-5. Add a unit test using the existing synthetic fixtures to call `ctx.adjacent(...)` twice and verify:
-   - same returned neighbors
-   - cache size grows once
-6. Add a fresh-child-context test that proves a route-generation child context does not observe the parent's adjacency cache.
-7. Re-run the existing fresh-context test coverage for other caches to confirm task-local behavior stays intact.
+### Add heading / look-ahead regression tests
+12. `heading_look_ahead_returns_finish_when_candidate_reaches_finish_before_next_fork`
+13. `heading_look_ahead_returns_dead_end_when_candidate_dies_before_next_fork`
+14. `heading_look_ahead_returns_immediate_decision_when_candidate_endpoint_is_already_a_fork`
+15. `heading_look_ahead_returns_approach_segment_after_single_choice_corridor`
+16. `weight_heading_matches_current_result_on_non_roundabout_corridor_case`
+17. `weight_heading_matches_current_result_on_immediate_fork_case`
+
+### Add `RoutingContext` equivalence tests
+18. `with_point_exposes_same_visible_data_as_point`
+19. `with_adjacent_exposes_same_visible_data_as_adjacent`
+20. `with_point_and_with_adjacent_work_with_cached_data`
+
+## Implementation notes
+- Test visible outcomes, not internal helper shapes
+- Prefer concise fixtures that make corridor/fork/dead-end behavior obvious
+- Preserve roundabout coverage, but do not expand roundabout behavior in this phase
+- If an existing behavior seems inefficient or surprising, freeze it now and revisit only in a later dedicated change
+
+## Deliverables
+- New or updated tests committed and passing
+- Any small test helpers needed to keep fixtures readable
+- A short note in the single PR description listing preserved behaviors the new tests now protect
 
 ## Validation
-1. `cargo test -p ridi-router-routing routing_context`
-2. `cargo test -p ridi-router-routing map_data::graph`
-3. `cargo check --workspace`
-4. Profile run from repo root:
-   ```bash
-   RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
-   ```
-5. Compare at minimum:
-   - `graph::get_adjacent` calls / total / alloc
-   - `tile_manager::get_adjacent_by_id` calls / total / alloc
-   - route-generation wall time
-   - walker hotspots that repeatedly call adjacency
+Recommended checks:
+- `cargo test -p ridi-router-routing`
+- Targeted reruns for walker/weights/routing_context tests while iterating
 
 ## Exit criteria
-- repeated same-point adjacency lookups within one `RoutingContext` are measurably reduced
-- behavior stays unchanged
-- the perf run shows whether option 1 is strong enough to keep first priority
+- All existing relevant tests still pass
+- All planned non-roundabout regression tests are added, or any omissions are explicitly justified
+- No production behavior changes are introduced in this phase
 
-## Decision gate
-- If phase 1 clearly lowers adjacency call count and time, keep the remaining order as planned.
-- If it barely moves the numbers, phase 2 becomes the more important next lever and phase 3 stays cleanup.
-
-## Main risk
-Low. The main watch-out is accidental cache sharing across route-generation tasks, which the current `RoutingContext` design already avoids.
+## Handoff to next phase
+Once this phase is complete, later refactors can safely change internals as long as these tests remain green.

@@ -1,82 +1,68 @@
-# Implementation Phase 2: add a loaded-only read fast path before the tile-manager write lock
+# Implementation Phase 2: Add borrowed `RoutingContext` accessors
 
 ## Goal
-Make warm adjacency lookups cheaper by avoiding the tile-manager write lock when already loaded tiles can answer the request.
+Introduce non-cloning `RoutingContext` accessors for hot-path read access, without changing routing behavior.
 
-## Why this is phase 2
-Phase 1 attacks repeated calls. Phase 2 attacks the cost of the calls that remain.
+## Why this phase exists
+The current hot path clones `MapDataPoint` and adjacency data even on cache hits. Later phases need borrowed access so the walker and look-ahead helper can inspect cached structures cheaply.
 
-The current `MapDataGraph::get_adjacent(...)` always takes `self.tile_manager.write().unwrap()`, even when the needed tiles are already in memory. That is a bad shape for a hot path under Rayon parallelism.
+## In scope
+- Add `with_...` style accessors in `crates/ridi-router-routing/src/routing_context.rs`
+- Preserve current `point()` and `adjacent()` APIs for compatibility
+- Ensure cached and uncached reads expose the same visible data
+- Keep this change narrow and internal-facing
 
-## Scope
+## Preferred API direction
+Examples:
 
-### In scope
-1. Add a loaded-only adjacency method in `crates/ridi-router-routing/src/rmdf/tile_manager.rs`:
-   ```rust
-   pub fn get_adjacent_by_id_if_loaded(
-       &self,
-       tile_id: TileId,
-       osm_id: u64,
-   ) -> Result<Option<Vec<(TileId, usize, TileId, u64)>>>;
-   ```
-2. Define exact loaded-only behavior:
-   - `Ok(None)` if the center tile is not loaded
-   - `Ok(None)` if the answer requires another tile that is not loaded
-   - `Ok(Some(...))` only when the full answer can be built from loaded tiles only
-3. Change `MapDataGraph::get_adjacent(...)` in `crates/ridi-router-routing/src/map_data/graph.rs` to:
-   - take `tile_manager.read()` first
-   - try `get_adjacent_by_id_if_loaded(...)`
-   - map and return on success
-   - fall back to `tile_manager.write()` plus `get_adjacent_by_id(...)` on miss
-4. Add tests for warm same-tile and cross-tile adjacency behavior.
-5. Add loaded-only path tests that verify:
-   - `Ok(None)` when a required tile is not yet loaded
-   - `Ok(Some(...))` once both needed tiles are warmed
-6. Keep current missing-neighbor behavior unchanged on the fallback path.
+```rust
+ctx.with_point(point_ref, |point| {
+    // inspect point by reference
+});
 
-### Explicitly out of scope
-- route-search API changes
-- shared caches
-- `SmallVec`
-- file-format changes
+ctx.with_adjacent(point_ref, |adjacent| {
+    // inspect adjacency by reference
+});
+```
 
-## Expected code touch points
-- `crates/ridi-router-routing/src/map_data/graph.rs`
-- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
-- graph cross-tile adjacency tests
-- tile-manager synthetic cross-tile tests
+Exact names may vary, but the requirements are:
+- no `MapDataPoint` clone when read-only inspection is enough
+- no adjacency vector clone when read-only iteration is enough
+- no behavior change for callers
 
-## Implementation steps
-1. Extract the loaded-only portion of `get_adjacent_by_id(...)` so it can run from `&self` without loading tiles.
-2. Reuse the existing loaded-tile helpers and `LoadedTile.point_index` instead of duplicating lookup logic.
-3. In the loaded-only path, stop immediately with `Ok(None)` when a required tile is not already loaded.
-4. Keep the current write-path implementation as the correctness fallback.
-5. Add tests that warm the needed tiles first, then confirm the loaded-only path returns the same adjacency.
-6. Add focused loaded-only tests for the boundary cases:
-   - center tile missing from the loaded set
-   - cross-tile neighbor tile not yet loaded
-   - both tiles loaded, returning `Ok(Some(...))`
-7. Add at least one test proving graph-level behavior still matches `test_get_adjacent_keeps_cross_tile_behavior`.
+## Design constraints
+- Keep ownership and borrowing rules simple enough that later walker code can use them ergonomically
+- Do not force a whole-codebase migration yet
+- Keep the old cloning APIs available until the refactor is complete
+- Avoid exposing new public surface area unless it is already consistent with crate boundaries and intended visibility
+
+## Tasks
+1. Add `with_point(...)`
+2. Add `with_adjacent(...)`
+3. Ensure both work for first access and cached access
+4. Add or wire up the Phase 1 equivalence tests for these APIs
+5. Keep existing callers working unchanged
+
+## Out of scope
+- No walker refactor yet
+- No heading look-ahead helper yet
+- No wide call-site conversion across the codebase
+
+## Deliverables
+- Borrowed accessors in `routing_context.rs`
+- Tests showing equivalence with current `point()` and `adjacent()` behavior
+- Minimal internal documentation or comments explaining intended hot-path use
 
 ## Validation
-1. `cargo test -p ridi-router-routing map_data::graph`
-2. `cargo test -p ridi-router-routing rmdf::tile_manager`
-3. `cargo check --workspace`
-4. Profile run:
-   ```bash
-   RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
-   ```
-5. Compare at minimum:
-   - `graph::get_adjacent`
-   - `tile_manager::get_adjacent_by_id`
-   - route wall time
-   - any lock-heavy tile-manager helpers that show up in Hotpath
-6. Specifically verify the new loaded-only tests cover both `Ok(None)` and `Ok(Some(...))` boundary cases.
+Recommended checks:
+- `cargo test -p ridi-router-routing routing_context`
+- `cargo test -p ridi-router-routing`
 
 ## Exit criteria
-- warm adjacency lookups no longer require the write lock
-- cross-tile behavior stays identical
-- the fallback boundary is simple and easy to reason about
+- New accessors compile cleanly
+- Visible behavior matches existing clone-based APIs
+- Cached access works correctly
+- Later phases can use the new accessors without needing API redesign
 
-## Main risk
-Low to medium. The key risk is getting the loaded-only boundary wrong for cross-tile cases and accidentally changing behavior instead of only changing lock shape.
+## Handoff to next phase
+Phase 3 should treat these accessors as the preferred way to inspect point and adjacency data inside the new shared classifier.

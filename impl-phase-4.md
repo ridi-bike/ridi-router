@@ -1,79 +1,70 @@
-# Implementation Phase 4: conditional collapse of the double materialization layer and final perf sweep
+# Implementation Phase 4: Refactor the main walker onto the classifier fast path
 
 ## Goal
-Only if phases 1-3 leave adjacency as a first-order hotspot, remove the remaining double-materialization overhead between tile manager and graph.
+Make `walker::move_forward_to_next_fork_with_context` cheap on the common 0/1-choice path while preserving current semantics.
 
-## Why this is phase 4
-This is the most invasive part of option 3. It should happen only after we have numbers from the earlier phases.
+## Why this phase exists
+This is the main hotspot. The biggest direct win should come from stopping the walker from allocating and rescanning temporary collections during corridor traversal.
 
-By then we will know whether the remaining cost is mostly:
-- repeated calls
-- lock contention
-- or the fact that adjacency still gets built twice per lookup
+## In scope
+- Refactor `crates/ridi-router-routing/src/router/walker.rs`
+- Route non-roundabout next-step decisions through the shared classifier from Phase 3
+- Preserve roundabout behavior by keeping roundabout-specific logic intact
+- Preserve explicit wrong-choice behavior and payload shape
 
-## Implemented outcome
+## Required target behavior
+The main loop should:
+- return `Finish` immediately on finish
+- return `DeadEnd` immediately on no legal next step
+- advance immediately on exactly one legal next step
+- return `Fork(...)` only when there are truly multiple legal choices and no explicit choice is set
+- validate explicit choices without paying unnecessary allocation cost on the success path
 
-This phase used the narrower refactor path:
-- `TileManager::{get_adjacent_by_id_if_loaded,get_adjacent_by_id}` now build final `(MapDataLineRef, MapDataPointRef)` pairs directly
-- `map_data::graph` owns the shared adjacency type alias and inline-capacity constant
-- `MapDataGraph::get_adjacent(...)` now forwards the already-materialized adjacency container without remapping every entry
+## Fast-path rules
+The common corridor case should avoid:
+- building `SegmentList`
+- collecting all choices just to use one
+- rescanning temporary collections multiple times
 
-That removes the remaining graph-side adjacency conversion layer while keeping the public route-search behavior unchanged.
-## Scope
+## Error-path policy
+For `WalkerError::WrongForkChoice`, it is acceptable to do extra work to build `available_fork_ids`.
+That payload matters for correctness, but it is not the hot path.
 
-### In scope
-1. Decide from fresh profiling whether adjacency still needs a deeper refactor.
-2. If yes, collapse one materialization layer by choosing one of these bounded designs:
-   - tile manager returns final adjacency refs directly, or
-   - graph and tile manager share one adjacency container type alias
-3. Keep the redesign narrow to adjacency only.
-4. Finish with a full perf re-run and compare against the original baseline from `perf.md`.
+## Strict preservation requirements
+This phase must preserve:
+- fork timing from the caller's point of view
+- finish behavior
+- dead-end behavior
+- junction-loop behavior in non-roundabout paths
+- wrong-choice error meaning and payload shape
+- route mutation/history results for successful traversal
 
-### Explicitly out of scope
-- eager per-tile adjacency precompute
-- broad graph API redesign unrelated to adjacency
-- speculative shared memoization beyond what the profile proves necessary
+## Tasks
+1. Swap the walk loop to use the shared classifier
+2. Keep explicit-choice handling behaviorally identical
+3. Build multi-choice collections only on the paths that really need them
+4. Keep roundabout delegation conservative and unchanged
+5. Re-run the full walker regression set after each meaningful step
 
-## Expected code touch points
-- `crates/ridi-router-routing/src/map_data/graph.rs`
-- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
-- possibly `crates/ridi-router-routing/src/routing_context.rs` if the final adjacency container type changes
+## Out of scope
+- No new heading helper usage yet
+- No roundabout redesign
+- No broad cleanup unrelated to the hotspot
 
-## Implementation steps
-1. Re-profile after phase 3.
-2. If adjacency is no longer first-order, skip the code refactor and keep this phase as measurement plus closeout.
-3. If adjacency still matters, pick one narrow design:
-   - `TileManager` returns final `(MapDataLineRef, MapDataPointRef)` pairs directly, or
-   - introduce a shared adjacency type alias and remove one conversion layer
-4. Update tests covering:
-   - same-tile adjacency
-   - cross-tile adjacency
-   - missing-neighbor behavior
-5. Run a final before/after summary against the original baseline.
-
-## Validation status
-
-Completed in this implementation pass:
-- `cargo test -p ridi-router-routing`
-- `cargo check --workspace`
-- attempted `RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia` in this environment; the run exceeded the interactive timeout before finishing, so no final before/after numbers are recorded here
+## Deliverables
+- Refactored `move_forward_to_next_fork_with_context`
+- Same public outcomes with lower allocation pressure on corridor traversal
+- Clean handling of wrong-choice errors on the slow path
 
 ## Validation
-1. `cargo test -p ridi-router-routing`
-2. `cargo check --workspace`
-3. Final profile run:
-   ```bash
-   RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
-   ```
-4. Compare the original baseline to the final state for:
-   - `graph::get_adjacent`
-   - `tile_manager::get_adjacent_by_id`
-   - walker hotspot totals
-   - route-generation wall time
+Recommended checks:
+- `cargo test -p ridi-router-routing walker`
+- `cargo test -p ridi-router-routing`
 
 ## Exit criteria
-- either adjacency is no longer worth deeper work and phase 4 is skipped cleanly,
-- or one materialization layer is removed with behavior unchanged and a measurable perf gain.
+- All walker regression tests from Phase 1 are green
+- The walker now uses the classifier on the non-roundabout fast path
+- No observable semantic drift is introduced
 
-## Main risk
-Medium. This is where the code can get more coupled if the final adjacency type crosses too many boundaries. Keep the design narrow and stop once the profile says the hotspot is no longer first-order.
+## Handoff to next phase
+With the main walker moved over, Phase 5 can add a narrow heading-specific look-ahead helper on top of the same classifier.

@@ -1,59 +1,76 @@
-# Implementation Phase 3: reduce adjacency allocation churn with local `SmallVec` cleanup
+# Implementation Phase 3: Build the shared non-roundabout next-step classifier
 
 ## Goal
-Shrink heap churn in the adjacency path without broad API redesign.
+Create one internal classification layer that computes legal next-step outcomes for non-roundabout traversal and becomes the single source of truth for both the main walker and heading look-ahead.
 
-## Why this is phase 3
-After phases 1 and 2, we should know how much adjacency call volume remains. This phase then targets the still-visible allocation cost called out in `perf-plan.md`:
-- `graph::get_adjacent`: 4.6 GB alloc
-- `tile_manager::get_adjacent_by_id`: 3.3 GB alloc
+## Why this phase exists
+The current path repeatedly builds temporary collections even for the common 0/1-choice cases. The refactor needs a lower-level primitive that can cheaply represent:
+- no legal continuation
+- exactly one legal continuation
+- multiple legal continuations
 
-This phase should stay local and measurable.
+## Proposed shape
+The exact names can change, but the intended model is:
 
-## Scope
+```rust
+enum NextStepClass {
+    None,
+    One(Segment),
+    Many(SmallVec<[Segment; 4]>),
+}
+```
 
-### In scope
-1. Add `smallvec = "1"` to the workspace and `smallvec.workspace = true` to `ridi-router-routing`.
-2. Replace the hottest temporary adjacency containers with `SmallVec` where road degree is usually small.
-3. Start with local/internal buffers only, not a full adjacency API redesign.
-4. Keep behavior and route-search APIs unchanged.
+The important property is not the exact type. It is that 0/1-choice cases avoid full `SegmentList` construction.
 
-### Explicitly out of scope
-- collapsing tile-manager and graph into one shared adjacency return type
-- caller-filled buffer APIs
-- route behavior changes
+## Responsibilities
+The classifier must handle the non-roundabout rules now enforced through existing helper logic:
+- start-point segment discovery
+- continuation discovery from an incoming segment
+- reverse-edge exclusion
+- one-way filtering
+- `OnlyAllowed` rule filtering
+- `NotAllowed` rule filtering
+- enough information to support explicit fork-choice validation
 
-## Expected code touch points
-- `Cargo.toml`
-- `crates/ridi-router-routing/Cargo.toml`
-- `crates/ridi-router-routing/src/map_data/graph.rs`
-- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
+## Design rules
+- This classifier is the single source of truth for legal next-step computation in this refactor
+- The main walker and heading helper must both use it
+- Roundabout logic remains separate for this pass
+- Use Phase 2 borrowed `RoutingContext` accessors where possible
 
-## Implementation steps
-1. Add `smallvec` dependencies.
-2. Change the raw adjacency temp buffer in `TileManager::get_adjacent_by_id(...)` from `Vec` to `SmallVec`.
-3. Change the mapped adjacency temp buffer in `MapDataGraph::get_adjacent(...)` from `Vec` to `SmallVec` where that stays local and simple.
-4. Keep the public return type unchanged if that avoids ripple. Convert only at the boundary.
-5. Use a conservative inline size such as 8, matching the expected small road degree.
-6. Add focused tests only where needed to lock in identical outputs.
+## Suggested internal split
+A practical implementation can separate:
+1. classification from a start point
+2. classification from an incoming segment
+3. conversion helpers for the rare paths that still need a collection payload
+4. wrong-choice support helpers that can build `available_fork_ids` only when needed
+
+## Tasks
+1. Introduce the internal enum/result type
+2. Implement shared non-roundabout classification helpers
+3. Replace duplicated filtering logic inside existing internal helpers where safe
+4. Keep existing external behavior untouched until Phase 4 swaps the main walker over
+5. Add focused tests if useful for classifier-only edge cases
+
+## Out of scope
+- No main walker fast-path swap yet
+- No `weight_heading` integration yet
+- No roundabout optimization
+
+## Deliverables
+- Shared classifier internals in the router traversal code
+- Clear internal naming around 0/1/many outcomes
+- Minimal allocation on the common path by design
 
 ## Validation
-1. `cargo test -p ridi-router-routing map_data::graph`
-2. `cargo test -p ridi-router-routing rmdf::tile_manager`
-3. `cargo check --workspace`
-4. Profile run:
-   ```bash
-   RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
-   ```
-5. Compare at minimum:
-   - alloc totals for `graph::get_adjacent`
-   - alloc totals for `tile_manager::get_adjacent_by_id`
-   - total route-generation time
+Recommended checks:
+- `cargo test -p ridi-router-routing`
+- Targeted reruns of walker rule-filtering tests from Phase 1
 
 ## Exit criteria
-- adjacency alloc totals drop materially
-- the change stays local and easy to back out
-- no new wide API churn appears just to support `SmallVec`
+- The classifier can express all required non-roundabout outcomes
+- Legal-step semantics still match current behavior under existing tests
+- Later phases can replace ad hoc next-step discovery with this classifier directly
 
-## Main risk
-Low to medium. The main risk is spreading `SmallVec` through too many layers at once and turning a local cleanup into a broad refactor.
+## Handoff to next phase
+Phase 4 should use this classifier inside `move_forward_to_next_fork_with_context` so the common corridor path becomes cheap.
