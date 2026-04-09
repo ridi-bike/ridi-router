@@ -1403,4 +1403,450 @@ mod tests {
             );
         }
     }
+    fn assert_choice_ids(ctx: &RoutingContext<'_>, choices: &crate::router::route::segment_list::SegmentList, expected: &[u64]) {
+        let mut actual = choices
+            .get_all_segment_points()
+            .into_iter()
+            .map(|point| ctx.point_id(&point))
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+
+        let mut expected = expected.to_vec();
+        expected.sort_unstable();
+
+        assert_eq!(actual, expected);
+    }
+
+    fn osm_node(id: u64) -> ridi_router_common::osm::OsmNode {
+        ridi_router_common::osm::OsmNode {
+            id,
+            lat: id as f64,
+            lon: id as f64,
+            residential_in_proximity: false,
+            nogo_area: false,
+        }
+    }
+
+    fn osm_way(id: u64, point_ids: &[u64]) -> ridi_router_common::osm::OsmWay {
+        ridi_router_common::osm::OsmWay {
+            id,
+            point_ids: point_ids.to_vec(),
+            tags: Some(HashMap::from([(
+                "highway".to_string(),
+                "primary".to_string(),
+            )])),
+        }
+    }
+
+    fn osm_one_way(id: u64, point_ids: &[u64]) -> ridi_router_common::osm::OsmWay {
+        ridi_router_common::osm::OsmWay {
+            id,
+            point_ids: point_ids.to_vec(),
+            tags: Some(HashMap::from([
+                ("highway".to_string(), "primary".to_string()),
+                ("oneway".to_string(), "yes".to_string()),
+            ])),
+        }
+    }
+
+    fn restriction_relation(
+        from_way_id: u64,
+        via_node_id: u64,
+        to_way_ids: &[u64],
+        restriction: &str,
+    ) -> OsmRelation {
+        let mut members = vec![
+            OsmRelationMember {
+                member_ref: from_way_id,
+                role: OsmRelationMemberRole::From,
+                member_type: OsmRelationMemberType::Way,
+            },
+            OsmRelationMember {
+                member_ref: via_node_id,
+                role: OsmRelationMemberRole::Via,
+                member_type: OsmRelationMemberType::Node,
+            },
+        ];
+        members.extend(to_way_ids.iter().map(|to_way_id| OsmRelationMember {
+            member_ref: *to_way_id,
+            role: OsmRelationMemberRole::To,
+            member_type: OsmRelationMemberType::Way,
+        }));
+
+        OsmRelation {
+            id: from_way_id * 1000 + via_node_id,
+            members,
+            tags: HashMap::from([
+                ("type".to_string(), "restriction".to_string()),
+                ("restriction".to_string(), restriction.to_string()),
+            ]),
+        }
+    }
+
+    fn corridor_finish_dataset() -> OsmTestData {
+        (
+            vec![osm_node(1), osm_node(2), osm_node(3), osm_node(4)],
+            vec![osm_way(1234, &[1, 2, 3, 4])],
+            Vec::new(),
+        )
+    }
+
+    fn corridor_dead_end_dataset() -> OsmTestData {
+        (
+            vec![osm_node(1), osm_node(2), osm_node(3), osm_node(4), osm_node(99)],
+            vec![osm_way(1234, &[1, 2, 3, 4])],
+            Vec::new(),
+        )
+    }
+
+    fn corridor_fork_dataset() -> OsmTestData {
+        (
+            vec![
+                osm_node(1),
+                osm_node(2),
+                osm_node(3),
+                osm_node(4),
+                osm_node(5),
+                osm_node(6),
+            ],
+            vec![
+                osm_way(12, &[1, 2]),
+                osm_way(23, &[2, 3]),
+                osm_way(34, &[3, 4]),
+                osm_way(35, &[3, 5]),
+                osm_way(46, &[4, 6]),
+            ],
+            Vec::new(),
+        )
+    }
+
+    fn corridor_one_way_dataset() -> OsmTestData {
+        (
+            vec![
+                osm_node(1),
+                osm_node(2),
+                osm_node(3),
+                osm_node(4),
+                osm_node(5),
+                osm_node(6),
+            ],
+            vec![
+                osm_way(12, &[1, 2]),
+                osm_way(23, &[2, 3]),
+                osm_way(34, &[3, 4]),
+                osm_way(35, &[3, 5]),
+                osm_one_way(63, &[6, 3]),
+            ],
+            Vec::new(),
+        )
+    }
+
+    fn corridor_only_allowed_dataset() -> OsmTestData {
+        (
+            vec![
+                osm_node(1),
+                osm_node(2),
+                osm_node(3),
+                osm_node(4),
+                osm_node(5),
+                osm_node(6),
+                osm_node(7),
+                osm_node(8),
+                osm_node(99),
+            ],
+            vec![
+                osm_way(12, &[1, 2]),
+                osm_way(23, &[2, 3]),
+                osm_way(34, &[3, 4]),
+                osm_way(35, &[3, 5]),
+                osm_way(36, &[3, 6]),
+                osm_way(47, &[4, 7]),
+                osm_way(48, &[4, 8]),
+            ],
+            vec![restriction_relation(23, 3, &[34], "only_straight_on")],
+        )
+    }
+
+    fn corridor_not_allowed_dataset() -> OsmTestData {
+        (
+            vec![
+                osm_node(1),
+                osm_node(2),
+                osm_node(3),
+                osm_node(4),
+                osm_node(5),
+                osm_node(6),
+                osm_node(99),
+            ],
+            vec![
+                osm_way(12, &[1, 2]),
+                osm_way(23, &[2, 3]),
+                osm_way(34, &[3, 4]),
+                osm_way(35, &[3, 5]),
+                osm_way(36, &[3, 6]),
+            ],
+            vec![restriction_relation(23, 3, &[35], "no_right_turn")],
+        )
+    }
+
+    fn start_point_rule_filtering_dataset() -> OsmTestData {
+        (
+            vec![osm_node(1), osm_node(2), osm_node(3), osm_node(4), osm_node(99)],
+            vec![osm_way(12, &[1, 2]), osm_way(13, &[1, 3]), osm_way(14, &[1, 4])],
+            vec![restriction_relation(12, 1, &[12, 13, 14], "no_exit")],
+        )
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_moves_through_single_choice_corridor_until_finish() {
+            let graph = graph_from_test_dataset(corridor_finish_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&4).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish),
+                Ok(WalkerMoveResult::Finish)
+            );
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3, 4]));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_returns_fork_after_single_choice_corridor() {
+            let graph = graph_from_test_dataset(corridor_fork_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&6).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            let choices = match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(choices)) => choices,
+                other => panic!("expected fork after corridor, got {other:?}"),
+            };
+
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3]));
+            assert_choice_ids(&ctx, &choices, &[4, 5]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_returns_dead_end_after_single_choice_corridor() {
+            let graph = graph_from_test_dataset(corridor_dead_end_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&99).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish),
+                Ok(WalkerMoveResult::DeadEnd)
+            );
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3, 4]));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_follows_explicit_choice_after_corridor() {
+            let graph = graph_from_test_dataset(corridor_fork_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&6).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected initial fork, got {other:?}"),
+            }
+
+            walker.set_fork_choice_point_ref(graph.test_get_point_ref_by_id(&4).unwrap());
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish),
+                Ok(WalkerMoveResult::Finish)
+            );
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3, 4, 6]));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_wrong_choice_after_corridor_returns_same_available_points() {
+            let graph = graph_from_test_dataset(corridor_fork_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&6).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected initial fork, got {other:?}"),
+            }
+
+            walker.set_fork_choice_point_ref(graph.test_get_point_ref_by_id(&6).unwrap());
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish),
+                Err(WalkerError::WrongForkChoice {
+                    id: 6,
+                    available_fork_ids: vec![4, 5],
+                })
+            );
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3]));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_filters_reverse_edge_from_incoming_segment() {
+            let graph = graph_from_test_dataset(corridor_fork_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&6).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            let choices = match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(choices)) => choices,
+                other => panic!("expected fork after corridor, got {other:?}"),
+            };
+
+            assert!(!choices
+                .get_all_segment_points()
+                .contains(&graph.test_get_point_ref_by_id(&2).unwrap()));
+            assert_choice_ids(&ctx, &choices, &[4, 5]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_respects_one_way_after_corridor() {
+            let graph = graph_from_test_dataset(corridor_one_way_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&6).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            let choices = match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(choices)) => choices,
+                other => panic!("expected fork after corridor, got {other:?}"),
+            };
+
+            assert_choice_ids(&ctx, &choices, &[4, 5]);
+            assert!(!choices
+                .get_all_segment_points()
+                .contains(&graph.test_get_point_ref_by_id(&6).unwrap()));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_respects_only_allowed_rule_after_corridor() {
+            let graph = graph_from_test_dataset(corridor_only_allowed_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&99).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            let choices = match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(choices)) => choices,
+                other => panic!("expected downstream fork after forced branch, got {other:?}"),
+            };
+
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3, 4]));
+            assert_choice_ids(&ctx, &choices, &[7, 8]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_respects_not_allowed_rule_after_corridor() {
+            let graph = graph_from_test_dataset(corridor_not_allowed_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&99).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            let choices = match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(choices)) => choices,
+                other => panic!("expected filtered fork, got {other:?}"),
+            };
+
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3]));
+            assert_choice_ids(&ctx, &choices, &[4, 6]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn walker_start_point_rule_filtering_matches_current_behavior() {
+            let graph = graph_from_test_dataset(start_point_rule_filtering_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&99).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            // This intentionally freezes the current start-point rule quirk: when every start
+            // branch is mentioned in a NotAllowed-style rule set, the walker surfaces no legal
+            // first move and returns DeadEnd with an empty route.
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish),
+                Ok(WalkerMoveResult::DeadEnd)
+            );
+            assert_eq!(walker.get_route().get_segment_count(), 0);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn move_backwards_to_prev_fork_still_returns_expected_choices_after_refactor() {
+            let graph = graph_from_test_dataset(corridor_fork_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&6).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected initial fork, got {other:?}"),
+            }
+
+            walker.set_fork_choice_point_ref(graph.test_get_point_ref_by_id(&5).unwrap());
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish),
+                Ok(WalkerMoveResult::DeadEnd)
+            );
+
+            let choices = walker
+                .move_backwards_to_prev_fork_with_context(&ctx)
+                .expect("expected previous fork choices");
+
+            assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3]));
+            assert_choice_ids(&ctx, &choices, &[4, 5]);
+        }
+    }
 }

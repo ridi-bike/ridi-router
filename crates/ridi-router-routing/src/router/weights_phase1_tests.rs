@@ -5,9 +5,9 @@ use crate::{
         route::{segment::Segment, Route},
         rules::RouterRules,
         walker::Walker,
-        weights::{weight_check_distance_to_next, WeightCalcInput},
+        weights::{weight_check_distance_to_next, weight_heading, WeightCalcInput},
     },
-    test_utils::{test_dataset_1, RoutingTestContext},
+    test_utils::{test_dataset_1, OsmTestData, RoutingTestContext},
     RoutingContext,
 };
 
@@ -184,5 +184,188 @@ fn repeated_boundary_point_uses_first_match_in_route_history() {
     assert_eq!(
         run_weight(&test_ctx, &ctx, &route, &itinerary, &rules),
         WeightCalcResult::LastSegmentDoNotUse
+    );
+}
+
+
+fn osm_node_with_coords(id: u64, lat: f64, lon: f64) -> ridi_router_common::osm::OsmNode {
+    ridi_router_common::osm::OsmNode {
+        id,
+        lat,
+        lon,
+        residential_in_proximity: false,
+        nogo_area: false,
+    }
+}
+
+fn osm_way(id: u64, point_ids: &[u64]) -> ridi_router_common::osm::OsmWay {
+    ridi_router_common::osm::OsmWay {
+        id,
+        point_ids: point_ids.to_vec(),
+        tags: Some(std::collections::HashMap::from([(
+            "highway".to_string(),
+            "primary".to_string(),
+        )])),
+    }
+}
+
+fn osm_one_way(id: u64, point_ids: &[u64]) -> ridi_router_common::osm::OsmWay {
+    ridi_router_common::osm::OsmWay {
+        id,
+        point_ids: point_ids.to_vec(),
+        tags: Some(std::collections::HashMap::from([
+            ("highway".to_string(), "primary".to_string()),
+            ("oneway".to_string(), "yes".to_string()),
+        ])),
+    }
+}
+
+fn run_heading_weight(
+    test_ctx: &RoutingTestContext,
+    ctx: &RoutingContext<'_>,
+    current_fork_from_id: u64,
+    current_fork_to_id: u64,
+    walker_start_id: u64,
+    next_id: u64,
+) -> WeightCalcResult {
+    let itinerary = Itinerary::new_start_finish(
+        test_ctx.point(current_fork_from_id),
+        test_ctx.point(next_id),
+        Vec::new(),
+        0.0,
+    );
+    let current_fork_segment =
+        segment_between(test_ctx, ctx, current_fork_from_id, current_fork_to_id);
+
+    weight_heading(WeightCalcInput {
+        current_fork_segment: &current_fork_segment,
+        route: &Route::new(),
+        itinerary: &itinerary,
+        walker_from_fork: Walker::new(test_ctx.point(walker_start_id)),
+        rules: &RouterRules::default(),
+        ctx,
+    })
+}
+
+fn finish_before_next_fork_dataset() -> OsmTestData {
+    (
+        vec![
+            osm_node_with_coords(1, 0.0, 0.0),
+            osm_node_with_coords(2, 1.0, 0.0),
+            osm_node_with_coords(3, 2.0, 0.0),
+        ],
+        vec![osm_one_way(12, &[1, 2]), osm_way(23, &[2, 3])],
+        Vec::new(),
+    )
+}
+
+fn dead_end_before_next_fork_dataset() -> OsmTestData {
+    (
+        vec![
+            osm_node_with_coords(1, 0.0, 0.0),
+            osm_node_with_coords(2, 1.0, 0.0),
+            osm_node_with_coords(3, 2.0, 0.0),
+            osm_node_with_coords(4, 1.0, 1.0),
+        ],
+        vec![osm_one_way(12, &[1, 2]), osm_way(24, &[2, 4])],
+        Vec::new(),
+    )
+}
+
+fn immediate_fork_heading_dataset() -> OsmTestData {
+    (
+        vec![
+            osm_node_with_coords(1, 0.0, 0.0),
+            osm_node_with_coords(2, 1.0, 0.0),
+            osm_node_with_coords(3, 2.0, 0.0),
+            osm_node_with_coords(4, 1.0, 1.0),
+        ],
+        vec![osm_one_way(12, &[1, 2]), osm_way(23, &[2, 3]), osm_way(24, &[2, 4])],
+        Vec::new(),
+    )
+}
+
+fn corridor_then_fork_heading_dataset() -> OsmTestData {
+    (
+        vec![
+            osm_node_with_coords(1, 0.0, 0.0),
+            osm_node_with_coords(2, 1.0, 0.0),
+            osm_node_with_coords(3, 1.0, 1.0),
+            osm_node_with_coords(4, 1.0, 2.0),
+            osm_node_with_coords(5, 2.0, 1.0),
+        ],
+        vec![
+            osm_one_way(12, &[1, 2]),
+            osm_way(23, &[2, 3]),
+            osm_way(34, &[3, 4]),
+            osm_way(35, &[3, 5]),
+        ],
+        Vec::new(),
+    )
+}
+
+#[test]
+fn heading_look_ahead_returns_finish_when_candidate_reaches_finish_before_next_fork() {
+    let test_ctx = RoutingTestContext::new(finish_before_next_fork_dataset());
+    let ctx = test_ctx.resolver();
+
+    assert_eq!(
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
+    );
+}
+
+#[test]
+fn heading_look_ahead_returns_dead_end_when_candidate_dies_before_next_fork() {
+    let test_ctx = RoutingTestContext::new(dead_end_before_next_fork_dataset());
+    let ctx = test_ctx.resolver();
+
+    assert_eq!(
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
+        WeightCalcResult::ForkChoiceDoNotUse
+    );
+}
+
+#[test]
+fn heading_look_ahead_returns_immediate_decision_when_candidate_endpoint_is_already_a_fork() {
+    let test_ctx = RoutingTestContext::new(immediate_fork_heading_dataset());
+    let ctx = test_ctx.resolver();
+
+    assert_eq!(
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
+    );
+}
+
+#[test]
+fn heading_look_ahead_returns_approach_segment_after_single_choice_corridor() {
+    let test_ctx = RoutingTestContext::new(corridor_then_fork_heading_dataset());
+    let ctx = test_ctx.resolver();
+
+    assert_eq!(
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 4),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
+    );
+}
+
+#[test]
+fn weight_heading_matches_current_result_on_non_roundabout_corridor_case() {
+    let test_ctx = RoutingTestContext::new(corridor_then_fork_heading_dataset());
+    let ctx = test_ctx.resolver();
+
+    assert_eq!(
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 4),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
+    );
+}
+
+#[test]
+fn weight_heading_matches_current_result_on_immediate_fork_case() {
+    let test_ctx = RoutingTestContext::new(immediate_fork_heading_dataset());
+    let ctx = test_ctx.resolver();
+
+    assert_eq!(
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
     );
 }

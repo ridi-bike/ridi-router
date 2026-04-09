@@ -84,3 +84,8 @@ Recommended checks:
 
 ## Handoff to next phase
 Once this phase is complete, later refactors can safely change internals as long as these tests remain green.
+
+
+## Phase 1 implementation note
+- The planned `with_point(...)` / `with_adjacent(...)` equivalence tests are intentionally deferred until those APIs exist in the later accessors phase. Phase 1 should not introduce those production APIs early just to satisfy tests.
+- The planned heading look-ahead regression cases can still be locked down in this phase by testing the current `weight_heading` behavior directly. That preserves externally visible outcomes now without implementing the later specialized helper yet.
