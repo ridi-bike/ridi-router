@@ -4,7 +4,7 @@ use crate::{
         navigator::WeightCalcResult,
         route::{segment::Segment, Route},
         rules::RouterRules,
-        walker::{HeadingLookAheadResult, Walker},
+        walker::Walker,
         weights::{weight_check_distance_to_next, weight_heading, WeightCalcInput},
     },
     test_utils::{test_dataset_1, OsmTestData, RoutingTestContext},
@@ -246,27 +246,6 @@ fn run_heading_weight(
     })
 }
 
-fn run_heading_look_ahead(
-    test_ctx: &RoutingTestContext,
-    ctx: &RoutingContext<'_>,
-    current_fork_from_id: u64,
-    current_fork_to_id: u64,
-    next_id: u64,
-) -> HeadingLookAheadResult {
-    let itinerary = Itinerary::new_start_finish(
-        test_ctx.point(current_fork_from_id),
-        test_ctx.point(next_id),
-        Vec::new(),
-        0.0,
-    );
-    let current_fork_segment =
-        segment_between(test_ctx, ctx, current_fork_from_id, current_fork_to_id);
-
-    Walker::heading_look_ahead_from_segment_with_context(ctx, &current_fork_segment, |point| {
-        itinerary.is_finished(point)
-    })
-}
-
 fn finish_before_next_fork_dataset() -> OsmTestData {
     (
         vec![
@@ -334,8 +313,8 @@ fn heading_look_ahead_returns_finish_when_candidate_reaches_finish_before_next_f
     let ctx = test_ctx.resolver();
 
     assert_eq!(
-        run_heading_look_ahead(&test_ctx, &ctx, 1, 2, 3),
-        HeadingLookAheadResult::Finish
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
     );
 }
 
@@ -345,8 +324,8 @@ fn heading_look_ahead_returns_dead_end_when_candidate_dies_before_next_fork() {
     let ctx = test_ctx.resolver();
 
     assert_eq!(
-        run_heading_look_ahead(&test_ctx, &ctx, 1, 2, 3),
-        HeadingLookAheadResult::DeadEnd
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
+        WeightCalcResult::ForkChoiceDoNotUse
     );
 }
 
@@ -356,10 +335,8 @@ fn heading_look_ahead_returns_immediate_decision_when_candidate_endpoint_is_alre
     let ctx = test_ctx.resolver();
 
     assert_eq!(
-        run_heading_look_ahead(&test_ctx, &ctx, 1, 2, 3),
-        HeadingLookAheadResult::Decision {
-            approach_segment: None,
-        }
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
     );
 }
 
@@ -369,10 +346,8 @@ fn heading_look_ahead_returns_approach_segment_after_single_choice_corridor() {
     let ctx = test_ctx.resolver();
 
     assert_eq!(
-        run_heading_look_ahead(&test_ctx, &ctx, 1, 2, 4),
-        HeadingLookAheadResult::Decision {
-            approach_segment: Some(segment_between(&test_ctx, &ctx, 2, 3)),
-        }
+        run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 4),
+        WeightCalcResult::ForkChoiceUseWithWeight(255)
     );
 }
 

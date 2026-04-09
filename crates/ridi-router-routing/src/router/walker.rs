@@ -35,13 +35,6 @@ pub enum WalkerMoveResult {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum HeadingLookAheadResult {
-    DeadEnd,
-    Finish,
-    Decision { approach_segment: Option<Segment> },
-}
-
-#[derive(Debug, Clone, PartialEq)]
 enum NextStepClass {
     None,
     One(Segment),
@@ -186,21 +179,22 @@ impl Walker {
         next_steps
     }
 
-    fn segment_start_point_id(ctx: &RoutingContext<'_>, segment: &Segment) -> u64 {
-        let line = ctx.line(segment.get_line());
-        if segment.get_end_point() == &line.points.0 {
-            return ctx.point_id(&line.points.1);
-        }
-
-        ctx.point_id(&line.points.0)
-    }
-
-    fn classify_continuation_segments_with_context(
+    fn classify_fork_segments_for_segment_with_context(
+        &self,
         ctx: &RoutingContext<'_>,
-        center_point: &MapDataPointRef,
-        center_line: &MapDataLineRef,
-        prev_point_id: u64,
+        segment: &Segment,
     ) -> NextStepClass {
+        let center_point = segment.get_end_point();
+        let center_line = segment.get_line();
+        let prev_point_id = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2)
+        {
+            self.route_walked
+                .get_segment_by_index(idx)
+                .map(|segment| ctx.point_id(segment.get_end_point()))
+                .unwrap_or_else(|| ctx.point_id(&self.start))
+        } else {
+            ctx.point_id(&self.start)
+        };
         let rules = ctx.with_point(center_point, |center_point_data| {
             center_point_data.rules.clone()
         });
@@ -225,81 +219,6 @@ impl Walker {
         }
 
         next_steps
-    }
-
-    fn classify_fork_segments_for_segment_with_context(
-        &self,
-        ctx: &RoutingContext<'_>,
-        segment: &Segment,
-    ) -> NextStepClass {
-        let center_point = segment.get_end_point();
-        let center_line = segment.get_line();
-        let prev_point_id = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2)
-        {
-            self.route_walked
-                .get_segment_by_index(idx)
-                .map(|segment| ctx.point_id(segment.get_end_point()))
-                .unwrap_or_else(|| ctx.point_id(&self.start))
-        } else {
-            ctx.point_id(&self.start)
-        };
-
-        Self::classify_continuation_segments_with_context(
-            ctx,
-            center_point,
-            center_line,
-            prev_point_id,
-        )
-    }
-
-    pub(crate) fn heading_look_ahead_from_segment_with_context<T: Fn(MapDataPointRef) -> bool>(
-        ctx: &RoutingContext<'_>,
-        candidate_segment: &Segment,
-        is_finished: T,
-    ) -> HeadingLookAheadResult {
-        if ctx.line(candidate_segment.get_line()).is_roundabout() {
-            return HeadingLookAheadResult::Decision {
-                approach_segment: None,
-            };
-        }
-
-        let mut current_segment = candidate_segment.clone();
-        let mut prev_point_id = Self::segment_start_point_id(ctx, candidate_segment);
-        let mut traversed_past_candidate = false;
-
-        loop {
-            let point = current_segment.get_end_point();
-            if is_finished(point.clone()) {
-                return HeadingLookAheadResult::Finish;
-            }
-
-            let next_steps = Self::classify_continuation_segments_with_context(
-                ctx,
-                point,
-                current_segment.get_line(),
-                prev_point_id,
-            );
-
-            match next_steps {
-                NextStepClass::None => return HeadingLookAheadResult::DeadEnd,
-                NextStepClass::One(next_segment) => {
-                    if ctx.line(next_segment.get_line()).is_roundabout() {
-                        return HeadingLookAheadResult::Decision {
-                            approach_segment: traversed_past_candidate.then_some(current_segment),
-                        };
-                    }
-
-                    prev_point_id = ctx.point_id(point);
-                    current_segment = next_segment;
-                    traversed_past_candidate = true;
-                }
-                NextStepClass::Many(_) => {
-                    return HeadingLookAheadResult::Decision {
-                        approach_segment: traversed_past_candidate.then_some(current_segment),
-                    };
-                }
-            }
-        }
     }
 
     fn get_fork_segments_for_segment_with_context(
