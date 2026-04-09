@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use geo::{Bearing, Haversine, Point};
-use tracing::{error, trace};
+use tracing::trace;
 
 use crate::{
     router::rules::{RouterRules, RulesTagValueAction},
@@ -12,9 +12,8 @@ use super::{
     itinerary::Itinerary,
     navigator::WeightCalcResult,
     route::{segment::Segment, Route},
-    walker::{Walker, WalkerMoveResult},
+    walker::{HeadingLookAheadResult, Walker},
 };
-
 pub struct WeightCalcInput<'a, 'ctx> {
     pub current_fork_segment: &'a Segment,
     pub route: &'a Route,
@@ -147,24 +146,16 @@ fn point_is_nogo(
 pub fn weight_heading(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_heading");
 
-    let mut walker = input.walker_from_fork;
-    let next_fork = match walker.move_forward_to_next_fork_with_context(input.ctx, |point| {
-        input.itinerary.is_finished(point)
-    }) {
-        Ok(value) => value,
-        Err(error) => {
-            error!("weight calc error {:#?}", error);
-            return WeightCalcResult::ForkChoiceDoNotUse;
+    let fork_segment = match Walker::heading_look_ahead_from_segment_with_context(
+        input.ctx,
+        input.current_fork_segment,
+        |point| input.itinerary.is_finished(point),
+    ) {
+        HeadingLookAheadResult::DeadEnd => return WeightCalcResult::ForkChoiceDoNotUse,
+        HeadingLookAheadResult::Finish => return WeightCalcResult::ForkChoiceUseWithWeight(255),
+        HeadingLookAheadResult::Decision { approach_segment } => {
+            approach_segment.unwrap_or_else(|| input.current_fork_segment.clone())
         }
-    };
-    let _ = match next_fork {
-        WalkerMoveResult::DeadEnd => return WeightCalcResult::ForkChoiceDoNotUse,
-        WalkerMoveResult::Finish => return WeightCalcResult::ForkChoiceUseWithWeight(255),
-        WalkerMoveResult::Fork(forks) => forks,
-    };
-    let fork_segment = match walker.get_route().get_segment_last() {
-        Some(last_segment) => last_segment,
-        None => input.current_fork_segment,
     };
     let (fork_lat, fork_lon) = input.ctx.point_coords(fork_segment.get_end_point());
     let fork_point_geo = Point::new(fork_lon, fork_lat);
