@@ -1403,7 +1403,11 @@ mod tests {
             );
         }
     }
-    fn assert_choice_ids(ctx: &RoutingContext<'_>, choices: &crate::router::route::segment_list::SegmentList, expected: &[u64]) {
+    fn assert_choice_ids(
+        ctx: &RoutingContext<'_>,
+        choices: &crate::router::route::segment_list::SegmentList,
+        expected: &[u64],
+    ) {
         let mut actual = choices
             .get_all_segment_points()
             .into_iter()
@@ -1493,7 +1497,13 @@ mod tests {
 
     fn corridor_dead_end_dataset() -> OsmTestData {
         (
-            vec![osm_node(1), osm_node(2), osm_node(3), osm_node(4), osm_node(99)],
+            vec![
+                osm_node(1),
+                osm_node(2),
+                osm_node(3),
+                osm_node(4),
+                osm_node(99),
+            ],
             vec![osm_way(1234, &[1, 2, 3, 4])],
             Vec::new(),
         )
@@ -1591,8 +1601,18 @@ mod tests {
 
     fn start_point_rule_filtering_dataset() -> OsmTestData {
         (
-            vec![osm_node(1), osm_node(2), osm_node(3), osm_node(4), osm_node(99)],
-            vec![osm_way(12, &[1, 2]), osm_way(13, &[1, 3]), osm_way(14, &[1, 4])],
+            vec![
+                osm_node(1),
+                osm_node(2),
+                osm_node(3),
+                osm_node(4),
+                osm_node(99),
+            ],
+            vec![
+                osm_way(12, &[1, 2]),
+                osm_way(13, &[1, 3]),
+                osm_way(14, &[1, 4]),
+            ],
             vec![restriction_relation(12, 1, &[12, 13, 14], "no_exit")],
         )
     }

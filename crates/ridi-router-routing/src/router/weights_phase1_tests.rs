@@ -187,7 +187,6 @@ fn repeated_boundary_point_uses_first_match_in_route_history() {
     );
 }
 
-
 fn osm_node_with_coords(id: u64, lat: f64, lon: f64) -> ridi_router_common::osm::OsmNode {
     ridi_router_common::osm::OsmNode {
         id,
@@ -280,7 +279,11 @@ fn immediate_fork_heading_dataset() -> OsmTestData {
             osm_node_with_coords(3, 2.0, 0.0),
             osm_node_with_coords(4, 1.0, 1.0),
         ],
-        vec![osm_one_way(12, &[1, 2]), osm_way(23, &[2, 3]), osm_way(24, &[2, 4])],
+        vec![
+            osm_one_way(12, &[1, 2]),
+            osm_way(23, &[2, 3]),
+            osm_way(24, &[2, 4]),
+        ],
         Vec::new(),
     )
 }

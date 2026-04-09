@@ -471,7 +471,10 @@ impl MapDataGraph {
         }
     }
 
-    pub fn get_adjacent(&self, center_point: MapDataPointRef) -> Vec<(MapDataLineRef, MapDataPointRef)> {
+    pub fn get_adjacent(
+        &self,
+        center_point: MapDataPointRef,
+    ) -> Vec<(MapDataLineRef, MapDataPointRef)> {
         // In test mode, check test storage first
         #[cfg(test)]
         {

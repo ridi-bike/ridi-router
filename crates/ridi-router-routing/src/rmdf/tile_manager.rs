@@ -4,9 +4,7 @@ const GRID_SEARCH_RING_RADIUS: i16 = 20;
 
 use crate::{
     map_data::{
-        graph::{
-            ADJACENT_INLINE_CAPACITY, AdjacentRefs, MapDataLineRef, MapDataPointRef,
-        },
+        graph::{AdjacentRefs, MapDataLineRef, MapDataPointRef, ADJACENT_INLINE_CAPACITY},
         rule::{MapDataRule, MapDataRuleType},
     },
     router::rules::{RouterRules, RulesTagValueAction},
@@ -751,11 +749,7 @@ impl TileManager {
     }
 
     /// Get adjacent lines and points from a point (handles border crossing)
-    pub fn get_adjacent_by_id(
-        &mut self,
-        tile_id: TileId,
-        osm_id: u64,
-    ) -> Result<AdjacentRefs> {
+    pub fn get_adjacent_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<AdjacentRefs> {
         self.ensure_tile_loaded(tile_id)?;
 
         let line_indices_and_data = self

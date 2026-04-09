@@ -61,8 +61,27 @@ impl<'a> RoutingContext<'a> {
     }
 
     pub(crate) fn point(&self, point_ref: &MapDataPointRef) -> MapDataPoint {
-        if let Some(point) = self.caches.borrow().points.get(point_ref).cloned() {
-            return point;
+        self.with_point(point_ref, Clone::clone)
+    }
+
+    // Borrow a cached point for hot-path read access without cloning the owned point.
+    pub(crate) fn with_point<R>(
+        &self,
+        point_ref: &MapDataPointRef,
+        f: impl FnOnce(&MapDataPoint) -> R,
+    ) -> R {
+        self.ensure_point_cached(point_ref);
+        let caches = self.caches.borrow();
+        let point = caches
+            .points
+            .get(point_ref)
+            .expect("point should exist in cache after hydration");
+        f(point)
+    }
+
+    fn ensure_point_cached(&self, point_ref: &MapDataPointRef) {
+        if self.caches.borrow().points.contains_key(point_ref) {
+            return;
         }
 
         let point = self
@@ -71,8 +90,7 @@ impl<'a> RoutingContext<'a> {
         self.caches
             .borrow_mut()
             .points
-            .insert(point_ref.clone(), point.clone());
-        point
+            .insert(point_ref.clone(), point);
     }
 
     pub(crate) fn point_id(&self, point_ref: &MapDataPointRef) -> u64 {
@@ -136,16 +154,34 @@ impl<'a> RoutingContext<'a> {
         &self,
         point_ref: &MapDataPointRef,
     ) -> Vec<(MapDataLineRef, MapDataPointRef)> {
-        if let Some(adjacent) = self.caches.borrow().adjacent.get(point_ref).cloned() {
-            return adjacent;
+        self.with_adjacent(point_ref, |adjacent| adjacent.to_vec())
+    }
+
+    // Borrow cached adjacency for hot-path iteration without cloning the backing vector.
+    pub(crate) fn with_adjacent<R>(
+        &self,
+        point_ref: &MapDataPointRef,
+        f: impl FnOnce(&[(MapDataLineRef, MapDataPointRef)]) -> R,
+    ) -> R {
+        self.ensure_adjacent_cached(point_ref);
+        let caches = self.caches.borrow();
+        let adjacent = caches
+            .adjacent
+            .get(point_ref)
+            .expect("adjacent should exist in cache after hydration");
+        f(adjacent.as_slice())
+    }
+
+    fn ensure_adjacent_cached(&self, point_ref: &MapDataPointRef) {
+        if self.caches.borrow().adjacent.contains_key(point_ref) {
+            return;
         }
 
         let adjacent = self.graph.get_adjacent(point_ref.clone());
         self.caches
             .borrow_mut()
             .adjacent
-            .insert(point_ref.clone(), adjacent.clone());
-        adjacent
+            .insert(point_ref.clone(), adjacent);
     }
 
     pub(crate) fn closest_to_coords(
@@ -317,6 +353,67 @@ mod tests {
         let second = ctx.adjacent(&point_ref);
         assert_eq!(second, first);
         assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn with_point_exposes_same_visible_data_as_point() {
+        let graph = MapDataGraph::new_test();
+        let point_ref = MapDataPointRef::new(SYNTHETIC_TILE_ID, 1);
+        let line_ref = MapDataLineRef::new(SYNTHETIC_TILE_ID, 7);
+
+        graph.test_insert_point(MapDataPoint {
+            id: 1,
+            lat: 1.0,
+            lon: 2.0,
+            lines: vec![line_ref],
+            rules: Vec::new(),
+            residential_in_proximity: true,
+            nogo_area: false,
+        });
+
+        let ctx = RoutingContext::new(&graph);
+        let owned = ctx.point(&point_ref);
+        let borrowed = ctx.with_point(&point_ref, |point| point.clone());
+
+        assert_eq!(borrowed, owned);
+        assert_eq!(ctx.cache_sizes(), (0, 1, 0, 0, 0));
+    }
+
+    #[test]
+    fn with_adjacent_exposes_same_visible_data_as_adjacent() {
+        let fixture = create_missing_neighbor_fixture("routing-context-with-adjacent-equivalence");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let point_ref = MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id);
+
+        let owned = ctx.adjacent(&point_ref);
+        let borrowed = ctx.with_adjacent(&point_ref, |adjacent| adjacent.to_vec());
+
+        assert_eq!(borrowed, owned);
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn with_point_and_with_adjacent_work_with_cached_data() {
+        let fixture = create_missing_neighbor_fixture("routing-context-borrowed-cache");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let point_ref = MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id);
+
+        let first_point = ctx.point(&point_ref);
+        let first_adjacent = ctx.adjacent(&point_ref);
+        assert_eq!(ctx.cache_sizes(), (0, 1, 0, 0, 1));
+
+        let cached_point_id = ctx.with_point(&point_ref, |point| point.id);
+        let cached_adjacent = ctx.with_adjacent(&point_ref, |adjacent| adjacent.to_vec());
+
+        assert_eq!(cached_point_id, first_point.id);
+        assert_eq!(cached_adjacent, first_adjacent);
+        assert_eq!(ctx.cache_sizes(), (0, 1, 0, 0, 1));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
