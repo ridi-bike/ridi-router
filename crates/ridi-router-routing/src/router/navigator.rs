@@ -96,39 +96,14 @@ impl ForkWeights {
             weight_list: HashMap::new(),
         }
     }
-    pub fn add_calc_result(
-        &mut self,
-        choice_point_ref: &MapDataPointRef,
-        weights: &Vec<WeightCalcResult>,
-    ) {
-        if weights
-            .iter()
-            .any(|weight| *weight == WeightCalcResult::LastSegmentDoNotUse)
-        {
-            self.discard_fork = true;
-            return;
-        }
-        if weights
-            .iter()
-            .all(|weight| *weight != WeightCalcResult::ForkChoiceDoNotUse)
-        {
-            let existing_weight = match self.weight_list.get(choice_point_ref) {
-                None => 0u32,
-                Some(w) => *w,
-            };
-            self.weight_list.insert(
-                choice_point_ref.clone(),
-                existing_weight
-                    + weights
-                        .iter()
-                        .map(|r| match r {
-                            WeightCalcResult::ForkChoiceDoNotUse => 0u32,
-                            WeightCalcResult::LastSegmentDoNotUse => 0u32,
-                            WeightCalcResult::ForkChoiceUseWithWeight(w) => *w as u32,
-                        })
-                        .sum::<u32>(),
-            );
-        }
+    pub fn discard(&mut self) {
+        self.discard_fork = true;
+    }
+
+    pub fn add_choice_weight(&mut self, choice_point_ref: &MapDataPointRef, weight: u32) {
+        let existing_weight = self.weight_list.get(choice_point_ref).copied().unwrap_or(0);
+        self.weight_list
+            .insert(choice_point_ref.clone(), existing_weight + weight);
     }
 
     fn get_choices_sorted_by_weight(&self) -> Vec<(&MapDataPointRef, &u32)> {
@@ -222,13 +197,20 @@ impl Navigator {
                     self.discarded_fork_choices.set_new_next();
                 }
 
-                let mut discard_fork = false;
+                let route_once_weight_calcs = self
+                    .weight_calcs
+                    .iter()
+                    .filter(|weight_calc| weight_calc.stage == WeightCalcStage::RouteOnce)
+                    .collect::<Vec<_>>();
+                let per_fork_weight_calcs = self
+                    .weight_calcs
+                    .iter()
+                    .filter(|weight_calc| weight_calc.stage == WeightCalcStage::PerForkChoice)
+                    .collect::<Vec<_>>();
+
+                let mut fork_weights = ForkWeights::new();
                 if let Some(representative_fork_segment) = fork_choices.get_first_segment() {
-                    for weight_calc in self
-                        .weight_calcs
-                        .iter()
-                        .filter(|weight_calc| weight_calc.stage == WeightCalcStage::RouteOnce)
-                    {
+                    for weight_calc in route_once_weight_calcs {
                         let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
                             route: self.walker.get_route(),
                             itinerary: &self.itinerary,
@@ -239,48 +221,61 @@ impl Navigator {
                             rules: &self.rules,
                             ctx,
                         });
-                        if weight_calc_result == WeightCalcResult::LastSegmentDoNotUse {
-                            discard_fork = true;
+                        if matches!(
+                            weight_calc_result,
+                            WeightCalcResult::LastSegmentDoNotUse
+                                | WeightCalcResult::ForkChoiceDoNotUse
+                        ) {
+                            fork_weights.discard();
                             break;
                         }
                     }
                 }
 
-                let mut fork_weights = ForkWeights::new();
-                if discard_fork {
-                    fork_weights.discard_fork = true;
-                } else {
-                    fork_weights = fork_choices.clone().into_iter().fold(
-                        ForkWeights::new(),
-                        |mut fork_weights, fork_route_segment| {
-                            let fork_weight_calc_results = self
-                                .weight_calcs
-                                .iter()
-                                .filter(|weight_calc| {
-                                    weight_calc.stage == WeightCalcStage::PerForkChoice
-                                })
-                                .map(|weight_calc| {
-                                    (weight_calc.calc)(WeightCalcInput {
-                                        route: self.walker.get_route(),
-                                        itinerary: &self.itinerary,
-                                        current_fork_segment: &fork_route_segment,
-                                        walker_from_fork: Walker::new(
-                                            fork_route_segment.get_end_point().clone(),
-                                        ),
-                                        rules: &self.rules,
-                                        ctx,
-                                    })
-                                })
-                                .collect::<Vec<_>>();
+                if !fork_weights.discard_fork {
+                    for fork_route_segment in fork_choices.clone() {
+                        let mut total_weight = 0u32;
+                        let mut skip_choice = false;
 
-                            fork_weights.add_calc_result(
+                        for weight_calc in &per_fork_weight_calcs {
+                            let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
+                                route: self.walker.get_route(),
+                                itinerary: &self.itinerary,
+                                current_fork_segment: &fork_route_segment,
+                                walker_from_fork: Walker::new(
+                                    fork_route_segment.get_end_point().clone(),
+                                ),
+                                rules: &self.rules,
+                                ctx,
+                            });
+
+                            match weight_calc_result {
+                                WeightCalcResult::ForkChoiceUseWithWeight(weight) => {
+                                    total_weight += weight as u32;
+                                }
+                                WeightCalcResult::ForkChoiceDoNotUse => {
+                                    skip_choice = true;
+                                    break;
+                                }
+                                WeightCalcResult::LastSegmentDoNotUse => {
+                                    fork_weights.discard();
+                                    skip_choice = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if fork_weights.discard_fork {
+                            break;
+                        }
+
+                        if !skip_choice {
+                            fork_weights.add_choice_weight(
                                 fork_route_segment.get_end_point(),
-                                &fork_weight_calc_results,
+                                total_weight,
                             );
-
-                            fork_weights
-                        },
-                    );
+                        }
+                    }
                 }
 
                 let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
@@ -566,3 +561,7 @@ mod test {
 #[cfg(test)]
 #[path = "navigator_phase1_tests.rs"]
 mod phase1_tests;
+
+#[cfg(test)]
+#[path = "navigator_phase3_tests.rs"]
+mod phase3_tests;
