@@ -119,8 +119,27 @@ impl<'a> RoutingContext<'a> {
     }
 
     pub(crate) fn line(&self, line_ref: &MapDataLineRef) -> MapDataLine {
-        if let Some(line) = self.caches.borrow().lines.get(line_ref).cloned() {
-            return line;
+        self.with_line(line_ref, Clone::clone)
+    }
+
+    // Borrow a cached line for hot-path read access without cloning the owned line.
+    pub(crate) fn with_line<R>(
+        &self,
+        line_ref: &MapDataLineRef,
+        f: impl FnOnce(&MapDataLine) -> R,
+    ) -> R {
+        self.ensure_line_cached(line_ref);
+        let caches = self.caches.borrow();
+        let line = caches
+            .lines
+            .get(line_ref)
+            .expect("line should exist in cache after hydration");
+        f(line)
+    }
+
+    fn ensure_line_cached(&self, line_ref: &MapDataLineRef) {
+        if self.caches.borrow().lines.contains_key(line_ref) {
+            return;
         }
 
         let line = self
@@ -129,8 +148,7 @@ impl<'a> RoutingContext<'a> {
         self.caches
             .borrow_mut()
             .lines
-            .insert(line_ref.clone(), line.clone());
-        line
+            .insert(line_ref.clone(), line);
     }
 
     pub(crate) fn tag_set(&self, tag_set_ref: &ElementTagSetRef) -> ElementTagSet {
@@ -382,6 +400,29 @@ mod tests {
     }
 
     #[test]
+    fn with_line_exposes_same_visible_data_as_line() {
+        let graph = MapDataGraph::new_test();
+        let point_ref = MapDataPointRef::new(SYNTHETIC_TILE_ID, 1);
+        let line_ref = MapDataLineRef::new(SYNTHETIC_TILE_ID, 7);
+
+        graph.test_insert_line(
+            MapDataLine {
+                points: (point_ref, MapDataPointRef::new(SYNTHETIC_TILE_ID, 2)),
+                direction: LineDirection::BothWays,
+                tags: crate::map_data::graph::ElementTagSetRef::new(SYNTHETIC_TILE_ID, 0),
+            },
+            7,
+        );
+
+        let ctx = RoutingContext::new(&graph);
+        let owned = ctx.line(&line_ref);
+        let borrowed = ctx.with_line(&line_ref, |line| line.clone());
+
+        assert_eq!(borrowed, owned);
+        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 0, 0));
+    }
+
+    #[test]
     fn with_adjacent_exposes_same_visible_data_as_adjacent() {
         let fixture = create_missing_neighbor_fixture("routing-context-with-adjacent-equivalence");
         let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
@@ -398,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn with_point_and_with_adjacent_work_with_cached_data() {
+    fn with_point_line_and_with_adjacent_work_with_cached_data() {
         let fixture = create_missing_neighbor_fixture("routing-context-borrowed-cache");
         let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
         let ctx = RoutingContext::new(&graph);
@@ -406,14 +447,17 @@ mod tests {
 
         let first_point = ctx.point(&point_ref);
         let first_adjacent = ctx.adjacent(&point_ref);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 0, 0, 1));
+        let first_line = ctx.line(&first_adjacent[0].0);
+        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0, 1));
 
         let cached_point_id = ctx.with_point(&point_ref, |point| point.id);
         let cached_adjacent = ctx.with_adjacent(&point_ref, |adjacent| adjacent.to_vec());
+        let cached_line = ctx.with_line(&first_adjacent[0].0, |line| line.clone());
 
         assert_eq!(cached_point_id, first_point.id);
         assert_eq!(cached_adjacent, first_adjacent);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 0, 0, 1));
+        assert_eq!(cached_line, first_line);
+        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0, 1));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }

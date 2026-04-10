@@ -152,31 +152,51 @@ impl Walker {
         !has_only_allowed_rule || allowed_by_only_allowed_rule
     }
 
+    fn prewarm_adjacent_lines(ctx: &RoutingContext<'_>, center_point: &MapDataPointRef) {
+        let line_refs = ctx.with_adjacent(center_point, |segments| {
+            segments
+                .iter()
+                .map(|(line_ref, _)| line_ref.clone())
+                .collect::<SmallVec<[MapDataLineRef; 8]>>()
+        });
+
+        for line_ref in &line_refs {
+            ctx.with_line(line_ref, |_| ());
+        }
+    }
+
     fn classify_segments_for_point_with_context(
         &self,
         ctx: &RoutingContext<'_>,
         center_point: &MapDataPointRef,
     ) -> NextStepClass {
-        let rules = ctx.with_point(center_point, |center_point_data| {
-            center_point_data.rules.clone()
-        });
-        let segments = ctx.adjacent(center_point);
-        let mut next_steps = NextStepClass::None;
+        ctx.with_point(center_point, |_| ());
+        Self::prewarm_adjacent_lines(ctx, center_point);
+        ctx.with_adjacent(center_point, |segments| {
+            ctx.with_point(center_point, |center_point_data| {
+                let rules = center_point_data.rules.as_slice();
+                let mut next_steps = NextStepClass::None;
 
-        for (line_ref, point_ref) in &segments {
-            let line = ctx.line(line_ref);
-            if line.is_one_way() && &line.points.1 == center_point {
-                continue;
-            }
+                for (line_ref, point_ref) in segments {
+                    let line_allowed = ctx.with_line(line_ref, |line| {
+                        !(line.is_one_way() && &line.points.1 == center_point)
+                    });
+                    if !line_allowed {
+                        continue;
+                    }
 
-            if Self::start_point_segment_blocked_by_not_allowed_rule(&rules, &segments, line_ref) {
-                continue;
-            }
+                    if Self::start_point_segment_blocked_by_not_allowed_rule(
+                        rules, segments, line_ref,
+                    ) {
+                        continue;
+                    }
 
-            next_steps.push(Segment::new(line_ref.clone(), point_ref.clone()));
-        }
+                    next_steps.push(Segment::new(line_ref.clone(), point_ref.clone()));
+                }
 
-        next_steps
+                next_steps
+            })
+        })
     }
 
     fn classify_fork_segments_for_segment_with_context(
@@ -195,30 +215,35 @@ impl Walker {
         } else {
             ctx.point_id(&self.start)
         };
-        let rules = ctx.with_point(center_point, |center_point_data| {
-            center_point_data.rules.clone()
-        });
-        let adjacent = ctx.adjacent(center_point);
-        let mut next_steps = NextStepClass::None;
+        ctx.with_point(center_point, |_| ());
+        Self::prewarm_adjacent_lines(ctx, center_point);
+        ctx.with_adjacent(center_point, |adjacent| {
+            ctx.with_point(center_point, |center_point_data| {
+                let rules = center_point_data.rules.as_slice();
+                let mut next_steps = NextStepClass::None;
 
-        for (line_next_ref, point_next_ref) in adjacent {
-            if ctx.point_id(&point_next_ref) == prev_point_id {
-                continue;
-            }
+                for (line_next_ref, point_next_ref) in adjacent {
+                    if ctx.point_id(point_next_ref) == prev_point_id {
+                        continue;
+                    }
 
-            let line_next = ctx.line(&line_next_ref);
-            if line_next.is_one_way() && &line_next.points.1 == center_point {
-                continue;
-            }
+                    let line_allowed = ctx.with_line(line_next_ref, |line_next| {
+                        !(line_next.is_one_way() && &line_next.points.1 == center_point)
+                    });
+                    if !line_allowed {
+                        continue;
+                    }
 
-            if !Self::continuation_allowed_by_rules(&rules, center_line, &line_next_ref) {
-                continue;
-            }
+                    if !Self::continuation_allowed_by_rules(rules, center_line, line_next_ref) {
+                        continue;
+                    }
 
-            next_steps.push(Segment::new(line_next_ref, point_next_ref));
-        }
+                    next_steps.push(Segment::new(line_next_ref.clone(), point_next_ref.clone()));
+                }
 
-        next_steps
+                next_steps
+            })
+        })
     }
 
     fn get_fork_segments_for_segment_with_context(
@@ -640,6 +665,44 @@ mod tests {
             } else {
                 assert!(false)
             }
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn classify_fork_segments_matches_existing_fork_choices() {
+            let graph = graph_from_test_dataset(test_dataset_1());
+            let ctx = RoutingContext::new(&graph);
+
+            let point1 = graph.test_get_point_ref_by_id(&1).unwrap();
+            let point3 = graph.test_get_point_ref_by_id(&3).unwrap();
+
+            let mut walker = Walker::new(point1);
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == point3),
+                Ok(WalkerMoveResult::Finish)
+            );
+
+            let last_segment = walker.get_route().get_segment_last().cloned().unwrap();
+            let classified = walker
+                .classify_fork_segments_for_segment_with_context(&ctx, &last_segment)
+                .into_segment_list();
+
+            assert_eq!(classified.get_segment_count(), 3);
+            classified.into_iter().for_each(|route_segment| {
+                let end_point_id = ctx.point(route_segment.get_end_point()).id;
+                assert!(end_point_id == 4 || end_point_id == 5 || end_point_id == 6);
+                assert!(
+                    line_is_between_point_ids(&ctx, route_segment.get_line(), 3, end_point_id)
+                        || line_is_between_point_ids(
+                            &ctx,
+                            route_segment.get_line(),
+                            end_point_id,
+                            3,
+                        )
+                );
+            });
         }
     }
 
