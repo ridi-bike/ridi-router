@@ -265,50 +265,41 @@ impl Walker {
         segment: &Segment,
     ) -> SegmentList {
         let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
-        if !ctx.line(segment.get_line()).is_roundabout() {
+        if !ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
             return SegmentList::new();
         }
 
-        let mut segments = Vec::new();
-
+        let mut exits = SmallVec::<[Segment; 4]>::new();
         let mut current_segment = segment.clone();
 
         loop {
-            let fork_segments =
-                self.get_fork_segments_for_segment_with_context(ctx, &current_segment);
-            let fork_segments: Vec<_> = fork_segments.into();
+            let mut next_roundabout_segment = None;
 
-            segments.push(
-                fork_segments
-                    .iter()
-                    .filter_map(|fork_segment| {
-                        if ctx.line(fork_segment.get_line()).is_roundabout() {
-                            return None;
-                        }
-                        Some(fork_segment.clone())
-                    })
-                    .collect::<Vec<_>>(),
-            );
-
-            current_segment = match fork_segments
-                .iter()
-                .find(|roundabout_segment| ctx.line(roundabout_segment.get_line()).is_roundabout())
+            for fork_segment in
+                self.get_fork_segments_for_segment_with_context(ctx, &current_segment)
             {
+                if ctx.with_line(fork_segment.get_line(), |line| line.is_roundabout()) {
+                    next_roundabout_segment.get_or_insert(fork_segment);
+                } else {
+                    exits.push(fork_segment);
+                }
+            }
+
+            current_segment = match next_roundabout_segment {
                 None => break,
                 Some(roundabout_segment) => {
                     if roundabout_segment.get_end_point() == segment.get_end_point() {
                         break;
                     }
-                    roundabout_segment.clone()
+                    roundabout_segment
                 }
             };
-            if visited_points.contains(current_segment.get_end_point()) {
+            if !visited_points.insert(current_segment.get_end_point().clone()) {
                 break;
             }
-            visited_points.insert(current_segment.get_end_point().clone());
         }
 
-        SegmentList::from(segments.into_iter().flatten().collect::<Vec<_>>())
+        SegmentList::from(exits.into_vec())
     }
 
     fn move_to_roundabout_exit_with_context(
@@ -320,7 +311,7 @@ impl Walker {
 
         let last_segment = match self.route_walked.get_segment_last() {
             Some(segment) => {
-                if !ctx.line(segment.get_line()).is_roundabout() {
+                if !ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
                     return;
                 }
                 segment.clone()
@@ -336,32 +327,34 @@ impl Walker {
             } else {
                 self.start.clone()
             };
-            if visited_points.contains(&last_point) {
-                break;
-            }
-            visited_points.insert(last_point);
-
-            let fork_segments =
-                self.get_fork_segments_for_segment_with_context(ctx, &current_segment);
-            let fork_segments: Vec<_> = fork_segments.into();
-
-            if fork_segments
-                .iter()
-                .any(|segment| segment.get_end_point() == exit_point)
-            {
+            if !visited_points.insert(last_point) {
                 break;
             }
 
-            current_segment = match fork_segments
-                .iter()
-                .find(|segment| ctx.line(segment.get_line()).is_roundabout())
-            {
+            let mut next_roundabout_segment = None;
+            let mut found_exit = false;
+            for segment in self.get_fork_segments_for_segment_with_context(ctx, &current_segment) {
+                if segment.get_end_point() == exit_point {
+                    found_exit = true;
+                    break;
+                }
+
+                if ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
+                    next_roundabout_segment.get_or_insert(segment);
+                }
+            }
+
+            if found_exit {
+                break;
+            }
+
+            current_segment = match next_roundabout_segment {
                 None => break,
                 Some(segment) => {
                     if segment.get_end_point() == last_segment.get_end_point() {
                         break;
                     }
-                    segment.clone()
+                    segment
                 }
             };
 
@@ -578,12 +571,14 @@ mod tests {
         RoutingContext,
     };
     use ridi_router_common::osm::{
-        OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
+        OsmNode, OsmRelation, OsmRelationMember, OsmRelationMemberRole, OsmRelationMemberType,
+        OsmWay,
     };
     use rusty_fork::rusty_fork_test;
     use tracing::info;
 
     use super::Walker;
+    use crate::router::route::segment::Segment;
 
     rusty_fork_test! {
         #![rusty_fork(timeout_ms = 2000)]
@@ -962,6 +957,184 @@ mod tests {
 
             let route = walker.get_route().clone();
             assert!(route_matches_ids(&ctx, route, &[7, 11, 12, 13, 131]));
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn get_roundabout_exits_handles_simple_roundabout() {
+            let tags_with_highway = HashMap::from([("highway".to_string(), "primary".to_string())]);
+            let roundabout_tags = HashMap::from([
+                ("junction".to_string(), "roundabout".to_string()),
+                ("highway".to_string(), "primary".to_string()),
+            ]);
+
+            let graph = graph_from_test_dataset((
+                vec![
+                    OsmNode { id: 6, lat: 6.0, lon: 6.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 7, lat: 7.0, lon: 7.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 11, lat: 11.0, lon: 11.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 12, lat: 12.0, lon: 12.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 111, lat: 111.0, lon: 111.0, residential_in_proximity: false, nogo_area: false },
+                ],
+                vec![
+                    OsmWay {
+                        id: 67,
+                        point_ids: vec![6, 7],
+                        tags: Some(tags_with_highway.clone()),
+                    },
+                    OsmWay {
+                        id: 71127,
+                        point_ids: vec![7, 11, 12, 7],
+                        tags: Some(roundabout_tags),
+                    },
+                    OsmWay {
+                        id: 11111,
+                        point_ids: vec![111, 11],
+                        tags: Some(tags_with_highway),
+                    },
+                ],
+                Vec::new(),
+            ));
+            let ctx = RoutingContext::new(&graph);
+
+            let start = graph.test_get_point_ref_by_id(&6).unwrap();
+            let point7 = graph.test_get_point_ref_by_id(&7).unwrap();
+            let point11 = graph.test_get_point_ref_by_id(&11).unwrap();
+            let mut walker = Walker::new(start.clone());
+
+            let approach_segment = ctx
+                .with_adjacent(&start, |adjacent| {
+                    adjacent
+                        .iter()
+                        .find(|(_, point)| *point == point7)
+                        .cloned()
+                })
+                .map(Segment::from)
+                .unwrap();
+            let roundabout_segment = ctx
+                .with_adjacent(&point7, |adjacent| {
+                    adjacent
+                        .iter()
+                        .find(|(_, point)| *point == point11)
+                        .cloned()
+                })
+                .map(Segment::from)
+                .unwrap();
+
+            walker.route_walked.add_segment(&ctx, approach_segment);
+            walker
+                .route_walked
+                .add_segment(&ctx, roundabout_segment.clone());
+
+            let exits = walker.get_roundabout_exits_with_context(&ctx, &roundabout_segment);
+
+            assert_eq!(exits.get_segment_count(), 1);
+            assert!(
+                exits
+                    .get_all_segment_points()
+                    .contains(&graph.test_get_point_ref_by_id(&111).unwrap())
+            );
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn get_roundabout_exits_stops_when_roundabout_revisits_point() {
+            let tags_with_highway = HashMap::from([("highway".to_string(), "primary".to_string())]);
+            let roundabout_tags = HashMap::from([
+                ("junction".to_string(), "roundabout".to_string()),
+                ("highway".to_string(), "primary".to_string()),
+            ]);
+
+            let graph = graph_from_test_dataset((
+                vec![
+                    OsmNode { id: 6, lat: 6.0, lon: 6.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 7, lat: 7.0, lon: 7.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 11, lat: 11.0, lon: 11.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 12, lat: 12.0, lon: 12.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 13, lat: 13.0, lon: 13.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 111, lat: 111.0, lon: 111.0, residential_in_proximity: false, nogo_area: false },
+                    OsmNode { id: 131, lat: 131.0, lon: 131.0, residential_in_proximity: false, nogo_area: false },
+                ],
+                vec![
+                    OsmWay {
+                        id: 67,
+                        point_ids: vec![6, 7],
+                        tags: Some(tags_with_highway.clone()),
+                    },
+                    OsmWay {
+                        id: 711121312,
+                        point_ids: vec![7, 11, 12, 13, 12],
+                        tags: Some(roundabout_tags),
+                    },
+                    OsmWay {
+                        id: 11111,
+                        point_ids: vec![111, 11],
+                        tags: Some(tags_with_highway.clone()),
+                    },
+                    OsmWay {
+                        id: 13131,
+                        point_ids: vec![131, 13],
+                        tags: Some(tags_with_highway),
+                    },
+                ],
+                Vec::new(),
+            ));
+            let ctx = RoutingContext::new(&graph);
+
+            let start = graph.test_get_point_ref_by_id(&6).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&131).unwrap();
+            let mut walker = Walker::new(start);
+
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected fork at roundabout entry, got {other:?}"),
+            }
+
+            let roundabout_segment = walker.get_route().get_segment_last().cloned().unwrap();
+            let exits = walker.get_roundabout_exits_with_context(&ctx, &roundabout_segment);
+            let exit_ids: Vec<_> = exits
+                .get_all_segment_points()
+                .iter()
+                .map(|point| ctx.point_id(point))
+                .collect();
+
+            assert_eq!(exit_ids, vec![111, 131]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn move_to_roundabout_exit_keeps_continuing_roundabout_segments() {
+            let graph = graph_from_test_dataset(test_dataset_2());
+            let ctx = RoutingContext::new(&graph);
+
+            let start = graph.test_get_point_ref_by_id(&6).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&131).unwrap();
+            let mut walker = Walker::new(start);
+
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected entry fork, got {other:?}"),
+            }
+
+            walker.set_fork_choice_point_ref(graph.test_get_point_ref_by_id(&11).unwrap());
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected roundabout exit fork, got {other:?}"),
+            }
+
+            walker.move_to_roundabout_exit_with_context(
+                &ctx,
+                &graph.test_get_point_ref_by_id(&131).unwrap(),
+            );
+
+            let route = walker.get_route().clone();
+            assert!(route_matches_ids(&ctx, route, &[7, 11, 12, 13]));
         }
     }
 
