@@ -1,4 +1,8 @@
-use std::{collections::HashSet, fmt::Debug};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+};
 
 use smallvec::SmallVec;
 
@@ -21,10 +25,23 @@ pub enum WalkerError {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct OrientedSegmentKey {
+    line_ref: MapDataLineRef,
+    end_point: MapDataPointRef,
+}
+
+#[derive(Default)]
+struct WalkerCaches {
+    fork_classifications: HashMap<OrientedSegmentKey, SmallVec<[Segment; 4]>>,
+    roundabout_exits: HashMap<OrientedSegmentKey, SmallVec<[Segment; 4]>>,
+}
+
 pub struct Walker {
     start: MapDataPointRef,
     route_walked: Route,
     next_fork_choice_point: Option<MapDataPointRef>,
+    caches: RefCell<WalkerCaches>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -59,6 +76,16 @@ impl NextStepClass {
         }
     }
 
+    fn from_segments(mut segments: SmallVec<[Segment; 4]>) -> Self {
+        match segments.len() {
+            0 => NextStepClass::None,
+            1 => NextStepClass::One(segments.pop().expect("single segment should exist")),
+            _ => NextStepClass::Many(segments),
+        }
+    }
+
+
+    #[cfg(test)]
     fn into_segment_list(self) -> SegmentList {
         match self {
             NextStepClass::None => SegmentList::new(),
@@ -86,6 +113,7 @@ impl Walker {
             start: start.clone(),
             route_walked: Route::new(),
             next_fork_choice_point: None,
+            caches: RefCell::new(WalkerCaches::default()),
         }
     }
 
@@ -199,28 +227,86 @@ impl Walker {
         })
     }
 
-    fn classify_fork_segments_for_segment_with_context(
+    fn oriented_segment_key(segment: &Segment) -> OrientedSegmentKey {
+        OrientedSegmentKey {
+            line_ref: segment.get_line().clone(),
+            end_point: segment.get_end_point().clone(),
+        }
+    }
+
+    fn incoming_point_for_segment_with_context(
         &self,
         ctx: &RoutingContext<'_>,
         segment: &Segment,
-    ) -> NextStepClass {
-        let center_point = segment.get_end_point();
-        let center_line = segment.get_line();
-        let prev_point_id = if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2)
-        {
+    ) -> Option<MapDataPointRef> {
+        ctx.with_line(segment.get_line(), |line| {
+            if line.points.0 == *segment.get_end_point() {
+                Some(line.points.1.clone())
+            } else if line.points.1 == *segment.get_end_point() {
+                Some(line.points.0.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn previous_point_id_from_route_history(&self, ctx: &RoutingContext<'_>) -> u64 {
+        if let Some(idx) = self.route_walked.get_segment_count().checked_sub(2) {
             self.route_walked
                 .get_segment_by_index(idx)
                 .map(|segment| ctx.point_id(segment.get_end_point()))
                 .unwrap_or_else(|| ctx.point_id(&self.start))
         } else {
             ctx.point_id(&self.start)
-        };
+        }
+    }
+
+    fn previous_point_id_for_segment_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        segment: &Segment,
+    ) -> u64 {
+        let segment_is_route_tail = self
+            .route_walked
+            .get_segment_last()
+            .map(|last_segment| last_segment == segment)
+            .unwrap_or(false);
+
+        if segment_is_route_tail {
+            self.incoming_point_for_segment_with_context(ctx, segment)
+                .map(|point| ctx.point_id(&point))
+                .unwrap_or_else(|| self.previous_point_id_from_route_history(ctx))
+        } else {
+            self.previous_point_id_from_route_history(ctx)
+        }
+    }
+
+    fn classify_fork_segments_cached_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        segment: &Segment,
+    ) -> SmallVec<[Segment; 4]> {
+        let cache_key = Self::oriented_segment_key(segment);
+        if let Some(cached) = self
+            .caches
+            .borrow()
+            .fork_classifications
+            .get(&cache_key)
+            .cloned()
+        {
+            return cached;
+        }
+
+        let center_point = segment.get_end_point();
+        let center_line = segment.get_line();
+        let prev_point_id = self.previous_point_id_for_segment_with_context(ctx, segment);
+
         ctx.with_point(center_point, |_| ());
         Self::prewarm_adjacent_lines(ctx, center_point);
-        ctx.with_adjacent(center_point, |adjacent| {
+        let next_steps = ctx.with_adjacent(center_point, |adjacent| {
             ctx.with_point(center_point, |center_point_data| {
                 let rules = center_point_data.rules.as_slice();
-                let mut next_steps = NextStepClass::None;
+                let mut next_steps = SmallVec::<[Segment; 4]>::new();
 
                 for (line_next_ref, point_next_ref) in adjacent {
                     if ctx.point_id(point_next_ref) == prev_point_id {
@@ -243,7 +329,21 @@ impl Walker {
 
                 next_steps
             })
-        })
+        });
+
+        self.caches
+            .borrow_mut()
+            .fork_classifications
+            .insert(cache_key, next_steps.clone());
+        next_steps
+    }
+
+    fn classify_fork_segments_for_segment_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        segment: &Segment,
+    ) -> NextStepClass {
+        NextStepClass::from_segments(self.classify_fork_segments_cached_with_context(ctx, segment))
     }
 
     fn get_fork_segments_for_segment_with_context(
@@ -251,8 +351,10 @@ impl Walker {
         ctx: &RoutingContext<'_>,
         segment: &Segment,
     ) -> SegmentList {
-        self.classify_fork_segments_for_segment_with_context(ctx, segment)
-            .into_segment_list()
+        SegmentList::from(
+            self.classify_fork_segments_cached_with_context(ctx, segment)
+                .into_vec(),
+        )
     }
 
     pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) {
@@ -264,11 +366,22 @@ impl Walker {
         ctx: &RoutingContext<'_>,
         segment: &Segment,
     ) -> SegmentList {
-        let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
         if !ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
             return SegmentList::new();
         }
 
+        let cache_key = Self::oriented_segment_key(segment);
+        if let Some(cached) = self
+            .caches
+            .borrow()
+            .roundabout_exits
+            .get(&cache_key)
+            .cloned()
+        {
+            return SegmentList::from(cached.into_vec());
+        }
+
+        let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
         let mut exits = SmallVec::<[Segment; 4]>::new();
         let mut current_segment = segment.clone();
 
@@ -299,6 +412,10 @@ impl Walker {
             }
         }
 
+        self.caches
+            .borrow_mut()
+            .roundabout_exits
+            .insert(cache_key, exits.clone());
         SegmentList::from(exits.into_vec())
     }
 
@@ -551,6 +668,16 @@ impl Walker {
 
     pub fn get_route(&self) -> &Route {
         &self.route_walked
+    }
+
+    #[cfg(test)]
+    fn fork_classification_cache_size(&self) -> usize {
+        self.caches.borrow().fork_classifications.len()
+    }
+
+    #[cfg(test)]
+    fn roundabout_exit_cache_size(&self) -> usize {
+        self.caches.borrow().roundabout_exits.len()
     }
 }
 
@@ -2257,6 +2384,107 @@ mod tests {
 
             assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3]));
             assert_choice_ids(&ctx, &choices, &[4, 5]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn fork_classification_cache_reuses_revisited_oriented_segment() {
+            let graph = graph_from_test_dataset(corridor_fork_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&6).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected initial fork, got {other:?}"),
+            }
+            assert_eq!(walker.fork_classification_cache_size(), 2);
+
+            walker.set_fork_choice_point_ref(graph.test_get_point_ref_by_id(&5).unwrap());
+            assert_eq!(
+                walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish),
+                Ok(WalkerMoveResult::DeadEnd)
+            );
+            assert_eq!(walker.fork_classification_cache_size(), 3);
+
+            let choices = walker
+                .move_backwards_to_prev_fork_with_context(&ctx)
+                .expect("expected previous fork choices");
+
+            assert_eq!(walker.fork_classification_cache_size(), 3);
+            assert_choice_ids(&ctx, &choices, &[4, 5]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn fork_classification_cache_keeps_rule_filtered_choices() {
+            let graph = graph_from_test_dataset(corridor_only_allowed_dataset());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&1).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&99).unwrap();
+
+            let mut walker = Walker::new(start);
+
+            let choices = match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(choices)) => choices,
+                other => panic!("expected downstream fork after forced branch, got {other:?}"),
+            };
+
+            assert_eq!(walker.fork_classification_cache_size(), 3);
+            assert_choice_ids(&ctx, &choices, &[7, 8]);
+
+            let last_segment = walker
+                .get_route()
+                .get_segment_last()
+                .cloned()
+                .expect("expected cached fork segment");
+            let cached_choices = walker.get_fork_segments_for_segment_with_context(&ctx, &last_segment);
+
+            assert_eq!(walker.fork_classification_cache_size(), 3);
+            assert_choice_ids(&ctx, &cached_choices, &[7, 8]);
+        }
+    }
+
+    rusty_fork_test! {
+        #![rusty_fork(timeout_ms = 2000)]
+        #[test]
+        fn roundabout_exit_cache_reuses_oriented_segment() {
+            let graph = graph_from_test_dataset(test_dataset_2());
+            let ctx = RoutingContext::new(&graph);
+            let start = graph.test_get_point_ref_by_id(&6).unwrap();
+            let finish = graph.test_get_point_ref_by_id(&131).unwrap();
+
+            let mut walker = Walker::new(start);
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected entry fork, got {other:?}"),
+            }
+
+            walker.set_fork_choice_point_ref(graph.test_get_point_ref_by_id(&11).unwrap());
+            match walker.move_forward_to_next_fork_with_context(&ctx, |p| p == finish) {
+                Ok(WalkerMoveResult::Fork(_)) => {}
+                other => panic!("expected roundabout exit fork, got {other:?}"),
+            }
+
+            let roundabout_segment = walker
+                .get_route()
+                .get_segment_last()
+                .cloned()
+                .expect("expected roundabout segment");
+
+            let first = walker.get_roundabout_exits_with_context(&ctx, &roundabout_segment);
+            assert_eq!(walker.roundabout_exit_cache_size(), 1);
+            let second = walker.get_roundabout_exits_with_context(&ctx, &roundabout_segment);
+
+            assert_eq!(walker.roundabout_exit_cache_size(), 1);
+            assert_choice_ids(&ctx, &first, &[111, 121, 131]);
+            assert_choice_ids(&ctx, &second, &[111, 121, 131]);
         }
     }
 }
