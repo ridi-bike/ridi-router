@@ -1,588 +1,298 @@
-# Performance implementation plan: `walker::move_forward_to_next_fork_with_context`
+# Performance plan
 
-## Scope
+Based on `perf.md` and a code pass over the hot path, the easiest wins are still in the walker/classification/tag stack.
 
-Target hotspot from `./perf.md`:
+## What the profile says
 
-- `walker::move_forward_to_next_fork_with_context`
-  - 357,872 calls
-  - 13.70 s total
-  - 27.09% of measured time
-  - 940.0 MB cumulative alloc
-  - about **38.3 µs/call**
-  - about **2.7 KB alloc/call**
+From `perf.md`:
 
-Related hotspots in the same path:
+- Biggest wall-clock buckets:
+  - `walker::move_forward_to_next_fork_with_context`: **16.56 s**
+  - `walker::classify_fork_segments_for_segment_with_context`: **9.30 s**
+  - `walker::get_roundabout_exits_with_context`: **7.65 s**
+  - `graph::get_tag_value`: **6.49 s**
+  - `walker::get_fork_segments_for_segment_with_context`: **5.69 s**
+  - `walker::move_backwards_to_prev_fork_with_context`: **4.23 s**
+  - `route::is_back_on_road_within_distance`: **3.43 s**
+  - `weights::weight_heading`: **3.05 s**
+- Biggest alloc buckets:
+  - `move_forward_to_next_fork_with_context`: **873.9 MB**
+  - `get_roundabout_exits_with_context`: **625.9 MB**
+  - `classify_fork_segments_for_segment_with_context`: **440.3 MB**
+  - `get_fork_segments_for_segment_with_context`: **324.9 MB**
+  - `move_backwards_to_prev_fork_with_context`: **307.8 MB**
+  - `weight_heading`: **161.2 MB**
 
-- `walker::get_fork_segments_for_segment_with_context`: 3,835,443 calls, 6.23 s, 598.4 MB
-- `weight_heading`: 141,086 calls, 2.86 s
-- `get_roundabout_exits_with_context`: visible and expensive, but **excluded from this refactor pass**
-
-This plan is now updated to reflect the implementation decisions we agreed on.
-
----
-
-## Agreed decisions
-
-1. **Do the larger refactor**, not just a tiny local optimization.
-   - But first, add tests that cement current behavior where that behavior is worth preserving.
-   - Then refactor.
-   - Then re-run tests and perf checks.
-
-2. **Create a specialized look-ahead helper for `weight_heading`.**
-   - The helper must share internals with the main walker.
-   - No duplicated rule logic.
-
-3. **Exclude roundabouts from this implementation pass.**
-   - Do not redesign roundabout traversal in this patch series.
-   - Preserve current roundabout behavior.
-   - Keep the new internals compatible with future roundabout work.
-
-4. **Update `RoutingContext` with `with_...` accessors** for hot-path non-cloning access.
-
-5. Optimize for **both runtime and allocations**.
-
-6. Maintain **strict behavior preservation**.
-   - Same routing behavior
-   - Same fork semantics
-   - Same error behavior where applicable
-
-7. The heading look-ahead helper should be **specialized**, not a new fully general speculative walker.
+That matches the code: we are still doing a lot of repeated cloning and recomputation in the walker.
 
 ---
 
-## Current behavior we are preserving
+## Priority 1: stop cloning cached data inside walker classification
 
-Source focus:
+### Why this is easy
+The code already has borrowed cache accessors in `RoutingContext`, but the hottest walker functions do not use them.
 
-- `crates/ridi-router-routing/src/router/walker.rs`
-- `crates/ridi-router-routing/src/router/weights.rs`
-- `crates/ridi-router-routing/src/routing_context.rs`
+Relevant code:
 
-`move_forward_to_next_fork_with_context` currently:
+- `crates/ridi-router-routing/src/routing_context.rs:67-80` has `with_point(...)`
+- `crates/ridi-router-routing/src/routing_context.rs:160-172` has `with_adjacent(...)`
+- but walker still clones data in:
+  - `crates/ridi-router-routing/src/router/walker.rs:160-163`
+  - `crates/ridi-router-routing/src/router/walker.rs:198-202`
+  - `crates/ridi-router-routing/src/router/walker.rs:163`
+  - `crates/ridi-router-routing/src/router/walker.rs:201`
 
-1. walks forward from the current point
-2. stops on finish, fork, dead end, or junction loop detection
-3. uses these helpers to discover legal next steps:
-   - `get_segments_for_point_with_context`
-   - `get_fork_segments_for_segment_with_context`
-   - `get_roundabout_exits_with_context`
-4. validates explicit fork choices
-5. updates the walked route as it advances
+Today the walker does all of this in the hot path:
 
-`weight_heading` currently:
+- clones `center_point.rules`
+- clones adjacency with `ctx.adjacent(...)`
+- clones `MapDataLine` with `ctx.line(...)`
 
-1. creates a fresh `Walker`
-2. calls `move_forward_to_next_fork_with_context`
-3. uses the resulting segment orientation to estimate heading toward the next itinerary point
+That is exactly the kind of churn that shows up as both wall time and alloc.
 
-The refactor should preserve those outcomes, while changing how the internals compute them.
+### Change
 
----
+1. Rewrite `classify_segments_for_point_with_context(...)` to:
+   - borrow point data with `with_point(...)`
+   - borrow adjacency with `with_adjacent(...)`
+   - iterate directly over borrowed slices
+2. Add `RoutingContext::with_line(...)` and use that instead of `ctx.line(...)` in the walker hot loop.
+3. Keep `Segment` construction at the boundary, but avoid cloning everything before we know a branch survives filters.
 
-## Main problems to address
+### Expected effect
 
-## 1. Common-path allocation churn in the walker
+- Good alloc win in `classify_fork_segments_for_segment_with_context`
+- Small-to-medium wall-clock win in both classification and forward walking
+- Low risk, because this is mostly an API usage cleanup, not routing logic changes
 
-Today the main walker loop asks helpers to fully build `SegmentList` values even in the common case where there are:
+### Validation
 
-- no legal next segments
-- exactly one legal next segment
-- or one chosen next segment out of multiple
+Re-run the same perf route and compare:
 
-That means the hot corridor-following case still pays for:
-
-- adjacency clones
-- temporary segment collections
-- repeated scans through collected choices
-
-This is a direct match for the allocation profile.
-
-## 2. `RoutingContext::point()` and `RoutingContext::adjacent()` clone owned data
-
-Current hot-path behavior:
-
-- `point()` clones `MapDataPoint`
-- `adjacent()` clones cached adjacency vectors
-
-That means even cache hits still allocate or copy owned containers.
-
-## 3. `get_fork_segments_for_segment_with_context` recomputes filtering work
-
-Per call it currently:
-
-- loads point data
-- scans rules
-- builds temporary rule lists
-- scans adjacency
-- creates fresh segments
-
-This is individually cheap, but it runs **millions of times**.
-
-## 4. `weight_heading` is using the full walker for a small question
-
-It only needs a specialized look-ahead answer, but currently pays for:
-
-- a fresh `Walker`
-- route mutation machinery
-- loop detector updates
-- full fork result behavior
-
-That is too heavy for a scoring probe.
+- `classify_fork_segments_for_segment_with_context`
+- `get_fork_segments_for_segment_with_context`
+- `move_forward_to_next_fork_with_context`
 
 ---
 
-## Implementation strategy
+## Priority 2: add a tag value cache in `RoutingContext`
 
-We will do a larger internal refactor, but in a controlled order:
+### Why this is easy
+`RoutingContext` already caches:
 
-1. **Add/expand tests first** for preserved behavior.
-2. **Introduce shared low-level next-step classification internals.**
-3. **Refactor the main walker to use them.**
-4. **Add specialized heading look-ahead on top of the same shared internals.**
-5. **Update `RoutingContext` with `with_...` accessors** so the hot path can inspect cached data without cloning.
-6. Re-run tests and perf measurements.
+- points
+- lines
+- tag sets
+- adjacency
 
-Roundabout optimization is explicitly out of scope for this pass.
+But it does **not** cache decoded tag values.
 
----
+Relevant code:
 
-## Detailed plan
+- `crates/ridi-router-routing/src/routing_context.rs:17-23` cache fields
+- `crates/ridi-router-routing/src/routing_context.rs:149-150` just forwards `tag_value(...)`
+- `crates/ridi-router-routing/src/map_data/graph.rs:415-436` returns `Option<String>`
+- `crates/ridi-router-routing/src/rmdf/tile_manager.rs:881-897` does `to_string()` on lookup
 
-## Phase 0: Cement current behavior with tests
+That means repeated tag reads allocate fresh strings over and over.
 
-Before touching the main logic, add or strengthen tests around non-roundabout behavior.
+This lines up with the profile:
 
-### Test goals
+- `graph::get_tag_value`: **6.49 s**
+- `tile_manager::get_tag_value_if_loaded`: **4.60 s**
 
-We want tests that preserve externally visible semantics, not tests that freeze internal implementation details.
+### Change
 
-### Add or strengthen tests for
+1. Add `tag_values: HashMap<ElementTagValueRef, Option<smartstring::alias::String>>` to `RoutingCaches`.
+2. Make `RoutingContext::tag_value(...)` cache the decoded value on first lookup.
+3. Update the hot users first:
+   - `weights.rs` helpers like `segment_name`, `segment_hw_ref`, `segment_highway`, `segment_surface`, `segment_smoothness`
+   - `route::is_back_on_road_within_distance(...)`
+   - any walker logic that hits tag reads while exploring
 
-#### Keep and re-run existing coverage
+### Expected effect
 
-These existing tests already protect part of the current behavior and should stay green throughout the refactor:
+- Strong alloc win
+- Real wall-clock win, because the current code repeatedly decodes the same tag strings
+- Helps several hotspots at once, not just one function
 
-- `walker_same_start_end`
-- `walker_error_on_wrong_choice`
-- `walker_choose_path`
-- `walker_reach_dead_end_walk_back`
-- `handle_roundabout`
-- `follow_one_way`
-- existing `rule_test(...)` coverage in `walker.rs`
-- existing `weights_phase1_tests.rs` coverage that touches routing/weight behavior
+### Validation
 
-#### Add concrete new tests
+Compare before/after on:
 
-##### In `crates/ridi-router-routing/src/router/walker.rs`
-
-1. `walker_moves_through_single_choice_corridor_until_finish`
-   - start on a non-roundabout corridor
-   - no explicit fork choice
-   - expect `Finish`
-   - assert route segments match the corridor exactly
-
-2. `walker_returns_fork_after_single_choice_corridor`
-   - start before a corridor that leads into a fork
-   - expect the walker to consume the corridor and return `Fork(...)` only at the first real multi-choice point
-   - assert fork choice count and end-point IDs
-
-3. `walker_returns_dead_end_after_single_choice_corridor`
-   - start before a corridor that leads into a dead end
-   - expect `DeadEnd` after walking the corridor
-   - assert route segments match the traversed corridor
-
-4. `walker_follows_explicit_choice_after_corridor`
-   - start before a corridor, set a valid explicit fork choice for the fork reached after the corridor
-   - expect the walker to consume the corridor and then follow the chosen branch
-   - assert chosen branch is taken and route history is correct
-
-5. `walker_wrong_choice_after_corridor_returns_same_available_points`
-   - same setup as above, but choose an invalid point
-   - expect `WalkerError::WrongForkChoice`
-   - assert the returned `available_fork_ids` match the currently legal choices
-
-6. `walker_filters_reverse_edge_from_incoming_segment`
-   - non-roundabout fork with a possible reverse edge back to the previous point
-   - assert the reverse edge is not offered as a legal continuation
-
-7. `walker_respects_one_way_after_corridor`
-   - non-roundabout corridor leading into a one-way restricted choice
-   - assert the wrong-way branch is excluded from `Fork(...)` choices
-
-8. `walker_respects_only_allowed_rule_after_corridor`
-   - build a point with `OnlyAllowed` rules for the incoming line
-   - assert only permitted outgoing lines are surfaced
-
-9. `walker_respects_not_allowed_rule_after_corridor`
-   - build a point with `NotAllowed` rules for the incoming line
-   - assert forbidden outgoing lines are excluded
-
-10. `walker_start_point_rule_filtering_matches_current_behavior`
-   - add a start-point-focused case that exercises `get_segments_for_point_with_context` semantics
-   - assert legal choices from the initial point match current behavior
-
-11. `move_backwards_to_prev_fork_still_returns_expected_choices_after_refactor`
-   - explicit regression test for non-roundabout backtracking
-   - expect the previous fork and available choices to remain unchanged
-
-##### In `crates/ridi-router-routing/src/router/weights_phase1_tests.rs` or a dedicated heading-look-ahead test file
-
-12. `heading_look_ahead_returns_finish_when_candidate_reaches_finish_before_next_fork`
-   - candidate branch reaches finish without another decision point
-   - expect specialized helper result `Finish`-equivalent behavior
-
-13. `heading_look_ahead_returns_dead_end_when_candidate_dies_before_next_fork`
-   - candidate branch ends before another decision point
-   - expect `DeadEnd`-equivalent behavior
-
-14. `heading_look_ahead_returns_immediate_decision_when_candidate_endpoint_is_already_a_fork`
-   - candidate endpoint itself is already a decision point
-   - assert the helper returns the same effective meaning that current `weight_heading` relies on
-
-15. `heading_look_ahead_returns_approach_segment_after_single_choice_corridor`
-   - candidate branch goes through exactly one corridor before the next decision point
-   - assert the returned approach segment is the last traversed segment before the fork
-
-16. `weight_heading_matches_current_result_on_non_roundabout_corridor_case`
-   - add a fixed fixture where current `weight_heading` behavior is easy to verify
-   - use it as a regression test before and after the helper swap
-
-17. `weight_heading_matches_current_result_on_immediate_fork_case`
-   - candidate point is already at a decision point
-   - assert fallback behavior remains identical
-
-##### In `crates/ridi-router-routing/src/routing_context.rs`
-
-18. `with_point_exposes_same_visible_data_as_point`
-   - for the same point ref, compare the fields observed through `with_point(...)` with the current `point()` result
-   - this is a behavior-equivalence test, not a perf test
-
-19. `with_adjacent_exposes_same_visible_data_as_adjacent`
-   - for the same point ref, compare the adjacency seen through `with_adjacent(...)` with the current `adjacent()` result
-   - order and contents should match current behavior
-
-20. `with_point_and_with_adjacent_work_with_cached_data`
-   - touch data once, then access again through the `with_...` APIs
-   - assert returned visible results stay correct when served from cache
-
-#### Test intent
-
-These tests are meant to lock down externally visible semantics while still leaving room for internal restructuring:
-
-- same route outcomes
-- same fork surfacing points
-- same rule filtering results
-- same explicit-choice validation behavior
-- same heading-scoring inputs in non-roundabout cases
-### Important constraint
-
-Do **not** broaden behavior in this phase.
-
-This is about preserving current semantics so the refactor has a clear safety net.
+- `graph::get_tag_value`
+- `tile_manager::get_tag_value_if_loaded`
+- `route::is_back_on_road_within_distance`
+- `weights::weight_heading`
+- `weights::weight_no_short_detours`
 
 ---
 
-## Phase 1: Introduce shared low-level traversal classification
+## Priority 3: cache fork classification and roundabout exits by oriented segment
 
-### Goal
+### Why this looks safe
+The biggest repeated work is classification.
 
-Create one internal classification layer that both the main walker and the new heading look-ahead helper will use.
+Relevant code:
 
-### Proposed shape
+- `crates/ridi-router-routing/src/router/walker.rs:182-221` classification
+- `crates/ridi-router-routing/src/router/walker.rs:224-231` fork-segment wrapper
+- `crates/ridi-router-routing/src/router/walker.rs:237-286` roundabout exit generation
 
-Introduce an internal result roughly like this:
+Also, `classify_fork_segments_for_segment_with_context(...)` currently looks back into route history at `walker.rs:189-197` to find the previous point, even though for a normal oriented segment the previous point is already implied by the line endpoints plus the segment end.
 
-```rust
-enum NextStepClass {
-    None,
-    One(Segment),
-    Many(SmallVec<[Segment; 4]>),
-}
-```
+So there is a good chance the result is cacheable by oriented segment (`line_ref + end_point`) instead of recomputing it millions of times.
 
-This does **not** have to be the final exact type name, but the core idea is:
+### Change
 
-- avoid full `SegmentList` allocation on the 0/1 cases
-- surface multiple choices only when multiple choices really exist
+1. Add a small cache keyed by oriented segment for:
+   - fork classification result
+   - roundabout exits result
+2. Derive the incoming point from the current segment instead of route history where possible.
+3. Reuse the cached result from:
+   - `move_forward_to_next_fork_with_context(...)`
+   - `move_backwards_to_prev_fork_with_context(...)`
+   - roundabout traversal helpers
 
-### Shared classifier responsibilities
+### Expected effect
 
-For the non-roundabout path, shared internals should handle:
+- High wall-clock upside
+- Medium alloc upside
+- Especially helpful because backtracking revisits the same junctions repeatedly
 
-- start-point segment discovery
-- incoming-segment continuation discovery
-- reverse-edge exclusion
-- one-way exclusion
-- `OnlyAllowed` / `NotAllowed` rule filtering
-- explicit fork-choice validation support
+### Validation
 
-### Explicit design rule
+Watch these first:
 
-The low-level classifier must be the **single source of truth** for legal next-step computation in this refactor.
-
-That prevents semantic drift between:
-
-- the main walker
-- the heading look-ahead helper
+- `classify_fork_segments_for_segment_with_context`
+- `get_fork_segments_for_segment_with_context`
+- `get_roundabout_exits_with_context`
+- `move_backwards_to_prev_fork_with_context`
 
 ---
 
-## Phase 2: Refactor the main walker to use the classifier
+## Priority 4: remove obvious allocation churn in roundabout handling
 
-### Goal
+### Why this is easy
+`get_roundabout_exits_with_context(...)` is doing several short-lived allocations per call.
 
-Make `move_forward_to_next_fork_with_context` cheap on the common path.
+Relevant code:
 
-### Target behavior
+- `crates/ridi-router-routing/src/router/walker.rs:242` allocates a `HashSet`
+- `crates/ridi-router-routing/src/router/walker.rs:247` allocates `Vec<Vec<Segment>>` shape indirectly
+- `crates/ridi-router-routing/src/router/walker.rs:254` converts `SegmentList` into `Vec`
+- `crates/ridi-router-routing/src/router/walker.rs:256-266` builds another temporary `Vec`
+- `crates/ridi-router-routing/src/router/walker.rs:286` flattens into yet another `Vec`
 
-The main loop should:
+For a function that is already at **625.9 MB** cumulative alloc, this is low-hanging fruit.
 
-- return `Finish` immediately on finish
-- return `DeadEnd` immediately on no legal next step
-- advance immediately on exactly one legal next step
-- return `Fork(...)` only when multiple legal choices actually exist and no explicit choice is set
-- validate explicit choices without paying unnecessary allocation cost on the success path
+### Change
 
-### Main fast-path idea
+1. Accumulate exits into one flat buffer instead of `Vec<Vec<Segment>>` + flatten.
+2. Prefer `SmallVec<[Segment; 4]>` or similar for the common case.
+3. Do the same cleanup in `move_to_roundabout_exit_with_context(...)`, which has similar `SegmentList -> Vec` churn.
+4. If Priority 3 lands, have roundabout lookup return cached exits directly.
 
-The common corridor case should avoid:
+### Expected effect
 
-- building `SegmentList`
-- collecting all choices just to grab the first
-- scanning temporary collections multiple times
-
-### Error-path policy
-
-For explicit wrong fork choices, it is acceptable to do some additional work to build the `available_fork_ids` payload.
-
-That is an error path, not the hot path.
-
-### Strict preservation requirement
-
-This refactor should preserve:
-
-- `Fork` timing behavior from the caller’s point of view
-- `WrongForkChoice` shape and meaning
-- finish/dead-end behavior
-- junction-loop behavior in non-roundabout paths
+- Clear alloc reduction
+- Some wall-clock improvement from less copying and less allocator traffic
+- Very local change, easy to benchmark in isolation
 
 ---
 
-## Phase 3: Add the specialized heading look-ahead helper
+## Priority 5: short-circuit expensive per-fork weight evaluation
 
-### Goal
+### Why this is easy
+Navigator currently computes **all** per-fork weights, collects them into a `Vec`, and only then decides whether the fork is already dead.
 
-Replace `weight_heading`’s full walker call with a narrow helper that answers only what heading scoring needs.
+Relevant code:
 
-### What the helper should do
+- `crates/ridi-router-routing/src/router/navigator.rs:253-274`
+- `crates/ridi-router-routing/src/router/navigator.rs:99-132`
+- per-fork weight order is set in `crates/ridi-router-routing/src/router/generator.rs:369-429`
 
-Given a candidate fork segment, it should follow the same shared next-step logic until it reaches one of these non-roundabout outcomes:
+Right now that means a fork can be rejected early by a cheap rule, but we still go on to run expensive work like:
 
-- `Finish`
-- `DeadEnd`
-- next decision point
+- `weight_no_short_detours(...)`
+- `weight_heading(...)`
 
-### What it should return
+### Change
 
-A specialized answer such as:
+1. Replace `map(...).collect::<Vec<_>>()` with a simple loop.
+2. Stop immediately on:
+   - `LastSegmentDoNotUse`
+   - `ForkChoiceDoNotUse`
+3. Accumulate total weight directly instead of building a temporary `Vec<WeightCalcResult>`.
+4. Keep expensive look-ahead weights late in the order.
 
-```rust
-enum HeadingLookAheadResult {
-    DeadEnd,
-    Finish,
-    Decision {
-        approach_segment: Option<Segment>,
-    },
-}
-```
+### Expected effect
 
-Exact naming may differ, but the helper should return only the information `weight_heading` needs.
+- Easy wall-clock win
+- Small alloc win
+- Low risk, because it preserves the existing semantics
 
-### What it should not do
+### Validation
 
-It should **not**:
+Watch:
 
-- build a full `Route`
-- mutate a full `Walker`
-- update loop detector route history
-- expose a general speculative traversal API
-
-### Shared-internals requirement
-
-This helper must use the same low-level next-step classification as the main walker.
-
-That is the key correctness rule for this part of the refactor.
-
-### Scope limit
-
-This helper should be specialized for **non-roundabout** heading look-ahead in this pass.
-
-If roundabout behavior is encountered, we should preserve current behavior conservatively rather than invent new semantics here.
+- `weights::weight_heading`
+- `weights::weight_no_short_detours`
+- overall route wall time
 
 ---
 
-## Phase 4: Add `RoutingContext` `with_...` accessors for hot paths
+## Secondary cleanup: make backward road-name scan cheaper
 
-### Goal
+This is not the first thing I would do, but it is an easy follow-up once tag caching is in place.
 
-Let hot traversal code inspect cached structures without cloning owned data.
+Relevant code:
 
-### Agreed direction
+- `crates/ridi-router-routing/src/router/route/mod.rs:489-537`
+- `crates/ridi-router-routing/src/router/weights.rs:256-275`
 
-Add `with_...` style accessors.
+`is_back_on_road_within_distance(...)` scans backwards and repeatedly does:
 
-Examples of the intended pattern:
+- `ctx.line(...)`
+- `ctx.tag_set(...)`
+- `ctx.tag_value(...)`
 
-```rust
-ctx.with_point(point_ref, |point| {
-    // inspect point.rules, flags, etc.
-});
+That is a bad fit for a function called **54,138** times.
 
-ctx.with_adjacent(point_ref, |adjacent| {
-    // inspect adjacency by reference
-});
-```
+### Change
 
-Exact naming can vary, but the intent is:
-
-- no cloning of `MapDataPoint` in the hot path when read-only inspection is enough
-- no cloning of adjacency vectors in the hot path when read-only iteration is enough
-
-### Where to use them first
-
-Use these accessors first in the traversal hotspot path:
-
-- walker fast-path helpers
-- heading look-ahead helper
-
-Do not try to convert the whole codebase at once.
-
-### Behavior rule
-
-These are API-level internal changes only.
-
-No behavioral change should result from introducing them.
+1. After tag caching lands, re-measure.
+2. If still hot, add a faster road-identity path:
+   - compare cached tag refs first where possible
+   - fall back to decoded string comparison only when needed
+3. Consider a borrowed slice helper for route chunks to avoid repeated `to_vec()` cloning from:
+   - `crates/ridi-router-routing/src/router/route/mod.rs:447-467`
 
 ---
 
-## Phase 5: Measure both runtime and allocations
+## What I would do first
 
-This refactor is successful only if it improves both:
+### Pass 1
 
-- runtime
-- cumulative allocations
+1. Borrowed access in walker hot loops
+2. Tag value cache in `RoutingContext`
+3. Per-fork weight short-circuiting
 
-### Main metrics to compare
+These are the easiest, lowest-risk changes with the best chance of helping both wall time and alloc.
 
-1. `walker::move_forward_to_next_fork_with_context`
-   - total time
-   - cumulative alloc
-   - average alloc per call
+### Pass 2
 
-2. `walker::get_fork_segments_for_segment_with_context`
-   - total time
-   - cumulative alloc
-   - average alloc per call
+4. Roundabout allocation cleanup
+5. Cache classification / roundabout exits by oriented segment
 
-3. `weight_heading`
-   - total time
-   - evidence that the new helper is cheaper than full walker traversal
-
-4. route-generation wall time for the same scenario in `./perf.md`
-
-### Expected profile shape after improvement
-
-We should ideally see:
-
-- lower alloc total in the walker path first
-- lower per-call cost in fork classification helpers
-- lower `weight_heading` cost from the specialized look-ahead helper
-- reduced time in `move_forward_to_next_fork_with_context`
+These likely have bigger upside, but they touch routing behavior a bit more, so I would land them after Pass 1 unless you want to swing for the larger walker win immediately.
 
 ---
 
-## Out of scope for this pass
+## What not to spend the next cycle on
 
-These items are intentionally excluded from this implementation round:
+- adjacency plumbing
+- tile loading broad rewrites
+- top-level navigator orchestration
 
-1. **Roundabout redesign**
-   - no refactor of `get_roundabout_exits_with_context`
-   - no refactor of `move_to_roundabout_exit_with_context`
-   - no attempt to optimize roundabout allocations yet
-
-2. **Broad route-policy changes**
-   - no change in scoring philosophy
-   - no change in route selection semantics
-
-3. **General speculative traversal framework**
-   - the new heading helper should stay narrow and specialized
-
-4. **Whole-program transition caching**
-   - promising, but not required for this pass
-
----
-
-## Risk management
-
-## Main risks
-
-1. semantic drift between main walker and heading look-ahead helper
-2. accidental change to fork or dead-end behavior
-3. accidental change to rule filtering behavior
-4. accidental roundabout regression from touching shared code too broadly
-
-## Mitigations
-
-1. tests first
-2. one shared non-roundabout next-step classifier
-3. strict behavior preservation as a design rule
-4. keep roundabout-specific code out of the first optimized path where possible
-5. re-run tests after each phase, not only at the end
-
----
-
-## Recommended patch order
-
-### Patch 1
-Add and strengthen tests for current non-roundabout behavior.
-
-### Patch 2
-Add `RoutingContext` `with_...` accessors for point/adjacent read access.
-
-### Patch 3
-Introduce shared non-roundabout next-step classification internals.
-
-### Patch 4
-Refactor `move_forward_to_next_fork_with_context` to use the shared classifier fast path.
-
-### Patch 5
-Add specialized heading look-ahead helper built on the same classifier.
-
-### Patch 6
-Refactor `weight_heading` to use the new helper.
-
-### Patch 7
-Run full tests and refresh the perf measurements.
-
-This order keeps correctness visible and reviewable.
-
----
-
-## Bottom line
-
-The implementation direction is now:
-
-- **larger refactor**
-- **tests first**
-- **strict behavior preservation**
-- **shared internals between walker and heading look-ahead**
-- **non-cloning `RoutingContext` hot-path access via `with_...` APIs**
-- **focus on both runtime and allocation reduction**
-- **exclude roundabout optimization from this pass**
-
-The highest-value first target remains the same:
-
-1. make the walker cheap on the 0/1-choice path
-2. stop cloning point and adjacency data in the hot path
-3. stop using the full walker for `weight_heading` look-ahead
+The current profile still says the main problem is repeated walker work, repeated branch classification, roundabout handling, and repeated tag decoding inside those paths.

@@ -1,25 +1,21 @@
 # Route generation performance review
 
-_Date:_ 2026-04-08
+_Date:_ 2026-04-09
 
 ## Command I ran
 
-I interpreted your requested command as the documented perf route invocation used by this repo:
+Your prompt used `RIDI_FEATURES ./dev.sh riga,latvia sigulda,latvia`, but this repo's `dev.sh` expects the `route` subcommand and the perf feature value.
+
+So I ran the repo-valid perf invocation:
 
 ```bash
 RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia
 ```
 
-Why: `dev.sh` expects the `route` subcommand, and `RIDI_FEATURES=perf` expands to `hotpath,hotpath-alloc,hotpath-mcp`.
-
-## Method
-
-I used two profiled runs:
-
-- **Run A**: main evidence run, with a live Hotpath MCP snapshot while routing was active.
-- **Run B**: quick repeat to check whether completion time and hotspot family were stable.
-
-I also compared the new results against the `./perf.md` content that existed before this overwrite.
+Why this is the right equivalent:
+- `dev.sh` requires `route`
+- `RIDI_FEATURES=perf` expands to `hotpath,hotpath-alloc,hotpath-mcp`
+- that enables live Hotpath MCP access during the run
 
 ## What `dev.sh` resolved and ran
 
@@ -43,209 +39,197 @@ target/release/ridi-router-cli generate-route \
   --finish 57.1540561,24.8567141
 ```
 
-## Run status
+## Run result
 
-### Run A
-
-- Cargo reuse/build overhead before run: **0.17 s**
-- Route generation started: **2026-04-08 21:41:43.629Z**
-- Router logged `Routes from itineraries` at **42 s** with:
+- Cargo reuse/build overhead before routing: **0.42 s**
+- Route generation started: **2026-04-09 19:06:04.887Z**
+- Router logged `Routes from itineraries` at **45 s** with:
   - `itinerary_count=109`
   - `routes_count=79`
-- Router logged `Route generation finished` at **2026-04-08 21:42:30.400Z**
-- Measured wall time from router start to router finish: **46.77 s**
-- Final Hotpath summary was printed at **50.57 s** uptime
+- Router logged `Route generation finished` at **2026-04-09 19:06:55.868Z**
+- Reported route-generation duration: **50 s**
+- Final Hotpath summary printed at **53.90 s** uptime
+- Process exit code: **0**
 - Output written successfully to `map-data/routes`
 - Final route files produced: **23 GPX files**
-- Output size: **4.29 MB total**
-- Output route filename lengths ranged from **81 km** to **236 km**
-
-### Run B
-
-- Cargo reuse/build overhead before run: **0.46 s**
-- Router logged `Routes from itineraries` at **41 s**
-- Router logged `Route generation finished` at **47 s**
-- Final Hotpath summary was printed at **50.29 s** uptime
-
-The second run landed in essentially the same runtime band, so the current result looks reproducible.
+- Output size: **4.42 MB total**
+- Output route filename lengths ranged from **81 km** to **261 km**
 
 ## Live Hotpath MCP snapshot while the run was active
 
-I queried Hotpath over MCP during **Run A**.
+I connected to Hotpath during the active route-generation phase.
 
-### Snapshot A: ~8.9 s uptime
+### Snapshot A: early thread/runtime state (~10.9 s elapsed)
 
-Profiler/thread status:
+Profiler/runtime status:
+- profiler uptime when queried: **7.57 s**
+- thread snapshot elapsed: **10.92 s**
+- thread count: **19**
+- RSS reported by Hotpath: **8.3 GB**
+- cumulative alloc/dealloc at that point: **3.3 GB alloc / 3.2 GB dealloc**
+- live alloc/dealloc diff: **100.9 MB**
+- eight worker threads were already busy, mostly around **79.6% to 91.6% CPU** each
+- Hotpath helper thread `hp-functions` was also using about **59.7% CPU**
 
-- profiler uptime: **8.87 s**
-- thread count: **20**
-- RSS reported by Hotpath: **7.2 GB**
-- cumulative alloc/dealloc at that point: **3.4 GB alloc / 3.3 GB dealloc**
-- live alloc/dealloc diff: **95.9 MB**
-- eight worker threads were already busy, mostly around **64% to 92% CPU** each
-- Hotpath helper thread `hp-functions` was also using about **63.8% CPU**
-
-Top timing hotspots at that early point:
+### Snapshot B: early timing hotspots (~13.6 s elapsed)
 
 | Function | Total | Why it stood out early |
 |---|---:|---|
-| `walker::move_forward_to_next_fork_with_context` | **7.35 s** | forward traversal dominated immediately |
-| `navigator::generate_routes_with_context` | **5.75 s** | top-level route search stayed busy from the start |
-| `walker::get_fork_segments_for_segment_with_context` | **3.43 s** | branch discovery was already expensive |
-| `graph::get_tag_value` | **2.81 s** | tag reads accumulated quickly inside the hot traversal loop |
-| `tile_manager::loaded_tile` | **2.63 s** | tile lookup plumbing was active constantly |
-| `walker::get_roundabout_exits_with_context` | **1.87 s** | roundabout branching became visible early |
+| `walker::move_forward_to_next_fork_with_context` | **11.99 s** | still the dominant traversal hotspot immediately |
+| `walker::classify_fork_segments_for_segment_with_context` | **6.88 s** | fork classification is already first-order work |
+| `navigator::generate_routes_with_context` | **6.41 s** | top-level route search remains expensive |
+| `walker::get_roundabout_exits_with_context` | **5.72 s** | roundabout expansion shows up very early |
+| `walker::get_fork_segments_for_segment_with_context` | **4.25 s** | branch discovery remains core cost |
+| `graph::get_tag_value` | **3.98 s** | tag reads still accumulate inside the hot traversal loop |
 
-Top allocation hotspots at that early point:
+### Snapshot C: early allocation hotspots (~16.1 s elapsed)
 
 | Function | Total alloc | Why it stood out early |
 |---|---:|---|
-| `walker::move_forward_to_next_fork_with_context` | **495.7 MB** | largest early traversal allocator |
-| `walker::get_fork_segments_for_segment_with_context` | **312.6 MB** | branch-expansion churn |
-| `walker::get_roundabout_exits_with_context` | **309.8 MB** | roundabout exploration allocates heavily |
-| `navigator::generate_routes_with_context` | **302.6 MB** | search-state growth shows up very early |
-| `walker::move_backwards_to_prev_fork_with_context` | **148.4 MB** | backward exploration is also a real memory cost |
-| `weights::weight_heading` | **93.2 MB** | biggest visible route-logic allocator |
+| `walker::move_forward_to_next_fork_with_context` | **650.0 MB** | biggest early allocator |
+| `walker::get_roundabout_exits_with_context` | **482.6 MB** | roundabout exploration allocates heavily |
+| `walker::classify_fork_segments_for_segment_with_context` | **327.6 MB** | classification now has clear allocation cost too |
+| `walker::get_fork_segments_for_segment_with_context` | **251.8 MB** | branch-expansion churn remains large |
+| `navigator::generate_routes_with_context` | **243.6 MB** | search orchestration still allocates a lot |
+| `walker::move_backwards_to_prev_fork_with_context` | **234.4 MB** | backward exploration is also costly |
 
 ## Final Hotpath timing snapshot at completion
 
-This table is from **Run A**.
+This table is from the final Hotpath summary printed by the profiled run.
 
-Note: Hotpath totals are cumulative across calls, so use them mainly for ranking hotspots.
+Note: Hotpath totals are cumulative across calls, so use them mainly for hotspot ranking.
 
 | Function | Calls | Total | % Total | Why it matters |
 |---|---:|---:|---:|---|
-| `navigator::generate_routes_with_context` | 15 | **14.34 s** | **28.35%** | top-level route search remains the single largest timing bucket |
-| `walker::move_forward_to_next_fork_with_context` | 357,872 | **13.70 s** | **27.09%** | biggest direct traversal hotspot |
-| `walker::get_fork_segments_for_segment_with_context` | 3,835,443 | **6.23 s** | **12.33%** | branch discovery is still core cost |
-| `graph::get_tag_value` | 4,285,459 | **5.28 s** | **10.44%** | tag fetching still adds up heavily inside search |
-| `tile_manager::loaded_tile` | 3,497,502 | **4.77 s** | **9.44%** | low-level tile access is still busy, but no longer the headline story |
-| `walker::get_roundabout_exits_with_context` | 108,406 | **4.09 s** | **8.08%** | roundabout branch handling remains expensive |
-| `tile_manager::get_tag_value_if_loaded` | 1,797,435 | **3.74 s** | **7.40%** | loaded-path tag reads are still significant |
-| `weights::weight_heading` | 141,086 | **2.86 s** | **5.66%** | biggest route-logic timing cost |
-| `weights::weight_no_short_detours` | 141,088 | **2.59 s** | **5.11%** | detour logic is meaningful but secondary to traversal |
-| `route::is_back_on_road_within_distance` | 49,956 | **2.39 s** | **4.72%** | backward safety scanning is still noticeable |
-| `graph::get_point_from_tiles` | 329,586 | **2.33 s** | **4.61%** | visible, but no longer dominant |
-| `walker::move_backwards_to_prev_fork_with_context` | 131,319 | **2.29 s** | **4.52%** | backward traversal is still part of the core search cost |
-| `graph::get_adjacent` | 329,096 | **1.48 s** | **2.93%** | adjacency lookup is now secondary rather than dominant |
-| `weights::weight_rules_highway` | 141,086 | **1.48 s** | **2.93%** | biggest rules-based weight after heading/detour |
-
-Secondary but real costs:
-
-- `graph::get_point_record_from_tiles`: **1.98 s**
-- `graph::get_line_from_tiles`: **1.19 s**
-- `tile_manager::get_adjacent_by_id_if_loaded`: **1.15 s**
-- `weights::weight_rules_surface`: **1.04 s**
-- `weights::weight_prefer_same_road`: **1.03 s**
-- `walker::get_segments_for_point_with_context`: **798.87 ms**
+| `walker::move_forward_to_next_fork_with_context` | 321,473 | **16.56 s** | **30.72%** | biggest direct traversal hotspot |
+| `walker::classify_fork_segments_for_segment_with_context` | 3,486,721 | **9.30 s** | **17.25%** | fork classification is now a first-order cost center |
+| `navigator::generate_routes_with_context` | 13 | **8.23 s** | **15.26%** | top-level search is still large, but no longer the single dominant bucket |
+| `walker::get_roundabout_exits_with_context` | 96,531 | **7.65 s** | **14.19%** | roundabout branch handling is very expensive |
+| `graph::get_tag_value` | 4,695,641 | **6.49 s** | **12.05%** | repeated tag reads still add up materially |
+| `walker::get_fork_segments_for_segment_with_context` | 2,785,483 | **5.69 s** | **10.56%** | branch discovery remains core work |
+| `tile_manager::loaded_tile` | 3,626,024 | **5.26 s** | **9.76%** | low-level tile access is still busy |
+| `tile_manager::get_tag_value_if_loaded` | 2,046,829 | **4.60 s** | **8.53%** | loaded-path tag reads are still significant |
+| `walker::move_backwards_to_prev_fork_with_context` | 117,561 | **4.23 s** | **7.86%** | backward traversal remains too expensive |
+| `weights::weight_no_short_detours` | 127,106 | **3.67 s** | **6.81%** | biggest route-logic timing cost in this run |
+| `route::is_back_on_road_within_distance` | 54,138 | **3.43 s** | **6.36%** | backward safety scanning is still noticeable |
+| `weights::weight_heading` | 127,105 | **3.05 s** | **5.65%** | heading logic remains a real cost |
+| `graph::get_adjacent` | 306,492 | **1.56 s** | **2.90%** | still visible, but clearly no longer the main problem |
 
 ## Final Hotpath allocation snapshot at completion
 
-This table is also from **Run A**.
-
-Total cumulative allocation reported by Hotpath: **4.1 GB**
+Total cumulative allocation reported by Hotpath: **3.6 GB**
 
 | Function | Calls | Total alloc | % Total | Why it matters |
 |---|---:|---:|---:|---|
-| `walker::move_forward_to_next_fork_with_context` | 357,872 | **940.0 MB** | **22.64%** | biggest remaining allocator |
-| `navigator::generate_routes_with_context` | 15 | **763.0 MB** | **18.38%** | overall search orchestration still allocates a lot |
-| `walker::get_roundabout_exits_with_context` | 108,406 | **667.1 MB** | **16.07%** | roundabout exploration is still costly in memory |
-| `walker::get_fork_segments_for_segment_with_context` | 3,835,443 | **598.4 MB** | **14.41%** | branch expansion churn remains large |
-| `walker::move_backwards_to_prev_fork_with_context` | 131,319 | **317.6 MB** | **7.65%** | backward traversal is also a substantial allocator |
-| `weights::weight_heading` | 141,086 | **179.9 MB** | **4.33%** | biggest route-logic allocator |
-| `walker::get_segments_for_point_with_context` | 141,133 | **74.2 MB** | **1.79%** | still non-trivial, but below the main walker functions |
-| `graph::get_adjacent` | 329,096 | **46.5 MB** | **1.12%** | now much smaller than the core traversal buckets |
-| `weights::weight_no_short_detours` | 141,088 | **45.5 MB** | **1.10%** | visible, but not first priority |
-| `route::is_back_on_road_within_distance` | 49,956 | **44.5 MB** | **1.07%** | same backward-scan pattern shows up in allocs |
-| `weights::weight_no_sharp_turns` | 141,089 | **44.1 MB** | **1.06%** | secondary route-logic allocator |
-| `graph::get_point_from_tiles` | 329,586 | **11.2 MB** | **0.27%** | no longer a major allocation problem |
-| `tile_manager::get_rules_for_point_if_loaded` | 3,015 | **526.1 KB** | **0.01%** | effectively out of the main allocation story |
+| `walker::move_forward_to_next_fork_with_context` | 321,473 | **873.9 MB** | **23.49%** | biggest remaining allocator |
+| `walker::get_roundabout_exits_with_context` | 96,531 | **625.9 MB** | **16.82%** | roundabout exploration is still a major memory cost |
+| `walker::classify_fork_segments_for_segment_with_context` | 3,486,721 | **440.3 MB** | **11.83%** | classification now has substantial allocation churn |
+| `walker::get_fork_segments_for_segment_with_context` | 2,785,483 | **324.9 MB** | **8.73%** | branch expansion still allocates heavily |
+| `walker::move_backwards_to_prev_fork_with_context` | 117,561 | **307.8 MB** | **8.27%** | backward traversal is also a substantial allocator |
+| `navigator::generate_routes_with_context` | 13 | **304.9 MB** | **8.19%** | overall search orchestration still allocates a lot |
+| `weights::weight_heading` | 127,105 | **161.2 MB** | **4.33%** | biggest route-logic allocator |
+| `weights::weight_no_short_detours` | 127,106 | **61.1 MB** | **1.64%** | visible route-logic allocation cost |
+| `route::is_back_on_road_within_distance` | 54,138 | **60.2 MB** | **1.62%** | backward-scan pattern shows up in allocs too |
+| `graph::get_adjacent` | 306,492 | **44.2 MB** | **1.19%** | adjacency is now far below the walker cluster |
 
 ## Comparison with the previous saved report in this repo
 
-I compared the new measurements with the `./perf.md` content that existed before this overwrite.
+I compared this run against the `./perf.md` content that existed before this overwrite.
 
 | Metric | Previous saved report | Current run | Change |
 |---|---:|---:|---:|
-| Route generation wall time | **114.22 s** | **46.77 s** | **-59%** |
-| Final Hotpath summary uptime | **115.79 s** | **50.57 s** | **-56%** |
-| Total cumulative allocation | **40.4 GB** | **4.1 GB** | **-90%** |
-| `graph::get_adjacent` total time | **329.08 s** | **1.48 s** | **~ -99.6%** |
-| `graph::get_adjacent` alloc | **4.6 GB** | **46.5 MB** | **~ -99.0%** |
-| `graph::get_point_from_tiles` total time | **40.66 s** | **2.33 s** | **~ -94%** |
-| `graph::get_point_from_tiles` alloc | **53.9 MB** | **11.2 MB** | **~ -79%** |
-| `tile_manager::get_rules_for_point_if_loaded` alloc | **2.2 MB** | **526.1 KB** | **~ -76%** |
+| Route generation wall time | **46.77 s** | **50.00 s** | **+6.9%** |
+| Final Hotpath summary uptime | **50.57 s** | **53.90 s** | **+6.6%** |
+| Total cumulative allocation | **4.1 GB** | **3.6 GB** | **-12.2%** |
+| `navigator::generate_routes_with_context` total time | **14.34 s** | **8.23 s** | **-42.6%** |
+| `walker::move_forward_to_next_fork_with_context` total time | **13.70 s** | **16.56 s** | **+20.9%** |
+| `walker::get_roundabout_exits_with_context` total time | **4.09 s** | **7.65 s** | **+87.0%** |
+| `walker::get_fork_segments_for_segment_with_context` total time | **6.23 s** | **5.69 s** | **-8.7%** |
+| `graph::get_tag_value` total time | **5.28 s** | **6.49 s** | **+22.9%** |
+| `weights::weight_heading` total time | **2.86 s** | **3.05 s** | **+6.6%** |
+| `graph::get_adjacent` total time | **1.48 s** | **1.56 s** | **+5.4%** |
+| `navigator::generate_routes_with_context` alloc | **763.0 MB** | **304.9 MB** | **-60.0%** |
+| `walker::get_fork_segments_for_segment_with_context` alloc | **598.4 MB** | **324.9 MB** | **-45.7%** |
+| `walker::move_forward_to_next_fork_with_context` alloc | **940.0 MB** | **873.9 MB** | **-7.0%** |
+| `weights::weight_heading` alloc | **179.9 MB** | **161.2 MB** | **-10.4%** |
+| `graph::get_adjacent` alloc | **46.5 MB** | **44.2 MB** | **-4.9%** |
 
-That is a very large improvement. The old graph hydration / adjacency story has mostly been removed as the first-order bottleneck.
+Two especially important takeaways from that comparison:
+- **memory/allocation got better again**
+- **wall time got a bit worse because cost shifted into the walker/roundabout/classification path**
 
 ## Main findings
 
-1. **This route is dramatically faster than the previously saved baseline.**
-   - The profiled routing phase dropped from about **114 s** to about **47 s**.
-   - End-to-end profiled completion dropped to about **50 s**.
-   - A second run landed in the same band.
+1. **This run is slightly slower than the previous saved report, even though cumulative allocation improved.**
+   - Route generation moved from about **46.8 s** to **50.0 s**.
+   - Hotpath total uptime moved from about **50.6 s** to **53.9 s**.
+   - But total cumulative allocation improved from **4.1 GB** to **3.6 GB**.
 
-2. **The main bottleneck is now route-search branching, not raw graph hydration.**
+2. **The main bottleneck is still branch-heavy route search, and the classification layer is now clearly part of that bottleneck.**
    - The dominant cluster is now:
-     - `navigator::generate_routes_with_context`
-     - `walker::move_forward_to_next_fork_with_context`
-     - `walker::get_fork_segments_for_segment_with_context`
-     - `walker::get_roundabout_exits_with_context`
-     - `walker::move_backwards_to_prev_fork_with_context`
-   - That points to search breadth and repeated traversal work as the next target.
+     - `move_forward_to_next_fork_with_context`
+     - `classify_fork_segments_for_segment_with_context`
+     - `get_roundabout_exits_with_context`
+     - `get_fork_segments_for_segment_with_context`
+     - `move_backwards_to_prev_fork_with_context`
+   - This is no longer a graph-hydration story.
 
-3. **Adjacency and point/rules loading are no longer the main problem.**
-   - `graph::get_adjacent` is down to **1.48 s** and **46.5 MB** cumulative alloc.
-   - `graph::get_point_from_tiles` is down to **2.33 s** and **11.2 MB** alloc.
-   - `tile_manager::get_rules_for_point_if_loaded` is effectively negligible.
+3. **Top-level search orchestration got cheaper, but the lower-level walker work got worse.**
+   - `navigator::generate_routes_with_context` time dropped by about **43%**.
+   - That win was more than offset by slower forward traversal, slower roundabout handling, and higher tag-read cost inside the traversal loop.
 
-4. **Tag access is still visible inside the hot traversal loop.**
-   - `graph::get_tag_value` and `tile_manager::get_tag_value_if_loaded` still add up to several seconds.
-   - They are probably not the first thing to optimize in isolation, but they are now part of the top traversal stack rather than a separate hydration bottleneck.
+4. **Roundabout and backward-scan behavior look like the sharpest runtime pain points.**
+   - `get_roundabout_exits_with_context`: **7.65 s**, **625.9 MB**
+   - `move_backwards_to_prev_fork_with_context`: **4.23 s**, **307.8 MB**
+   - `is_back_on_road_within_distance`: **3.43 s**, **60.2 MB**
+   - These are too large to treat as secondary details.
 
-5. **Roundabout and backward-scan logic still deserve attention.**
-   - `walker::get_roundabout_exits_with_context`: **4.09 s**, **667.1 MB**
-   - `route::is_back_on_road_within_distance`: **2.39 s**, **44.5 MB**
-   - `walker::move_backwards_to_prev_fork_with_context`: **2.29 s**, **317.6 MB**
-   - These are not the top item, but they are too large to ignore.
+5. **Tag access is still meaningfully expensive, but mainly because it sits inside the hot walker loop.**
+   - `graph::get_tag_value`: **6.49 s**
+   - `tile_manager::get_tag_value_if_loaded`: **4.60 s**
+   - The right question is probably not “make tag lookup faster in isolation”, but “how often can the walker avoid repeating the same lookups?”
 
-6. **Profiling overhead is still real.**
-   - Early in the run, the Hotpath helper thread `hp-functions` itself was consuming a noticeable amount of CPU.
-   - Treat this as a hotspot map first, not a clean production benchmark.
+6. **Adjacency is still under control.**
+   - `graph::get_adjacent` is only **1.56 s** and **44.2 MB** cumulative alloc.
+   - That confirms the earlier adjacency work is still paying off.
 
-7. **RSS still looks surprisingly high relative to live alloc/dealloc diff.**
-   - At the live MCP sample, Hotpath reported **7.2 GB RSS** but only about **95.9 MB** live alloc/dealloc diff.
-   - That mismatch suggests resident memory is being driven by something broader than simple outstanding allocator delta: likely mapped tile data, retained structures, or profiler-related effects.
-   - If memory becomes a primary concern, it deserves a separate memory-focused investigation.
+7. **The live Hotpath thread snapshot still showed very high RSS relative to allocator delta.**
+   - At the live sample, Hotpath reported **8.3 GB RSS** but only about **100.9 MB** live alloc/dealloc diff.
+   - That again suggests resident memory is driven by something broader than simple outstanding heap allocations: likely mapped tile data, retained structures, and profiler overhead.
+
+8. **Comparison quality is reasonably good because the route search breadth signals matched the previous saved report.**
+   - This run also produced `itinerary_count=109`, `routes_count=79`, and **23 GPX files**.
+   - That makes the regression look more like **per-branch work getting slower** than a large change in search breadth.
 
 ## Recommended next perf targets
 
 Ordered by likely payoff:
 
-1. **Reduce branch fan-out in the walker/navigator path.**
-   - Focus on `move_forward_to_next_fork_with_context`, `get_fork_segments_for_segment_with_context`, and `get_roundabout_exits_with_context`.
-   - The current profile says the router is still spending most of its budget expanding and evaluating choices.
+1. **Cut repeated fork classification work in the walker path.**
+   - `classify_fork_segments_for_segment_with_context` is now too large to ignore.
+   - First question: can classification results be reused, cached, or computed from cheaper pre-fetched data?
 
-2. **Instrument branch width and rejection reasons.**
-   - Add counters around fork expansion and roundabout exit generation.
-   - Good questions: how many candidates are created, how many are rejected later, and how often the same structural work repeats.
+2. **Revisit roundabout exit generation.**
+   - `get_roundabout_exits_with_context` is large in both time and allocation.
+   - This looks like one of the cleanest places for a meaningful win.
 
-3. **Review repeated backward safety checks.**
-   - `route::is_back_on_road_within_distance` and `move_backwards_to_prev_fork_with_context` are still a meaningful cost center.
-   - If these checks can be memoized, bounded earlier, or made cheaper per branch, that should help.
+3. **Reduce repeated backward safety scans.**
+   - `move_backwards_to_prev_fork_with_context` and `is_back_on_road_within_distance` are still expensive enough to justify focused work.
+   - If they can be memoized, bounded earlier, or skipped more often, that should help.
 
-4. **Only after traversal pruning, look at the remaining weight functions.**
-   - `weight_heading` and `weight_no_short_detours` are the largest route-logic buckets.
-   - They matter, but the profile says they are still downstream of the bigger traversal/search problem.
+4. **After branch pruning, reduce repeated tag reads inside traversal.**
+   - The tag costs are now real enough to matter.
+   - But they still look downstream of the larger branch/classification problem.
 
-5. **Do not spend the next optimization cycle on `get_point_from_tiles` / `get_rules_for_point_if_loaded`.**
-   - The current profile shows those changes already paid off.
-   - They are no longer where the biggest gains are.
+5. **Do not spend the next optimization cycle on adjacency plumbing.**
+   - The current profile still says adjacency is not the first-order bottleneck anymore.
 
 ## Bottom line
 
-For `riga,latvia -> sigulda,latvia`, the current profiled build now completes reliably in about **50 seconds** end-to-end under Hotpath, with the actual route-generation phase at about **47 seconds**. That is a major improvement over the previously saved **114-second** profile.
+For `riga,latvia -> sigulda,latvia`, the current profiled build completes successfully in about **53.9 seconds** end-to-end under Hotpath, with the actual route-generation phase reported at **50 seconds**.
 
-The old adjacency / point hydration bottleneck has largely been solved.
+Compared with the previously saved report in this repo, this build is **slightly slower in wall time** but **better on cumulative allocation**.
 
-The next meaningful speedup is most likely in **branch-heavy search behavior**: forward traversal, fork discovery, roundabout exit handling, backward checks, and the top-level navigator loop.
+The old adjacency bottleneck is still not the main story.
+
+The next meaningful speedup is most likely in the **walker branch-expansion stack**: forward traversal, fork classification, roundabout exit handling, backward checks, and the repeated tag lookups embedded in that path.

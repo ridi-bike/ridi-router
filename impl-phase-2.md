@@ -1,68 +1,49 @@
-# Implementation Phase 2: Add borrowed `RoutingContext` accessors
+# Phase 2 — Cache decoded tag values and clean up the hottest tag users
 
 ## Goal
-Introduce non-cloning `RoutingContext` accessors for hot-path read access, without changing routing behavior.
+Stop re-decoding the same tag strings in routing hot paths.
 
-## Why this phase exists
-The current hot path clones `MapDataPoint` and adjacency data even on cache hits. Later phases need borrowed access so the walker and look-ahead helper can inspect cached structures cheaply.
+## Why this phase is separate
+The profile says tag lookup is still expensive, but the real waste is repeated decoding inside walker- and weight-heavy code. This phase changes cache behavior and some call-site APIs, so it deserves its own landing.
 
-## In scope
-- Add `with_...` style accessors in `crates/ridi-router-routing/src/routing_context.rs`
-- Preserve current `point()` and `adjacent()` APIs for compatibility
-- Ensure cached and uncached reads expose the same visible data
-- Keep this change narrow and internal-facing
+## Main files
+- `crates/ridi-router-routing/src/routing_context.rs`
+- `crates/ridi-router-routing/src/router/weights.rs`
+- `crates/ridi-router-routing/src/router/route/mod.rs`
+- `crates/ridi-router-routing/src/router/route/score.rs`
 
-## Preferred API direction
-Examples:
-
-```rust
-ctx.with_point(point_ref, |point| {
-    // inspect point by reference
-});
-
-ctx.with_adjacent(point_ref, |adjacent| {
-    // inspect adjacency by reference
-});
-```
-
-Exact names may vary, but the requirements are:
-- no `MapDataPoint` clone when read-only inspection is enough
-- no adjacency vector clone when read-only iteration is enough
-- no behavior change for callers
-
-## Design constraints
-- Keep ownership and borrowing rules simple enough that later walker code can use them ergonomically
-- Do not force a whole-codebase migration yet
-- Keep the old cloning APIs available until the refactor is complete
-- Avoid exposing new public surface area unless it is already consistent with crate boundaries and intended visibility
-
-## Tasks
-1. Add `with_point(...)`
-2. Add `with_adjacent(...)`
-3. Ensure both work for first access and cached access
-4. Add or wire up the Phase 1 equivalence tests for these APIs
-5. Keep existing callers working unchanged
-
-## Out of scope
-- No walker refactor yet
-- No heading look-ahead helper yet
-- No wide call-site conversion across the codebase
-
-## Deliverables
-- Borrowed accessors in `routing_context.rs`
-- Tests showing equivalence with current `point()` and `adjacent()` behavior
-- Minimal internal documentation or comments explaining intended hot-path use
+## Concrete changes
+1. Add a decoded tag-value cache to `RoutingCaches`, keyed by `ElementTagValueRef`.
+2. Implement cached tag lookup in `RoutingContext`.
+3. Avoid re-introducing allocation at the API boundary:
+   - either add a borrowed accessor like `with_tag_value(...)`
+   - or switch routing-only call sites to a cached small-string type
+   - do **not** keep a cache internally and then allocate a fresh `String` on every hot call
+4. Update the hottest users first:
+   - `segment_name`
+   - `segment_hw_ref`
+   - `segment_highway`
+   - `segment_surface`
+   - `segment_smoothness`
+   - `route::is_back_on_road_within_distance(...)`
+5. If the types make it easy, compare road identity by tag refs before falling back to decoded string equality in the backward road scan.
+6. Add tests that prove repeated tag reads hit the cache and keep existing semantics for missing values.
 
 ## Validation
-Recommended checks:
-- `cargo test -p ridi-router-routing routing_context`
 - `cargo test -p ridi-router-routing`
+- Re-run the profiled route:
+  - `RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia`
+- Compare these hotspots first:
+  - `graph::get_tag_value`
+  - `tile_manager::get_tag_value_if_loaded`
+  - `route::is_back_on_road_within_distance`
+  - `weights::weight_heading`
+  - `weights::weight_no_short_detours`
 
 ## Exit criteria
-- New accessors compile cleanly
-- Visible behavior matches existing clone-based APIs
-- Cached access works correctly
-- Later phases can use the new accessors without needing API redesign
+- Repeated tag reads stop allocating fresh strings in hot routing code.
+- Tag lookup hotspots drop meaningfully in both time and alloc.
+- Weight and route tests still pass unchanged.
 
-## Handoff to next phase
-Phase 3 should treat these accessors as the preferred way to inspect point and adjacency data inside the new shared classifier.
+## Open implementation choice
+Before coding, decide whether the project prefers a borrowed accessor or a routing-local string type change. That is the only real design fork in this phase.

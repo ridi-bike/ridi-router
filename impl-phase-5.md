@@ -1,73 +1,46 @@
-# Implementation Phase 5: Add the specialized heading look-ahead helper
+# Phase 5 — Memoize fork classification and roundabout exits by oriented segment
 
 ## Goal
-Introduce a narrow helper for heading scoring that reuses the same non-roundabout next-step classifier as the main walker, but does not pay full walker costs.
+Cut repeated walker recomputation at revisited junctions and during backtracking.
 
-## Why this phase exists
-`weight_heading` currently constructs a fresh `Walker` and runs full traversal logic to answer a much smaller question. This phase extracts only the information heading scoring actually needs.
+## Why this is the last phase
+This likely has the biggest upside, but it is the highest-risk behavior change. It depends on the earlier cleanup phases making the hot path simpler and easier to reason about.
 
-## Required behavior
-Given a candidate fork segment, the helper should follow shared non-roundabout next-step logic until it reaches one of:
-- `Finish`
-- `DeadEnd`
-- the next decision point
+## Main files
+- `crates/ridi-router-routing/src/router/walker.rs`
+- `crates/ridi-router-routing/src/routing_context.rs`
 
-## Suggested return shape
-Exact names may differ, but the intent is:
-
-```rust
-enum HeadingLookAheadResult {
-    DeadEnd,
-    Finish,
-    Decision {
-        approach_segment: Option<Segment>,
-    },
-}
-```
-
-The helper should return only what heading scoring needs.
-
-## Must-use design rule
-This helper must use the same low-level next-step classification as the main walker.
-No duplicated rule logic.
-No alternate interpretation of legal continuations.
-
-## What this helper must not do
-- build a full `Route`
-- mutate a full `Walker`
-- update full loop-detector route history
-- become a general speculative traversal API
-
-## Roundabout scope limit
-This helper is specialized for non-roundabout look-ahead in this pass.
-If roundabout behavior is encountered, preserve current behavior conservatively rather than inventing new semantics here.
-
-## Tasks
-1. Add the new helper and result type
-2. Drive traversal via the shared classifier
-3. Return the approach segment needed by heading scoring
-4. Add the heading regression tests planned in Phase 1
-5. Keep the implementation narrow and internal
-
-## Out of scope
-- No `weight_heading` swap yet
-- No general speculative traversal framework
-- No roundabout optimization
-
-## Deliverables
-- Specialized heading look-ahead helper
-- Regression tests covering finish, dead-end, immediate decision, and corridor approach-segment cases
-- Conservative behavior at roundabout boundaries
+## Concrete changes
+1. Introduce an oriented-segment cache key, effectively `line_ref + end_point`.
+2. Cache these results by oriented segment:
+   - fork classification result
+   - roundabout exits result
+3. Derive the incoming point from the current oriented segment where possible instead of scanning route history for the previous point.
+4. Use the cache from both forward and backward walker paths:
+   - `move_forward_to_next_fork_with_context(...)`
+   - `move_backwards_to_prev_fork_with_context(...)`
+   - roundabout traversal helpers
+5. Keep any fallback path needed for edge cases where the oriented segment does not fully determine the old behavior.
+6. Add targeted tests for:
+   - repeated revisits to the same junction
+   - backtracking over the same fork
+   - rule-restricted forks
+   - roundabouts with multiple exits
 
 ## Validation
-Recommended checks:
-- `cargo test -p ridi-router-routing weights`
 - `cargo test -p ridi-router-routing`
+- Re-run the profiled route:
+  - `RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia`
+- Compare these hotspots first:
+  - `walker::classify_fork_segments_for_segment_with_context`
+  - `walker::get_fork_segments_for_segment_with_context`
+  - `walker::get_roundabout_exits_with_context`
+  - `walker::move_backwards_to_prev_fork_with_context`
 
 ## Exit criteria
-- Helper behavior is covered by regression tests
-- The helper shares the classifier rather than duplicating logic
-- The helper returns only the data `weight_heading` needs
+- Revisited oriented segments reuse cached classification work.
+- Backtracking no longer pays the full classification cost again.
+- All walker and route tests still pass.
 
-## Handoff to next phase
-Phase 6 should switch `weight_heading` to this helper and confirm scoring behavior remains unchanged.
+## Notes
+This phase is where route-behavior regressions are most likely. Land it only after the earlier phases are green and re-profiled.

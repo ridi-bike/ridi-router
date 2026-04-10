@@ -1,91 +1,39 @@
-# Implementation Phase 1: Lock down current behavior with tests
+# Phase 1 — Borrow walker hot-path data instead of cloning it
 
 ## Goal
-Create a safety net before any hot-path refactor. This phase exists to preserve external behavior while later phases change internals.
+Cut the easiest allocation churn in the walker without changing routing behavior.
 
-## Why this is a separate phase
-The performance plan explicitly favors a larger refactor, but only after current semantics are pinned down. This phase reduces the main project risk: semantic drift.
+## Why this phase comes first
+`RoutingContext` already has borrowed point and adjacency accessors, but the hottest walker classification paths still clone point rules, adjacency, and lines on every call. This is the lowest-risk change in the whole plan.
 
-## Rollout note
-These phases are for implementation order and logical separation inside a single PR.
-Do not treat them as separate PR boundaries.
+## Main files
+- `crates/ridi-router-routing/src/routing_context.rs`
+- `crates/ridi-router-routing/src/router/walker.rs`
 
-## In scope
-- Keep all relevant existing tests green
-- Add or strengthen non-roundabout behavior tests in:
-  - `crates/ridi-router-routing/src/router/walker.rs`
-  - `crates/ridi-router-routing/src/router/weights_phase1_tests.rs` or a dedicated heading-look-ahead test file
-  - `crates/ridi-router-routing/src/routing_context.rs`
-- Add test fixtures/helpers only when needed to express behavior clearly
-- Document any current behavior that looks odd but is intentionally preserved
-
-## Out of scope
-- No production refactor yet
-- No roundabout redesign
-- No performance-driven behavior changes
-
-## Required test coverage
-### Keep existing coverage green
-- `walker_same_start_end`
-- `walker_error_on_wrong_choice`
-- `walker_choose_path`
-- `walker_reach_dead_end_walk_back`
-- `handle_roundabout`
-- `follow_one_way`
-- existing `rule_test(...)` coverage in `walker.rs`
-- existing `weights_phase1_tests.rs` coverage that touches routing/weight behavior
-
-### Add or strengthen walker tests
-1. `walker_moves_through_single_choice_corridor_until_finish`
-2. `walker_returns_fork_after_single_choice_corridor`
-3. `walker_returns_dead_end_after_single_choice_corridor`
-4. `walker_follows_explicit_choice_after_corridor`
-5. `walker_wrong_choice_after_corridor_returns_same_available_points`
-6. `walker_filters_reverse_edge_from_incoming_segment`
-7. `walker_respects_one_way_after_corridor`
-8. `walker_respects_only_allowed_rule_after_corridor`
-9. `walker_respects_not_allowed_rule_after_corridor`
-10. `walker_start_point_rule_filtering_matches_current_behavior`
-11. `move_backwards_to_prev_fork_still_returns_expected_choices_after_refactor`
-
-### Add heading / look-ahead regression tests
-12. `heading_look_ahead_returns_finish_when_candidate_reaches_finish_before_next_fork`
-13. `heading_look_ahead_returns_dead_end_when_candidate_dies_before_next_fork`
-14. `heading_look_ahead_returns_immediate_decision_when_candidate_endpoint_is_already_a_fork`
-15. `heading_look_ahead_returns_approach_segment_after_single_choice_corridor`
-16. `weight_heading_matches_current_result_on_non_roundabout_corridor_case`
-17. `weight_heading_matches_current_result_on_immediate_fork_case`
-
-### Add `RoutingContext` equivalence tests
-18. `with_point_exposes_same_visible_data_as_point`
-19. `with_adjacent_exposes_same_visible_data_as_adjacent`
-20. `with_point_and_with_adjacent_work_with_cached_data`
-
-## Implementation notes
-- Test visible outcomes, not internal helper shapes
-- Prefer concise fixtures that make corridor/fork/dead-end behavior obvious
-- Preserve roundabout coverage, but do not expand roundabout behavior in this phase
-- If an existing behavior seems inefficient or surprising, freeze it now and revisit only in a later dedicated change
-
-## Deliverables
-- New or updated tests committed and passing
-- Any small test helpers needed to keep fixtures readable
-- A short note in the single PR description listing preserved behaviors the new tests now protect
+## Concrete changes
+1. Add `RoutingContext::with_line(...)` plus any small internal helper needed to hydrate line cache once and then borrow it.
+2. Refactor `classify_segments_for_point_with_context(...)` to:
+   - borrow `center_point.rules` with `with_point(...)`
+   - borrow adjacency with `with_adjacent(...)`
+   - inspect lines through `with_line(...)`
+   - build `Segment` only after a branch survives all filters
+3. Refactor `classify_fork_segments_for_segment_with_context(...)` the same way.
+4. Keep the current previous-point logic unchanged in this phase. Do not mix in memoization yet.
+5. Add or extend focused tests around `RoutingContext` cache behavior and walker classification parity.
 
 ## Validation
-Recommended checks:
 - `cargo test -p ridi-router-routing`
-- Targeted reruns for walker/weights/routing_context tests while iterating
+- Re-run the profiled route:
+  - `RIDI_FEATURES=perf ./dev.sh route riga,latvia sigulda,latvia`
+- Compare these hotspots first:
+  - `walker::classify_fork_segments_for_segment_with_context`
+  - `walker::get_fork_segments_for_segment_with_context`
+  - `walker::move_forward_to_next_fork_with_context`
 
 ## Exit criteria
-- All existing relevant tests still pass
-- All planned non-roundabout regression tests are added, or any omissions are explicitly justified
-- No production behavior changes are introduced in this phase
+- No route-behavior change in existing tests.
+- Classification and forward-walk allocation totals move down.
+- The diff stays local to context access and walker loops.
 
-## Handoff to next phase
-Once this phase is complete, later refactors can safely change internals as long as these tests remain green.
-
-
-## Phase 1 implementation note
-- The planned `with_point(...)` / `with_adjacent(...)` equivalence tests are intentionally deferred until those APIs exist in the later accessors phase. Phase 1 should not introduce those production APIs early just to satisfy tests.
-- The planned heading look-ahead regression cases can still be locked down in this phase by testing the current `weight_heading` behavior directly. That preserves externally visible outcomes now without implementing the later specialized helper yet.
+## Notes
+This phase should stay boring. If a change needs route-history semantics or new memoization keys, defer it to Phase 5.

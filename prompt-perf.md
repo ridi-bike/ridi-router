@@ -6,8 +6,3 @@ write your findings to ./perf-plan.md, overwrite the file
 lets discuss the possible improvements together 
 
 
-i am investigating performance.
-please run perf profiling with hotpath by running `RIDI_FEATURES ./dev.sh riga,latvia sigulda,latvia`
-write a full review in ./perf.md, overwrite existing contents
-give me a summary of your findings
-you can use the hotpath MCP while the process is running
