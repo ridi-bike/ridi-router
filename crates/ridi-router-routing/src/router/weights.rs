@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use geo::{Bearing, Haversine, Point};
-use smartstring::alias::String as SmartString;
 use tracing::{error, trace};
 
 use crate::{
@@ -100,34 +99,60 @@ fn should_use_exact_distance_fallback(distance_a_approx: f32, distance_b_approx:
     (distance_a_approx - distance_b_approx).abs() <= larger_distance * EXACT_FALLBACK_RATIO
 }
 
-fn segment_name(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
-    let line = ctx.line(segment.get_line());
-    let tags = ctx.tag_set(&line.tags);
-    ctx.with_tag_value(&tags.name, |value| value.cloned())
+fn with_segment_tag_value<R>(
+    ctx: &RoutingContext<'_>,
+    segment: &Segment,
+    tag_value_ref: impl FnOnce(
+        &crate::map_data::graph::ElementTagSet,
+    ) -> &crate::map_data::graph::ElementTagValueRef,
+    f: impl FnOnce(Option<&str>) -> R,
+) -> R {
+    let line_tags = ctx.with_line(segment.get_line(), |line| line.tags.clone());
+    let tags = ctx.tag_set(&line_tags);
+    ctx.with_tag_value(tag_value_ref(&tags), |value| f(value.map(|value| value.as_str())))
 }
 
-fn segment_hw_ref(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
-    let line = ctx.line(segment.get_line());
-    let tags = ctx.tag_set(&line.tags);
-    ctx.with_tag_value(&tags.hw_ref, |value| value.cloned())
+
+fn with_segment_highway<R>(
+    ctx: &RoutingContext<'_>,
+    segment: &Segment,
+    f: impl FnOnce(Option<&str>) -> R,
+) -> R {
+    with_segment_tag_value(ctx, segment, |tags| &tags.highway, f)
 }
 
-fn segment_highway(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
-    let line = ctx.line(segment.get_line());
-    let tags = ctx.tag_set(&line.tags);
-    ctx.with_tag_value(&tags.highway, |value| value.cloned())
+fn with_segment_surface<R>(
+    ctx: &RoutingContext<'_>,
+    segment: &Segment,
+    f: impl FnOnce(Option<&str>) -> R,
+) -> R {
+    with_segment_tag_value(ctx, segment, |tags| &tags.surface, f)
 }
 
-fn segment_surface(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
-    let line = ctx.line(segment.get_line());
-    let tags = ctx.tag_set(&line.tags);
-    ctx.with_tag_value(&tags.surface, |value| value.cloned())
+fn with_segment_smoothness<R>(
+    ctx: &RoutingContext<'_>,
+    segment: &Segment,
+    f: impl FnOnce(Option<&str>) -> R,
+) -> R {
+    with_segment_tag_value(ctx, segment, |tags| &tags.smoothness, f)
 }
 
-fn segment_smoothness(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
-    let line = ctx.line(segment.get_line());
-    let tags = ctx.tag_set(&line.tags);
-    ctx.with_tag_value(&tags.smoothness, |value| value.cloned())
+fn segments_share_tag_value(
+    ctx: &RoutingContext<'_>,
+    left: &Segment,
+    right: &Segment,
+    tag_value_ref: impl Fn(
+        &crate::map_data::graph::ElementTagSet,
+    ) -> &crate::map_data::graph::ElementTagValueRef
+        + Copy,
+ ) -> bool {
+    with_segment_tag_value(ctx, left, tag_value_ref, |left_value| {
+        left_value.is_some_and(|left_value| {
+            with_segment_tag_value(ctx, right, tag_value_ref, |right_value| {
+                right_value.is_some_and(|right_value| right_value == left_value)
+            })
+        })
+    })
 }
 
 fn point_near_residential(
@@ -196,20 +221,25 @@ pub fn weight_prefer_same_road(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
     if !input.rules.basic.prefer_same_road.enabled {
         return WeightCalcResult::ForkChoiceUseWithWeight(0);
     }
-    let current_ref = input
-        .route
-        .get_segment_last()
-        .and_then(|segment| segment_hw_ref(input.ctx, segment));
-    let current_name = input
-        .route
-        .get_segment_last()
-        .and_then(|segment| segment_name(input.ctx, segment));
-    let fork_ref = segment_hw_ref(input.ctx, input.current_fork_segment);
-    let fork_name = segment_name(input.ctx, input.current_fork_segment);
 
-    if (current_ref.is_some() && fork_ref.is_some() && current_ref == fork_ref)
-        || (current_name.is_some() && fork_name.is_some() && current_name == fork_name)
-    {
+    let same_hw_ref = input.route.get_segment_last().is_some_and(|segment| {
+        segments_share_tag_value(
+            input.ctx,
+            segment,
+            input.current_fork_segment,
+            |tags| &tags.hw_ref,
+        )
+    });
+    let same_name = input.route.get_segment_last().is_some_and(|segment| {
+        segments_share_tag_value(
+            input.ctx,
+            segment,
+            input.current_fork_segment,
+            |tags| &tags.name,
+        )
+    });
+
+    if same_hw_ref || same_name {
         return WeightCalcResult::ForkChoiceUseWithWeight(
             input.rules.basic.prefer_same_road.priority,
         );
@@ -262,12 +292,9 @@ pub fn weight_no_short_detours(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
         return WeightCalcResult::ForkChoiceUseWithWeight(0);
     }
 
-    let hw_ref = segment_hw_ref(input.ctx, input.current_fork_segment);
-    let hw_name = segment_name(input.ctx, input.current_fork_segment);
     if input.route.is_back_on_road_within_distance(
         input.ctx,
-        hw_ref,
-        hw_name,
+        input.current_fork_segment,
         input.rules.basic.no_short_detours.min_detour_len_m,
     ) {
         return WeightCalcResult::LastSegmentDoNotUse;
@@ -378,12 +405,11 @@ pub fn weight_progress_speed(input: WeightCalcInput<'_, '_>) -> WeightCalcResult
 
 fn get_rule_for_tag(
     rule: &Option<HashMap<String, RulesTagValueAction>>,
-    segment_tag: Option<SmartString>,
+    segment_tag: Option<&str>,
 ) -> Option<WeightCalcResult> {
-    if let Some(ref rule_tag) = rule {
+    if let Some(rule_tag) = rule {
         if let Some(segment_tag) = segment_tag {
-            let rule_tag = rule_tag.get(segment_tag.as_str());
-            if let Some(rule_tag) = rule_tag {
+            if let Some(rule_tag) = rule_tag.get(segment_tag) {
                 return Some(match rule_tag {
                     RulesTagValueAction::Avoid => WeightCalcResult::ForkChoiceDoNotUse,
                     RulesTagValueAction::Priority { value } => {
@@ -416,23 +442,18 @@ pub fn weight_rules_highway(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
         .get_route_chunk_since_junction_before_last(input.ctx)
         .iter()
         .any(|segment| {
-            if let Some(tag_rule) =
-                get_rule_for_tag(&input.rules.highway, segment_highway(input.ctx, segment))
-            {
-                if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
-                    return true;
-                }
-            }
-            false
+            with_segment_highway(input.ctx, segment, |tag| {
+                get_rule_for_tag(&input.rules.highway, tag)
+                    == Some(WeightCalcResult::ForkChoiceDoNotUse)
+            })
         })
     {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
 
-    if let Some(result) = get_rule_for_tag(
-        &input.rules.highway,
-        segment_highway(input.ctx, input.current_fork_segment),
-    ) {
+    if let Some(result) = with_segment_highway(input.ctx, input.current_fork_segment, |tag| {
+        get_rule_for_tag(&input.rules.highway, tag)
+    }) {
         return result;
     }
 
@@ -452,23 +473,18 @@ pub fn weight_rules_surface(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
         .get_route_chunk_since_junction_before_last(input.ctx)
         .iter()
         .any(|segment| {
-            if let Some(tag_rule) =
-                get_rule_for_tag(&input.rules.surface, segment_surface(input.ctx, segment))
-            {
-                if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
-                    return true;
-                }
-            }
-            false
+            with_segment_surface(input.ctx, segment, |tag| {
+                get_rule_for_tag(&input.rules.surface, tag)
+                    == Some(WeightCalcResult::ForkChoiceDoNotUse)
+            })
         })
     {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
 
-    if let Some(result) = get_rule_for_tag(
-        &input.rules.surface,
-        segment_surface(input.ctx, input.current_fork_segment),
-    ) {
+    if let Some(result) = with_segment_surface(input.ctx, input.current_fork_segment, |tag| {
+        get_rule_for_tag(&input.rules.surface, tag)
+    }) {
         return result;
     }
 
@@ -488,24 +504,18 @@ pub fn weight_rules_smoothness(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
         .get_route_chunk_since_junction_before_last(input.ctx)
         .iter()
         .any(|segment| {
-            if let Some(tag_rule) = get_rule_for_tag(
-                &input.rules.smoothness,
-                segment_smoothness(input.ctx, segment),
-            ) {
-                if tag_rule == WeightCalcResult::ForkChoiceDoNotUse {
-                    return true;
-                }
-            }
-            false
+            with_segment_smoothness(input.ctx, segment, |tag| {
+                get_rule_for_tag(&input.rules.smoothness, tag)
+                    == Some(WeightCalcResult::ForkChoiceDoNotUse)
+            })
         })
     {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
 
-    if let Some(result) = get_rule_for_tag(
-        &input.rules.smoothness,
-        segment_smoothness(input.ctx, input.current_fork_segment),
-    ) {
+    if let Some(result) = with_segment_smoothness(input.ctx, input.current_fork_segment, |tag| {
+        get_rule_for_tag(&input.rules.smoothness, tag)
+    }) {
         return result;
     }
 
@@ -532,10 +542,10 @@ pub fn weight_avoid_nogo_areas(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
 fn was_on_avoid<F>(
     route_chunk: &[Segment],
     tag_rule: &Option<HashMap<String, RulesTagValueAction>>,
-    tag_getter: F,
+    tag_matches: F,
 ) -> bool
 where
-    F: Fn(&Segment) -> Option<SmartString>,
+    F: Fn(&Segment, &[&str]) -> bool,
 {
     if let Some(tag_rules) = tag_rule {
         let avoid_rules = tag_rules
@@ -547,8 +557,7 @@ where
             .collect::<Vec<_>>();
         if route_chunk
             .iter()
-            .filter_map(tag_getter)
-            .any(|tag| avoid_rules.contains(&tag.as_str()))
+            .any(|segment| tag_matches(segment, &avoid_rules))
         {
             return true;
         }
@@ -563,18 +572,24 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput<'_, '_>) -> WeightCalcRes
     let last_chunk = input
         .route
         .get_route_chunk_since_junction_before_last(input.ctx);
-    if was_on_avoid(&last_chunk, &input.rules.highway, |segment| {
-        segment_highway(input.ctx, segment)
+    if was_on_avoid(&last_chunk, &input.rules.highway, |segment, avoid_rules| {
+        with_segment_highway(input.ctx, segment, |tag| {
+            tag.is_some_and(|tag| avoid_rules.contains(&tag))
+        })
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
-    if was_on_avoid(&last_chunk, &input.rules.surface, |segment| {
-        segment_surface(input.ctx, segment)
+    if was_on_avoid(&last_chunk, &input.rules.surface, |segment, avoid_rules| {
+        with_segment_surface(input.ctx, segment, |tag| {
+            tag.is_some_and(|tag| avoid_rules.contains(&tag))
+        })
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
-    if was_on_avoid(&last_chunk, &input.rules.smoothness, |segment| {
-        segment_smoothness(input.ctx, segment)
+    if was_on_avoid(&last_chunk, &input.rules.smoothness, |segment, avoid_rules| {
+        with_segment_smoothness(input.ctx, segment, |tag| {
+            tag.is_some_and(|tag| avoid_rules.contains(&tag))
+        })
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }

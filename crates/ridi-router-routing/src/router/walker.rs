@@ -76,13 +76,6 @@ impl NextStepClass {
         }
     }
 
-    fn from_segments(mut segments: SmallVec<[Segment; 4]>) -> Self {
-        match segments.len() {
-            0 => NextStepClass::None,
-            1 => NextStepClass::One(segments.pop().expect("single segment should exist")),
-            _ => NextStepClass::Many(segments),
-        }
-    }
 
 
     #[cfg(test)]
@@ -180,50 +173,33 @@ impl Walker {
         !has_only_allowed_rule || allowed_by_only_allowed_rule
     }
 
-    fn prewarm_adjacent_lines(ctx: &RoutingContext<'_>, center_point: &MapDataPointRef) {
-        let line_refs = ctx.with_adjacent(center_point, |segments| {
-            segments
-                .iter()
-                .map(|(line_ref, _)| line_ref.clone())
-                .collect::<SmallVec<[MapDataLineRef; 8]>>()
-        });
-
-        for line_ref in &line_refs {
-            ctx.with_line(line_ref, |_| ());
-        }
-    }
-
     fn classify_segments_for_point_with_context(
         &self,
         ctx: &RoutingContext<'_>,
         center_point: &MapDataPointRef,
     ) -> NextStepClass {
-        ctx.with_point(center_point, |_| ());
-        Self::prewarm_adjacent_lines(ctx, center_point);
-        ctx.with_adjacent(center_point, |segments| {
-            ctx.with_point(center_point, |center_point_data| {
-                let rules = center_point_data.rules.as_slice();
-                let mut next_steps = NextStepClass::None;
+        ctx.with_point_and_adjacent_lines(center_point, |center_point_data, segments, lines| {
+            let rules = center_point_data.rules.as_slice();
+            let mut next_steps = NextStepClass::None;
 
-                for (line_ref, point_ref) in segments {
-                    let line_allowed = ctx.with_line(line_ref, |line| {
-                        !(line.is_one_way() && &line.points.1 == center_point)
-                    });
-                    if !line_allowed {
-                        continue;
-                    }
-
-                    if Self::start_point_segment_blocked_by_not_allowed_rule(
-                        rules, segments, line_ref,
-                    ) {
-                        continue;
-                    }
-
-                    next_steps.push(Segment::new(line_ref.clone(), point_ref.clone()));
+            for (line_ref, point_ref) in segments {
+                let line = lines
+                    .get(line_ref)
+                    .expect("adjacent line should exist in cache after hydration");
+                if line.is_one_way() && &line.points.1 == center_point {
+                    continue;
                 }
 
-                next_steps
-            })
+                if Self::start_point_segment_blocked_by_not_allowed_rule(
+                    rules, segments, line_ref,
+                ) {
+                    continue;
+                }
+
+                next_steps.push(Segment::new(line_ref.clone(), point_ref.clone()));
+            }
+
+            next_steps
         })
     }
 
@@ -266,45 +242,29 @@ impl Walker {
         ctx: &RoutingContext<'_>,
         segment: &Segment,
     ) -> u64 {
-        let segment_is_route_tail = self
-            .route_walked
-            .get_segment_last()
-            .map(|last_segment| last_segment == segment)
-            .unwrap_or(false);
-
-        if segment_is_route_tail {
-            self.incoming_point_for_segment_with_context(ctx, segment)
-                .map(|point| ctx.point_id(&point))
-                .unwrap_or_else(|| self.previous_point_id_from_route_history(ctx))
-        } else {
-            self.previous_point_id_from_route_history(ctx)
-        }
+        self.incoming_point_for_segment_with_context(ctx, segment)
+            .map(|point| ctx.point_id(&point))
+            .unwrap_or_else(|| self.previous_point_id_from_route_history(ctx))
     }
 
-    fn classify_fork_segments_cached_with_context(
+    fn with_fork_segments_for_segment_with_context<R>(
         &self,
         ctx: &RoutingContext<'_>,
         segment: &Segment,
-    ) -> SmallVec<[Segment; 4]> {
+        f: impl FnOnce(&[Segment]) -> R,
+    ) -> R {
         let cache_key = Self::oriented_segment_key(segment);
-        if let Some(cached) = self
-            .caches
-            .borrow()
-            .fork_classifications
-            .get(&cache_key)
-            .cloned()
-        {
-            return cached;
+        if let Some(cached) = self.caches.borrow().fork_classifications.get(&cache_key) {
+            return f(cached.as_slice());
         }
 
         let center_point = segment.get_end_point();
         let center_line = segment.get_line();
         let prev_point_id = self.previous_point_id_for_segment_with_context(ctx, segment);
 
-        ctx.with_point(center_point, |_| ());
-        Self::prewarm_adjacent_lines(ctx, center_point);
-        let next_steps = ctx.with_adjacent(center_point, |adjacent| {
-            ctx.with_point(center_point, |center_point_data| {
+        let next_steps = ctx.with_point_and_adjacent_lines(
+            center_point,
+            |center_point_data, adjacent, lines| {
                 let rules = center_point_data.rules.as_slice();
                 let mut next_steps = SmallVec::<[Segment; 4]>::new();
 
@@ -313,10 +273,10 @@ impl Walker {
                         continue;
                     }
 
-                    let line_allowed = ctx.with_line(line_next_ref, |line_next| {
-                        !(line_next.is_one_way() && &line_next.points.1 == center_point)
-                    });
-                    if !line_allowed {
+                    let line_next = lines
+                        .get(line_next_ref)
+                        .expect("adjacent line should exist in cache after hydration");
+                    if line_next.is_one_way() && &line_next.points.1 == center_point {
                         continue;
                     }
 
@@ -324,26 +284,42 @@ impl Walker {
                         continue;
                     }
 
-                    next_steps.push(Segment::new(line_next_ref.clone(), point_next_ref.clone()));
+                    next_steps.push(Segment::new(
+                        line_next_ref.clone(),
+                        point_next_ref.clone(),
+                    ));
                 }
 
                 next_steps
-            })
-        });
+            },
+        );
 
         self.caches
             .borrow_mut()
             .fork_classifications
-            .insert(cache_key, next_steps.clone());
-        next_steps
+            .insert(cache_key.clone(), next_steps);
+
+        let caches = self.caches.borrow();
+        let cached = caches
+            .fork_classifications
+            .get(&cache_key)
+            .expect("fork classification should exist in cache after hydration");
+        f(cached.as_slice())
     }
 
+    #[cfg(test)]
     fn classify_fork_segments_for_segment_with_context(
         &self,
         ctx: &RoutingContext<'_>,
         segment: &Segment,
     ) -> NextStepClass {
-        NextStepClass::from_segments(self.classify_fork_segments_cached_with_context(ctx, segment))
+        self.with_fork_segments_for_segment_with_context(ctx, segment, |segments| {
+            match segments {
+                [] => NextStepClass::None,
+                [segment] => NextStepClass::One(segment.clone()),
+                _ => NextStepClass::Many(segments.iter().cloned().collect()),
+            }
+        })
     }
 
     fn get_fork_segments_for_segment_with_context(
@@ -351,52 +327,61 @@ impl Walker {
         ctx: &RoutingContext<'_>,
         segment: &Segment,
     ) -> SegmentList {
-        SegmentList::from(
-            self.classify_fork_segments_cached_with_context(ctx, segment)
-                .into_vec(),
-        )
+        self.with_fork_segments_for_segment_with_context(ctx, segment, |segments| {
+            SegmentList::from_iter(segments.iter())
+        })
     }
 
     pub fn set_fork_choice_point_ref(&mut self, point: MapDataPointRef) {
         self.next_fork_choice_point = Some(point);
     }
 
-    fn get_roundabout_exits_with_context(
+    fn with_roundabout_exits_for_segment_with_context<R>(
         &self,
         ctx: &RoutingContext<'_>,
         segment: &Segment,
-    ) -> SegmentList {
+        f: impl FnOnce(&[Segment]) -> R,
+    ) -> R {
         if !ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
-            return SegmentList::new();
+            return f(&[]);
         }
 
         let cache_key = Self::oriented_segment_key(segment);
-        if let Some(cached) = self
-            .caches
-            .borrow()
-            .roundabout_exits
-            .get(&cache_key)
-            .cloned()
-        {
-            return SegmentList::from(cached.into_vec());
+        if let Some(cached) = self.caches.borrow().roundabout_exits.get(&cache_key) {
+            return f(cached.as_slice());
         }
 
         let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
         let mut exits = SmallVec::<[Segment; 4]>::new();
         let mut current_segment = segment.clone();
+        let roundabout_entry_exit_point = self
+            .route_walked
+            .get_segment_last()
+            .filter(|last_segment| *last_segment == segment)
+            .and_then(|_| self.route_walked.get_segment_count().checked_sub(2))
+            .and_then(|idx| self.route_walked.get_segment_by_index(idx))
+            .and_then(|entry_segment| {
+                self.incoming_point_for_segment_with_context(ctx, entry_segment)
+            });
 
         loop {
             let mut next_roundabout_segment = None;
 
-            for fork_segment in
-                self.get_fork_segments_for_segment_with_context(ctx, &current_segment)
-            {
-                if ctx.with_line(fork_segment.get_line(), |line| line.is_roundabout()) {
-                    next_roundabout_segment.get_or_insert(fork_segment);
-                } else {
-                    exits.push(fork_segment);
-                }
-            }
+            self.with_fork_segments_for_segment_with_context(
+                ctx,
+                &current_segment,
+                |fork_segments| {
+                    for fork_segment in fork_segments {
+                        if ctx.with_line(fork_segment.get_line(), |line| line.is_roundabout()) {
+                            next_roundabout_segment.get_or_insert_with(|| fork_segment.clone());
+                        } else if roundabout_entry_exit_point.as_ref()
+                            != Some(fork_segment.get_end_point())
+                        {
+                            exits.push(fork_segment.clone());
+                        }
+                    }
+                },
+            );
 
             current_segment = match next_roundabout_segment {
                 None => break,
@@ -415,8 +400,25 @@ impl Walker {
         self.caches
             .borrow_mut()
             .roundabout_exits
-            .insert(cache_key, exits.clone());
-        SegmentList::from(exits.into_vec())
+            .insert(cache_key.clone(), exits);
+
+        let caches = self.caches.borrow();
+        let cached = caches
+            .roundabout_exits
+            .get(&cache_key)
+            .expect("roundabout exits should exist in cache after hydration");
+        f(cached.as_slice())
+    }
+
+    #[cfg(test)]
+    fn get_roundabout_exits_with_context(
+        &self,
+        ctx: &RoutingContext<'_>,
+        segment: &Segment,
+    ) -> SegmentList {
+        self.with_roundabout_exits_for_segment_with_context(ctx, segment, |segments| {
+            SegmentList::from_iter(segments.iter())
+        })
     }
 
     fn move_to_roundabout_exit_with_context(
@@ -450,16 +452,22 @@ impl Walker {
 
             let mut next_roundabout_segment = None;
             let mut found_exit = false;
-            for segment in self.get_fork_segments_for_segment_with_context(ctx, &current_segment) {
-                if segment.get_end_point() == exit_point {
-                    found_exit = true;
-                    break;
-                }
+            self.with_fork_segments_for_segment_with_context(
+                ctx,
+                &current_segment,
+                |segments| {
+                    for segment in segments {
+                        if segment.get_end_point() == exit_point {
+                            found_exit = true;
+                            break;
+                        }
 
-                if ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
-                    next_roundabout_segment.get_or_insert(segment);
-                }
-            }
+                        if ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
+                            next_roundabout_segment.get_or_insert_with(|| segment.clone());
+                        }
+                    }
+                },
+            );
 
             if found_exit {
                 break;
@@ -538,76 +546,105 @@ impl Walker {
                     }
                 }
                 Some(segment) => {
-                    if ctx.line(segment.get_line()).is_roundabout() {
-                        let available_segments =
-                            self.get_roundabout_exits_with_context(ctx, segment);
-                        if available_segments.get_segment_count() > 1
-                            && self.next_fork_choice_point.is_none()
-                        {
-                            return Ok(WalkerMoveResult::Fork(available_segments));
-                        }
+                    if ctx.with_line(segment.get_line(), |line| line.is_roundabout()) {
+                        let next_fork_choice_point = self.next_fork_choice_point.take();
+                        let (next_segment, fork_choices) = self
+                            .with_roundabout_exits_for_segment_with_context(
+                                ctx,
+                                segment,
+                                |available_segments| {
+                                    if available_segments.len() > 1
+                                        && next_fork_choice_point.is_none()
+                                    {
+                                        return Ok((
+                                            None,
+                                            Some(SegmentList::from_iter(
+                                                available_segments.iter(),
+                                            )),
+                                        ));
+                                    }
 
-                        if let Some(next_point) = self.next_fork_choice_point.take() {
-                            if !available_segments.has_segment_with_point(&next_point) {
-                                return Err(WalkerError::WrongForkChoice {
-                                    id: ctx.point_id(&next_point),
-                                    available_fork_ids: available_segments
-                                        .get_all_segment_points()
-                                        .iter()
-                                        .map(|point_ref| ctx.point_id(point_ref))
-                                        .collect(),
-                                });
-                            }
+                                    if let Some(next_point) = next_fork_choice_point {
+                                        if let Some(segment) = available_segments
+                                            .iter()
+                                            .find(|segment| segment.get_end_point() == &next_point)
+                                        {
+                                            return Ok((Some(segment.clone()), None));
+                                        }
 
-                            available_segments
-                                .get_segment_from_point(&next_point)
-                                .cloned()
-                        } else {
-                            available_segments.get_first_segment().cloned()
+                                        return Err(WalkerError::WrongForkChoice {
+                                            id: ctx.point_id(&next_point),
+                                            available_fork_ids: available_segments
+                                                .iter()
+                                                .map(|segment| {
+                                                    ctx.point_id(segment.get_end_point())
+                                                })
+                                                .collect(),
+                                        });
+                                    }
+
+                                    Ok((available_segments.first().cloned(), None))
+                                },
+                            )?;
+                        if let Some(fork_choices) = fork_choices {
+                            return Ok(WalkerMoveResult::Fork(fork_choices));
                         }
+                        next_segment
                     } else {
-                        let available_segments =
-                            self.classify_fork_segments_for_segment_with_context(ctx, segment);
-                        match (available_segments, self.next_fork_choice_point.take()) {
-                            (NextStepClass::None, None) => None,
-                            (NextStepClass::None, Some(next_point)) => {
-                                return Err(WalkerError::WrongForkChoice {
-                                    id: ctx.point_id(&next_point),
-                                    available_fork_ids: Vec::new(),
-                                });
-                            }
-                            (NextStepClass::One(segment), None) => Some(segment),
-                            (NextStepClass::One(segment), Some(next_point)) => {
-                                if segment.get_end_point() != &next_point {
-                                    return Err(WalkerError::WrongForkChoice {
+                        let next_fork_choice_point = self.next_fork_choice_point.take();
+                        let (next_segment, fork_choices) = self
+                            .with_fork_segments_for_segment_with_context(
+                                ctx,
+                                segment,
+                                |available_segments| match (
+                                    available_segments,
+                                    next_fork_choice_point,
+                                ) {
+                                    ([], None) => Ok((None, None)),
+                                    ([], Some(next_point)) => Err(WalkerError::WrongForkChoice {
                                         id: ctx.point_id(&next_point),
-                                        available_fork_ids: vec![
-                                            ctx.point_id(segment.get_end_point())
-                                        ],
-                                    });
-                                }
-                                Some(segment)
-                            }
-                            (NextStepClass::Many(segments), None) => {
-                                return Ok(WalkerMoveResult::Fork(SegmentList::from(
-                                    segments.into_vec(),
-                                )));
-                            }
-                            (NextStepClass::Many(mut segments), Some(next_point)) => {
-                                if let Some(index) = segments
-                                    .iter()
-                                    .position(|segment| segment.get_end_point() == &next_point)
-                                {
-                                    Some(segments.remove(index))
-                                } else {
-                                    return Err(WalkerError::WrongForkChoice {
-                                        id: ctx.point_id(&next_point),
-                                        available_fork_ids: NextStepClass::Many(segments)
-                                            .into_available_point_ids(ctx),
-                                    });
-                                }
-                            }
+                                        available_fork_ids: Vec::new(),
+                                    }),
+                                    ([segment], None) => Ok((Some(segment.clone()), None)),
+                                    ([segment], Some(next_point)) => {
+                                        if segment.get_end_point() != &next_point {
+                                            return Err(WalkerError::WrongForkChoice {
+                                                id: ctx.point_id(&next_point),
+                                                available_fork_ids: vec![ctx.point_id(
+                                                    segment.get_end_point(),
+                                                )],
+                                            });
+                                        }
+                                        Ok((Some(segment.clone()), None))
+                                    }
+                                    (segments, None) => Ok((
+                                        None,
+                                        Some(SegmentList::from_iter(segments.iter())),
+                                    )),
+                                    (segments, Some(next_point)) => {
+                                        if let Some(segment) = segments
+                                            .iter()
+                                            .find(|segment| segment.get_end_point() == &next_point)
+                                        {
+                                            Ok((Some(segment.clone()), None))
+                                        } else {
+                                            Err(WalkerError::WrongForkChoice {
+                                                id: ctx.point_id(&next_point),
+                                                available_fork_ids: segments
+                                                    .iter()
+                                                    .map(|segment| {
+                                                        ctx.point_id(segment.get_end_point())
+                                                    })
+                                                    .collect(),
+                                            })
+                                        }
+                                    }
+                                },
+                            )?;
+                        if let Some(fork_choices) = fork_choices {
+                            return Ok(WalkerMoveResult::Fork(fork_choices));
                         }
+                        next_segment
                     }
                 }
             };
@@ -640,17 +677,21 @@ impl Walker {
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
-                if (ctx.point_is_junction(last_segment.get_end_point())
-                    && self
-                        .get_fork_segments_for_segment_with_context(ctx, last_segment)
-                        .get_segment_count()
-                        > 1)
-                    || (ctx.line(last_segment.get_line()).is_roundabout()
-                        && self
-                            .get_roundabout_exits_with_context(ctx, last_segment)
-                            .get_segment_count()
-                            > 1)
-                {
+                let is_junction_fork = ctx.point_is_junction(last_segment.get_end_point())
+                    && self.with_fork_segments_for_segment_with_context(
+                        ctx,
+                        last_segment,
+                        |segments| segments.len() > 1,
+                    );
+                let is_roundabout_fork = ctx
+                    .with_line(last_segment.get_line(), |line| line.is_roundabout())
+                    && self.with_roundabout_exits_for_segment_with_context(
+                        ctx,
+                        last_segment,
+                        |segments| segments.len() > 1,
+                    );
+
+                if is_junction_fork || is_roundabout_fork {
                     break;
                 }
             } else {

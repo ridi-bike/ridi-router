@@ -31,6 +31,46 @@ fn road_key_from_tag_ref(
     ctx.with_tag_value(tag_value_ref, |value| value.cloned().map(RoadKey))
 }
 
+fn with_segment_tag_value<R>(
+    ctx: &RoutingContext<'_>,
+    segment: &Segment,
+    tag_value_ref: impl FnOnce(
+        &crate::map_data::graph::ElementTagSet,
+    ) -> &crate::map_data::graph::ElementTagValueRef,
+    f: impl FnOnce(Option<&SmartString>) -> R,
+) -> R {
+    let line_tags = ctx.with_line(segment.get_line(), |line| line.tags.clone());
+    let tags = ctx.tag_set(&line_tags);
+    ctx.with_tag_value(tag_value_ref(&tags), f)
+}
+
+fn segments_share_tag_value(
+    ctx: &RoutingContext<'_>,
+    left: &Segment,
+    right: &Segment,
+    tag_value_ref: impl Fn(
+        &crate::map_data::graph::ElementTagSet,
+    ) -> &crate::map_data::graph::ElementTagValueRef
+    + Copy,
+ ) -> bool {
+    with_segment_tag_value(ctx, left, tag_value_ref, |left_value| {
+        left_value.is_some_and(|left_value| {
+            with_segment_tag_value(ctx, right, tag_value_ref, |right_value| {
+                right_value.is_some_and(|right_value| left_value == right_value)
+            })
+        })
+    })
+}
+
+fn segments_share_road_identity(
+    ctx: &RoutingContext<'_>,
+    left: &Segment,
+    right: &Segment,
+) -> bool {
+    segments_share_tag_value(ctx, left, right, |tags| &tags.hw_ref)
+        || segments_share_tag_value(ctx, left, right, |tags| &tags.name)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CellId {
     lat_bucket: i32,
@@ -492,26 +532,28 @@ impl Route {
     pub fn is_back_on_road_within_distance(
         &self,
         ctx: &RoutingContext<'_>,
-        hw_ref: Option<SmartString>,
-        hw_name: Option<SmartString>,
+        current_segment: &Segment,
         len_check_m: f32,
     ) -> bool {
         let mut len_tot_m = 0.;
 
-        if hw_ref.is_none() && hw_name.is_none() {
+        let has_road_identity = with_segment_tag_value(
+            ctx,
+            current_segment,
+            |tags| &tags.hw_ref,
+            |hw_ref| hw_ref.is_some(),
+        ) || with_segment_tag_value(
+            ctx,
+            current_segment,
+            |tags| &tags.name,
+            |name| name.is_some(),
+        );
+        if !has_road_identity {
             return false;
         }
 
         if let Some(last_route_segment) = self.get_segment_last() {
-            let last_line = ctx.line(last_route_segment.get_line());
-            let last_tags = ctx.tag_set(&last_line.tags);
-            let last_matches = ctx.with_tag_value(&last_tags.hw_ref, |last_hw_ref| {
-                (last_hw_ref.is_some() && last_hw_ref == hw_ref.as_ref())
-                    || ctx.with_tag_value(&last_tags.name, |last_name| {
-                        last_name.is_some() && last_name == hw_name.as_ref()
-                    })
-            });
-            if last_matches {
+            if segments_share_road_identity(ctx, last_route_segment, current_segment) {
                 return false;
             }
         }
@@ -523,15 +565,7 @@ impl Route {
                 let current_point = ctx.point(segment.get_end_point());
                 len_tot_m += prev_point.distance_between(&current_point);
 
-                let line = ctx.line(segment.get_line());
-                let tags = ctx.tag_set(&line.tags);
-                let segment_matches = ctx.with_tag_value(&tags.hw_ref, |segment_hw_ref| {
-                    (segment_hw_ref.is_some() && segment_hw_ref == hw_ref.as_ref())
-                        || ctx.with_tag_value(&tags.name, |segment_name| {
-                            segment_name.is_some() && segment_name == hw_name.as_ref()
-                        })
-                });
-                if segment_matches {
+                if segments_share_road_identity(ctx, segment, current_segment) {
                     return len_check_m >= len_tot_m;
                 }
             }

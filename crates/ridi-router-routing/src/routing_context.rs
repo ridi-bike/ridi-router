@@ -167,6 +167,7 @@ impl<'a> RoutingContext<'a> {
         tag_set
     }
 
+    #[cfg(test)]
     pub(crate) fn tag_value(&self, tag_value_ref: &ElementTagValueRef) -> Option<SmartString> {
         self.with_tag_value(tag_value_ref, |value| value.cloned())
     }
@@ -177,11 +178,16 @@ impl<'a> RoutingContext<'a> {
         f: impl FnOnce(Option<&SmartString>) -> R,
     ) -> R {
         self.ensure_tag_value_cached(tag_value_ref);
-        let caches = self.caches.borrow();
-        let value = caches
+        let value = self
+            .caches
+            .borrow()
             .tag_values
             .get(tag_value_ref)
+            .cloned()
             .expect("tag value should exist in cache after hydration");
+
+        // Do not hold the RefCell borrow across the callback. Weight callbacks can
+        // re-enter RoutingContext and touch other caches while comparing tag values.
         f(value.as_ref())
     }
 
@@ -197,6 +203,7 @@ impl<'a> RoutingContext<'a> {
             .insert(tag_value_ref.clone(), tag_value);
     }
 
+    #[cfg(test)]
     pub(crate) fn adjacent(
         &self,
         point_ref: &MapDataPointRef,
@@ -204,6 +211,7 @@ impl<'a> RoutingContext<'a> {
         self.with_adjacent(point_ref, |adjacent| adjacent.to_vec())
     }
 
+    #[cfg(test)]
     // Borrow cached adjacency for hot-path iteration without cloning the backing vector.
     pub(crate) fn with_adjacent<R>(
         &self,
@@ -217,6 +225,64 @@ impl<'a> RoutingContext<'a> {
             .get(point_ref)
             .expect("adjacent should exist in cache after hydration");
         f(adjacent.as_slice())
+    }
+
+    fn ensure_adjacent_lines_cached(&self, point_ref: &MapDataPointRef) {
+        self.ensure_adjacent_cached(point_ref);
+
+        let missing_line_refs = {
+            let caches = self.caches.borrow();
+            let adjacent = caches
+                .adjacent
+                .get(point_ref)
+                .expect("adjacent should exist in cache after hydration");
+
+            adjacent
+                .iter()
+                .filter_map(|(line_ref, _)| {
+                    (!caches.lines.contains_key(line_ref)).then(|| line_ref.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+
+        if missing_line_refs.is_empty() {
+            return;
+        }
+
+        let mut caches = self.caches.borrow_mut();
+        for line_ref in missing_line_refs {
+            caches.lines.entry(line_ref.clone()).or_insert_with(|| {
+                self.graph.get_line_from_tiles(
+                    line_ref.get_tile_id(),
+                    line_ref.get_element_id() as usize,
+                )
+            });
+        }
+    }
+
+    pub(crate) fn with_point_and_adjacent_lines<R>(
+        &self,
+        point_ref: &MapDataPointRef,
+        f: impl FnOnce(
+            &MapDataPoint,
+            &[(MapDataLineRef, MapDataPointRef)],
+            &HashMap<MapDataLineRef, MapDataLine>,
+        ) -> R,
+    ) -> R {
+        self.ensure_point_cached(point_ref);
+        self.ensure_adjacent_lines_cached(point_ref);
+
+        let caches = self.caches.borrow();
+        let point = caches
+            .points
+            .get(point_ref)
+            .expect("point should exist in cache after hydration");
+        let adjacent = caches
+            .adjacent
+            .get(point_ref)
+            .expect("adjacent should exist in cache after hydration");
+
+        f(point, adjacent.as_slice(), &caches.lines)
     }
 
     fn ensure_adjacent_cached(&self, point_ref: &MapDataPointRef) {
@@ -430,6 +496,28 @@ mod tests {
         fs::remove_dir_all(fixture.dir).unwrap();
     }
 
+    #[test]
+    fn with_tag_value_allows_reentrant_context_access() {
+        let fixture =
+            create_linear_single_tile_fixture("routing-context-with-tag-value-reentrant");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let line_ref = MapDataLineRef::new(fixture.tile_id, 0);
+        let point_ref = MapDataPointRef::new(fixture.tile_id, fixture.start_osm_id);
+        let line = ctx.line(&line_ref);
+        let tags = ctx.tag_set(&line.tags);
+
+        let point_id = ctx.with_tag_value(&tags.highway, |value| {
+            assert_eq!(value.map(|value| value.as_str()), Some("secondary"));
+            ctx.point(&point_ref).id
+        });
+
+        assert_eq!(point_id, fixture.start_osm_id);
+        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 1, 0));
+        assert_eq!(ctx.tag_value_cache_size(), 1);
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
     #[test]
     fn caches_adjacency_within_one_context() {
         let fixture = create_missing_neighbor_fixture("routing-context-adjacent-cache");

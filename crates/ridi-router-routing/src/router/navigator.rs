@@ -146,7 +146,8 @@ pub struct Navigator {
     itinerary: Itinerary,
     rules: RouterRules,
     walker: Walker,
-    weight_calcs: Vec<WeightCalc>,
+    route_once_weight_calcs: Vec<WeightCalc>,
+    per_fork_weight_calcs: Vec<WeightCalc>,
     discarded_fork_choices: DiscardedForkChoices,
 }
 
@@ -158,11 +159,21 @@ impl Navigator {
         weight_calcs: Vec<WeightCalc>,
         reset_at_new_next: bool,
     ) -> Self {
+        let mut route_once_weight_calcs = Vec::new();
+        let mut per_fork_weight_calcs = Vec::new();
+        for weight_calc in weight_calcs {
+            match weight_calc.stage {
+                WeightCalcStage::RouteOnce => route_once_weight_calcs.push(weight_calc),
+                WeightCalcStage::PerForkChoice => per_fork_weight_calcs.push(weight_calc),
+            }
+        }
+
         Self {
             walker: Walker::new(itinerary.start.clone()),
             itinerary,
             rules,
-            weight_calcs,
+            route_once_weight_calcs,
+            per_fork_weight_calcs,
             discarded_fork_choices: DiscardedForkChoices::new(reset_at_new_next),
         }
     }
@@ -197,20 +208,10 @@ impl Navigator {
                     self.discarded_fork_choices.set_new_next();
                 }
 
-                let route_once_weight_calcs = self
-                    .weight_calcs
-                    .iter()
-                    .filter(|weight_calc| weight_calc.stage == WeightCalcStage::RouteOnce)
-                    .collect::<Vec<_>>();
-                let per_fork_weight_calcs = self
-                    .weight_calcs
-                    .iter()
-                    .filter(|weight_calc| weight_calc.stage == WeightCalcStage::PerForkChoice)
-                    .collect::<Vec<_>>();
 
                 let mut fork_weights = ForkWeights::new();
                 if let Some(representative_fork_segment) = fork_choices.get_first_segment() {
-                    for weight_calc in route_once_weight_calcs {
+                    for weight_calc in &self.route_once_weight_calcs {
                         let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
                             route: self.walker.get_route(),
                             itinerary: &self.itinerary,
@@ -237,7 +238,7 @@ impl Navigator {
                         let mut total_weight = 0u32;
                         let mut skip_choice = false;
 
-                        for weight_calc in &per_fork_weight_calcs {
+                        for weight_calc in &self.per_fork_weight_calcs {
                             let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
                                 route: self.walker.get_route(),
                                 itinerary: &self.itinerary,
