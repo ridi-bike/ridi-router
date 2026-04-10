@@ -24,6 +24,13 @@ const LOOP_CELL_SIZE_DEGREES: f32 = 0.0003;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RoadKey(SmartString);
 
+fn road_key_from_tag_ref(
+    ctx: &RoutingContext<'_>,
+    tag_value_ref: &crate::map_data::graph::ElementTagValueRef,
+) -> Option<RoadKey> {
+    ctx.with_tag_value(tag_value_ref, |value| value.cloned().map(RoadKey))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CellId {
     lat_bucket: i32,
@@ -58,12 +65,8 @@ impl LoopMeta {
         let (lat, lon) = ctx.point_coords(&end_point);
         let line = ctx.line(segment.get_line());
         let line_tags = ctx.tag_set(&line.tags);
-        let hw_ref = ctx
-            .tag_value(&line_tags.hw_ref)
-            .map(|value| RoadKey(value.into()));
-        let name = ctx
-            .tag_value(&line_tags.name)
-            .map(|value| RoadKey(value.into()));
+        let hw_ref = road_key_from_tag_ref(ctx, &line_tags.hw_ref);
+        let name = road_key_from_tag_ref(ctx, &line_tags.name);
         let cell_id = CellId::from_lat_lon(lat, lon);
         let is_junction = ctx.point_is_junction(&end_point);
 
@@ -489,8 +492,8 @@ impl Route {
     pub fn is_back_on_road_within_distance(
         &self,
         ctx: &RoutingContext<'_>,
-        hw_ref: Option<String>,
-        hw_name: Option<String>,
+        hw_ref: Option<SmartString>,
+        hw_name: Option<SmartString>,
         len_check_m: f32,
     ) -> bool {
         let mut len_tot_m = 0.;
@@ -502,11 +505,13 @@ impl Route {
         if let Some(last_route_segment) = self.get_segment_last() {
             let last_line = ctx.line(last_route_segment.get_line());
             let last_tags = ctx.tag_set(&last_line.tags);
-            let last_hw_ref = ctx.tag_value(&last_tags.hw_ref);
-            let last_name = ctx.tag_value(&last_tags.name);
-            if (last_hw_ref.is_some() && last_hw_ref == hw_ref)
-                || (last_name.is_some() && last_name == hw_name)
-            {
+            let last_matches = ctx.with_tag_value(&last_tags.hw_ref, |last_hw_ref| {
+                (last_hw_ref.is_some() && last_hw_ref == hw_ref.as_ref())
+                    || ctx.with_tag_value(&last_tags.name, |last_name| {
+                        last_name.is_some() && last_name == hw_name.as_ref()
+                    })
+            });
+            if last_matches {
                 return false;
             }
         }
@@ -520,11 +525,13 @@ impl Route {
 
                 let line = ctx.line(segment.get_line());
                 let tags = ctx.tag_set(&line.tags);
-                let segment_hw_ref = ctx.tag_value(&tags.hw_ref);
-                let segment_name = ctx.tag_value(&tags.name);
-                if (segment_hw_ref.is_some() && segment_hw_ref == hw_ref)
-                    || (segment_name.is_some() && segment_name == hw_name)
-                {
+                let segment_matches = ctx.with_tag_value(&tags.hw_ref, |segment_hw_ref| {
+                    (segment_hw_ref.is_some() && segment_hw_ref == hw_ref.as_ref())
+                        || ctx.with_tag_value(&tags.name, |segment_name| {
+                            segment_name.is_some() && segment_name == hw_name.as_ref()
+                        })
+                });
+                if segment_matches {
                     return len_check_m >= len_tot_m;
                 }
             }
@@ -555,7 +562,11 @@ impl Route {
 
     #[hotpath::measure]
     pub fn calc_stats(&self, ctx: &RoutingContext<'_>, rules: &RouterRules) -> RouteStats {
-        fn update_map(tag_val: &Option<String>, line_len: f64, map: &mut HashMap<String, f64>) {
+        fn update_map(
+            tag_val: Option<&SmartString>,
+            line_len: f64,
+            map: &mut HashMap<String, f64>,
+        ) {
             if let Some(tag_val) = tag_val {
                 if let Some(len) = map.get(tag_val.as_str()) {
                     map.insert(tag_val.to_string(), len + line_len);
@@ -603,12 +614,15 @@ impl Route {
                 junction_count += 1;
             }
             let line_tags = ctx.tag_set(&line.tags);
-            let highway_val = ctx.tag_value(&line_tags.highway);
-            update_map(&highway_val, line_len, &mut highway);
-            let surface_val = ctx.tag_value(&line_tags.surface);
-            update_map(&surface_val, line_len, &mut surface);
-            let smoothness_val = ctx.tag_value(&line_tags.smoothness);
-            update_map(&smoothness_val, line_len, &mut smoothness);
+            ctx.with_tag_value(&line_tags.highway, |highway_val| {
+                update_map(highway_val, line_len, &mut highway)
+            });
+            ctx.with_tag_value(&line_tags.surface, |surface_val| {
+                update_map(surface_val, line_len, &mut surface)
+            });
+            ctx.with_tag_value(&line_tags.smoothness, |smoothness_val| {
+                update_map(smoothness_val, line_len, &mut smoothness)
+            });
         }
 
         RouteStats {

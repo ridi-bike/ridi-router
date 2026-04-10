@@ -46,4 +46,4 @@ The profile says tag lookup is still expensive, but the real waste is repeated d
 - Weight and route tests still pass unchanged.
 
 ## Open implementation choice
-Before coding, decide whether the project prefers a borrowed accessor or a routing-local string type change. That is the only real design fork in this phase.
+Borrowed accessor chosen: add `RoutingContext::with_tag_value(...)` and keep cached values as `smartstring::alias::String` so hot routing code can reuse decoded tag strings without allocating fresh `String`s on every read.

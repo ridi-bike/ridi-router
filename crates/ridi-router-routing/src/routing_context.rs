@@ -1,5 +1,7 @@
 use std::{cell::RefCell, collections::HashMap};
 
+use smartstring::alias::String as SmartString;
+
 use crate::{
     map_data::{
         graph::{
@@ -19,6 +21,7 @@ struct RoutingCaches {
     points: HashMap<MapDataPointRef, MapDataPoint>,
     lines: HashMap<MapDataLineRef, MapDataLine>,
     tag_sets: HashMap<ElementTagSetRef, ElementTagSet>,
+    tag_values: HashMap<ElementTagValueRef, Option<SmartString>>,
     adjacent: HashMap<MapDataPointRef, Vec<(MapDataLineRef, MapDataPointRef)>>,
 }
 
@@ -164,8 +167,34 @@ impl<'a> RoutingContext<'a> {
         tag_set
     }
 
-    pub(crate) fn tag_value(&self, tag_value_ref: &ElementTagValueRef) -> Option<String> {
-        self.graph.get_tag_value(tag_value_ref)
+    pub(crate) fn tag_value(&self, tag_value_ref: &ElementTagValueRef) -> Option<SmartString> {
+        self.with_tag_value(tag_value_ref, |value| value.cloned())
+    }
+
+    pub(crate) fn with_tag_value<R>(
+        &self,
+        tag_value_ref: &ElementTagValueRef,
+        f: impl FnOnce(Option<&SmartString>) -> R,
+    ) -> R {
+        self.ensure_tag_value_cached(tag_value_ref);
+        let caches = self.caches.borrow();
+        let value = caches
+            .tag_values
+            .get(tag_value_ref)
+            .expect("tag value should exist in cache after hydration");
+        f(value.as_ref())
+    }
+
+    fn ensure_tag_value_cached(&self, tag_value_ref: &ElementTagValueRef) {
+        if self.caches.borrow().tag_values.contains_key(tag_value_ref) {
+            return;
+        }
+
+        let tag_value = self.graph.get_tag_value(tag_value_ref).map(Into::into);
+        self.caches
+            .borrow_mut()
+            .tag_values
+            .insert(tag_value_ref.clone(), tag_value);
     }
 
     pub(crate) fn adjacent(
@@ -230,6 +259,11 @@ impl<'a> RoutingContext<'a> {
             caches.adjacent.len(),
         )
     }
+
+    #[cfg(test)]
+    fn tag_value_cache_size(&self) -> usize {
+        self.caches.borrow().tag_values.len()
+    }
 }
 
 #[cfg(test)]
@@ -238,7 +272,7 @@ mod tests {
 
     use crate::{
         map_data::{
-            graph::{MapDataGraph, MapDataLineRef, MapDataPointRef},
+            graph::{ElementTagValueRef, MapDataGraph, MapDataLineRef, MapDataPointRef},
             line::{LineDirection, MapDataLine},
             point::MapDataPoint,
         },
@@ -347,6 +381,51 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(ctx.cache_sizes(), (0, 0, 1, 1, 0));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn caches_tag_values_within_one_context_and_preserves_missing_values() {
+        let fixture = create_linear_single_tile_fixture("routing-context-tag-value-cache");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let line_ref = MapDataLineRef::new(fixture.tile_id, 0);
+        let line = ctx.line(&line_ref);
+        let tags = ctx.tag_set(&line.tags);
+        let missing = ElementTagValueRef::none(fixture.tile_id);
+
+        assert_eq!(ctx.tag_value_cache_size(), 0);
+
+        let first = ctx.tag_value(&tags.highway);
+        let second = ctx.tag_value(&tags.highway);
+        assert_eq!(first, second);
+        assert_eq!(ctx.tag_value_cache_size(), 1);
+
+        let first_missing = ctx.tag_value(&missing);
+        let second_missing = ctx.tag_value(&missing);
+        assert_eq!(first_missing, None);
+        assert_eq!(second_missing, None);
+        assert_eq!(ctx.tag_value_cache_size(), 2);
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn with_tag_value_exposes_same_visible_data_as_tag_value() {
+        let fixture =
+            create_linear_single_tile_fixture("routing-context-with-tag-value-equivalence");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let line_ref = MapDataLineRef::new(fixture.tile_id, 0);
+        let line = ctx.line(&line_ref);
+        let tags = ctx.tag_set(&line.tags);
+
+        let owned = ctx.tag_value(&tags.highway);
+        let borrowed = ctx.with_tag_value(&tags.highway, |value| value.cloned());
+
+        assert_eq!(borrowed, owned);
+        assert_eq!(ctx.tag_value_cache_size(), 1);
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }

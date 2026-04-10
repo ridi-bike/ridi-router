@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use geo::{Bearing, Haversine, Point};
+use smartstring::alias::String as SmartString;
 use tracing::{error, trace};
 
 use crate::{
@@ -99,34 +100,34 @@ fn should_use_exact_distance_fallback(distance_a_approx: f32, distance_b_approx:
     (distance_a_approx - distance_b_approx).abs() <= larger_distance * EXACT_FALLBACK_RATIO
 }
 
-fn segment_name(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<String> {
+fn segment_name(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
     let line = ctx.line(segment.get_line());
     let tags = ctx.tag_set(&line.tags);
-    ctx.tag_value(&tags.name)
+    ctx.with_tag_value(&tags.name, |value| value.cloned())
 }
 
-fn segment_hw_ref(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<String> {
+fn segment_hw_ref(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
     let line = ctx.line(segment.get_line());
     let tags = ctx.tag_set(&line.tags);
-    ctx.tag_value(&tags.hw_ref)
+    ctx.with_tag_value(&tags.hw_ref, |value| value.cloned())
 }
 
-fn segment_highway(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<String> {
+fn segment_highway(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
     let line = ctx.line(segment.get_line());
     let tags = ctx.tag_set(&line.tags);
-    ctx.tag_value(&tags.highway)
+    ctx.with_tag_value(&tags.highway, |value| value.cloned())
 }
 
-fn segment_surface(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<String> {
+fn segment_surface(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
     let line = ctx.line(segment.get_line());
     let tags = ctx.tag_set(&line.tags);
-    ctx.tag_value(&tags.surface)
+    ctx.with_tag_value(&tags.surface, |value| value.cloned())
 }
 
-fn segment_smoothness(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<String> {
+fn segment_smoothness(ctx: &RoutingContext<'_>, segment: &Segment) -> Option<SmartString> {
     let line = ctx.line(segment.get_line());
     let tags = ctx.tag_set(&line.tags);
-    ctx.tag_value(&tags.smoothness)
+    ctx.with_tag_value(&tags.smoothness, |value| value.cloned())
 }
 
 fn point_near_residential(
@@ -377,11 +378,11 @@ pub fn weight_progress_speed(input: WeightCalcInput<'_, '_>) -> WeightCalcResult
 
 fn get_rule_for_tag(
     rule: &Option<HashMap<String, RulesTagValueAction>>,
-    segment_tag: Option<String>,
+    segment_tag: Option<SmartString>,
 ) -> Option<WeightCalcResult> {
     if let Some(ref rule_tag) = rule {
         if let Some(segment_tag) = segment_tag {
-            let rule_tag = rule_tag.get(&segment_tag);
+            let rule_tag = rule_tag.get(segment_tag.as_str());
             if let Some(rule_tag) = rule_tag {
                 return Some(match rule_tag {
                     RulesTagValueAction::Avoid => WeightCalcResult::ForkChoiceDoNotUse,
@@ -529,25 +530,25 @@ pub fn weight_avoid_nogo_areas(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
 }
 
 fn was_on_avoid<F>(
-    route_chunk: &Vec<Segment>,
+    route_chunk: &[Segment],
     tag_rule: &Option<HashMap<String, RulesTagValueAction>>,
     tag_getter: F,
 ) -> bool
 where
-    F: Fn(&Segment) -> Option<String>,
+    F: Fn(&Segment) -> Option<SmartString>,
 {
     if let Some(tag_rules) = tag_rule {
         let avoid_rules = tag_rules
             .iter()
             .filter_map(|(key, rule)| match rule {
-                RulesTagValueAction::Avoid => Some(key),
+                RulesTagValueAction::Avoid => Some(key.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>();
         if route_chunk
             .iter()
             .filter_map(tag_getter)
-            .any(|tag| avoid_rules.contains(&&tag))
+            .any(|tag| avoid_rules.contains(&tag.as_str()))
         {
             return true;
         }

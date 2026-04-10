@@ -181,7 +181,7 @@ run_one() {
     echo "[run ] phase $phase_num ($phase_file)"
 
     local -a cmd
-    cmd=("$PI_BIN" -p --no-session --tools read,bash,edit,write,lsp --thinking "$THINKING")
+    cmd=("$PI_BIN" -p --no-session --thinking "$THINKING")
 
     if [[ -n "$MODEL" ]]; then
         cmd+=(--model "$MODEL")

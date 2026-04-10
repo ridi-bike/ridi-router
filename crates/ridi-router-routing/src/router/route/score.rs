@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use smartstring::alias::String as SmartString;
+
 use crate::{
     router::rules::{RouterRules, RulesTagValueAction},
     RoutingContext,
@@ -15,10 +17,10 @@ fn scale_priority(priority: u8) -> f64 {
 
 fn get_rule_adjustment(
     bearing_diff: f64,
-    tag: &Option<String>,
+    tag: Option<&SmartString>,
     rule: &Option<HashMap<String, RulesTagValueAction>>,
 ) -> f64 {
-    if let Some(ref curr_tag) = tag {
+    if let Some(curr_tag) = tag {
         if let Some(ref tag_rules) = rule {
             if let Some(curr_tag_rule) = tag_rules.get(curr_tag.as_str()) {
                 if let RulesTagValueAction::Priority {
@@ -54,21 +56,15 @@ impl Score {
                 } else {
                     let line_tags = ctx.tag_set(&line.tags);
                     let mut adjusted = bearing_diff;
-                    adjusted += get_rule_adjustment(
-                        bearing_diff,
-                        &ctx.tag_value(&line_tags.highway),
-                        &rules.highway,
-                    );
-                    adjusted += get_rule_adjustment(
-                        bearing_diff,
-                        &ctx.tag_value(&line_tags.surface),
-                        &rules.surface,
-                    );
-                    adjusted += get_rule_adjustment(
-                        bearing_diff,
-                        &ctx.tag_value(&line_tags.smoothness),
-                        &rules.smoothness,
-                    );
+                    adjusted += ctx.with_tag_value(&line_tags.highway, |highway| {
+                        get_rule_adjustment(bearing_diff, highway, &rules.highway)
+                    });
+                    adjusted += ctx.with_tag_value(&line_tags.surface, |surface| {
+                        get_rule_adjustment(bearing_diff, surface, &rules.surface)
+                    });
+                    adjusted += ctx.with_tag_value(&line_tags.smoothness, |smoothness| {
+                        get_rule_adjustment(bearing_diff, smoothness, &rules.smoothness)
+                    });
                     adjusted
                 }
             }
@@ -76,14 +72,11 @@ impl Score {
             let line_tags = ctx.tag_set(&line.tags);
             prev_bearing = if end_point.is_junction() {
                 None
-            } else if let Some(hw) = ctx.tag_value(&line_tags.highway) {
-                if hw == "residential" || end_point.residential_in_proximity {
-                    None
-                } else {
-                    Some(curr_bearing)
-                }
             } else {
-                Some(curr_bearing)
+                ctx.with_tag_value(&line_tags.highway, |highway| match highway {
+                    Some(hw) if hw == "residential" || end_point.residential_in_proximity => None,
+                    _ => Some(curr_bearing),
+                })
             };
         }
 
