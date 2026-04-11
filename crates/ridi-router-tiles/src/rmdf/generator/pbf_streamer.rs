@@ -17,7 +17,7 @@
 
 use anyhow::{Context, Result};
 use rayon::prelude::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -74,10 +74,10 @@ pub struct PbfStreamer<'a> {
 }
 
 impl<'a> PbfStreamer<'a> {
-    pub fn new(pbf_data: &'a InMemoryPbf, output_dir: &PathBuf, tile_size_degrees: f32) -> Self {
+    pub fn new(pbf_data: &'a InMemoryPbf, output_dir: &Path, tile_size_degrees: f32) -> Self {
         Self {
             pbf_data,
-            output_dir: output_dir.clone(),
+            output_dir: output_dir.to_path_buf(),
             tile_size_degrees,
         }
     }
@@ -167,9 +167,11 @@ impl<'a> PbfStreamer<'a> {
             // Nodes already have residential_in_proximity and nogo_area flags pre-computed
             let tile_data = self.extract_tile_data(tile_id, buffered_bounds)
                 .with_context(|| format!(
-                    "Failed to extract PBF data for tile {:?} (bounds: lat={:.3}..{:.3}, lon={:.3}..{:.3})",
-                    tile_id, buffered_bounds.lat_min, buffered_bounds.lat_max,
-                    buffered_bounds.lon_min, buffered_bounds.lon_max
+                    "Failed to extract PBF data for tile {tile_id:?} (bounds: lat={:.3}..{:.3}, lon={:.3}..{:.3})",
+                    buffered_bounds.lat_min,
+                    buffered_bounds.lat_max,
+                    buffered_bounds.lon_min,
+                    buffered_bounds.lon_max
                 ))?;
 
             // Handle empty tiles (ocean, poles, etc.) - skip writing
@@ -188,13 +190,10 @@ impl<'a> PbfStreamer<'a> {
 
             // Step 4: Write RMDF tile file
             self.write_rmdf_tile(tile_id, graph)
-                .with_context(|| format!(
-                    "Failed to write RMDF tile {:?} to disk",
-                    tile_id
-                ))?;
+                .with_context(|| format!("Failed to write RMDF tile {tile_id:?} to disk"))?;
 
             Ok(())
-        })().with_context(|| format!("Failed to process tile {:?}", tile_id))
+        })().with_context(|| format!("Failed to process tile {tile_id:?}"))
     }
 
     /// Calculate tiles that intersect with PBF bounds
@@ -437,7 +436,7 @@ impl<'a> PbfStreamer<'a> {
         // Write tile directly from GenerationGraph data.
         writer
             .write_tile_from_graph(tile_id, graph, &output_path)
-            .with_context(|| format!("Failed to write RMDF tile {:?}", tile_id))?;
+            .with_context(|| format!("Failed to write RMDF tile {tile_id:?}"))?;
 
         Ok(())
     }

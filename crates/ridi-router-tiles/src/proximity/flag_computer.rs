@@ -102,8 +102,6 @@ pub fn apply_grid_to_nodes(nodes: &mut HashMap<u64, OsmNode>, grid: &RasterizedP
 }
 
 /// Apply pre-computed grid flags to nodes.
-
-/// Apply pre-computed grid flags to nodes.
 ///
 /// This function updates the `residential_in_proximity` and `nogo_area` flags
 /// on each node based on the grid cell values at the node's location.

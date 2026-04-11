@@ -541,18 +541,15 @@ pub fn line_is_between_point_ids(
     point_ids.contains(&id1) && point_ids.contains(&id2)
 }
 pub fn route_matches_ids(ctx: &RoutingContext<'_>, route: Route, ids: &[u64]) -> bool {
-    ids.iter()
-        .enumerate()
-        .map(|(idx, &id)| {
-            let route_segment = route.get_segment_by_index(idx);
-            if let Some(route_segment) = route_segment {
-                if ctx.point(route_segment.get_end_point()).id == id {
-                    return true;
-                }
+    ids.iter().enumerate().all(|(idx, &id)| {
+        let route_segment = route.get_segment_by_index(idx);
+        if let Some(route_segment) = route_segment {
+            if ctx.point(route_segment.get_end_point()).id == id {
+                return true;
             }
-            false
-        })
-        .all(|v| v)
+        }
+        false
+    })
 }
 
 #[allow(dead_code)]

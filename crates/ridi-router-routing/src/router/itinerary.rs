@@ -73,6 +73,7 @@ impl Itinerary {
         }
     }
 
+    #[allow(dead_code)]
     pub fn id(&self, ctx: &RoutingContext<'_>) -> String {
         format!(
             "{}-{}-{}",

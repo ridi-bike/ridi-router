@@ -84,7 +84,7 @@ fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
     let first_tile = tiles[0]["filename"].as_str().unwrap();
     assert!(output_dir.path().join(first_tile).exists());
 
-    let mut executor = RoutingExecutor::open(RoutingExecutorConfig {
+    let executor = RoutingExecutor::open(RoutingExecutorConfig {
         tiles_dir: summary.output_dir.clone(),
     })
     .unwrap();
@@ -97,7 +97,7 @@ fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
                 },
                 finish: Coords {
                     lat: 57.313103,
-                    lon: 25.281460,
+                    lon: 25.281_46,
                 },
             },
             rules: RouterRules::default(),

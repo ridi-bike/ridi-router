@@ -2,7 +2,7 @@ mod api;
 use anyhow::Result;
 use include_directory::{include_directory, Dir};
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tiny_http::{Header, Method, Request, Response, Server};
 use tracing::info;
 
@@ -41,7 +41,7 @@ pub fn run(input_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn handle_request(request: Request, input_dir: &PathBuf) -> Result<(), RmdfViewerError> {
+fn handle_request(request: Request, input_dir: &Path) -> Result<(), RmdfViewerError> {
     // Only allow GET requests
     if *request.method() != Method::Get {
         request
@@ -82,7 +82,7 @@ fn handle_request(request: Request, input_dir: &PathBuf) -> Result<(), RmdfViewe
         }
         Err(e) => {
             request
-                .respond(Response::from_string(format!("Error: {}", e)).with_status_code(500))
+                .respond(Response::from_string(format!("Error: {e}")).with_status_code(500))
                 .map_err(RmdfViewerError::Respond)?;
         }
     }
@@ -92,7 +92,7 @@ fn handle_request(request: Request, input_dir: &PathBuf) -> Result<(), RmdfViewe
 
 fn handle_api_request(
     url: &str,
-    input_dir: &PathBuf,
+    input_dir: &Path,
 ) -> Result<Response<std::io::Cursor<Vec<u8>>>, RmdfViewerError> {
     if url == "/api/manifest" {
         match api::get_manifest(input_dir) {
@@ -104,7 +104,7 @@ fn handle_api_request(
                 ))
             }
             Err(e) => {
-                let error_json = format!("{{\"error\": \"{}\"}}", e);
+                let error_json = format!("{{\"error\": \"{e}\"}}");
                 Ok(Response::from_string(error_json)
                     .with_status_code(500)
                     .with_header(
@@ -131,7 +131,7 @@ fn handle_api_request(
                 } else {
                     500
                 };
-                let error_json = format!("{{\"error\": \"{}\"}}", e);
+                let error_json = format!("{{\"error\": \"{e}\"}}");
                 Ok(Response::from_string(error_json)
                     .with_status_code(status)
                     .with_header(
@@ -152,7 +152,7 @@ fn handle_api_request(
                 } else {
                     500
                 };
-                let error_json = format!("{{\"error\": \"{}\"}}", e);
+                let error_json = format!("{{\"error\": \"{e}\"}}");
                 Ok(Response::from_string(error_json)
                     .with_status_code(status)
                     .with_header(
@@ -186,8 +186,8 @@ fn handle_file_request(url: &str) -> Result<Response<Cursor<Vec<u8>>>, RmdfViewe
     }
 
     // Remove leading slash
-    let file_name = if file_name.starts_with('/') {
-        &file_name[1..]
+    let file_name = if let Some(file_name) = file_name.strip_prefix('/') {
+        file_name
     } else {
         &file_name
     };

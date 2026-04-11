@@ -86,6 +86,7 @@ type AdjacentLineData = (usize, u64, f32, f32, u64, f32, f32);
 #[hotpath::measure_all]
 impl TileManager {
     /// Initialize TileManager from directory containing manifest.json
+    #[allow(dead_code)]
     pub fn new(tile_dir: PathBuf) -> Result<Self> {
         let manifest_path = tile_dir.join("manifest.json");
         let manifest_file =
@@ -120,9 +121,7 @@ impl TileManager {
         );
         assert!(
             loaded_tiles_limit <= MAX_LOADED_TILES,
-            "test loaded tiles limit {} exceeds capacity {}",
-            loaded_tiles_limit,
-            MAX_LOADED_TILES
+            "test loaded tiles limit {loaded_tiles_limit} exceeds capacity {MAX_LOADED_TILES}"
         );
 
         let mut manager = Self::from_manifest(manifest, tile_dir);
@@ -189,7 +188,7 @@ impl TileManager {
         let filepath = self.tile_dir.join(&filename);
 
         let mapped_tile = MappedTile::load(&filepath)
-            .with_context(|| format!("Failed to load tile: {:?}", filename))?;
+            .with_context(|| format!("Failed to load tile: {filename:?}"))?;
         let loaded_tile = LoadedTile::new(mapped_tile, self.next_access_epoch())?;
 
         self.loaded_tiles.insert(tile_id, loaded_tile);
@@ -202,7 +201,7 @@ impl TileManager {
     pub fn get_point_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<PointRecord> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_point_by_id_if_loaded(tile_id, osm_id)?
-            .with_context(|| format!("Point {} not found in tile {:?}", osm_id, tile_id))
+            .with_context(|| format!("Point {osm_id} not found in tile {tile_id:?}"))
     }
 
     pub(crate) fn get_point_by_id_if_loaded(
@@ -221,12 +220,7 @@ impl TileManager {
     pub fn get_line_by_index(&mut self, tile_id: TileId, line_index: usize) -> Result<LineRecord> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_line_by_index_if_loaded(tile_id, line_index)?
-            .with_context(|| {
-                format!(
-                    "Line index {} out of bounds in tile {:?}",
-                    line_index, tile_id
-                )
-            })
+            .with_context(|| format!("Line index {line_index} out of bounds in tile {tile_id:?}"))
     }
 
     pub(crate) fn get_line_by_index_if_loaded(
@@ -242,6 +236,7 @@ impl TileManager {
         Ok(lines.get(line_index).copied())
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_rules_for_point(
         &mut self,
         tile_id: TileId,
@@ -249,7 +244,7 @@ impl TileManager {
     ) -> Result<Vec<MapDataRule>> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_rules_for_point_if_loaded(tile_id, point)?
-            .with_context(|| format!("Tile {:?} not loaded after point rule lookup", tile_id))
+            .with_context(|| format!("Tile {tile_id:?} not loaded after point rule lookup"))
     }
 
     pub(crate) fn get_rules_for_point_if_loaded(
@@ -309,6 +304,7 @@ impl TileManager {
         Ok(Some(rules))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_line_indices_for_point(
         &mut self,
         tile_id: TileId,
@@ -316,7 +312,7 @@ impl TileManager {
     ) -> Result<&[u64]> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_line_indices_for_point_if_loaded(tile_id, point)?
-            .with_context(|| format!("Tile {:?} not loaded after point line lookup", tile_id))
+            .with_context(|| format!("Tile {tile_id:?} not loaded after point line lookup"))
     }
 
     pub(crate) fn get_line_indices_for_point_if_loaded(
@@ -391,6 +387,7 @@ impl TileManager {
         Ok(closest.map(|(id_tuple, _)| id_tuple))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn find_closest_in_grid_rings(
         tile_id: TileId,
         tile: &MappedTile,
@@ -440,6 +437,7 @@ impl TileManager {
         Ok(closest)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn find_closest_in_points(
         tile_id: TileId,
         tile: &MappedTile,
@@ -469,6 +467,7 @@ impl TileManager {
         Ok(closest)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn update_closest_for_points(
         tile_id: TileId,
         tile: &MappedTile,
@@ -614,7 +613,7 @@ impl TileManager {
 
         for &line_index in &line_refs[start..end] {
             let line_index = usize::try_from(line_index)
-                .with_context(|| format!("Line index {} does not fit usize", line_index))?;
+                .with_context(|| format!("Line index {line_index} does not fit usize"))?;
             let line = *lines.get(line_index).with_context(|| {
                 format!(
                     "Line index {} for point {} is out of bounds",
@@ -693,7 +692,7 @@ impl TileManager {
         Ok(adjacent_tags.iter().any(|tags| {
             tags.highway
                 .as_deref()
-                .is_some_and(|value| limit_to_hw_tags.iter().any(|allowed| *allowed == value))
+                .is_some_and(|value| limit_to_hw_tags.contains(&value))
         }))
     }
 
@@ -754,7 +753,7 @@ impl TileManager {
 
         let line_indices_and_data = self
             .collect_adjacent_line_data_if_loaded(tile_id, osm_id)?
-            .with_context(|| format!("Tile {:?} not loaded after adjacency lookup", tile_id))?;
+            .with_context(|| format!("Tile {tile_id:?} not loaded after adjacency lookup"))?;
 
         let mut result = AdjacentRefs::with_capacity(line_indices_and_data.len());
 
@@ -881,7 +880,7 @@ impl TileManager {
     pub fn get_tag_value(&mut self, tile_id: TileId, tag_value_idx: u32) -> Result<String> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_tag_value_if_loaded(tile_id, tag_value_idx)?
-            .with_context(|| format!("Tile {:?} not loaded after tag value lookup", tile_id))
+            .with_context(|| format!("Tile {tile_id:?} not loaded after tag value lookup"))
     }
 
     pub fn get_tag_value_if_loaded(
@@ -905,7 +904,7 @@ impl TileManager {
     ) -> Result<TagSetRecord> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_tag_set_record_if_loaded(tile_id, tag_set_idx)?
-            .with_context(|| format!("Tile {:?} not loaded after tag set lookup", tile_id))
+            .with_context(|| format!("Tile {tile_id:?} not loaded after tag set lookup"))
     }
 
     pub fn get_tag_set_record_if_loaded(
@@ -2402,7 +2401,7 @@ mod tests {
         let adjacent = manager.get_adjacent_by_id(point.0, point.1).unwrap();
 
         // Should have at least one adjacent point
-        assert!(adjacent.len() > 0);
+        assert!(!adjacent.is_empty());
 
         // Check if any cross tile boundary
         let crosses_boundary = adjacent.iter().any(|(line_ref, other_point_ref)| {

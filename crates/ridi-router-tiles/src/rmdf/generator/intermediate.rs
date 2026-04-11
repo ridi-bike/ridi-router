@@ -241,7 +241,7 @@ pub struct GridBounds {
 
 impl GridBounds {
     /// Serialize to bytes
-    pub fn to_bytes(&self) -> [u8; 16] {
+    pub fn to_bytes(self) -> [u8; 16] {
         let mut bytes = [0u8; 16];
         bytes[0..4].copy_from_slice(&self.lon_min.to_le_bytes());
         bytes[4..8].copy_from_slice(&self.lat_min.to_le_bytes());
@@ -794,7 +794,7 @@ mod tests {
         );
 
         // Each overlap should have exactly 2 sources (one from each grid)
-        for (_, sources) in &overlaps {
+        for sources in overlaps.values() {
             assert_eq!(sources.len(), 2);
         }
     }

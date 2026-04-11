@@ -316,7 +316,7 @@ impl RasterizedProximityGrid {
     #[inline]
     pub fn is_residential_proximity(&self, lat: f32, lon: f32) -> bool {
         self.get_cell(lat, lon)
-            .map_or(false, |cell| cell.is_residential_proximity())
+            .is_some_and(|cell| cell.is_residential_proximity())
     }
 
     /// O(1) lookup for nogo area flag.
@@ -330,7 +330,7 @@ impl RasterizedProximityGrid {
         military
             || self
                 .get_cell(lat, lon)
-                .map_or(false, |cell| cell.is_nogo_area())
+                .is_some_and(|cell| cell.is_nogo_area())
     }
 
     /// Get total number of residential cells in the grid.

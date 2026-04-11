@@ -208,7 +208,6 @@ impl Navigator {
                     self.discarded_fork_choices.set_new_next();
                 }
 
-
                 let mut fork_weights = ForkWeights::new();
                 if let Some(representative_fork_segment) = fork_choices.get_first_segment() {
                     for weight_calc in &self.route_once_weight_calcs {
@@ -322,6 +321,7 @@ impl Navigator {
 }
 
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod test {
     use crate::{
         router::{

@@ -213,7 +213,8 @@ pub struct RouterRules {
 }
 
 #[cfg(feature = "rule-schema-writer")]
-pub fn generate_json_schema(dest: &std::path::PathBuf) -> anyhow::Result<()> {
+#[allow(dead_code)]
+pub fn generate_json_schema(dest: &std::path::Path) -> anyhow::Result<()> {
     let schema = schemars::schema_for!(RouterRules);
     let file = std::fs::File::create(dest)?;
     serde_json::to_writer_pretty(file, &schema)?;

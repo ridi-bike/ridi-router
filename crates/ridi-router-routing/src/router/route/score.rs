@@ -21,15 +21,13 @@ fn get_rule_adjustment(
     rule: &Option<HashMap<String, RulesTagValueAction>>,
 ) -> f64 {
     if let Some(curr_tag) = tag {
-        if let Some(ref tag_rules) = rule {
-            if let Some(curr_tag_rule) = tag_rules.get(curr_tag.as_str()) {
-                if let RulesTagValueAction::Priority {
+        if let Some(tag_rules) = rule {
+            return match tag_rules.get(curr_tag.as_str()) {
+                Some(RulesTagValueAction::Priority {
                     value: priority_value,
-                } = curr_tag_rule
-                {
-                    return bearing_diff * scale_priority(*priority_value);
-                }
-            }
+                }) => bearing_diff * scale_priority(*priority_value),
+                _ => 0.,
+            };
         }
     }
     0.

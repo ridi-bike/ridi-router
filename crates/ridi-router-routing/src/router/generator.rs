@@ -22,7 +22,7 @@ use super::{
     },
 };
 
-pub const WP_LOOKUP_ALLOWED_HWS: [&'static str; 6] = [
+pub const WP_LOOKUP_ALLOWED_HWS: [&str; 6] = [
     "motorway",
     "trunk",
     "primary",

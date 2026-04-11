@@ -229,6 +229,7 @@ pub fn haversine_scalar(lat1: f32, lon1: f32, lat2: f32, lon2: f32) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod tests {
     use super::*;
 

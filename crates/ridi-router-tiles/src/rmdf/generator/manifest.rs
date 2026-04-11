@@ -4,6 +4,7 @@ use std::fs::File;
 use std::path::Path;
 
 use crate::rmdf::format::{RmdfHeader, TileId};
+#[allow(unused_imports)]
 pub use ridi_router_common::manifest::{
     military_geojson_filename, TileBounds, TileManifest, TileMetadata, TileNeighbors,
 };

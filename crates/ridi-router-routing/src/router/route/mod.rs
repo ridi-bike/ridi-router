@@ -48,11 +48,9 @@ fn segments_share_tag_value(
     ctx: &RoutingContext<'_>,
     left: &Segment,
     right: &Segment,
-    tag_value_ref: impl Fn(
-        &crate::map_data::graph::ElementTagSet,
-    ) -> &crate::map_data::graph::ElementTagValueRef
-    + Copy,
- ) -> bool {
+    tag_value_ref: impl Fn(&crate::map_data::graph::ElementTagSet) -> &crate::map_data::graph::ElementTagValueRef
+        + Copy,
+) -> bool {
     with_segment_tag_value(ctx, left, tag_value_ref, |left_value| {
         left_value.is_some_and(|left_value| {
             with_segment_tag_value(ctx, right, tag_value_ref, |right_value| {
@@ -62,11 +60,7 @@ fn segments_share_tag_value(
     })
 }
 
-fn segments_share_road_identity(
-    ctx: &RoutingContext<'_>,
-    left: &Segment,
-    right: &Segment,
-) -> bool {
+fn segments_share_road_identity(ctx: &RoutingContext<'_>, left: &Segment, right: &Segment) -> bool {
     segments_share_tag_value(ctx, left, right, |tags| &tags.hw_ref)
         || segments_share_tag_value(ctx, left, right, |tags| &tags.name)
 }
@@ -434,6 +428,7 @@ impl Route {
         self.loop_detector.metas.get(idx)
     }
 
+    #[cfg(test)]
     pub fn split_at_point(&self, point: &MapDataPointRef) -> Self {
         let point_pos = self
             .route_segments
@@ -577,6 +572,7 @@ impl Route {
 
         false
     }
+    #[cfg(test)]
     pub fn get_junctions_from_end(
         &self,
         ctx: &RoutingContext<'_>,

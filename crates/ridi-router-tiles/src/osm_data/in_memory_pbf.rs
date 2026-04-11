@@ -56,7 +56,7 @@ impl BoundingBox {
     }
 
     /// Convert to RTree AABB for spatial queries
-    pub fn to_aabb(&self) -> AABB<[f64; 2]> {
+    pub fn to_aabb(self) -> AABB<[f64; 2]> {
         AABB::from_corners([self.lon_min, self.lat_min], [self.lon_max, self.lat_max])
     }
 }
@@ -119,6 +119,20 @@ impl RTreeObject for RelationSpatialEntry {
         self.envelope
     }
 }
+
+type NodeLoadResult = (HashMap<u64, OsmNode>, RTree<NodeSpatialEntry>, PbfBounds);
+type WaysLoadResult = (
+    HashMap<u64, WayWithBounds>,
+    RTree<WaySpatialEntry>,
+    Vec<u64>,
+    Vec<u64>,
+);
+type RelationsLoadResult = (
+    HashMap<u64, RelationWithBounds>,
+    RTree<RelationSpatialEntry>,
+    Vec<u64>,
+    Vec<u64>,
+);
 
 /// Geographic bounds discovered from PBF file
 #[derive(Debug, Clone, Copy)]
@@ -605,11 +619,9 @@ impl InMemoryPbf {
     }
 
     /// Pass 1: Load all nodes from PBF
-    fn load_nodes(
-        path: &Path,
-    ) -> Result<(HashMap<u64, OsmNode>, RTree<NodeSpatialEntry>, PbfBounds)> {
+    fn load_nodes(path: &Path) -> Result<NodeLoadResult> {
         let file = std::fs::File::open(path)
-            .with_context(|| format!("Failed to open PBF file: {:?}", path))?;
+            .with_context(|| format!("Failed to open PBF file: {path:?}"))?;
         let mut pbf = OsmPbfReader::new(file);
 
         let mut bounds = PbfBounds::empty();
@@ -618,17 +630,14 @@ impl InMemoryPbf {
         let nodes: Vec<_> = pbf
             .par_iter()
             .filter_map(|obj_result| {
-                if let Ok(obj) = obj_result {
-                    if let OsmObj::Node(node) = obj {
-                        let osm_node = OsmNode {
-                            id: node.id.0 as u64,
-                            lat: node.lat(),
-                            lon: node.lon(),
-                            residential_in_proximity: false,
-                            nogo_area: false,
-                        };
-                        return Some(osm_node);
-                    }
+                if let Ok(OsmObj::Node(node)) = obj_result {
+                    return Some(OsmNode {
+                        id: node.id.0 as u64,
+                        lat: node.lat(),
+                        lon: node.lon(),
+                        residential_in_proximity: false,
+                        nogo_area: false,
+                    });
                 }
                 None
             })
@@ -655,64 +664,53 @@ impl InMemoryPbf {
     }
 
     /// Pass 2: Load all ways and compute bounding boxes
-    fn load_ways(
-        path: &Path,
-        nodes_by_id: &HashMap<u64, OsmNode>,
-    ) -> Result<(
-        HashMap<u64, WayWithBounds>,
-        RTree<WaySpatialEntry>,
-        Vec<u64>,
-        Vec<u64>,
-    )> {
+    fn load_ways(path: &Path, nodes_by_id: &HashMap<u64, OsmNode>) -> Result<WaysLoadResult> {
         let file = std::fs::File::open(path)
-            .with_context(|| format!("Failed to open PBF file: {:?}", path))?;
+            .with_context(|| format!("Failed to open PBF file: {path:?}"))?;
         let mut pbf = OsmPbfReader::new(file);
 
         // Collect all ways with highway or area tags
         let ways: Vec<_> = pbf
             .par_iter()
             .filter_map(|obj_result| {
-                if let Ok(obj) = obj_result {
-                    if let OsmObj::Way(way) = obj {
-                        let tags = way.tags.clone();
+                if let Ok(OsmObj::Way(way)) = obj_result {
+                    let tags = way.tags.clone();
 
-                        // Check if this way has highway or area tags we care about
-                        let has_highway = tags.contains_key("highway");
-                        let is_residential =
-                            tags.get("landuse").map(|v| v.as_str()) == Some("residential");
-                        let is_military = tags.get("landuse").map(|v| v.as_str())
-                            == Some("military")
-                            || tags.contains_key("military");
+                    // Check if this way has highway or area tags we care about
+                    let has_highway = tags.contains_key("highway");
+                    let is_residential =
+                        tags.get("landuse").map(|v| v.as_str()) == Some("residential");
+                    let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military")
+                        || tags.contains_key("military");
 
-                        // Also include ways that could be multipolygon relation members:
-                        // - Closed loops (first == last) with >= 4 nodes
-                        // - Open non-highway ways with >= 2 nodes (potential boundary segments)
-                        let is_closed_loop =
-                            way.nodes.len() >= 4 && way.nodes.first() == way.nodes.last();
-                        let is_potential_boundary = !has_highway && way.nodes.len() >= 2;
+                    // Also include ways that could be multipolygon relation members:
+                    // - Closed loops (first == last) with >= 4 nodes
+                    // - Open non-highway ways with >= 2 nodes (potential boundary segments)
+                    let is_closed_loop =
+                        way.nodes.len() >= 4 && way.nodes.first() == way.nodes.last();
+                    let is_potential_boundary = !has_highway && way.nodes.len() >= 2;
 
-                        if has_highway
-                            || is_residential
-                            || is_military
-                            || is_closed_loop
-                            || is_potential_boundary
-                        {
-                            let tags_map: HashMap<String, String> = tags
-                                .iter()
-                                .map(|(k, v)| (k.to_string(), v.to_string()))
-                                .collect();
+                    if has_highway
+                        || is_residential
+                        || is_military
+                        || is_closed_loop
+                        || is_potential_boundary
+                    {
+                        let tags_map: HashMap<String, String> = tags
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                            .collect();
 
-                            let osm_way = OsmWay {
-                                id: way.id.0 as u64,
-                                point_ids: way.nodes.iter().map(|n| n.0 as u64).collect(),
-                                tags: if tags_map.is_empty() {
-                                    None
-                                } else {
-                                    Some(tags_map)
-                                },
-                            };
-                            return Some((osm_way, is_residential, is_military));
-                        }
+                        let osm_way = OsmWay {
+                            id: way.id.0 as u64,
+                            point_ids: way.nodes.iter().map(|n| n.0 as u64).collect(),
+                            tags: if tags_map.is_empty() {
+                                None
+                            } else {
+                                Some(tags_map)
+                            },
+                        };
+                        return Some((osm_way, is_residential, is_military));
                     }
                 }
                 None
@@ -788,77 +786,69 @@ impl InMemoryPbf {
         path: &Path,
         nodes_by_id: &HashMap<u64, OsmNode>,
         ways_by_id: &HashMap<u64, WayWithBounds>,
-    ) -> Result<(
-        HashMap<u64, RelationWithBounds>,
-        RTree<RelationSpatialEntry>,
-        Vec<u64>,
-        Vec<u64>,
-    )> {
+    ) -> Result<RelationsLoadResult> {
         let file = std::fs::File::open(path)
-            .with_context(|| format!("Failed to open PBF file: {:?}", path))?;
+            .with_context(|| format!("Failed to open PBF file: {path:?}"))?;
         let mut pbf = OsmPbfReader::new(file);
 
         // Collect all relations
         let relations: Vec<_> = pbf
             .par_iter()
             .filter_map(|obj_result| {
-                if let Ok(obj) = obj_result {
-                    if let OsmObj::Relation(relation) = obj {
-                        let tags = relation.tags.clone();
+                if let Ok(OsmObj::Relation(relation)) = obj_result {
+                    let tags = relation.tags.clone();
 
-                        // Keep area relations for proximity extraction and restriction relations
-                        // for tile generation. Unsupported relation semantics are filtered later
-                        // by the generation graph.
-                        let is_multipolygon =
-                            tags.get("type").map(|v| v.as_str()) == Some("multipolygon");
-                        let is_restriction =
-                            tags.get("type").map(|v| v.as_str()) == Some("restriction");
-                        let is_residential =
-                            tags.get("landuse").map(|v| v.as_str()) == Some("residential");
-                        let is_military = tags.get("landuse").map(|v| v.as_str())
-                            == Some("military")
-                            || tags.contains_key("military");
+                    // Keep area relations for proximity extraction and restriction relations
+                    // for tile generation. Unsupported relation semantics are filtered later
+                    // by the generation graph.
+                    let is_multipolygon =
+                        tags.get("type").map(|v| v.as_str()) == Some("multipolygon");
+                    let is_restriction =
+                        tags.get("type").map(|v| v.as_str()) == Some("restriction");
+                    let is_residential =
+                        tags.get("landuse").map(|v| v.as_str()) == Some("residential");
+                    let is_military = tags.get("landuse").map(|v| v.as_str()) == Some("military")
+                        || tags.contains_key("military");
 
-                        if is_multipolygon || is_restriction || is_residential || is_military {
-                            let members: Vec<OsmRelationMember> = relation
-                                .refs
-                                .iter()
-                                .map(|r| {
-                                    let member_type = match r.member {
-                                        osmpbfreader::OsmId::Node(_) => OsmRelationMemberType::Node,
-                                        osmpbfreader::OsmId::Way(_) => OsmRelationMemberType::Way,
-                                        osmpbfreader::OsmId::Relation(_) => {
-                                            OsmRelationMemberType::Relation
-                                        }
-                                    };
-
-                                    let member_ref = match r.member {
-                                        osmpbfreader::OsmId::Node(id) => id.0 as u64,
-                                        osmpbfreader::OsmId::Way(id) => id.0 as u64,
-                                        osmpbfreader::OsmId::Relation(id) => id.0 as u64,
-                                    };
-
-                                    OsmRelationMember {
-                                        member_type,
-                                        role: Self::map_relation_member_role(&r.role),
-                                        member_ref,
+                    if is_multipolygon || is_restriction || is_residential || is_military {
+                        let members: Vec<OsmRelationMember> = relation
+                            .refs
+                            .iter()
+                            .map(|r| {
+                                let member_type = match r.member {
+                                    osmpbfreader::OsmId::Node(_) => OsmRelationMemberType::Node,
+                                    osmpbfreader::OsmId::Way(_) => OsmRelationMemberType::Way,
+                                    osmpbfreader::OsmId::Relation(_) => {
+                                        OsmRelationMemberType::Relation
                                     }
-                                })
-                                .collect();
+                                };
 
-                            let tags_map: HashMap<String, String> = tags
-                                .iter()
-                                .map(|(k, v)| (k.to_string(), v.to_string()))
-                                .collect();
+                                let member_ref = match r.member {
+                                    osmpbfreader::OsmId::Node(id) => id.0 as u64,
+                                    osmpbfreader::OsmId::Way(id) => id.0 as u64,
+                                    osmpbfreader::OsmId::Relation(id) => id.0 as u64,
+                                };
 
-                            let osm_relation = OsmRelation {
-                                id: relation.id.0 as u64,
-                                members,
-                                tags: tags_map,
-                            };
+                                OsmRelationMember {
+                                    member_type,
+                                    role: Self::map_relation_member_role(&r.role),
+                                    member_ref,
+                                }
+                            })
+                            .collect();
 
-                            return Some((osm_relation, is_residential, is_military));
-                        }
+                        let tags_map: HashMap<String, String> = tags
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                            .collect();
+
+                        let osm_relation = OsmRelation {
+                            id: relation.id.0 as u64,
+                            members,
+                            tags: tags_map,
+                        };
+
+                        return Some((osm_relation, is_residential, is_military));
                     }
                 }
                 None

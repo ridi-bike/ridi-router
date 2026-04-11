@@ -462,6 +462,7 @@ fn is_military_interior(lat: f32, lon: f32, polygon_bboxes: &[(&MultiPolygon<f64
 }
 
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod tests {
     use super::*;
     use geo::{Coord, LineString, Polygon};
@@ -636,7 +637,7 @@ mod tests {
         // North: higher latitude
         let bearing_n = calculate_bearing(lat, lon, 51.0, 10.0);
         assert!(
-            bearing_n < 10.0 || bearing_n > 350.0,
+            !(10.0..=350.0).contains(&bearing_n),
             "North bearing should be ~0°, got {}",
             bearing_n
         );
@@ -709,7 +710,7 @@ mod tests {
         // Same point should still give a result (degenerate case)
         let bearing = calculate_bearing(50.0, 10.0, 50.0, 10.0);
         // Result is undefined but shouldn't panic
-        assert!(bearing >= 0.0 && bearing < 360.0);
+        assert!((0.0..360.0).contains(&bearing));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::Path;
 use ts_rs::TS;
 
 use crate::rmdf::format::TagSetRecord;
@@ -28,7 +28,6 @@ pub struct TileSummary {
     pub size_bytes: u64,
     pub point_count: u64,
     pub line_count: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub military_geojson_filename: Option<String>,
 }
@@ -80,39 +79,24 @@ pub struct LineResponse {
     pub tags: TagResponse,
 }
 
-#[derive(Serialize, TS)]
+#[derive(Default, Serialize, TS)]
 #[ts(export, export_to = "ui/src/types/generated")]
 pub struct TagResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub highway: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub surface: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub smoothness: Option<String>,
 }
 
-impl Default for TagResponse {
-    fn default() -> Self {
-        Self {
-            name: None,
-            highway: None,
-            surface: None,
-            smoothness: None,
-        }
-    }
-}
-
-pub fn get_manifest(input_dir: &PathBuf) -> Result<ManifestResponse> {
+pub fn get_manifest(input_dir: &Path) -> Result<ManifestResponse> {
     let manifest_path = input_dir.join("manifest.json");
 
     let file = std::fs::File::open(&manifest_path)
-        .with_context(|| format!("Failed to open manifest at {:?}", manifest_path))?;
+        .with_context(|| format!("Failed to open manifest at {manifest_path:?}"))?;
 
     let manifest: TileManifest =
         serde_json::from_reader(file).context("Failed to parse manifest.json")?;
@@ -146,7 +130,7 @@ pub fn get_manifest(input_dir: &PathBuf) -> Result<ManifestResponse> {
     Ok(response)
 }
 
-pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
+pub fn get_tile(input_dir: &Path, filename: &str) -> Result<TileResponse> {
     // Security: Validate filename doesn't contain path traversal
     if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
         anyhow::bail!("Invalid filename");
@@ -159,7 +143,7 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
 
     let tile_path = input_dir.join(filename);
     let mapped_tile = MappedTile::load(&tile_path)
-        .with_context(|| format!("Failed to load tile: {:?}", tile_path))?;
+        .with_context(|| format!("Failed to load tile: {tile_path:?}"))?;
 
     let header = mapped_tile.header;
 
@@ -222,7 +206,7 @@ pub fn get_tile(input_dir: &PathBuf, filename: &str) -> Result<TileResponse> {
     })
 }
 
-pub fn get_geojson(input_dir: &PathBuf, filename: &str) -> Result<String> {
+pub fn get_geojson(input_dir: &Path, filename: &str) -> Result<String> {
     if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
         anyhow::bail!("Invalid filename");
     }
@@ -233,7 +217,7 @@ pub fn get_geojson(input_dir: &PathBuf, filename: &str) -> Result<String> {
 
     let geojson_path = input_dir.join(filename);
     std::fs::read_to_string(&geojson_path)
-        .with_context(|| format!("Failed to load GeoJSON: {:?}", geojson_path))
+        .with_context(|| format!("Failed to load GeoJSON: {geojson_path:?}"))
 }
 
 fn resolve_tags(tile: &MappedTile, tag_set_index: u32) -> Result<TagResponse> {

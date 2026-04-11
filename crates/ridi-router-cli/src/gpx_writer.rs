@@ -1,6 +1,6 @@
 use geo::Point;
 use gpx::{errors::GpxError, write, Gpx, GpxVersion, Route as GpxRoute, Waypoint};
-use std::{collections::HashMap, fs::File, io::Error, isize, path::PathBuf};
+use std::{collections::HashMap, fs::File, io::Error, path::PathBuf};
 
 use crate::file_naming::route_file_path;
 use ridi_router_routing::{ComputedRoute, RouteStatElement};
@@ -50,8 +50,10 @@ impl GpxWriter {
     }
 
     fn build_gpx(route: ComputedRoute, idx: usize) -> Gpx {
-        let mut gpx = Gpx::default();
-        gpx.version = GpxVersion::Gpx11;
+        let mut gpx = Gpx {
+            version: GpxVersion::Gpx11,
+            ..Default::default()
+        };
 
         let mut gpx_route = GpxRoute::new();
         gpx_route.name = Some(format!(

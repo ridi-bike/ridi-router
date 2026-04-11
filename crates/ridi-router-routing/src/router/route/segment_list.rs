@@ -40,7 +40,7 @@ impl SegmentList {
             .iter()
             .find(|segment| segment.get_end_point() == point)
     }
-    pub fn exclude_segments_where_points_in(&self, points: &Vec<MapDataPointRef>) -> SegmentList {
+    pub fn exclude_segments_where_points_in(&self, points: &[MapDataPointRef]) -> SegmentList {
         self.segment_list
             .iter()
             .filter(|segment| !points.contains(segment.get_end_point()))

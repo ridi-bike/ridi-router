@@ -10,7 +10,6 @@ pub struct MappedTile {
     mmap: Mmap,
     data_end: usize,
     pub header: &'static RmdfHeader,
-    pub tile_id: TileId,
     spatial_index_cache: OnceLock<Box<[GridCellEntry]>>,
     points_cache: OnceLock<Box<[PointRecord]>>,
     lines_cache: OnceLock<Box<[LineRecord]>>,
@@ -42,7 +41,9 @@ impl MappedTile {
             .file_name()
             .and_then(|n| n.to_str())
             .context("Invalid filename")?;
-        let tile_id = Self::parse_tile_id(filename)?;
+        let _tile_id = Self::parse_tile_id(filename)?;
+
+        super::validation::validate_header(header)?;
 
         // SAFETY: We keep the File and Mmap alive, so the reference is valid
         // for the lifetime of MappedTile
@@ -59,7 +60,6 @@ impl MappedTile {
             mmap,
             data_end,
             header: header_static,
-            tile_id,
             spatial_index_cache: OnceLock::new(),
             points_cache: OnceLock::new(),
             lines_cache: OnceLock::new(),

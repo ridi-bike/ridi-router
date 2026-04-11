@@ -109,9 +109,10 @@ fn with_segment_tag_value<R>(
 ) -> R {
     let line_tags = ctx.with_line(segment.get_line(), |line| line.tags.clone());
     let tags = ctx.tag_set(&line_tags);
-    ctx.with_tag_value(tag_value_ref(&tags), |value| f(value.map(|value| value.as_str())))
+    ctx.with_tag_value(tag_value_ref(&tags), |value| {
+        f(value.map(|value| value.as_str()))
+    })
 }
-
 
 fn with_segment_highway<R>(
     ctx: &RoutingContext<'_>,
@@ -141,11 +142,9 @@ fn segments_share_tag_value(
     ctx: &RoutingContext<'_>,
     left: &Segment,
     right: &Segment,
-    tag_value_ref: impl Fn(
-        &crate::map_data::graph::ElementTagSet,
-    ) -> &crate::map_data::graph::ElementTagValueRef
+    tag_value_ref: impl Fn(&crate::map_data::graph::ElementTagSet) -> &crate::map_data::graph::ElementTagValueRef
         + Copy,
- ) -> bool {
+) -> bool {
     with_segment_tag_value(ctx, left, tag_value_ref, |left_value| {
         left_value.is_some_and(|left_value| {
             with_segment_tag_value(ctx, right, tag_value_ref, |right_value| {
@@ -223,20 +222,14 @@ pub fn weight_prefer_same_road(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
     }
 
     let same_hw_ref = input.route.get_segment_last().is_some_and(|segment| {
-        segments_share_tag_value(
-            input.ctx,
-            segment,
-            input.current_fork_segment,
-            |tags| &tags.hw_ref,
-        )
+        segments_share_tag_value(input.ctx, segment, input.current_fork_segment, |tags| {
+            &tags.hw_ref
+        })
     });
     let same_name = input.route.get_segment_last().is_some_and(|segment| {
-        segments_share_tag_value(
-            input.ctx,
-            segment,
-            input.current_fork_segment,
-            |tags| &tags.name,
-        )
+        segments_share_tag_value(input.ctx, segment, input.current_fork_segment, |tags| {
+            &tags.name
+        })
     });
 
     if same_hw_ref || same_name {
@@ -586,11 +579,15 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput<'_, '_>) -> WeightCalcRes
     }) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
-    if was_on_avoid(&last_chunk, &input.rules.smoothness, |segment, avoid_rules| {
-        with_segment_smoothness(input.ctx, segment, |tag| {
-            tag.is_some_and(|tag| avoid_rules.contains(&tag))
-        })
-    }) {
+    if was_on_avoid(
+        &last_chunk,
+        &input.rules.smoothness,
+        |segment, avoid_rules| {
+            with_segment_smoothness(input.ctx, segment, |tag| {
+                tag.is_some_and(|tag| avoid_rules.contains(&tag))
+            })
+        },
+    ) {
         return WeightCalcResult::LastSegmentDoNotUse;
     }
 

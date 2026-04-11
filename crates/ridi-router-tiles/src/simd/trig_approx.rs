@@ -249,6 +249,7 @@ mod avx512 {
 pub use avx512::{asin_f32x16, cos_f32x16, sin_f32x16};
 
 #[cfg(test)]
+#[allow(clippy::uninlined_format_args)]
 mod tests {
     use super::*;
     use num_traits::Float;

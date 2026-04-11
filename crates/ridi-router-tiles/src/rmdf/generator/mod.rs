@@ -250,9 +250,9 @@ fn export_military_geojson_tiles(
         });
 
         let file = std::fs::File::create(&geojson_path)
-            .with_context(|| format!("Failed to create GeoJSON file: {:?}", geojson_path))?;
+            .with_context(|| format!("Failed to create GeoJSON file: {geojson_path:?}"))?;
         serde_json::to_writer_pretty(file, &feature_collection)
-            .with_context(|| format!("Failed to write GeoJSON file: {:?}", geojson_path))?;
+            .with_context(|| format!("Failed to write GeoJSON file: {geojson_path:?}"))?;
         written_geojson_tiles += 1;
     }
 
@@ -361,7 +361,7 @@ impl MultiPbfGenerator {
 
         // Load PBF with pre-computed flags AND get the proximity grid
         let (pbf_data, proximity_grid) = InMemoryPbf::from_pbf_file_with_grid(pbf_path)
-            .with_context(|| format!("Failed to load PBF file: {:?}", pbf_path))?;
+            .with_context(|| format!("Failed to load PBF file: {pbf_path:?}"))?;
         let military_polygons = extract_debug_military_polygons(&pbf_data);
 
         // Store grid bounds
@@ -950,7 +950,7 @@ impl MultiPbfGenerator {
         // Write tile directly from GenerationGraph data.
         writer
             .write_tile_from_graph(tile_id, graph, &output_path)
-            .with_context(|| format!("Failed to write RMDF tile {:?}", tile_id))?;
+            .with_context(|| format!("Failed to write RMDF tile {tile_id:?}"))?;
 
         Ok(())
     }

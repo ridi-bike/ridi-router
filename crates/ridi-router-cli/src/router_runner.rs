@@ -29,7 +29,7 @@ pub enum RouterRunnerError {
 
     #[error(
         "Coordinate error for {name}: {cause}{}",
-        .error.as_ref().map(|e| format!(": {}", e)).unwrap_or_default()
+        .error.as_ref().map(|e| format!(": {e}")).unwrap_or_default()
     )]
     Coords {
         name: String,

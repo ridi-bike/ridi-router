@@ -10,7 +10,6 @@ pub struct MappedTile {
     _file: File,
     mmap: Mmap,
     pub header: &'static RmdfHeader,
-    pub tile_id: TileId,
 }
 
 impl MappedTile {
@@ -36,7 +35,7 @@ impl MappedTile {
             .file_name()
             .and_then(|n| n.to_str())
             .context("Invalid filename")?;
-        let tile_id = Self::parse_tile_id(filename)?;
+        let _tile_id = Self::parse_tile_id(filename)?;
 
         // SAFETY: We keep the File and Mmap alive, so the reference is valid
         // for the lifetime of MappedTile
@@ -46,7 +45,6 @@ impl MappedTile {
             _file: file,
             mmap,
             header: header_static,
-            tile_id,
         })
     }
 
@@ -68,19 +66,6 @@ impl MappedTile {
         let row = parts[1].parse().context("Invalid row number")?;
 
         Ok(TileId { col, row })
-    }
-
-    pub fn get_spatial_index(&self) -> Result<&[GridCellEntry]> {
-        let offset = self.header.section_offsets[section::SPATIAL_INDEX] as usize;
-        let count = self.header.spatial_grid_cell_count as usize;
-        let size = count * std::mem::size_of::<GridCellEntry>();
-
-        let slice = self
-            .mmap
-            .get(offset..offset + size)
-            .context("Spatial index section out of bounds")?;
-
-        Ok(cast_slice(slice))
     }
 
     pub fn get_points(&self) -> Result<&[PointRecord]> {
@@ -105,19 +90,6 @@ impl MappedTile {
             .mmap
             .get(offset..offset + size)
             .context("Lines section out of bounds")?;
-
-        Ok(cast_slice(slice))
-    }
-
-    pub fn get_line_refs(&self) -> Result<&[u64]> {
-        let offset = self.header.section_offsets[section::LINE_REFS] as usize;
-        // Line refs array continues until Tag Values section
-        let next_offset = self.header.section_offsets[section::TAG_VALUES] as usize;
-
-        let slice = self
-            .mmap
-            .get(offset..next_offset)
-            .context("Line refs section out of bounds")?;
 
         Ok(cast_slice(slice))
     }

@@ -239,9 +239,8 @@ impl<'a> RoutingContext<'a> {
 
             adjacent
                 .iter()
-                .filter_map(|(line_ref, _)| {
-                    (!caches.lines.contains_key(line_ref)).then(|| line_ref.clone())
-                })
+                .filter(|(line_ref, _)| !caches.lines.contains_key(line_ref))
+                .map(|(line_ref, _)| line_ref.clone())
                 .collect::<Vec<_>>()
         };
 
@@ -252,10 +251,8 @@ impl<'a> RoutingContext<'a> {
         let mut caches = self.caches.borrow_mut();
         for line_ref in missing_line_refs {
             caches.lines.entry(line_ref.clone()).or_insert_with(|| {
-                self.graph.get_line_from_tiles(
-                    line_ref.get_tile_id(),
-                    line_ref.get_element_id() as usize,
-                )
+                self.graph
+                    .get_line_from_tiles(line_ref.get_tile_id(), line_ref.get_element_id() as usize)
             });
         }
     }
@@ -498,8 +495,7 @@ mod tests {
 
     #[test]
     fn with_tag_value_allows_reentrant_context_access() {
-        let fixture =
-            create_linear_single_tile_fixture("routing-context-with-tag-value-reentrant");
+        let fixture = create_linear_single_tile_fixture("routing-context-with-tag-value-reentrant");
         let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
         let ctx = RoutingContext::new(&graph);
         let line_ref = MapDataLineRef::new(fixture.tile_id, 0);
