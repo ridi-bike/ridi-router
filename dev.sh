@@ -8,6 +8,7 @@ PBF_DIR="$SCRIPT_DIR/map-data/pbf"
 INPUT_DIR="$SCRIPT_DIR/map-data/input"
 OUTPUT_DIR="$SCRIPT_DIR/map-data/output"
 ROUTE_DIR="$SCRIPT_DIR/map-data/routes"
+PROGRESS_DIR="$SCRIPT_DIR/map-data/progress"
 RULE_EXAMPLES_DIR="$SCRIPT_DIR/rule-examples"
 OSM_USER_AGENT="ridi-router-dev-script/1.0 (local development helper)"
 
@@ -46,7 +47,7 @@ cmd_help() {
     echo "Commands:"
     echo "  pbf <country>                       Download PBF file for a country"
     echo "  generate-tiles <countries>          Generate tiles for comma-separated countries"
-    echo "  route <start> <finish> [preset]     Generate a GPX route using OSM place lookup"
+    echo "  route <start> <finish> [preset]     Generate a GPX route and progress JSONL using OSM place lookup"
     echo "  build                               Build the project"
     echo "  run                                 Run the CLI"
     echo "  rmdf-view                           Run the RMDF debug viewer"
@@ -346,11 +347,14 @@ cmd_route() {
 
     echo "Cleaning $ROUTE_DIR..."
     rm -rf "$ROUTE_DIR"
+    echo "Cleaning $PROGRESS_DIR..."
+    rm -rf "$PROGRESS_DIR"
 
     route_args=(
         generate-route
         --tiles "$OUTPUT_DIR"
         --output-dir "$ROUTE_DIR"
+        --progress-dir "$PROGRESS_DIR"
         --format gpx
     )
 
@@ -367,6 +371,7 @@ cmd_route() {
     echo "Generating route..."
     run_cli_release "${route_args[@]}"
     echo "Route files written to $ROUTE_DIR"
+    echo "Progress files written to $PROGRESS_DIR"
 }
 
 cmd_build() {
