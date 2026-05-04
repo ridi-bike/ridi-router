@@ -1046,7 +1046,7 @@ impl TileManager {
         Ok((start, end))
     }
 
-    fn slice_rule_line_refs<'a>(payload: &'a [u64], offset: u64, count: u32) -> Result<&'a [u64]> {
+    fn slice_rule_line_refs(payload: &[u64], offset: u64, count: u32) -> Result<&[u64]> {
         let (start, end) = Self::checked_range(offset, count, payload.len())?;
         Ok(&payload[start..end])
     }

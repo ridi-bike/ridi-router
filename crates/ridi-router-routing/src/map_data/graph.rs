@@ -1343,21 +1343,21 @@ mod tests {
         right_osm_id: u64,
     }
 
+    struct OverlapManifestTile<'a> {
+        id: TileId,
+        bounds: ridi_router_common::format::TileBounds,
+        path: &'a std::path::Path,
+        point_count: u64,
+        line_count: u64,
+    }
+
     fn write_overlap_manifest(
         dir: &std::path::Path,
-        tile_a: TileId,
-        tile_b: TileId,
-        bounds_a: ridi_router_common::format::TileBounds,
-        bounds_b: ridi_router_common::format::TileBounds,
-        tile_a_path: &std::path::Path,
-        tile_b_path: &std::path::Path,
-        tile_a_point_count: u64,
-        tile_a_line_count: u64,
-        tile_b_point_count: u64,
-        tile_b_line_count: u64,
+        tile_a: OverlapManifestTile<'_>,
+        tile_b: OverlapManifestTile<'_>,
     ) {
-        let tile_a_filename = tile_a.to_filename();
-        let tile_b_filename = tile_b.to_filename();
+        let tile_a_filename = tile_a.id.to_filename();
+        let tile_b_filename = tile_b.id.to_filename();
         write_manifest(
             dir,
             &TileManifest {
@@ -1369,9 +1369,9 @@ mod tests {
                 tiles: vec![
                     TileMetadata {
                         filename: tile_a_filename.clone(),
-                        col: tile_a.col,
-                        row: tile_a.row,
-                        bounds: manifest_bounds(bounds_a),
+                        col: tile_a.id.col,
+                        row: tile_a.id.row,
+                        bounds: manifest_bounds(tile_a.bounds),
                         neighbors: TileNeighbors {
                             north: None,
                             south: None,
@@ -1382,17 +1382,17 @@ mod tests {
                             southeast: None,
                             southwest: None,
                         },
-                        size_bytes: fs::metadata(tile_a_path).unwrap().len(),
-                        point_count: tile_a_point_count,
-                        line_count: tile_a_line_count,
+                        size_bytes: fs::metadata(tile_a.path).unwrap().len(),
+                        point_count: tile_a.point_count,
+                        line_count: tile_a.line_count,
                         checksum: "sha256:graph-overlap-a".to_string(),
                         military_geojson_filename: None,
                     },
                     TileMetadata {
                         filename: tile_b_filename,
-                        col: tile_b.col,
-                        row: tile_b.row,
-                        bounds: manifest_bounds(bounds_b),
+                        col: tile_b.id.col,
+                        row: tile_b.id.row,
+                        bounds: manifest_bounds(tile_b.bounds),
                         neighbors: TileNeighbors {
                             north: None,
                             south: None,
@@ -1403,9 +1403,9 @@ mod tests {
                             southeast: None,
                             southwest: None,
                         },
-                        size_bytes: fs::metadata(tile_b_path).unwrap().len(),
-                        point_count: tile_b_point_count,
-                        line_count: tile_b_line_count,
+                        size_bytes: fs::metadata(tile_b.path).unwrap().len(),
+                        point_count: tile_b.point_count,
+                        line_count: tile_b.line_count,
                         checksum: "sha256:graph-overlap-b".to_string(),
                         military_geojson_filename: None,
                     },
@@ -1532,16 +1532,20 @@ mod tests {
 
         write_overlap_manifest(
             &dir,
-            tile_a,
-            tile_b,
-            bounds_a,
-            bounds_b,
-            &tile_a_path,
-            &tile_b_path,
-            1,
-            0,
-            2,
-            2,
+            OverlapManifestTile {
+                id: tile_a,
+                bounds: bounds_a,
+                path: &tile_a_path,
+                point_count: 1,
+                line_count: 0,
+            },
+            OverlapManifestTile {
+                id: tile_b,
+                bounds: bounds_b,
+                path: &tile_b_path,
+                point_count: 2,
+                line_count: 2,
+            },
         );
 
         OverlapFixture {
@@ -1661,16 +1665,20 @@ mod tests {
 
         write_overlap_manifest(
             &dir,
-            tile_a,
-            tile_b,
-            bounds_a,
-            bounds_b,
-            &tile_a_path,
-            &tile_b_path,
-            1,
-            2,
-            1,
-            2,
+            OverlapManifestTile {
+                id: tile_a,
+                bounds: bounds_a,
+                path: &tile_a_path,
+                point_count: 1,
+                line_count: 2,
+            },
+            OverlapManifestTile {
+                id: tile_b,
+                bounds: bounds_b,
+                path: &tile_b_path,
+                point_count: 1,
+                line_count: 2,
+            },
         );
 
         OverlapFixture {
@@ -1869,16 +1877,20 @@ mod tests {
 
         write_overlap_manifest(
             &dir,
-            tile_a,
-            tile_b,
-            bounds_a,
-            bounds_b,
-            &tile_a_path,
-            &tile_b_path,
-            2,
-            1,
-            2,
-            1,
+            OverlapManifestTile {
+                id: tile_a,
+                bounds: bounds_a,
+                path: &tile_a_path,
+                point_count: 2,
+                line_count: 1,
+            },
+            OverlapManifestTile {
+                id: tile_b,
+                bounds: bounds_b,
+                path: &tile_b_path,
+                point_count: 2,
+                line_count: 1,
+            },
         );
 
         let graph = MapDataGraph::new(crate::rmdf::TileManager::new(dir.clone()).unwrap());
@@ -2095,16 +2107,20 @@ mod tests {
 
         write_overlap_manifest(
             &dir,
-            tile_a,
-            tile_b,
-            bounds_a,
-            bounds_b,
-            &tile_a_path,
-            &tile_b_path,
-            3,
-            2,
-            3,
-            2,
+            OverlapManifestTile {
+                id: tile_a,
+                bounds: bounds_a,
+                path: &tile_a_path,
+                point_count: 3,
+                line_count: 2,
+            },
+            OverlapManifestTile {
+                id: tile_b,
+                bounds: bounds_b,
+                path: &tile_b_path,
+                point_count: 3,
+                line_count: 2,
+            },
         );
 
         let graph = MapDataGraph::new(crate::rmdf::TileManager::new(dir.clone()).unwrap());
@@ -2272,16 +2288,20 @@ mod tests {
 
         write_overlap_manifest(
             &dir,
-            tile_a,
-            tile_b,
-            bounds_a,
-            bounds_b,
-            &tile_a_path,
-            &tile_b_path,
-            1,
-            0,
-            3,
-            2,
+            OverlapManifestTile {
+                id: tile_a,
+                bounds: bounds_a,
+                path: &tile_a_path,
+                point_count: 1,
+                line_count: 0,
+            },
+            OverlapManifestTile {
+                id: tile_b,
+                bounds: bounds_b,
+                path: &tile_b_path,
+                point_count: 3,
+                line_count: 2,
+            },
         );
 
         let graph = MapDataGraph::new(crate::rmdf::TileManager::new(dir.clone()).unwrap());

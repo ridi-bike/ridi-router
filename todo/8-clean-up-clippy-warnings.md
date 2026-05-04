@@ -1,18 +1,14 @@
 # Clean up clippy warnings
 
-## Problem
+## Status
 
-The workspace still has clippy warnings.
+Resolved.
 
-## Evidence
+## Resolution
 
-- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`: needless lifetime
-- `crates/ridi-router-routing/src/map_data/graph.rs`: too many arguments in helper
+- Elided the needless lifetime in `TileManager::slice_rule_line_refs`.
+- Refactored the overlap manifest test helper to group per-tile metadata, avoiding the `too_many_arguments` warning.
 
-## Why it matters
+## Verification
 
-Warnings add noise and make it easier for new issues to hide in CI output.
-
-## Suggested fix
-
-Apply the simple lifetime cleanup and either refactor the helper signature or explicitly allow it if the current shape is intentional.
+- `cargo clippy --workspace --all-targets`
