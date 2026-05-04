@@ -15,7 +15,7 @@ pub struct BasicRuleStepLimit(pub u32);
 
 impl Default for BasicRuleStepLimit {
     fn default() -> Self {
-        Self(30000)
+        Self(60000)
     }
 }
 
@@ -46,7 +46,7 @@ impl Default for BasicRuleProgressDirection {
     fn default() -> Self {
         Self {
             enabled: true,
-            check_junctions_back: 50,
+            check_junctions_back: 100,
         }
     }
 }
