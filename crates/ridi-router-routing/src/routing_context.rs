@@ -230,30 +230,40 @@ impl<'a> RoutingContext<'a> {
     fn ensure_adjacent_lines_cached(&self, point_ref: &MapDataPointRef) {
         self.ensure_adjacent_cached(point_ref);
 
-        let missing_line_refs = {
+        let adjacent = {
             let caches = self.caches.borrow();
-            let adjacent = caches
+            caches
                 .adjacent
                 .get(point_ref)
-                .expect("adjacent should exist in cache after hydration");
-
-            adjacent
-                .iter()
-                .filter(|(line_ref, _)| !caches.lines.contains_key(line_ref))
-                .map(|(line_ref, _)| line_ref.clone())
-                .collect::<Vec<_>>()
+                .expect("adjacent should exist in cache after hydration")
+                .to_vec()
         };
 
-        if missing_line_refs.is_empty() {
+        if adjacent.is_empty() {
             return;
         }
 
         let mut caches = self.caches.borrow_mut();
-        for line_ref in missing_line_refs {
-            caches.lines.entry(line_ref.clone()).or_insert_with(|| {
+        for (line_ref, adjacent_point_ref) in adjacent {
+            let line = caches.lines.entry(line_ref.clone()).or_insert_with(|| {
                 self.graph
                     .get_line_from_tiles(line_ref.get_tile_id(), line_ref.get_element_id() as usize)
             });
+            Self::normalize_adjacent_line_endpoints(line, point_ref, &adjacent_point_ref);
+        }
+    }
+
+    fn normalize_adjacent_line_endpoints(
+        line: &mut MapDataLine,
+        center_point_ref: &MapDataPointRef,
+        adjacent_point_ref: &MapDataPointRef,
+    ) {
+        if line.points.0.get_element_id() == center_point_ref.get_element_id() {
+            line.points.0 = center_point_ref.clone();
+            line.points.1 = adjacent_point_ref.clone();
+        } else if line.points.1.get_element_id() == center_point_ref.get_element_id() {
+            line.points.1 = center_point_ref.clone();
+            line.points.0 = adjacent_point_ref.clone();
         }
     }
 
@@ -343,7 +353,8 @@ mod tests {
         RoutingContext,
     };
     use ridi_router_test_support::rmdf::{
-        create_linear_single_tile_fixture, create_missing_neighbor_fixture, SYNTHETIC_TILE_ID,
+        create_border_overlap_fixture, create_linear_single_tile_fixture,
+        create_missing_neighbor_fixture, SYNTHETIC_TILE_ID,
     };
 
     #[test]
@@ -534,6 +545,32 @@ mod tests {
         let second = ctx.adjacent(&point_ref);
         assert_eq!(second, first);
         assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn with_point_and_adjacent_lines_keeps_border_overlap_on_current_tile() {
+        let fixture = create_border_overlap_fixture("routing-context-border-overlap");
+        let graph = MapDataGraph::new(TileManager::new(fixture.dir.clone()).unwrap());
+        let ctx = RoutingContext::new(&graph);
+        let point_ref = MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id);
+        let duplicated_point_ref =
+            MapDataPointRef::new(fixture.tile_a, fixture.duplicated_neighbor_osm_id);
+        let line_ref = MapDataLineRef::new(fixture.tile_a, 0);
+
+        ctx.with_point_and_adjacent_lines(&point_ref, |_, adjacent, lines| {
+            assert_eq!(
+                adjacent,
+                &[(line_ref.clone(), duplicated_point_ref.clone())]
+            );
+
+            let line = lines
+                .get(&line_ref)
+                .expect("adjacent line should be cached for the overlap case");
+            assert_eq!(line.points.0, point_ref);
+            assert_eq!(line.points.1, duplicated_point_ref);
+        });
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
