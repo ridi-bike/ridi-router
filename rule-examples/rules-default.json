@@ -7,7 +7,7 @@
 		},
 		"progression_direction": {
 			"enabled": true,
-			"check_junctions_back": 50
+			"check_junctions_back": 100
 		},
 		"progression_speed": {
 			"enabled": false,
