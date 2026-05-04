@@ -1,18 +1,18 @@
 # Revisit repeated-point route-history compatibility behavior
 
-## Problem
+## Status
 
-Routing code preserves current behavior for repeated points "for compatibility", even though comments note it may not match intended waypoint-transition semantics.
+Resolved.
 
-## Evidence
+## Resolution
 
-Relevant code:
-- `crates/ridi-router-routing/src/router/route/mod.rs`
+- Removed first-occurrence compatibility behavior for repeated route-history points.
+- `since_point` route-history lookups now use the latest matching occurrence.
+- Removed test-only split/query helpers that encoded the old first-match behavior.
+- Added/updated regression tests for repeated boundary points in loop detection, junction lookups, and progression weighting.
 
-## Why it matters
+## Verification
 
-This looks like correctness debt in loop/revisit scenarios and may hide route-history bugs.
-
-## Suggested fix
-
-Add targeted regression tests around repeated-point cases, then decide whether to keep or replace the compatibility behavior.
+- `cargo test -p ridi-router-routing route::`
+- `cargo test -p ridi-router-routing router::weights::phase1_tests::repeated_boundary_point_uses_latest_match_in_route_history`
+- `cargo test -p ridi-router-routing`

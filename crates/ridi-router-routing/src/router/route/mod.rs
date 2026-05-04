@@ -191,13 +191,9 @@ impl LoopDetector {
             return false;
         };
 
-        // Preserve the current since_point behavior for compatibility: we start at the first
-        // matching point in route history. That matches the existing `.position(...)` logic,
-        // even though it may not line up with the original waypoint-transition intent when the
-        // same point appears multiple times.
         let since_idx = since_point
             .and_then(|point| self.point_hits.get(point))
-            .and_then(|indices| indices.first().copied())
+            .and_then(|indices| indices.last().copied())
             .unwrap_or(0);
 
         if self
@@ -417,27 +413,15 @@ impl Route {
         self.loop_detector.push_segment(ctx, &segment);
         self.route_segments.push(segment)
     }
-    pub fn route_index_first_for_point(&self, point: &MapDataPointRef) -> Option<usize> {
+    pub fn route_index_last_for_point(&self, point: &MapDataPointRef) -> Option<usize> {
         self.loop_detector
             .point_hits
             .get(point)
-            .and_then(|indices| indices.first().copied())
+            .and_then(|indices| indices.last().copied())
     }
 
     fn segment_meta(&self, idx: usize) -> Option<&LoopMeta> {
         self.loop_detector.metas.get(idx)
-    }
-
-    #[cfg(test)]
-    pub fn split_at_point(&self, point: &MapDataPointRef) -> Self {
-        let point_pos = self
-            .route_segments
-            .iter()
-            .position(|seg| seg.get_end_point() == point)
-            .map_or(0, |v| v);
-
-        let route_segments = self.route_segments[point_pos..].to_vec();
-        Self::from(route_segments)
     }
 
     pub fn nth_junction_from_end_since_idx(
@@ -474,10 +458,7 @@ impl Route {
         since_point: &MapDataPointRef,
         num_of_junctions: usize,
     ) -> Option<&Segment> {
-        // Preserve the current split_at_point(...).position(...) behavior for compatibility: when
-        // the same point appears multiple times, we intentionally start at the first match in
-        // route history, even if that differs from the conceptual waypoint-switch boundary.
-        let since_idx = self.route_index_first_for_point(since_point).unwrap_or(0);
+        let since_idx = self.route_index_last_for_point(since_point).unwrap_or(0);
 
         self.nth_junction_from_end_since_idx(ctx, since_idx, num_of_junctions)
     }
@@ -571,15 +552,6 @@ impl Route {
         }
 
         false
-    }
-    #[cfg(test)]
-    pub fn get_junctions_from_end(
-        &self,
-        ctx: &RoutingContext<'_>,
-        num_of_junctions: usize,
-    ) -> Option<Segment> {
-        self.nth_junction_from_end_since_idx(ctx, 0, num_of_junctions)
-            .cloned()
     }
     pub fn get_segments_from_end(&self, num_of_segments: usize) -> Option<Segment> {
         if self.route_segments.len() < num_of_segments + 1 {
@@ -1148,7 +1120,7 @@ mod tests {
     }
 
     #[test]
-    fn since_point_present_multiple_times_uses_first_occurrence() {
+    fn since_point_present_multiple_times_uses_latest_occurrence() {
         let graph = loop_test_graph();
         let ctx = RoutingContext::new(&graph);
         let mut specs = vec![
@@ -1160,7 +1132,7 @@ mod tests {
         specs.push((HW_REF_CLOSE_LINE_IDX, HW_REF_CLOSE_POINT_ID));
         let route = route_from_specs(&ctx, &specs);
 
-        assert!(route.has_looped(&ctx, Some(&point_ref(SINCE_POINT_ID))));
+        assert!(!route.has_looped(&ctx, Some(&point_ref(SINCE_POINT_ID))));
     }
 
     #[test]

@@ -167,7 +167,7 @@ fn switched_waypoint_boundary_limits_the_checked_suffix() {
 }
 
 #[test]
-fn repeated_boundary_point_uses_first_match_in_route_history() {
+fn repeated_boundary_point_uses_latest_match_in_route_history() {
     let test_ctx = RoutingTestContext::new(test_dataset_1());
     let ctx = test_ctx.resolver();
     let route = route_from_points(&test_ctx, &ctx, &[1, 2, 3, 6, 3, 4]);
@@ -179,11 +179,9 @@ fn repeated_boundary_point_uses_first_match_in_route_history() {
     });
     let rules = base_rules(2);
 
-    // This pins the current caveat: split_at_point() starts from the first matching point in the
-    // route history, not from the conceptual waypoint-switch moment when the same point repeats.
     assert_eq!(
         run_weight(&test_ctx, &ctx, &route, &itinerary, &rules),
-        WeightCalcResult::LastSegmentDoNotUse
+        WeightCalcResult::ForkChoiceUseWithWeight(0)
     );
 }
 

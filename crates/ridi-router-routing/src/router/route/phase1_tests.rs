@@ -44,105 +44,92 @@ fn end_point_id(segment: Option<&Segment>, ctx: &RoutingContext<'_>) -> Option<u
 }
 
 #[test]
-fn route_query_equivalence_when_boundary_is_missing() {
+fn nth_junction_since_missing_boundary_scans_from_start() {
     let test_ctx = RoutingTestContext::new(test_dataset_1());
     let ctx = test_ctx.resolver();
     let route = route_from_points(&test_ctx, &ctx, &[1, 2, 3, 6, 8, 4]);
     let boundary = test_ctx.point(11);
 
-    let current = route
-        .split_at_point(&boundary)
-        .get_junctions_from_end(&ctx, 2);
+    let from_start = route.nth_junction_from_end_since_idx(&ctx, 0, 2);
     let planned = route.nth_junction_from_end_since_point(&ctx, &boundary, 2);
 
-    assert_eq!(
-        end_point_id(current.as_ref(), &ctx),
-        end_point_id(planned, &ctx)
-    );
+    assert_eq!(end_point_id(from_start, &ctx), end_point_id(planned, &ctx));
 }
 
 #[test]
-fn route_query_equivalence_when_boundary_is_at_start() {
+fn nth_junction_since_boundary_at_start_uses_boundary_index() {
     let test_ctx = RoutingTestContext::new(test_dataset_1());
     let ctx = test_ctx.resolver();
     let route = route_from_points(&test_ctx, &ctx, &[1, 2, 3, 6, 8, 4]);
     let boundary = test_ctx.point(2);
+    let since_idx = route.route_index_last_for_point(&boundary).unwrap();
 
-    let current = route
-        .split_at_point(&boundary)
-        .get_junctions_from_end(&ctx, 2);
+    let from_boundary = route.nth_junction_from_end_since_idx(&ctx, since_idx, 2);
     let planned = route.nth_junction_from_end_since_point(&ctx, &boundary, 2);
 
     assert_eq!(
-        end_point_id(current.as_ref(), &ctx),
+        end_point_id(from_boundary, &ctx),
         end_point_id(planned, &ctx)
     );
 }
 
 #[test]
-fn route_query_equivalence_when_boundary_is_in_the_middle() {
+fn nth_junction_since_boundary_in_middle_uses_boundary_index() {
     let test_ctx = RoutingTestContext::new(test_dataset_1());
     let ctx = test_ctx.resolver();
     let route = route_from_points(&test_ctx, &ctx, &[1, 2, 3, 6, 8, 4]);
     let boundary = test_ctx.point(6);
+    let since_idx = route.route_index_last_for_point(&boundary).unwrap();
 
-    let current = route
-        .split_at_point(&boundary)
-        .get_junctions_from_end(&ctx, 2);
+    let from_boundary = route.nth_junction_from_end_since_idx(&ctx, since_idx, 2);
     let planned = route.nth_junction_from_end_since_point(&ctx, &boundary, 2);
 
     assert_eq!(
-        end_point_id(current.as_ref(), &ctx),
+        end_point_id(from_boundary, &ctx),
         end_point_id(planned, &ctx)
     );
 }
 
 #[test]
-fn route_query_equivalence_when_there_are_not_enough_junctions() {
+fn nth_junction_since_boundary_returns_none_when_suffix_is_too_short() {
     let test_ctx = RoutingTestContext::new(test_dataset_1());
     let ctx = test_ctx.resolver();
     let route = route_from_points(&test_ctx, &ctx, &[1, 2, 3, 4]);
     let boundary = test_ctx.point(2);
 
-    let current = route
-        .split_at_point(&boundary)
-        .get_junctions_from_end(&ctx, 2);
     let planned = route.nth_junction_from_end_since_point(&ctx, &boundary, 2);
 
-    assert_eq!(
-        end_point_id(current.as_ref(), &ctx),
-        end_point_id(planned, &ctx)
-    );
+    assert_eq!(end_point_id(planned, &ctx), None);
 }
 
 #[test]
-fn route_query_equivalence_preserves_repeated_boundary_point_behavior() {
+fn repeated_boundary_point_uses_latest_route_occurrence() {
     let test_ctx = RoutingTestContext::new(test_dataset_1());
     let ctx = test_ctx.resolver();
     let route = route_from_points(&test_ctx, &ctx, &[1, 2, 3, 6, 3, 4]);
     let boundary = test_ctx.point(3);
+    let since_idx = route.route_index_last_for_point(&boundary).unwrap();
 
-    let current = route
-        .split_at_point(&boundary)
-        .get_junctions_from_end(&ctx, 2);
+    let from_latest_boundary = route.nth_junction_from_end_since_idx(&ctx, since_idx, 2);
     let planned = route.nth_junction_from_end_since_point(&ctx, &boundary, 2);
 
+    assert_eq!(since_idx, 3);
     assert_eq!(
-        end_point_id(current.as_ref(), &ctx),
+        end_point_id(from_latest_boundary, &ctx),
         end_point_id(planned, &ctx)
     );
-    assert_eq!(end_point_id(planned, &ctx), Some(6));
+    assert_eq!(end_point_id(planned, &ctx), None);
 }
 
 #[test]
-fn route_index_first_for_point_uses_detector_history() {
+fn route_index_last_for_point_uses_detector_history() {
     let test_ctx = RoutingTestContext::new(test_dataset_1());
     let ctx = test_ctx.resolver();
     let route = route_from_points(&test_ctx, &ctx, &[1, 2, 3, 6, 3, 4]);
 
     assert_eq!(
-        route.route_index_first_for_point(&test_ctx.point(3)),
-        Some(1)
+        route.route_index_last_for_point(&test_ctx.point(3)),
+        Some(3)
     );
-    assert_eq!(route.route_index_first_for_point(&test_ctx.point(11)), None);
+    assert_eq!(route.route_index_last_for_point(&test_ctx.point(11)), None);
 }
