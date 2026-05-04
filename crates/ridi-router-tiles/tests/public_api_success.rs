@@ -49,16 +49,15 @@ fn workspace_root() -> PathBuf {
 }
 
 fn fixture_pbf() -> PathBuf {
-    workspace_root().join("map-data/input/latvia-latest.osm.pbf")
+    workspace_root().join("crates/ridi-router-cli/tests/fixtures/tiny-routing.osm.pbf")
 }
 
 #[test]
-#[ignore = "uses the workspace Latvia PBF fixture and takes several minutes"]
 fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
     let input_file = fixture_pbf();
     assert!(input_file.exists(), "missing fixture: {input_file:?}");
 
-    let output_dir = TestDir::new("latvia-single-file");
+    let output_dir = TestDir::new("tiny-routing-single-file");
     let summary = generate_tiles(TileGenerationRequest {
         input: TileInputSource::File(input_file),
         output_dir: output_dir.path().clone(),
@@ -92,12 +91,12 @@ fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
         .generate(RouteRequest {
             mode: RouteMode::StartFinish {
                 start: Coords {
-                    lat: 56.951861,
-                    lon: 24.113821,
+                    lat: 10.0,
+                    lon: 20.0,
                 },
                 finish: Coords {
-                    lat: 57.313103,
-                    lon: 25.281_46,
+                    lat: 10.12,
+                    lon: 20.0,
                 },
             },
             rules: RouterRules::default(),

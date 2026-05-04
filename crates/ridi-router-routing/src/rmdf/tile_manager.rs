@@ -1163,10 +1163,10 @@ mod tests {
     use crate::router::rules::{RouterRules, RulesTagValueAction};
     use ridi_router_common::format::RuleRecord;
     use ridi_router_test_support::rmdf::{
-        create_missing_neighbor_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
-        write_manifest, write_tile, LineRecord, PointRecord, TagSetRecord, TileBounds, TileId,
-        TileManifest, TileMetadata, TileNeighbors, TileSpec, SYNTHETIC_TILE_BOUNDS,
-        SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+        create_linear_single_tile_fixture, create_missing_neighbor_fixture, empty_neighbors,
+        manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord, PointRecord,
+        TagSetRecord, TileBounds, TileId, TileManifest, TileMetadata, TileNeighbors, TileSpec,
+        SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
     };
     use std::{collections::HashMap, fs, path::PathBuf};
 
@@ -1606,16 +1606,11 @@ mod tests {
 
     #[test]
     fn test_load_manifest() {
-        // Assumes Montenegro tiles generated in test setup
-        let tile_dir = PathBuf::from("test_data/montenegro_tiles");
+        let fixture = create_linear_single_tile_fixture("tile-manager-load-manifest");
 
-        // Skip if test data doesn't exist
-        if !tile_dir.exists() {
-            eprintln!("Skipping test: test_data/montenegro_tiles doesn't exist");
-            return;
-        }
+        let _manager = TileManager::new(fixture.dir.clone()).expect("Failed to load TileManager");
 
-        let _manager = TileManager::new(tile_dir).expect("Failed to load TileManager");
+        fs::remove_dir_all(fixture.dir).unwrap();
     }
 
     #[test]
@@ -2463,21 +2458,22 @@ mod tests {
 
     #[test]
     fn test_single_tile_query() {
-        let tile_dir = PathBuf::from("test_data/montenegro_tiles");
+        let fixture = create_linear_single_tile_fixture("tile-manager-single-tile-query");
+        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
 
-        // Skip if test data doesn't exist
-        if !tile_dir.exists() {
-            eprintln!("Skipping test: test_data/montenegro_tiles doesn't exist");
-            return;
-        }
-
-        let mut manager = TileManager::new(tile_dir).unwrap();
-
-        // Query for a point known to exist in Montenegro
         let point = manager
-            .get_closest_to_coords(42.5, 18.5, &RouterRules::default(), false, None)
+            .get_closest_to_coords(
+                fixture.start_lat,
+                fixture.start_lon,
+                &RouterRules::default(),
+                false,
+                None,
+            )
             .unwrap();
-        assert!(point.is_some());
+
+        assert_eq!(point, Some((fixture.tile_id, fixture.start_osm_id)));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
     }
 
     #[test]
@@ -2589,34 +2585,29 @@ mod tests {
 
     #[test]
     fn test_cross_tile_traversal() {
-        let tile_dir = PathBuf::from("test_data/montenegro_tiles");
+        let SyntheticCrossTileFixture {
+            dir,
+            tile_a,
+            tile_b,
+            center_osm_id,
+            in_tile_neighbor_osm_id,
+            cross_tile_neighbor_osm_id,
+        } = create_cross_tile_fixture("tile-manager-cross-tile-traversal");
 
-        // Skip if test data doesn't exist
-        if !tile_dir.exists() {
-            eprintln!("Skipping test: test_data/montenegro_tiles doesn't exist");
-            return;
-        }
+        let mut manager = TileManager::new(dir.clone()).unwrap();
+        let adjacent = manager.get_adjacent_by_id(tile_a, center_osm_id).unwrap();
 
-        let mut manager = TileManager::new(tile_dir).unwrap();
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(tile_a, 0),
+            MapDataPointRef::new(tile_a, in_tile_neighbor_osm_id),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(tile_a, 1),
+            MapDataPointRef::new(tile_b, cross_tile_neighbor_osm_id),
+        )));
+        assert_eq!(manager.loaded_tile_count(), 2);
 
-        // Get a point near a tile boundary
-        let point = manager
-            .get_closest_to_coords(42.1, 18.9, &RouterRules::default(), false, None)
-            .unwrap()
-            .unwrap();
-
-        // Get adjacent points (may cross tile boundary)
-        let adjacent = manager.get_adjacent_by_id(point.0, point.1).unwrap();
-
-        // Should have at least one adjacent point
-        assert!(!adjacent.is_empty());
-
-        // Check if any cross tile boundary
-        let crosses_boundary = adjacent.iter().any(|(line_ref, other_point_ref)| {
-            line_ref.get_tile_id() != other_point_ref.get_tile_id()
-        });
-        // May or may not cross depending on location
-        let _ = crosses_boundary;
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

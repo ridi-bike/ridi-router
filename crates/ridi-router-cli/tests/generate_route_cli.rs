@@ -1,33 +1,10 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::Command,
 };
 
 use ridi_router_test_support::rmdf::{create_linear_single_tile_fixture, unique_test_dir};
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .unwrap()
-}
-
-fn repo_path(relative: &str) -> PathBuf {
-    workspace_root().join(relative)
-}
-
-fn fixture_tiles_dir() -> PathBuf {
-    repo_path("map-data/output")
-}
-
-fn fixture_rule_file() -> PathBuf {
-    repo_path("rule-examples/rules-default.json")
-}
-
-fn repo_fixture_tiles_available() -> bool {
-    fixture_tiles_dir().join("manifest.json").exists() && fixture_rule_file().exists()
-}
 
 fn base_generate_route_command(
     tiles_dir: &Path,
@@ -56,19 +33,6 @@ fn base_generate_route_command(
     command
 }
 
-fn run_generate_route(output_dir: &Path, format: &str) -> Output {
-    base_generate_route_command(
-        &fixture_tiles_dir(),
-        &fixture_rule_file(),
-        output_dir,
-        format,
-        "56.951861,24.113821",
-        "57.313103,25.281460",
-    )
-    .output()
-    .expect("failed to execute ridi-router-cli generate-route")
-}
-
 const SYNTHETIC_START: &str = "10.0,20.0";
 const SYNTHETIC_FINISH: &str = "10.12,20.0";
 
@@ -79,12 +43,18 @@ fn create_synthetic_success_fixture() -> (PathBuf, PathBuf) {
 
 #[test]
 fn generate_route_end_to_end_json_output_dir() {
-    if !repo_fixture_tiles_available() {
-        eprintln!("Skipping test: map-data/output fixture is not available");
-        return;
-    }
+    let (tiles_dir, rule_file) = create_synthetic_success_fixture();
     let output_dir = unique_test_dir("cli-json-output-dir");
-    let output = run_generate_route(&output_dir, "json");
+    let output = base_generate_route_command(
+        &tiles_dir,
+        &rule_file,
+        &output_dir,
+        "json",
+        SYNTHETIC_START,
+        SYNTHETIC_FINISH,
+    )
+    .output()
+    .expect("failed to execute ridi-router-cli generate-route");
 
     assert!(
         output.status.success(),
@@ -98,19 +68,26 @@ fn generate_route_end_to_end_json_output_dir() {
     assert!(output_dir.is_dir());
     assert!(fs::read_dir(&output_dir).unwrap().count() >= 1);
 
+    fs::remove_dir_all(tiles_dir).unwrap();
     fs::remove_dir_all(output_dir).unwrap();
 }
 
 #[test]
 fn generate_route_end_to_end_gpx_output_dir() {
-    if !repo_fixture_tiles_available() {
-        eprintln!("Skipping test: map-data/output fixture is not available");
-        return;
-    }
+    let (tiles_dir, rule_file) = create_synthetic_success_fixture();
     let output_dir = unique_test_dir("cli-gpx-output-dir");
     fs::create_dir_all(&output_dir).unwrap();
 
-    let output = run_generate_route(&output_dir, "gpx");
+    let output = base_generate_route_command(
+        &tiles_dir,
+        &rule_file,
+        &output_dir,
+        "gpx",
+        SYNTHETIC_START,
+        SYNTHETIC_FINISH,
+    )
+    .output()
+    .expect("failed to execute ridi-router-cli generate-route");
 
     assert!(
         output.status.success(),
@@ -124,20 +101,27 @@ fn generate_route_end_to_end_gpx_output_dir() {
     assert!(output_dir.is_dir());
     assert!(fs::read_dir(&output_dir).unwrap().count() >= 1);
 
+    fs::remove_dir_all(tiles_dir).unwrap();
     fs::remove_dir_all(output_dir).unwrap();
 }
 
 #[test]
 fn generate_route_non_empty_output_dir_fails() {
-    if !repo_fixture_tiles_available() {
-        eprintln!("Skipping test: map-data/output fixture is not available");
-        return;
-    }
+    let (tiles_dir, rule_file) = create_synthetic_success_fixture();
     let output_dir = unique_test_dir("cli-non-empty-output-dir");
     fs::create_dir_all(&output_dir).unwrap();
     fs::write(output_dir.join("already-there.txt"), "sentinel").unwrap();
 
-    let output = run_generate_route(&output_dir, "json");
+    let output = base_generate_route_command(
+        &tiles_dir,
+        &rule_file,
+        &output_dir,
+        "json",
+        SYNTHETIC_START,
+        SYNTHETIC_FINISH,
+    )
+    .output()
+    .expect("failed to execute ridi-router-cli generate-route");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(!output.status.success());
@@ -149,11 +133,13 @@ fn generate_route_non_empty_output_dir_fails() {
     assert!(output_dir.join("already-there.txt").exists());
     assert_eq!(fs::read_dir(&output_dir).unwrap().count(), 1);
 
+    fs::remove_dir_all(tiles_dir).unwrap();
     fs::remove_dir_all(output_dir).unwrap();
 }
 
 #[test]
 fn generate_route_missing_manifest_fails() {
+    let (fixture_dir, rule_file) = create_synthetic_success_fixture();
     let tiles_dir = unique_test_dir("cli-missing-manifest-tiles");
     let output_dir = unique_test_dir("cli-missing-manifest-output");
     fs::create_dir_all(&tiles_dir).unwrap();
@@ -167,12 +153,12 @@ fn generate_route_missing_manifest_fails() {
         .arg("--format")
         .arg("json")
         .arg("--rule-file")
-        .arg(fixture_rule_file())
+        .arg(&rule_file)
         .arg("start-finish")
         .arg("--start")
-        .arg("56.951861,24.113821")
+        .arg(SYNTHETIC_START)
         .arg("--finish")
-        .arg("57.313103,25.281460")
+        .arg(SYNTHETIC_FINISH)
         .output()
         .expect("failed to execute ridi-router-cli generate-route");
 
@@ -181,6 +167,7 @@ fn generate_route_missing_manifest_fails() {
     assert!(output.stdout.is_empty());
     assert!(stderr.contains("manifest.json"), "stderr: {stderr}");
 
+    fs::remove_dir_all(fixture_dir).unwrap();
     fs::remove_dir_all(tiles_dir).unwrap();
     if output_dir.exists() {
         fs::remove_dir_all(output_dir).unwrap();
@@ -189,6 +176,7 @@ fn generate_route_missing_manifest_fails() {
 
 #[test]
 fn generate_route_invalid_tiles_dir_fails() {
+    let (fixture_dir, rule_file) = create_synthetic_success_fixture();
     let tiles_dir = unique_test_dir("cli-invalid-tiles-dir");
     let output_dir = unique_test_dir("cli-invalid-tiles-output");
 
@@ -201,12 +189,12 @@ fn generate_route_invalid_tiles_dir_fails() {
         .arg("--format")
         .arg("json")
         .arg("--rule-file")
-        .arg(fixture_rule_file())
+        .arg(&rule_file)
         .arg("start-finish")
         .arg("--start")
-        .arg("56.951861,24.113821")
+        .arg(SYNTHETIC_START)
         .arg("--finish")
-        .arg("57.313103,25.281460")
+        .arg(SYNTHETIC_FINISH)
         .output()
         .expect("failed to execute ridi-router-cli generate-route");
 
@@ -218,19 +206,26 @@ fn generate_route_invalid_tiles_dir_fails() {
         "stderr: {stderr}"
     );
 
+    fs::remove_dir_all(fixture_dir).unwrap();
     if output_dir.exists() {
         fs::remove_dir_all(output_dir).unwrap();
     }
 }
 
 #[test]
-fn generate_route_zero_routes_succeeds() {
-    if !repo_fixture_tiles_available() {
-        eprintln!("Skipping test: map-data/output fixture is not available");
-        return;
-    }
-    let output_dir = unique_test_dir("cli-zero-routes");
-    let output = run_generate_route(&output_dir, "json");
+fn generate_route_does_not_report_no_routes_when_route_exists() {
+    let (tiles_dir, rule_file) = create_synthetic_success_fixture();
+    let output_dir = unique_test_dir("cli-route-found");
+    let output = base_generate_route_command(
+        &tiles_dir,
+        &rule_file,
+        &output_dir,
+        "json",
+        SYNTHETIC_START,
+        SYNTHETIC_FINISH,
+    )
+    .output()
+    .expect("failed to execute ridi-router-cli generate-route");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr: {stderr}");
@@ -239,6 +234,7 @@ fn generate_route_zero_routes_succeeds() {
     assert!(output_dir.is_dir());
     assert!(fs::read_dir(&output_dir).unwrap().count() >= 1);
 
+    fs::remove_dir_all(tiles_dir).unwrap();
     fs::remove_dir_all(output_dir).unwrap();
 }
 

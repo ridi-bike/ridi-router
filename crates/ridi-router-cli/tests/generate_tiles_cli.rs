@@ -157,10 +157,7 @@ fn generate_tiles_cli_requires_input_or_input_dir() {
 #[test]
 fn generate_tiles_cli_single_file_writes_manifest_and_tiles() {
     let input_file = tiny_routing_pbf();
-    if !input_file.exists() {
-        eprintln!("Skipping test: missing fixture {input_file:?}");
-        return;
-    }
+    assert!(input_file.exists(), "missing fixture: {input_file:?}");
 
     let _heavy_test_lock = heavy_test_lock();
     let output_dir = TestDir::new("tiles-cli-single-file-success");
@@ -182,10 +179,7 @@ fn generate_tiles_cli_single_file_writes_manifest_and_tiles() {
 #[test]
 fn generate_tiles_directory_input_then_generate_route_end_to_end() {
     let fixture_pbf = tiny_routing_pbf();
-    if !fixture_pbf.exists() {
-        eprintln!("Skipping test: missing fixture {fixture_pbf:?}");
-        return;
-    }
+    assert!(fixture_pbf.exists(), "missing fixture: {fixture_pbf:?}");
 
     let _heavy_test_lock = heavy_test_lock();
     let input_dir = TestDir::new("tiles-cli-directory-input");

@@ -1,25 +1,19 @@
 # Replace skipped fixture-based tests with reliable coverage
 
-## Problem
+## Status
 
-Several tests silently skip when external fixtures are unavailable.
+Resolved.
 
-## Evidence
+## Resolution
 
-Skipped CLI fixture tests:
-- `crates/ridi-router-cli/tests/generate_route_cli.rs`
-- `crates/ridi-router-cli/tests/generate_tiles_cli.rs`
+- `generate_route_cli` now uses deterministic synthetic RMDF tiles and rules instead of optional `map-data/output`.
+- `generate_tiles_cli` now fails clearly if the checked-in tiny PBF fixture is missing instead of silently skipping.
+- `tile_manager` tests now use synthetic RMDF fixtures instead of optional external Montenegro tiles.
+- `public_api_success` now runs by default against the checked-in tiny PBF fixture instead of an ignored large Latvia fixture.
 
-Skipped routing tests depend on missing `test_data/montenegro_tiles`:
-- `crates/ridi-router-routing/src/rmdf/tile_manager.rs`
+## Verification
 
-Heavy public API test is ignored:
-- `crates/ridi-router-tiles/tests/public_api_success.rs`
-
-## Why it matters
-
-Real integration coverage is weaker than it appears, especially for data-dependent behavior.
-
-## Suggested fix
-
-Prefer synthetic fixtures checked into the repo, or make fixture generation deterministic and part of test setup.
+- `cargo test -p ridi-router-cli --test generate_route_cli`
+- `cargo test -p ridi-router-cli --test generate_tiles_cli`
+- `cargo test -p ridi-router-routing rmdf::tile_manager`
+- `cargo test -p ridi-router-tiles --test public_api_success`
