@@ -656,9 +656,12 @@ impl Walker {
     pub(crate) fn move_backwards_to_prev_fork_with_context(
         &mut self,
         ctx: &RoutingContext<'_>,
-    ) -> Option<SegmentList> {
+    ) -> (Option<SegmentList>, Vec<Segment>) {
         self.next_fork_choice_point = None;
-        self.route_walked.remove_last_segment();
+        let mut removed_segments = Vec::new();
+        if let Some(segment) = self.route_walked.remove_last_segment() {
+            removed_segments.push(segment);
+        }
         loop {
             let last_segment = self.route_walked.get_segment_last();
             if let Some(last_segment) = last_segment {
@@ -682,14 +685,19 @@ impl Walker {
             } else {
                 break;
             }
-            self.route_walked.remove_last_segment();
+            if let Some(segment) = self.route_walked.remove_last_segment() {
+                removed_segments.push(segment);
+            }
         }
 
         if let Some(last_segment) = self.route_walked.get_segment_last() {
-            return Some(self.get_fork_segments_for_segment_with_context(ctx, last_segment));
+            return (
+                Some(self.get_fork_segments_for_segment_with_context(ctx, last_segment)),
+                removed_segments,
+            );
         }
 
-        None
+        (None, removed_segments)
     }
 
     pub fn get_route(&self) -> &Route {
@@ -990,7 +998,8 @@ mod tests {
             );
             assert!(!walker.get_route().has_looped(&ctx, None));
 
-            let choices = match walker.move_backwards_to_prev_fork_with_context(&ctx) {
+            let (choices, _removed_segments) = walker.move_backwards_to_prev_fork_with_context(&ctx);
+            let choices = match choices {
                 None => panic!("Expected to be back at point 3 with choices"),
                 Some(c) => c,
             };
@@ -2405,9 +2414,8 @@ mod tests {
                 Ok(WalkerMoveResult::DeadEnd)
             );
 
-            let choices = walker
-                .move_backwards_to_prev_fork_with_context(&ctx)
-                .expect("expected previous fork choices");
+            let (choices, _removed_segments) = walker.move_backwards_to_prev_fork_with_context(&ctx);
+            let choices = choices.expect("expected previous fork choices");
 
             assert!(route_matches_ids(&ctx, walker.get_route().clone(), &[2, 3]));
             assert_choice_ids(&ctx, &choices, &[4, 5]);
@@ -2438,9 +2446,8 @@ mod tests {
             );
             assert_eq!(walker.fork_classification_cache_size(), 3);
 
-            let choices = walker
-                .move_backwards_to_prev_fork_with_context(&ctx)
-                .expect("expected previous fork choices");
+            let (choices, _removed_segments) = walker.move_backwards_to_prev_fork_with_context(&ctx);
+            let choices = choices.expect("expected previous fork choices");
 
             assert_eq!(walker.fork_classification_cache_size(), 3);
             assert_choice_ids(&ctx, &choices, &[4, 5]);

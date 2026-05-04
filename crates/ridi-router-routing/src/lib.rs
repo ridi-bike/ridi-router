@@ -1,4 +1,5 @@
 mod map_data;
+mod progress;
 mod rmdf;
 mod route_output;
 mod router;
@@ -7,6 +8,13 @@ pub(crate) mod routing_context;
 #[cfg(test)]
 mod test_utils;
 
+pub use progress::{
+    BacktrackReason, ForkChoiceRejection, ForkChoiceSummary, ForkDecisionReason,
+    GenerationPassMetadata, ItineraryStatus, MapPointSnapshot, MapSegmentSnapshot,
+    RoutingProgressEnvelope, RoutingProgressEvent, RoutingProgressListener, RoutingProgressSink,
+    SnapPointMetadata, SnapPointRole, WaypointSelectionMetadata, WeightCalcStageSnapshot,
+    WeightEvaluation, WeightEvaluationResult,
+};
 pub use route_output::{ComputedRoute, RouteComputation};
 pub use router::route::{RouteStatElement, RouteStats};
 pub use router::rules::{RouterRules, RulesTagValueAction};

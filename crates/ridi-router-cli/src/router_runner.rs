@@ -1,4 +1,4 @@
-use std::{num::ParseFloatError, path::PathBuf, str::FromStr};
+use std::{num::ParseFloatError, path::PathBuf, str::FromStr, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -9,6 +9,7 @@ use crate::{
         output_dir::{prepare_empty_output_dir, OutputDirError},
         rules::{read_router_rules, RuleFileError},
     },
+    progress_writer::{JsonlProgressSink, ProgressWriterError},
     result_writer::{OutputFormat, ResultWriter, ResultWriterError, RouteOutputRequest},
 };
 use ridi_router_routing::{
@@ -48,6 +49,9 @@ pub enum RouterRunnerError {
 
     #[error("Failed to write result: {error}")]
     ResultWrite { error: ResultWriterError },
+
+    #[error("Failed to initialize progress writer: {error}")]
+    ProgressWrite { error: ProgressWriterError },
 
     #[cfg(feature = "rule-schema-writer")]
     #[error("Failed to write rule schema: {error}")]
@@ -168,6 +172,10 @@ enum CliMode {
         /// JSON file with specified rules for route generation. Default values used if file not
         /// specified
         rule_file: Option<PathBuf>,
+
+        #[arg(long, value_name = "DIR")]
+        /// Directory that will receive one JSONL progress file per itinerary
+        progress_dir: Option<PathBuf>,
 
         #[command(subcommand)]
         /// Routing mode to generate a route between start and finish coordinates or a round trip
@@ -290,6 +298,7 @@ impl RouterRunner {
         routing_mode: &RoutingMode,
         output_request: RouteOutputRequest,
         rule_file: Option<PathBuf>,
+        progress_dir: Option<PathBuf>,
     ) -> std::result::Result<(), RouterRunnerError> {
         let rules =
             read_router_rules(rule_file).map_err(|error| RouterRunnerError::Rules { error })?;
@@ -299,10 +308,23 @@ impl RouterRunner {
             .map_err(|error| RouterRunnerError::Routing { error })?;
 
         info!("Route generation started");
+        let progress_sink = progress_dir
+            .map(JsonlProgressSink::new)
+            .transpose()
+            .map_err(|error| RouterRunnerError::ProgressWrite { error })?
+            .map(Arc::new);
+        let progress_listener = progress_sink
+            .clone()
+            .map(|sink| sink as ridi_router_routing::RoutingProgressListener);
         let request = Self::build_route_request(routing_mode, rules);
         let computation = executor
-            .generate(request)
+            .generate(request, progress_listener)
             .map_err(|error| RouterRunnerError::Routing { error })?;
+        if let Some(progress_sink) = &progress_sink {
+            progress_sink
+                .finish()
+                .map_err(|error| RouterRunnerError::ProgressWrite { error })?;
+        }
         Self::write_route_output(output_request, computation)
     }
 
@@ -339,11 +361,13 @@ impl RouterRunner {
                 output_dir,
                 format,
                 rule_file,
+                progress_dir,
             } => Self::run_generate_route(
                 tiles,
                 &routing_mode,
                 RouteOutputRequest { output_dir, format },
                 rule_file,
+                progress_dir,
             ),
             CliMode::GenerateTiles {
                 input,

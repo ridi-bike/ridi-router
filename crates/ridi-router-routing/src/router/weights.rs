@@ -179,11 +179,11 @@ pub fn weight_heading(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
         Ok(value) => value,
         Err(error) => {
             error!("weight calc error {:#?}", error);
-            return WeightCalcResult::ForkChoiceDoNotUse;
+            return WeightCalcResult::ForkChoiceDoNotUse();
         }
     };
     let _ = match next_fork {
-        WalkerMoveResult::DeadEnd => return WeightCalcResult::ForkChoiceDoNotUse,
+        WalkerMoveResult::DeadEnd => return WeightCalcResult::ForkChoiceDoNotUse(),
         WalkerMoveResult::Finish => return WeightCalcResult::ForkChoiceUseWithWeight(255),
         WalkerMoveResult::Fork(forks) => forks,
     };
@@ -248,7 +248,7 @@ pub fn weight_no_loops(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
         .route
         .has_looped(input.ctx, input.itinerary.get_point_loop_check_since())
     {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
 
     WeightCalcResult::ForkChoiceUseWithWeight(0)
@@ -290,7 +290,7 @@ pub fn weight_no_short_detours(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
         input.current_fork_segment,
         input.rules.basic.no_short_detours.min_detour_len_m,
     ) {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
 
     WeightCalcResult::ForkChoiceUseWithWeight(0)
@@ -351,7 +351,7 @@ pub fn weight_check_distance_to_next(input: WeightCalcInput<'_, '_>) -> WeightCa
     );
 
     if distance_to_next_current > distance_to_next_junctions_back {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
@@ -390,7 +390,7 @@ pub fn weight_progress_speed(input: WeightCalcInput<'_, '_>) -> WeightCalcResult
                 .progression_speed
                 .last_step_distance_below_avg_with_ratio
     {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
 
     WeightCalcResult::ForkChoiceUseWithWeight(0)
@@ -404,7 +404,7 @@ fn get_rule_for_tag(
         if let Some(segment_tag) = segment_tag {
             if let Some(rule_tag) = rule_tag.get(segment_tag) {
                 return Some(match rule_tag {
-                    RulesTagValueAction::Avoid => WeightCalcResult::ForkChoiceDoNotUse,
+                    RulesTagValueAction::Avoid => WeightCalcResult::ForkChoiceDoNotUse(),
                     RulesTagValueAction::Priority { value } => {
                         WeightCalcResult::ForkChoiceUseWithWeight(*value)
                     }
@@ -437,11 +437,11 @@ pub fn weight_rules_highway(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
         .any(|segment| {
             with_segment_highway(input.ctx, segment, |tag| {
                 get_rule_for_tag(&input.rules.highway, tag)
-                    == Some(WeightCalcResult::ForkChoiceDoNotUse)
+                    == Some(WeightCalcResult::ForkChoiceDoNotUse())
             })
         })
     {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
 
     if let Some(result) = with_segment_highway(input.ctx, input.current_fork_segment, |tag| {
@@ -468,11 +468,11 @@ pub fn weight_rules_surface(input: WeightCalcInput<'_, '_>) -> WeightCalcResult 
         .any(|segment| {
             with_segment_surface(input.ctx, segment, |tag| {
                 get_rule_for_tag(&input.rules.surface, tag)
-                    == Some(WeightCalcResult::ForkChoiceDoNotUse)
+                    == Some(WeightCalcResult::ForkChoiceDoNotUse())
             })
         })
     {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
 
     if let Some(result) = with_segment_surface(input.ctx, input.current_fork_segment, |tag| {
@@ -499,11 +499,11 @@ pub fn weight_rules_smoothness(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
         .any(|segment| {
             with_segment_smoothness(input.ctx, segment, |tag| {
                 get_rule_for_tag(&input.rules.smoothness, tag)
-                    == Some(WeightCalcResult::ForkChoiceDoNotUse)
+                    == Some(WeightCalcResult::ForkChoiceDoNotUse())
             })
         })
     {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
 
     if let Some(result) = with_segment_smoothness(input.ctx, input.current_fork_segment, |tag| {
@@ -519,15 +519,15 @@ pub fn weight_rules_smoothness(input: WeightCalcInput<'_, '_>) -> WeightCalcResu
 pub fn weight_avoid_nogo_areas(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     trace!("weight_avoid_nogo_areas");
     if point_is_nogo(input.ctx, input.current_fork_segment.get_end_point()) {
-        return WeightCalcResult::ForkChoiceDoNotUse;
+        return WeightCalcResult::ForkChoiceDoNotUse();
     }
 
     if let Some(segment) = input.route.get_segment_last() {
         if point_is_nogo(input.ctx, segment.get_end_point()) {
-            return WeightCalcResult::LastSegmentDoNotUse;
+            return WeightCalcResult::LastSegmentDoNotUse();
         }
     } else if point_is_nogo(input.ctx, &input.itinerary.start) {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
     WeightCalcResult::ForkChoiceUseWithWeight(0)
 }
@@ -570,14 +570,14 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput<'_, '_>) -> WeightCalcRes
             tag.is_some_and(|tag| avoid_rules.contains(&tag))
         })
     }) {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
     if was_on_avoid(&last_chunk, &input.rules.surface, |segment, avoid_rules| {
         with_segment_surface(input.ctx, segment, |tag| {
             tag.is_some_and(|tag| avoid_rules.contains(&tag))
         })
     }) {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
     if was_on_avoid(
         &last_chunk,
@@ -588,7 +588,7 @@ pub fn weight_check_avoid_rules(input: WeightCalcInput<'_, '_>) -> WeightCalcRes
             })
         },
     ) {
-        return WeightCalcResult::LastSegmentDoNotUse;
+        return WeightCalcResult::LastSegmentDoNotUse();
     }
 
     WeightCalcResult::ForkChoiceUseWithWeight(0)

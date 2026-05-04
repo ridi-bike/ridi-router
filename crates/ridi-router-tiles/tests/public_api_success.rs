@@ -88,19 +88,22 @@ fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
     })
     .unwrap();
     let computation = executor
-        .generate(RouteRequest {
-            mode: RouteMode::StartFinish {
-                start: Coords {
-                    lat: 10.0,
-                    lon: 20.0,
+        .generate(
+            RouteRequest {
+                mode: RouteMode::StartFinish {
+                    start: Coords {
+                        lat: 10.0,
+                        lon: 20.0,
+                    },
+                    finish: Coords {
+                        lat: 10.12,
+                        lon: 20.0,
+                    },
                 },
-                finish: Coords {
-                    lat: 10.12,
-                    lon: 20.0,
-                },
+                rules: RouterRules::default(),
             },
-            rules: RouterRules::default(),
-        })
+            None,
+        )
         .unwrap();
 
     assert!(

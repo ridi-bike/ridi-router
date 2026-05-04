@@ -4,6 +4,7 @@ mod debug;
 mod file_naming;
 mod gpx_writer;
 mod json_writer;
+mod progress_writer;
 mod result_writer;
 #[cfg(feature = "rmdf-viewer")]
 mod rmdf;
@@ -21,8 +22,9 @@ use tracing::{error_span, Level};
 #[hotpath::main(
     percentiles = [50, 95, 99],
     limit = 0,
+    format = "none",
     report = "functions-timing,functions-alloc"
- )]
+)]
 fn main() {
     let subscriber = if std::io::stdin().is_terminal() {
         let subscriber = tracing_subscriber::fmt()

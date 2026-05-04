@@ -26,12 +26,12 @@ fn reset_counts() {
 
 fn route_gate_last_segment_do_not_use(_input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     ROUTE_GATE_CALLS.fetch_add(1, Ordering::SeqCst);
-    WeightCalcResult::LastSegmentDoNotUse
+    WeightCalcResult::LastSegmentDoNotUse()
 }
 
 fn second_route_gate_last_segment_do_not_use(_input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
     SECOND_ROUTE_GATE_CALLS.fetch_add(1, Ordering::SeqCst);
-    WeightCalcResult::LastSegmentDoNotUse
+    WeightCalcResult::LastSegmentDoNotUse()
 }
 
 fn route_gate_pass(_input: WeightCalcInput<'_, '_>) -> WeightCalcResult {

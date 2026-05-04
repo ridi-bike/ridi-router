@@ -128,7 +128,7 @@ fn returns_last_segment_do_not_use_when_current_is_farther_from_next() {
 
     assert_eq!(
         run_weight(&test_ctx, &ctx, &route, &itinerary, &rules),
-        WeightCalcResult::LastSegmentDoNotUse
+        WeightCalcResult::LastSegmentDoNotUse()
     );
 }
 
@@ -323,7 +323,7 @@ fn heading_look_ahead_returns_dead_end_when_candidate_dies_before_next_fork() {
 
     assert_eq!(
         run_heading_weight(&test_ctx, &ctx, 1, 2, 2, 3),
-        WeightCalcResult::ForkChoiceDoNotUse
+        WeightCalcResult::ForkChoiceDoNotUse()
     );
 }
 

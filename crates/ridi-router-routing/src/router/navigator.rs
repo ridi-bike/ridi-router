@@ -5,20 +5,47 @@ use std::{
 
 use tracing::trace;
 
-use crate::{map_data::graph::MapDataPointRef, router::rules::RouterRules, RoutingContext};
+use crate::{
+    map_data::graph::MapDataPointRef,
+    progress::{
+        point_snapshot, segment_snapshot_from, segment_snapshot_infer_from_line, BacktrackReason,
+        ForkChoiceRejection, ForkChoiceSummary, ForkDecisionReason, ItineraryProgressReporter,
+        ItineraryStatus, RoutingProgressEvent, WeightEvaluation, WeightEvaluationResult,
+    },
+    router::rules::RouterRules,
+    RoutingContext,
+};
 
 use super::{
     itinerary::Itinerary,
-    route::Route,
+    route::{segment::Segment, Route},
     walker::{Walker, WalkerMoveResult},
     weights::{WeightCalc, WeightCalcInput, WeightCalcStage},
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum WeightCalcResult {
-    ForkChoiceUseWithWeight(u8),
-    ForkChoiceDoNotUse,
-    LastSegmentDoNotUse,
+    ForkChoiceUseWithWeight { weight: u8, reason: Option<String> },
+    ForkChoiceDoNotUse { reason: Option<String> },
+    LastSegmentDoNotUse { reason: Option<String> },
+}
+
+#[allow(non_snake_case)]
+impl WeightCalcResult {
+    pub fn ForkChoiceUseWithWeight(weight: u8) -> Self {
+        Self::ForkChoiceUseWithWeight {
+            weight,
+            reason: None,
+        }
+    }
+
+    pub fn ForkChoiceDoNotUse() -> Self {
+        Self::ForkChoiceDoNotUse { reason: None }
+    }
+
+    pub fn LastSegmentDoNotUse() -> Self {
+        Self::LastSegmentDoNotUse { reason: None }
+    }
 }
 
 #[derive(Debug)]
@@ -149,15 +176,33 @@ pub struct Navigator {
     route_once_weight_calcs: Vec<WeightCalc>,
     per_fork_weight_calcs: Vec<WeightCalc>,
     discarded_fork_choices: DiscardedForkChoices,
+    progress: ItineraryProgressReporter,
 }
 
 #[hotpath::measure_all]
 impl Navigator {
+    #[allow(dead_code)]
     pub fn new(
         itinerary: Itinerary,
         rules: RouterRules,
         weight_calcs: Vec<WeightCalc>,
         reset_at_new_next: bool,
+    ) -> Self {
+        Self::new_with_progress(
+            itinerary,
+            rules,
+            weight_calcs,
+            reset_at_new_next,
+            ItineraryProgressReporter::disabled(0),
+        )
+    }
+
+    pub fn new_with_progress(
+        itinerary: Itinerary,
+        rules: RouterRules,
+        weight_calcs: Vec<WeightCalc>,
+        reset_at_new_next: bool,
+        progress: ItineraryProgressReporter,
     ) -> Self {
         let mut route_once_weight_calcs = Vec::new();
         let mut per_fork_weight_calcs = Vec::new();
@@ -175,6 +220,75 @@ impl Navigator {
             route_once_weight_calcs,
             per_fork_weight_calcs,
             discarded_fork_choices: DiscardedForkChoices::new(reset_at_new_next),
+            progress,
+        }
+    }
+
+    fn evaluation(weight_calc: &WeightCalc, result: &WeightCalcResult) -> WeightEvaluation {
+        let result = match result {
+            WeightCalcResult::ForkChoiceUseWithWeight { weight, reason } => {
+                WeightEvaluationResult::Accepted {
+                    weight: *weight,
+                    reason: reason.clone(),
+                }
+            }
+            WeightCalcResult::ForkChoiceDoNotUse { reason } => {
+                WeightEvaluationResult::RejectedChoice {
+                    reason: reason.clone(),
+                }
+            }
+            WeightCalcResult::LastSegmentDoNotUse { reason } => {
+                WeightEvaluationResult::RejectedRoute {
+                    reason: reason.clone(),
+                }
+            }
+        };
+
+        WeightEvaluation {
+            name: weight_calc.name.clone(),
+            stage: weight_calc.stage.into(),
+            result,
+        }
+    }
+
+    fn emit_advanced_segments(&mut self, ctx: &RoutingContext<'_>, start_idx: usize) {
+        if !self.progress.enabled() {
+            return;
+        }
+        let route = self.walker.get_route();
+        for idx in start_idx..route.get_segment_count() {
+            let Some(segment) = route.get_segment_by_index(idx) else {
+                continue;
+            };
+            let from_point = if idx == 0 {
+                &self.itinerary.start
+            } else {
+                route
+                    .get_segment_by_index(idx - 1)
+                    .map(|segment| segment.get_end_point())
+                    .unwrap_or(&self.itinerary.start)
+            };
+            self.progress.emit(RoutingProgressEvent::SegmentAdvanced {
+                segment: segment_snapshot_from(ctx, from_point, segment),
+            });
+        }
+    }
+
+    fn emit_backtracked_segments(
+        &mut self,
+        ctx: &RoutingContext<'_>,
+        removed_segments: Vec<Segment>,
+        reason: BacktrackReason,
+    ) {
+        if !self.progress.enabled() {
+            return;
+        }
+        for segment in removed_segments {
+            self.progress
+                .emit(RoutingProgressEvent::SegmentBacktracked {
+                    segment: segment_snapshot_infer_from_line(ctx, &segment),
+                    reason: reason.clone(),
+                });
         }
     }
 
@@ -189,26 +303,67 @@ impl Navigator {
         loop {
             loop_counter += 1;
 
+            let route_len_before_move = self.walker.get_route().get_segment_count();
             let move_result = self
                 .walker
                 .move_forward_to_next_fork_with_context(ctx, |p| self.itinerary.is_finished(p));
+            self.emit_advanced_segments(ctx, route_len_before_move);
 
             if move_result == Ok(WalkerMoveResult::Finish) {
+                self.progress.emit(RoutingProgressEvent::ItineraryFinished {
+                    status: ItineraryStatus::Finished,
+                });
                 return NavigationResult::Finished(self.walker.get_route().clone());
             }
             if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
-                let last_point = self.walker.get_last_point();
-                let discarded_choices = &self
+                let last_point = self.walker.get_last_point().clone();
+                let progress_enabled = self.progress.enabled();
+                let available_fork_choices = progress_enabled.then(|| fork_choices.clone());
+                let discarded_choices = self
                     .discarded_fork_choices
-                    .get_discarded_choices_for_point(last_point)
+                    .get_discarded_choices_for_point(&last_point)
                     .map_or(Vec::new(), |d| d);
-                let fork_choices = fork_choices.exclude_segments_where_points_in(discarded_choices);
+                let fork_choices =
+                    fork_choices.exclude_segments_where_points_in(&discarded_choices);
+
+                if progress_enabled {
+                    let available_fork_choices = available_fork_choices.expect(
+                        "available fork choices should be captured when progress is enabled",
+                    );
+                    self.progress.emit(RoutingProgressEvent::ForkReached {
+                        at: point_snapshot(ctx, &last_point),
+                        choices: available_fork_choices
+                            .clone()
+                            .into_iter()
+                            .map(|segment| segment_snapshot_from(ctx, &last_point, &segment))
+                            .collect(),
+                    });
+                    self.progress
+                        .emit(RoutingProgressEvent::ForkChoicesFiltered {
+                            at: point_snapshot(ctx, &last_point),
+                            available: available_fork_choices
+                                .into_iter()
+                                .map(|segment| segment_snapshot_from(ctx, &last_point, &segment))
+                                .collect(),
+                            previously_discarded: discarded_choices
+                                .iter()
+                                .map(|point| point_snapshot(ctx, point))
+                                .collect(),
+                            remaining: fork_choices
+                                .clone()
+                                .into_iter()
+                                .map(|segment| segment_snapshot_from(ctx, &last_point, &segment))
+                                .collect(),
+                        });
+                }
 
                 if self.itinerary.check_set_next(ctx, last_point.clone()) {
                     self.discarded_fork_choices.set_new_next();
                 }
 
                 let mut fork_weights = ForkWeights::new();
+                let mut route_evaluations = progress_enabled.then(Vec::new);
+                let mut route_rejection_rule = None;
                 if let Some(representative_fork_segment) = fork_choices.get_first_segment() {
                     for weight_calc in &self.route_once_weight_calcs {
                         let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
@@ -221,21 +376,40 @@ impl Navigator {
                             rules: &self.rules,
                             ctx,
                         });
+
+                        if progress_enabled {
+                            let evaluation = Self::evaluation(weight_calc, &weight_calc_result);
+                            self.progress
+                                .emit(RoutingProgressEvent::ForkRouteRuleEvaluated {
+                                    at: point_snapshot(ctx, &last_point),
+                                    evaluation: evaluation.clone(),
+                                });
+                            if let Some(route_evaluations) = &mut route_evaluations {
+                                route_evaluations.push(evaluation);
+                            }
+                        }
+
                         if matches!(
                             weight_calc_result,
-                            WeightCalcResult::LastSegmentDoNotUse
-                                | WeightCalcResult::ForkChoiceDoNotUse
+                            WeightCalcResult::LastSegmentDoNotUse { .. }
+                                | WeightCalcResult::ForkChoiceDoNotUse { .. }
                         ) {
+                            if progress_enabled {
+                                route_rejection_rule = Some(weight_calc.name.clone());
+                            }
                             fork_weights.discard();
                             break;
                         }
                     }
                 }
 
+                let mut choice_summaries = progress_enabled.then(Vec::new);
                 if !fork_weights.discard_fork {
                     for fork_route_segment in fork_choices.clone() {
                         let mut total_weight = 0u32;
                         let mut skip_choice = false;
+                        let mut evaluations = progress_enabled.then(Vec::new);
+                        let mut rejection = None;
 
                         for weight_calc in &self.per_fork_weight_calcs {
                             let weight_calc_result = (weight_calc.calc)(WeightCalcInput {
@@ -249,19 +423,74 @@ impl Navigator {
                                 ctx,
                             });
 
+                            if progress_enabled {
+                                let evaluation = Self::evaluation(weight_calc, &weight_calc_result);
+                                self.progress
+                                    .emit(RoutingProgressEvent::ForkChoiceRuleEvaluated {
+                                        at: point_snapshot(ctx, &last_point),
+                                        choice: segment_snapshot_from(
+                                            ctx,
+                                            &last_point,
+                                            &fork_route_segment,
+                                        ),
+                                        evaluation: evaluation.clone(),
+                                    });
+                                if let Some(evaluations) = &mut evaluations {
+                                    evaluations.push(evaluation);
+                                }
+                            }
+
                             match weight_calc_result {
-                                WeightCalcResult::ForkChoiceUseWithWeight(weight) => {
+                                WeightCalcResult::ForkChoiceUseWithWeight { weight, .. } => {
                                     total_weight += weight as u32;
                                 }
-                                WeightCalcResult::ForkChoiceDoNotUse => {
+                                WeightCalcResult::ForkChoiceDoNotUse { .. } => {
+                                    if progress_enabled {
+                                        rejection = Some(ForkChoiceRejection::RejectedByRule {
+                                            rule_name: weight_calc.name.clone(),
+                                        });
+                                    }
                                     skip_choice = true;
                                     break;
                                 }
-                                WeightCalcResult::LastSegmentDoNotUse => {
+                                WeightCalcResult::LastSegmentDoNotUse { .. } => {
+                                    if progress_enabled {
+                                        rejection =
+                                            Some(ForkChoiceRejection::RouteRejectedByRule {
+                                                rule_name: weight_calc.name.clone(),
+                                            });
+                                    }
                                     fork_weights.discard();
                                     skip_choice = true;
                                     break;
                                 }
+                            }
+                        }
+
+                        let accepted = !skip_choice && !fork_weights.discard_fork;
+                        if progress_enabled {
+                            let summary = ForkChoiceSummary {
+                                choice: segment_snapshot_from(
+                                    ctx,
+                                    &last_point,
+                                    &fork_route_segment,
+                                ),
+                                accepted,
+                                total_weight,
+                                evaluations: evaluations.unwrap_or_default(),
+                                rejection,
+                            };
+                            self.progress
+                                .emit(RoutingProgressEvent::ForkChoiceEvaluated {
+                                    at: point_snapshot(ctx, &last_point),
+                                    choice: summary.choice.clone(),
+                                    accepted: summary.accepted,
+                                    total_weight: summary.total_weight,
+                                    evaluations: summary.evaluations.clone(),
+                                    rejection: summary.rejection.clone(),
+                                });
+                            if let Some(choice_summaries) = &mut choice_summaries {
+                                choice_summaries.push(summary);
                             }
                         }
 
@@ -276,13 +505,63 @@ impl Navigator {
                             );
                         }
                     }
+                } else if progress_enabled && route_rejection_rule.is_some() {
+                    let route_evaluations = route_evaluations.clone().unwrap_or_default();
+                    choice_summaries = Some(
+                        fork_choices
+                            .clone()
+                            .into_iter()
+                            .map(|segment| ForkChoiceSummary {
+                                choice: segment_snapshot_from(ctx, &last_point, &segment),
+                                accepted: false,
+                                total_weight: 0,
+                                evaluations: route_evaluations.clone(),
+                                rejection: route_rejection_rule.clone().map(|rule_name| {
+                                    ForkChoiceRejection::RouteRejectedByRule { rule_name }
+                                }),
+                            })
+                            .collect(),
+                    );
                 }
 
                 let chosen_fork_point = fork_weights.get_choice_id_by_index_from_heaviest(0);
+                if progress_enabled {
+                    let selected_segment = chosen_fork_point
+                        .as_ref()
+                        .and_then(|point| fork_choices.get_segment_from_point(point))
+                        .cloned();
+                    let decision_reason = if let Some(selected_segment) = &selected_segment {
+                        ForkDecisionReason::SelectedHighestWeight {
+                            selected_weight: fork_weights
+                                .weight_list
+                                .get(selected_segment.get_end_point())
+                                .copied()
+                                .unwrap_or(0),
+                        }
+                    } else if !discarded_choices.is_empty() && fork_choices.get_segment_count() == 0
+                    {
+                        ForkDecisionReason::AllChoicesPreviouslyDiscarded
+                    } else if let Some(rule_name) = route_rejection_rule.clone() {
+                        ForkDecisionReason::RouteRejectedByRule { rule_name }
+                    } else if fork_choices.get_segment_count() == 0 {
+                        ForkDecisionReason::NoChoicesAvailable
+                    } else {
+                        ForkDecisionReason::AllChoicesRejected
+                    };
+
+                    self.progress.emit(RoutingProgressEvent::ForkDecisionMade {
+                        at: point_snapshot(ctx, &last_point),
+                        selected: selected_segment
+                            .as_ref()
+                            .map(|segment| segment_snapshot_from(ctx, &last_point, segment)),
+                        choices: choice_summaries.unwrap_or_default(),
+                        reason: decision_reason,
+                    });
+                }
 
                 if let Some(chosen_fork_point) = chosen_fork_point {
                     self.discarded_fork_choices
-                        .add_discarded_choice(last_point, &chosen_fork_point);
+                        .add_discarded_choice(&last_point, &chosen_fork_point);
                     self.walker.set_fork_choice_point_ref(chosen_fork_point);
                 } else {
                     if self
@@ -292,6 +571,9 @@ impl Navigator {
                         .is_none()
                     {
                         trace!("Stuck");
+                        self.progress.emit(RoutingProgressEvent::ItineraryFinished {
+                            status: ItineraryStatus::Stuck,
+                        });
                         return NavigationResult::Stuck;
                     }
                     if self
@@ -300,20 +582,37 @@ impl Navigator {
                     {
                         self.discarded_fork_choices.set_prev_next();
                     }
-                    self.walker.move_backwards_to_prev_fork_with_context(ctx);
+                    let (_, removed_segments) =
+                        self.walker.move_backwards_to_prev_fork_with_context(ctx);
+                    self.emit_backtracked_segments(
+                        ctx,
+                        removed_segments,
+                        BacktrackReason::NoAcceptedForkChoice,
+                    );
                 }
             } else if move_result == Ok(WalkerMoveResult::DeadEnd) {
+                if self.progress.enabled() {
+                    let dead_end_point = self.walker.get_last_point().clone();
+                    self.progress.emit(RoutingProgressEvent::DeadEndReached {
+                        at: point_snapshot(ctx, &dead_end_point),
+                    });
+                }
                 if self
                     .itinerary
                     .check_set_back(self.walker.get_last_point().clone())
                 {
                     self.discarded_fork_choices.set_prev_next();
                 }
-                self.walker.move_backwards_to_prev_fork_with_context(ctx);
+                let (_, removed_segments) =
+                    self.walker.move_backwards_to_prev_fork_with_context(ctx);
+                self.emit_backtracked_segments(ctx, removed_segments, BacktrackReason::DeadEnd);
             }
 
             if loop_counter >= self.rules.basic.step_limit.0 {
                 trace!("Reached loop {loop_counter}, stopping");
+                self.progress.emit(RoutingProgressEvent::ItineraryFinished {
+                    status: ItineraryStatus::Stopped,
+                });
                 return NavigationResult::Stopped;
             }
         }
@@ -483,7 +782,7 @@ mod test {
         fn navigate_no_routes_with_do_not_use_weight() {
             fn weight(input: WeightCalcInput) -> WeightCalcResult {
                 if input.ctx.point(input.current_fork_segment.get_end_point()).id == 7 {
-                    return WeightCalcResult::ForkChoiceDoNotUse;
+                    return WeightCalcResult::ForkChoiceDoNotUse();
                 }
                 WeightCalcResult::ForkChoiceUseWithWeight(1)
             }

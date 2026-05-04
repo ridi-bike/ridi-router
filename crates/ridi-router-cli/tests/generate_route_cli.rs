@@ -105,6 +105,148 @@ fn generate_route_end_to_end_json_output_dir() {
 }
 
 #[test]
+fn generate_route_progress_dir_writes_itinerary_jsonl() {
+    let (tiles_dir, rule_file) = create_synthetic_success_fixture();
+    let output_dir = unique_test_dir("cli-progress-route-output");
+    let progress_dir = unique_test_dir("cli-progress-jsonl-output");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ridi-router-cli"))
+        .arg("generate-route")
+        .arg("--tiles")
+        .arg(&tiles_dir)
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--format")
+        .arg("json")
+        .arg("--rule-file")
+        .arg(&rule_file)
+        .arg("--progress-dir")
+        .arg(&progress_dir)
+        .arg("start-finish")
+        .arg("--start")
+        .arg(SYNTHETIC_START)
+        .arg("--finish")
+        .arg(SYNTHETIC_FINISH)
+        .output()
+        .expect("failed to execute ridi-router-cli generate-route");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert!(progress_dir.is_dir());
+
+    let mut files = fs::read_dir(&progress_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    files.sort();
+    assert!(!files.is_empty(), "expected at least one progress file");
+    assert_eq!(
+        files[0].extension().and_then(|ext| ext.to_str()),
+        Some("jsonl")
+    );
+
+    let lines = fs::read_to_string(&files[0]).unwrap();
+    let events = lines
+        .lines()
+        .take(3)
+        .map(|line| {
+            let json: serde_json::Value = serde_json::from_str(line).unwrap();
+            json.get("event")
+                .and_then(|event| event.as_str())
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events,
+        vec![
+            "routing_request_metadata",
+            "snapping_metadata",
+            "itinerary_metadata"
+        ]
+    );
+
+    fs::remove_dir_all(tiles_dir).unwrap();
+    fs::remove_dir_all(output_dir).unwrap();
+    fs::remove_dir_all(progress_dir).unwrap();
+}
+
+#[test]
+fn generate_route_non_empty_progress_dir_fails() {
+    let (tiles_dir, rule_file) = create_synthetic_success_fixture();
+    let output_dir = unique_test_dir("cli-non-empty-progress-route-output");
+    let progress_dir = unique_test_dir("cli-non-empty-progress-dir");
+    fs::create_dir_all(&progress_dir).unwrap();
+    fs::write(progress_dir.join("already-there.txt"), "sentinel").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ridi-router-cli"))
+        .arg("generate-route")
+        .arg("--tiles")
+        .arg(&tiles_dir)
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--format")
+        .arg("json")
+        .arg("--rule-file")
+        .arg(&rule_file)
+        .arg("--progress-dir")
+        .arg(&progress_dir)
+        .arg("start-finish")
+        .arg("--start")
+        .arg(SYNTHETIC_START)
+        .arg("--finish")
+        .arg(SYNTHETIC_FINISH)
+        .output()
+        .expect("failed to execute ridi-router-cli generate-route");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr.contains("Output directory must be empty"),
+        "stderr: {stderr}"
+    );
+    assert!(progress_dir.join("already-there.txt").exists());
+
+    fs::remove_dir_all(tiles_dir).unwrap();
+    fs::remove_dir_all(progress_dir).unwrap();
+    if output_dir.exists() {
+        fs::remove_dir_all(output_dir).unwrap();
+    }
+}
+
+#[test]
+fn generate_route_without_progress_dir_preserves_output_and_creates_no_progress_artifacts() {
+    let (tiles_dir, rule_file) = create_synthetic_success_fixture();
+    let output_dir = unique_test_dir("cli-no-progress-route-output");
+    let unpassed_progress_dir = unique_test_dir("cli-no-progress-artifacts");
+
+    let output = base_generate_route_command(
+        &tiles_dir,
+        &rule_file,
+        &output_dir,
+        "json",
+        SYNTHETIC_START,
+        SYNTHETIC_FINISH,
+    )
+    .output()
+    .expect("failed to execute ridi-router-cli generate-route");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert!(output.stdout.is_empty());
+    assert!(output_dir.is_dir());
+    assert!(fs::read_dir(&output_dir).unwrap().count() >= 1);
+    assert!(
+        !unpassed_progress_dir.exists(),
+        "progress artifacts should not be created unless --progress-dir is passed"
+    );
+
+    fs::remove_dir_all(tiles_dir).unwrap();
+    fs::remove_dir_all(output_dir).unwrap();
+}
+
+#[test]
 fn generate_route_end_to_end_gpx_output_dir() {
     let (tiles_dir, rule_file) = create_synthetic_success_fixture();
     let output_dir = unique_test_dir("cli-gpx-output-dir");

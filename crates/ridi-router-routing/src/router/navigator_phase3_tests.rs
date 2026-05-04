@@ -34,7 +34,7 @@ fn cheap_reject_one_choice(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
         == 5
     {
         CHEAP_REJECTED_CHOICE_CALLS.fetch_add(1, Ordering::SeqCst);
-        return WeightCalcResult::ForkChoiceDoNotUse;
+        return WeightCalcResult::ForkChoiceDoNotUse();
     }
 
     WeightCalcResult::ForkChoiceUseWithWeight(1)
@@ -65,7 +65,7 @@ fn expensive_prefer_six(input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
 }
 
 fn discard_fork_immediately(_input: WeightCalcInput<'_, '_>) -> WeightCalcResult {
-    WeightCalcResult::LastSegmentDoNotUse
+    WeightCalcResult::LastSegmentDoNotUse()
 }
 
 fn expensive_after_discard(_input: WeightCalcInput<'_, '_>) -> WeightCalcResult {

@@ -2,10 +2,15 @@ use std::{collections::HashMap, ops::Sub, time::Instant};
 
 use crate::{
     map_data::graph::MapDataPointRef,
+    progress::{
+        point_snapshot, GenerationPassMetadata, ItineraryMetadataPayload, RoutingProgressEvent,
+        RoutingProgressReporter, SnapPointMetadata, WaypointSelectionMetadata,
+    },
     router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
+    routing_api::{Coords, RouteMode},
     RoutingContext,
 };
-use geo::{Bearing, Destination, Haversine, Point};
+use geo::{Bearing, Destination, Distance, Haversine, Point};
 use hdbscan::{Hdbscan, HdbscanError, HdbscanHyperParams};
 use rayon::prelude::*;
 use tracing::{error, info, trace};
@@ -41,6 +46,19 @@ pub enum GeneratorError {
 pub struct RouteWithStats {
     pub stats: RouteStats,
     pub route: Route,
+}
+
+#[derive(Debug, Clone)]
+struct GeneratedWaypoint {
+    requested: Coords,
+    snapped: MapDataPointRef,
+}
+
+#[derive(Debug, Clone)]
+pub struct GeneratedItinerary {
+    pub id: u64,
+    pub itinerary: Itinerary,
+    pub metadata: Option<ItineraryMetadataPayload>,
 }
 
 pub struct Generator {
@@ -83,7 +101,7 @@ impl Generator {
         point: &MapDataPointRef,
         bearing: &f32,
         avoid_residential: bool,
-    ) -> Vec<MapDataPointRef> {
+    ) -> Vec<GeneratedWaypoint> {
         let (point_lat, point_lon) = ctx.point_coords(point);
         let point_geo = Point::new(point_lon, point_lat);
 
@@ -103,26 +121,45 @@ impl Generator {
                     .iter()
                     .filter_map(|distance| {
                         let wp_geo = Haversine.destination(point_geo, *bearing, *distance);
-
-                        ctx.closest_to_coords(
+                        let snapped = ctx.closest_to_coords(
                             wp_geo.y(),
                             wp_geo.x(),
                             &self.rules,
                             avoid_residential,
                             Some(&WP_LOOKUP_ALLOWED_HWS),
-                        )
+                        )?;
+                        Some(GeneratedWaypoint {
+                            requested: Coords {
+                                lat: wp_geo.y(),
+                                lon: wp_geo.x(),
+                            },
+                            snapped,
+                        })
                     })
             })
             .collect()
     }
 
-    #[tracing::instrument(skip(self, ctx))]
+    fn next_itinerary_id(next_id: &mut u64) -> u64 {
+        let id = *next_id;
+        *next_id += 1;
+        id
+    }
+
+    #[tracing::instrument(skip(self, ctx, next_id))]
     fn generate_itineraries(
         &self,
         ctx: &RoutingContext<'_>,
         avoid_residential: bool,
         round_trip_bearing_adjustment: Option<f32>,
-    ) -> Vec<Itinerary> {
+        emit_metadata: bool,
+        next_id: &mut u64,
+    ) -> Vec<GeneratedItinerary> {
+        let generation_pass = GenerationPassMetadata {
+            avoid_residential,
+            round_trip_bearing_adjustment,
+        };
+
         if let Some(round_trip) = self.round_trip {
             let (start_lat, start_lon) = ctx.point_coords(&self.start);
             let start_geo = Point::new(start_lon, start_lat);
@@ -169,58 +206,74 @@ impl Generator {
                                                 bearing + bearing_variation,
                                                 dist * tip_ratio,
                                             );
-
-                                            let tip_point = match ctx.closest_to_coords(
+                                            let tip_point = ctx.closest_to_coords(
                                                 tip_geo.y(),
                                                 tip_geo.x(),
                                                 &self.rules,
                                                 avoid_residential,
                                                 Some(&WP_LOOKUP_ALLOWED_HWS),
-                                            ) {
-                                                None => return None,
-                                                Some(p) => p,
-                                            };
+                                            )?;
 
                                             let side_left_geo = Haversine.destination(
                                                 start_geo,
                                                 bearing + bearing_variation - 45.,
                                                 dist * side_left_ratio,
                                             );
-
-                                            let side_left_point = match ctx.closest_to_coords(
+                                            let side_left_point = ctx.closest_to_coords(
                                                 side_left_geo.y(),
                                                 side_left_geo.x(),
                                                 &self.rules,
                                                 avoid_residential,
                                                 Some(&WP_LOOKUP_ALLOWED_HWS),
-                                            ) {
-                                                None => return None,
-                                                Some(p) => p,
-                                            };
+                                            )?;
 
                                             let side_right_geo = Haversine.destination(
                                                 start_geo,
                                                 bearing + bearing_variation + 45.,
                                                 dist * side_right_ratio,
                                             );
-
-                                            let side_right_point = match ctx.closest_to_coords(
+                                            let side_right_point = ctx.closest_to_coords(
                                                 side_right_geo.y(),
                                                 side_right_geo.x(),
                                                 &self.rules,
                                                 avoid_residential,
                                                 Some(&WP_LOOKUP_ALLOWED_HWS),
-                                            ) {
-                                                None => return None,
-                                                Some(p) => p,
-                                            };
+                                            )?;
 
-                                            Some(Itinerary::new_round_trip(
+                                            let id = Self::next_itinerary_id(next_id);
+                                            let itinerary = Itinerary::new_round_trip(
                                                 self.start.clone(),
                                                 self.finish.clone(),
-                                                vec![side_left_point, tip_point, side_right_point],
+                                                vec![
+                                                    side_left_point.clone(),
+                                                    tip_point.clone(),
+                                                    side_right_point.clone(),
+                                                ],
                                                 3000.,
-                                            ))
+                                            );
+                                            let metadata = emit_metadata.then(|| ItineraryMetadataPayload {
+                                                itinerary_id: id,
+                                                generation_pass: generation_pass.clone(),
+                                                start: point_snapshot(ctx, &self.start),
+                                                finish: point_snapshot(ctx, &self.finish),
+                                                waypoints: itinerary
+                                                    .waypoints
+                                                    .iter()
+                                                    .map(|point| point_snapshot(ctx, point))
+                                                    .collect(),
+                                                waypoint_selection: WaypointSelectionMetadata::RoundTripGenerated {
+                                                    bearing: round_trip.0,
+                                                    adjusted_bearing: bearing,
+                                                    target_distance_m: round_trip.1,
+                                                    side_left_requested: Coords { lat: side_left_geo.y(), lon: side_left_geo.x() },
+                                                    side_left_snapped: point_snapshot(ctx, &side_left_point),
+                                                    tip_requested: Coords { lat: tip_geo.y(), lon: tip_geo.x() },
+                                                    tip_snapped: point_snapshot(ctx, &tip_point),
+                                                    side_right_requested: Coords { lat: side_right_geo.y(), lon: side_right_geo.x() },
+                                                    side_right_snapped: point_snapshot(ctx, &side_right_point),
+                                                },
+                                            });
+                                            Some(GeneratedItinerary { id, itinerary, metadata })
                                         })
                                         .collect::<Vec<_>>()
                                 })
@@ -230,33 +283,80 @@ impl Generator {
                 })
                 .collect();
         }
+
+        let start_to_finish_bearing = Self::point_bearing(ctx, &self.start, &self.finish);
+        let finish_to_start_bearing = Self::point_bearing(ctx, &self.finish, &self.start);
         let from_waypoints = self.create_waypoints_around(
             ctx,
             &self.start,
-            &Self::point_bearing(ctx, &self.start, &self.finish),
+            &start_to_finish_bearing,
             avoid_residential,
         );
         let to_waypoints = self.create_waypoints_around(
             ctx,
             &self.finish,
-            &Self::point_bearing(ctx, &self.finish, &self.start),
+            &finish_to_start_bearing,
             avoid_residential,
         );
-        let mut itineraries = vec![Itinerary::new_start_finish(
-            self.start.clone(),
-            self.finish.clone(),
-            Vec::new(),
-            3000.,
-        )];
+        let start_finish_distance_m = {
+            let (start_lat, start_lon) = ctx.point_coords(&self.start);
+            let (finish_lat, finish_lon) = ctx.point_coords(&self.finish);
+            Haversine.distance(
+                Point::new(start_lon, start_lat),
+                Point::new(finish_lon, finish_lat),
+            )
+        };
+
+        let direct_id = Self::next_itinerary_id(next_id);
+        let direct_itinerary =
+            Itinerary::new_start_finish(self.start.clone(), self.finish.clone(), Vec::new(), 3000.);
+        let mut itineraries = vec![GeneratedItinerary {
+            id: direct_id,
+            metadata: emit_metadata.then(|| ItineraryMetadataPayload {
+                itinerary_id: direct_id,
+                generation_pass: generation_pass.clone(),
+                start: point_snapshot(ctx, &self.start),
+                finish: point_snapshot(ctx, &self.finish),
+                waypoints: Vec::new(),
+                waypoint_selection: WaypointSelectionMetadata::DirectStartFinish,
+            }),
+            itinerary: direct_itinerary,
+        }];
 
         from_waypoints.iter().for_each(|from_wp| {
             to_waypoints.iter().for_each(|to_wp| {
-                itineraries.push(Itinerary::new_start_finish(
+                let id = Self::next_itinerary_id(next_id);
+                let itinerary = Itinerary::new_start_finish(
                     self.start.clone(),
                     self.finish.clone(),
-                    vec![from_wp.clone(), to_wp.clone()],
+                    vec![from_wp.snapped.clone(), to_wp.snapped.clone()],
                     3000.,
-                ))
+                );
+                let metadata = emit_metadata.then(|| ItineraryMetadataPayload {
+                    itinerary_id: id,
+                    generation_pass: generation_pass.clone(),
+                    start: point_snapshot(ctx, &self.start),
+                    finish: point_snapshot(ctx, &self.finish),
+                    waypoints: itinerary
+                        .waypoints
+                        .iter()
+                        .map(|point| point_snapshot(ctx, point))
+                        .collect(),
+                    waypoint_selection: WaypointSelectionMetadata::StartFinishGenerated {
+                        from_waypoint_requested: from_wp.requested,
+                        from_waypoint_snapped: point_snapshot(ctx, &from_wp.snapped),
+                        to_waypoint_requested: to_wp.requested,
+                        to_waypoint_snapped: point_snapshot(ctx, &to_wp.snapped),
+                        bearing_from_start_to_finish: start_to_finish_bearing,
+                        bearing_from_finish_to_start: finish_to_start_bearing,
+                        distance_m: start_finish_distance_m,
+                    },
+                });
+                itineraries.push(GeneratedItinerary {
+                    id,
+                    itinerary,
+                    metadata,
+                })
             })
         });
         itineraries
@@ -266,12 +366,19 @@ impl Generator {
     pub fn dedupe_itineraries(
         &self,
         ctx: &RoutingContext<'_>,
-        itineraries: Vec<Itinerary>,
-    ) -> Result<Vec<Itinerary>, GeneratorError> {
+        itineraries: Vec<GeneratedItinerary>,
+    ) -> Result<Vec<GeneratedItinerary>, GeneratorError> {
         let mut points = Vec::new();
-        for itinerary in itineraries.iter().filter(|i| !i.waypoints.is_empty()) {
+        let mut point_source_indices = Vec::new();
+        for (idx, itinerary) in itineraries
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| !i.itinerary.waypoints.is_empty())
+        {
+            point_source_indices.push(idx);
             points.push(
                 itinerary
+                    .itinerary
                     .waypoints
                     .iter()
                     .flat_map(|point_ref| {
@@ -297,27 +404,32 @@ impl Generator {
 
         let mut deduped_itineraries_map = HashMap::new();
         labels.iter().enumerate().for_each(|(idx, label)| {
-            deduped_itineraries_map.insert(*label, itineraries[idx].clone());
+            deduped_itineraries_map.insert(*label, itineraries[point_source_indices[idx]].clone());
         });
 
         let mut deduped_itineraries = deduped_itineraries_map.into_values().collect::<Vec<_>>();
         deduped_itineraries.append(
             &mut itineraries
                 .into_iter()
-                .filter(|i| i.waypoints.is_empty())
+                .filter(|i| i.itinerary.waypoints.is_empty())
                 .collect(),
         );
 
         Ok(deduped_itineraries)
     }
 
-    #[tracing::instrument(skip(self, ctx))]
+    #[tracing::instrument(skip(self, ctx, progress, snapping_metadata))]
     pub fn generate_routes(
         self,
         ctx: &RoutingContext<'_>,
+        progress: RoutingProgressReporter,
+        request_mode: RouteMode,
+        request_rules: RouterRules,
+        snapping_metadata: Option<(SnapPointMetadata, SnapPointMetadata)>,
     ) -> Result<Vec<RouteWithStats>, GeneratorError> {
         let route_generation_start = Instant::now();
         let mut routes: Vec<Route> = Vec::new();
+        let mut next_itinerary_id = 1u64;
         'outer: for avoid_residential in self
             .rules
             .generation
@@ -348,7 +460,13 @@ impl Generator {
                     break 'outer;
                 }
                 let itineraries = hotpath::measure_block!("generator.generate_itineraries", {
-                    self.generate_itineraries(ctx, *avoid_residential, Some(adjustment))
+                    self.generate_itineraries(
+                        ctx,
+                        *avoid_residential,
+                        Some(adjustment),
+                        progress.enabled(),
+                        &mut next_itinerary_id,
+                    )
                 });
                 let itineraries = hotpath::measure_block!("generator.dedupe_itineraries", {
                     self.dedupe_itineraries(ctx, itineraries)?
@@ -361,10 +479,31 @@ impl Generator {
                 let mut routes_new = hotpath::measure_block!("generator.navigate_itineraries", {
                     itineraries
                         .into_par_iter()
-                        .map(|itinerary| {
+                        .map(|generated_itinerary| {
                             let task_ctx = RoutingContext::new(graph);
-                            Navigator::new(
-                                itinerary,
+                            let mut itinerary_progress =
+                                progress.for_itinerary(generated_itinerary.id);
+                            if itinerary_progress.enabled() {
+                                itinerary_progress.emit(
+                                    RoutingProgressEvent::RoutingRequestMetadata {
+                                        mode: request_mode.clone(),
+                                        rules: Box::new(request_rules.clone()),
+                                    },
+                                );
+                                if let Some((start, finish)) = snapping_metadata.clone() {
+                                    itinerary_progress.emit(
+                                        RoutingProgressEvent::SnappingMetadata {
+                                            start: Box::new(start),
+                                            finish: Box::new(finish),
+                                        },
+                                    );
+                                }
+                                if let Some(metadata) = generated_itinerary.metadata.clone() {
+                                    itinerary_progress.emit(metadata.into_event());
+                                }
+                            }
+                            Navigator::new_with_progress(
+                                generated_itinerary.itinerary,
                                 self.rules.clone(),
                                 vec![
                                     WeightCalc {
@@ -429,6 +568,7 @@ impl Generator {
                                     },
                                 ],
                                 self.round_trip.is_some(),
+                                itinerary_progress,
                             )
                             .generate_routes_with_context(&task_ctx)
                         })

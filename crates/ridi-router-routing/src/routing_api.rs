@@ -9,6 +9,10 @@ use tracing::trace;
 
 use crate::{
     map_data::graph::MapDataGraph,
+    progress::{
+        point_snapshot, RoutingProgressListener, RoutingProgressReporter, SnapPointMetadata,
+        SnapPointRole,
+    },
     route_output::RouteComputation,
     router::{
         generator::{Generator, GeneratorError, WP_LOOKUP_ALLOWED_HWS},
@@ -99,10 +103,15 @@ impl RoutingExecutor {
         Ok(Self::new(graph))
     }
 
-    pub fn generate(&self, request: RouteRequest) -> Result<RouteComputation, RoutingError> {
+    pub fn generate(
+        &self,
+        request: RouteRequest,
+        progress: Option<RoutingProgressListener>,
+    ) -> Result<RouteComputation, RoutingError> {
         trace!("Generating route");
 
-        let (start_coords, finish_coords, round_trip) = match request.mode {
+        let progress = RoutingProgressReporter::new(progress);
+        let (start_coords, finish_coords, round_trip) = match request.mode.clone() {
             RouteMode::StartFinish { start, finish } => (start, finish, None),
             RouteMode::RoundTrip {
                 start_finish,
@@ -113,15 +122,16 @@ impl RoutingExecutor {
 
         let ctx = RoutingContext::new(self.graph.as_ref());
 
-        let snap_point = |coords: Coords, point: &'static str| {
-            ctx.closest_to_coords(
+        let snap_point = |coords: Coords, point: &'static str, role: SnapPointRole| {
+            let preferred = ctx.closest_to_coords(
                 coords.lat,
                 coords.lon,
                 &request.rules,
                 false,
                 Some(&WP_LOOKUP_ALLOWED_HWS),
-            )
-            .or_else(|| {
+            );
+            let preferred_highway_match_found = preferred.is_some();
+            let snapped = preferred.or_else(|| {
                 trace!(
                     point,
                     lat = coords.lat,
@@ -129,20 +139,53 @@ impl RoutingExecutor {
                     "No preferred-highway snap point found, retrying without highway filter"
                 );
                 ctx.closest_to_coords(coords.lat, coords.lon, &request.rules, false, None)
-            })
-            .ok_or(RoutingGenerationError::PointNotFound { point })
+            });
+
+            let snapped = snapped.ok_or(RoutingGenerationError::PointNotFound { point })?;
+            let metadata = if progress.enabled() {
+                Some(SnapPointMetadata {
+                    role,
+                    requested: coords,
+                    snapped: point_snapshot(&ctx, &snapped),
+                    preferred_highway_filter: Some(
+                        WP_LOOKUP_ALLOWED_HWS
+                            .iter()
+                            .map(|value| (*value).to_string())
+                            .collect(),
+                    ),
+                    preferred_highway_match_found,
+                    avoid_residential: false,
+                    rules_used: request.rules.clone(),
+                })
+            } else {
+                None
+            };
+            Ok::<_, RoutingGenerationError>((snapped, metadata))
         };
 
-        let start = hotpath::measure_block!("routing_executor.snap_start", {
-            snap_point(start_coords, "start point")?
-        });
-        let finish = hotpath::measure_block!("routing_executor.snap_finish", {
-            snap_point(finish_coords, "finish point")?
-        });
+        let (start, start_snap_metadata) =
+            hotpath::measure_block!("routing_executor.snap_start", {
+                snap_point(start_coords, "start point", SnapPointRole::Start)?
+            });
+        let (finish, finish_snap_metadata) =
+            hotpath::measure_block!("routing_executor.snap_finish", {
+                snap_point(finish_coords, "finish point", SnapPointRole::Finish)?
+            });
+
+        let snapping_metadata = match (start_snap_metadata, finish_snap_metadata) {
+            (Some(start), Some(finish)) => Some((start, finish)),
+            _ => None,
+        };
 
         let routes = hotpath::measure_block!("routing_executor.generate_routes", {
-            Generator::new(start, finish, round_trip, request.rules)
-                .generate_routes(&ctx)
+            Generator::new(start, finish, round_trip, request.rules.clone())
+                .generate_routes(
+                    &ctx,
+                    progress,
+                    request.mode,
+                    request.rules,
+                    snapping_metadata,
+                )
                 .map_err(|error| RoutingGenerationError::RouteGeneration { error })?
         });
 
@@ -261,7 +304,7 @@ mod tests {
                         },
                     },
                     rules: synthetic_rules(),
-                })
+                }, None)
                 .unwrap();
 
             assert_eq!(computation.routes.len(), 1);
@@ -413,12 +456,30 @@ mod tests {
 
 #[cfg(test)]
 mod routing_executor_tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::{RoutingProgressEnvelope, RoutingProgressSink};
+
     use rusty_fork::rusty_fork_test;
 
     use super::{
         tests::synthetic_rules, tests::synthetic_tiles_dir, Coords, RouteMode, RouteRequest,
         RoutingExecutor, RoutingExecutorConfig,
     };
+
+    #[derive(Default)]
+    struct RecordingProgressSink {
+        events: Mutex<Vec<RoutingProgressEnvelope>>,
+    }
+
+    impl RoutingProgressSink for RecordingProgressSink {
+        fn emit(&self, envelope: RoutingProgressEnvelope) {
+            self.events
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(envelope);
+        }
+    }
 
     #[test]
     fn routing_executor_open_reads_tiles_dir_manifest() {
@@ -439,7 +500,7 @@ mod routing_executor_tests {
                         finish: Coords { lat: 10.12, lon: 20.0 },
                     },
                     rules: synthetic_rules(),
-                })
+                }, None)
                 .unwrap();
 
             assert_eq!(computation.routes.len(), 1);
@@ -469,7 +530,7 @@ mod routing_executor_tests {
                         },
                     },
                     rules: synthetic_rules(),
-                })
+                }, None)
                 .unwrap();
 
             assert_eq!(computation.routes.len(), 1);
@@ -494,7 +555,7 @@ mod routing_executor_tests {
                         distance: 2_000,
                     },
                     rules: synthetic_rules(),
-                })
+                }, None)
                 .unwrap();
 
             let _as_route_computation = computation;
@@ -512,7 +573,7 @@ mod routing_executor_tests {
                         finish: Coords { lat: 10.12, lon: 20.0 },
                     },
                     rules: synthetic_rules(),
-                })
+                }, None)
                 .unwrap();
             let second = executor
                 .generate(RouteRequest {
@@ -521,11 +582,41 @@ mod routing_executor_tests {
                         finish: Coords { lat: 10.11, lon: 20.0 },
                     },
                     rules: synthetic_rules(),
-                })
+                }, None)
                 .unwrap();
 
             assert_eq!(first.routes.len(), 1);
             assert_eq!(second.routes.len(), 1);
+        }
+
+        #[test]
+        fn routing_executor_generate_returns_same_routes_with_and_without_listener() {
+            let tiles_dir = synthetic_tiles_dir();
+            let executor = RoutingExecutor::open(RoutingExecutorConfig { tiles_dir }).unwrap();
+            let request = RouteRequest {
+                mode: RouteMode::StartFinish {
+                    start: Coords { lat: 10.0, lon: 20.0 },
+                    finish: Coords { lat: 10.12, lon: 20.0 },
+                },
+                rules: synthetic_rules(),
+            };
+
+            let without_listener = executor.generate(request.clone(), None).unwrap();
+            let listener = Arc::new(RecordingProgressSink::default());
+            let with_listener = executor.generate(request, Some(listener.clone())).unwrap();
+
+            assert_eq!(
+                serde_json::to_value(&without_listener).unwrap(),
+                serde_json::to_value(&with_listener).unwrap()
+            );
+            assert!(
+                !listener
+                    .events
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .is_empty(),
+                "listener should receive progress events"
+            );
         }
     }
 }
