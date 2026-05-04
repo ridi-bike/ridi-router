@@ -233,13 +233,13 @@ impl Generator {
         let from_waypoints = self.create_waypoints_around(
             ctx,
             &self.start,
-            &Self::point_bearing(ctx, &self.finish, &self.start),
+            &Self::point_bearing(ctx, &self.start, &self.finish),
             avoid_residential,
         );
         let to_waypoints = self.create_waypoints_around(
             ctx,
             &self.finish,
-            &Self::point_bearing(ctx, &self.start, &self.finish),
+            &Self::point_bearing(ctx, &self.finish, &self.start),
             avoid_residential,
         );
         let mut itineraries = vec![Itinerary::new_start_finish(
