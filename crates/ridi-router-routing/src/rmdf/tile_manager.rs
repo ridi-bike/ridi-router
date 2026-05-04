@@ -60,6 +60,7 @@ impl LoadedTile {
 
 pub struct TileManager {
     tile_dir: PathBuf,
+    available_tiles: HashSet<TileId>,
     loaded_tiles: HashMap<TileId, LoadedTile>,
     access_epoch: AtomicU64,
     #[cfg(test)]
@@ -99,8 +100,18 @@ impl TileManager {
 
     /// Create TileManager from manifest directly
     pub fn from_manifest(manifest: TileManifest, tile_dir: PathBuf) -> Self {
+        let available_tiles = manifest
+            .tiles
+            .iter()
+            .map(|tile| TileId {
+                col: tile.col,
+                row: tile.row,
+            })
+            .collect();
+
         Self {
             tile_dir,
+            available_tiles,
             loaded_tiles: HashMap::new(),
             access_epoch: AtomicU64::new(0),
             #[cfg(test)]
@@ -144,6 +155,10 @@ impl TileManager {
         TileId::from_coords(lat, lon, self.tile_size_degrees)
     }
 
+    fn is_tile_available(&self, tile_id: TileId) -> bool {
+        self.available_tiles.contains(&tile_id)
+    }
+
     fn next_access_epoch(&self) -> u64 {
         self.access_epoch.fetch_add(1, Ordering::Relaxed) + 1
     }
@@ -179,6 +194,10 @@ impl TileManager {
 
     /// Ensure tile is loaded (load if not already)
     fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()> {
+        if !self.is_tile_available(tile_id) {
+            anyhow::bail!("Tile {tile_id:?} not available in manifest");
+        }
+
         if let Some(loaded_tile) = self.loaded_tiles.get(&tile_id) {
             self.touch_loaded_tile(loaded_tile);
             return Ok(());
@@ -347,6 +366,9 @@ impl TileManager {
         limit_to_hw_tags: Option<&[&'static str]>,
     ) -> Result<Option<(TileId, u64)>> {
         let tile_id = TileId::from_coords(lat, lon, self.tile_size_degrees);
+        if !self.is_tile_available(tile_id) {
+            return Ok(None);
+        }
         self.ensure_tile_loaded(tile_id)?;
 
         let loaded_tile = self.loaded_tiles.get(&tile_id).unwrap();
@@ -779,6 +801,14 @@ impl TileManager {
 
             // Check if we need to load a different tile
             if other_tile_id != tile_id {
+                if !self.is_tile_available(other_tile_id) {
+                    tracing::debug!(
+                        ?other_tile_id,
+                        "Tile not present in manifest, treating line as dead-end"
+                    );
+                    continue;
+                }
+
                 // Border crossing detected
                 match self.ensure_tile_loaded(other_tile_id) {
                     Ok(_) => {
@@ -2251,6 +2281,23 @@ mod tests {
         assert_eq!(closest, Some((fixture.tile_id, allowed_osm_id)));
 
         fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_returns_none_when_query_tile_is_not_in_manifest() {
+        let SyntheticLruFixture { dir, manifest, .. } =
+            create_single_point_tile_fixture("tile-manager-closest-missing-query-tile", 1);
+        let mut manager =
+            TileManager::from_manifest_with_loaded_tiles_limit(manifest, dir.clone(), 3);
+
+        let closest = manager
+            .get_closest_to_coords(10.5, 21.5, &RouterRules::default(), false, None)
+            .unwrap();
+
+        assert_eq!(closest, None);
+        assert_eq!(manager.loaded_tile_count(), 0);
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
