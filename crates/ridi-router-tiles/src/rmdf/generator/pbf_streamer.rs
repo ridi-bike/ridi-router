@@ -23,49 +23,12 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
 
+use super::tile_materializer::{extract_materialized_tile, MaterializedTileData};
 use crate::generation::GenerationGraph;
 use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
 use crate::rmdf::format::TileId;
-use ridi_router_common::osm::{OsmNode, OsmRelation, OsmRelationMemberType, OsmWay};
+use ridi_router_common::osm::{OsmNode, OsmRelation, OsmWay};
 use std::collections::HashMap;
-
-// Allowed highway values for routing
-const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
-    "motorway",
-    "trunk",
-    "primary",
-    "secondary",
-    "tertiary",
-    "unclassified",
-    "residential",
-    "motorway_link",
-    "trunk_link",
-    "primary_link",
-    "secondary_link",
-    "tertiary_link",
-    "living_street",
-    "track",
-    "escape",
-    "raceway",
-    "road",
-];
-
-/// Data extracted from PBF for a single tile
-struct TileData {
-    nodes: HashMap<u64, OsmNode>, // OSM ID -> Node with coordinates (flags pre-computed)
-    ways: Vec<OsmWay>,
-    relations: Vec<OsmRelation>,
-}
-
-impl TileData {
-    fn new() -> Self {
-        Self {
-            nodes: HashMap::new(),
-            ways: Vec::new(),
-            relations: Vec::new(),
-        }
-    }
-}
 
 pub struct PbfStreamer<'a> {
     pbf_data: &'a InMemoryPbf,
@@ -281,91 +244,13 @@ impl<'a> PbfStreamer<'a> {
         }
     }
     /// Extract nodes, ways, and relations within buffered bounds using in-memory PBF
-    ///
-    /// Queries the pre-loaded in-memory data structure (NO PBF READS!)
     fn extract_tile_data(
         &self,
         tile_id: TileId,
         buffered_bounds: crate::rmdf::format::TileBounds,
-    ) -> Result<TileData> {
-        let mut tile_data = TileData::new();
+    ) -> Result<MaterializedTileData> {
+        let tile_data = extract_materialized_tile(self.pbf_data, buffered_bounds)?;
 
-        // Query in-memory structure (O(log n) spatial lookups - FAST!)
-        let nodes_in_bounds = self.pbf_data.query_nodes_in_bounds(&buffered_bounds);
-        let ways_in_bounds = self.pbf_data.query_ways_in_bounds(&buffered_bounds);
-        let relations_in_bounds = self.pbf_data.query_relations_in_bounds(&buffered_bounds);
-
-        // Early exit if no nodes in bounds
-        if nodes_in_bounds.is_empty() {
-            return Ok(tile_data);
-        }
-
-        // Build node map
-        for node in nodes_in_bounds {
-            tile_data.nodes.insert(node.id, node.clone());
-        }
-
-        // Build set of node IDs for way filtering
-        let node_ids: std::collections::HashSet<u64> = tile_data.nodes.keys().copied().collect();
-
-        // Process ways - only collect highway ways (area ways handled during PBF load)
-        for way_with_bounds in ways_in_bounds {
-            let way = &way_with_bounds.way;
-
-            // Skip ways that don't have nodes in the tile
-            let has_nodes_in_tile = way.point_ids.iter().any(|id| node_ids.contains(id));
-            if !has_nodes_in_tile {
-                continue;
-            }
-
-            // Check if this is a highway way (area ways no longer needed per-tile)
-            if let Some(ref tags) = way.tags {
-                if let Some(highway_value) = tags.get("highway") {
-                    let is_highway = ALLOWED_HIGHWAY_VALUES.contains(&highway_value.as_str())
-                        || (highway_value == "path"
-                            && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
-
-                    if is_highway {
-                        tile_data.ways.push(way.clone());
-                    }
-                }
-            }
-        }
-
-        // Build set of way IDs for relation filtering
-        let way_ids: std::collections::HashSet<u64> = tile_data.ways.iter().map(|w| w.id).collect();
-
-        // Process relations - only collect restriction relations (area relations handled during PBF load)
-        for rel_with_bounds in relations_in_bounds {
-            let relation = &rel_with_bounds.relation;
-
-            // Check if relation has any members in the tile
-            let has_members_in_tile =
-                relation
-                    .members
-                    .iter()
-                    .any(|member| match member.member_type {
-                        OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
-                        OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
-                        OsmRelationMemberType::Relation => true,
-                    });
-
-            if !has_members_in_tile {
-                continue;
-            }
-
-            // Only collect restriction relations (area relations handled during PBF load)
-            if relation
-                .tags
-                .get("type")
-                .map(|v| v.starts_with("restriction"))
-                .unwrap_or(false)
-            {
-                tile_data.relations.push(relation.clone());
-            }
-        }
-
-        // Log tile statistics
         if tile_data.nodes.is_empty() && tile_data.ways.is_empty() {
             info!(
                 "Tile {:?} is empty (likely ocean or unpopulated area)",
@@ -383,7 +268,6 @@ impl<'a> PbfStreamer<'a> {
 
         Ok(tile_data)
     }
-
     /// Build GenerationGraph from tile data
     /// Nodes already have correct residential_in_proximity and nogo_area flags from pre-computation
     fn build_generation_graph(
@@ -433,7 +317,10 @@ impl<'a> PbfStreamer<'a> {
         // Create the RMDF writer for the generation model.
         let writer = RmdfWriter::new(self.tile_size_degrees);
 
-        // Write tile directly from GenerationGraph data.
+        graph.validate_line_endpoints().with_context(|| {
+            format!("Generation graph for tile {tile_id:?} contains orphaned line endpoints")
+        })?;
+
         writer
             .write_tile_from_graph(tile_id, graph, &output_path)
             .with_context(|| format!("Failed to write RMDF tile {tile_id:?}"))?;
@@ -445,8 +332,12 @@ impl<'a> PbfStreamer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::osm_data::in_memory_pbf::InMemoryPbf;
-    use crate::rmdf::format::TileBounds;
+    use crate::generation::{GenerationGraph, LineDirection};
+    use crate::osm_data::in_memory_pbf::{InMemoryPbf, PbfBounds};
+    use crate::rmdf::format::{TileBounds, TileId};
+    use crate::rmdf::generator::tile_materializer::MaterializedTileData;
+    use ridi_router_common::osm::{OsmNode, OsmWay};
+    use std::collections::HashMap;
 
     fn create_test_streamer(tile_size: f32) -> PbfStreamer<'static> {
         static DUMMY_PBF: std::sync::OnceLock<InMemoryPbf> = std::sync::OnceLock::new();
@@ -695,7 +586,7 @@ mod tests {
 
     #[test]
     fn test_tile_data_validation_no_orphaned_ways() {
-        let mut tile_data = TileData::new();
+        let mut tile_data = MaterializedTileData::default();
 
         // Add nodes
         tile_data.nodes.insert(
@@ -746,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_tile_data_validation_detects_orphaned_ways() {
-        let mut tile_data = TileData::new();
+        let mut tile_data = MaterializedTileData::default();
 
         // Add only node 1
         tile_data.nodes.insert(
@@ -785,5 +676,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_write_rmdf_tile_validates_line_endpoints_before_writer() {
+        let streamer = create_test_streamer(1.0);
+        let mut graph = GenerationGraph::new();
+        let highway = "primary".to_string();
+        let tags = graph
+            .tags
+            .get_or_create(None, None, Some(&highway), None, None);
+
+        graph.insert_node(OsmNode {
+            id: 1,
+            lat: 50.0,
+            lon: 10.0,
+            residential_in_proximity: false,
+            nogo_area: false,
+        });
+        graph.lines.push(crate::generation::GenerationLine {
+            from_node_id: 1,
+            to_node_id: 999,
+            direction: LineDirection::BothWays,
+            tags,
+        });
+
+        let err = streamer
+            .write_rmdf_tile(TileId { col: 180, row: 90 }, graph)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("contains orphaned line endpoints"));
     }
 }

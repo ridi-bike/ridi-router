@@ -1048,6 +1048,18 @@ impl InMemoryPbf {
         )
     }
 
+    /// Look up a node by OSM ID
+    pub fn node_by_osm_id(&self, osm_id: u64) -> Option<&OsmNode> {
+        self.nodes_by_id.get(&osm_id)
+    }
+
+    /// Look up a way by OSM ID
+    pub fn way_by_osm_id(&self, osm_id: u64) -> Option<&OsmWay> {
+        self.ways_by_id
+            .get(&osm_id)
+            .map(|way_with_bounds| &way_with_bounds.way)
+    }
+
     /// Query all nodes within tile bounds
     pub fn query_nodes_in_bounds(&self, bounds: &TileBounds) -> Vec<&OsmNode> {
         let envelope = AABB::from_corners(
@@ -1085,6 +1097,96 @@ impl InMemoryPbf {
             .locate_in_envelope_intersecting(&envelope)
             .filter_map(|entry| self.relations_by_id.get(&entry.id))
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        nodes: Vec<OsmNode>,
+        ways: Vec<OsmWay>,
+        relations: Vec<OsmRelation>,
+    ) -> Self {
+        let mut bounds = PbfBounds::empty();
+        let mut nodes_by_id = HashMap::with_capacity(nodes.len());
+        let mut node_spatial_entries = Vec::with_capacity(nodes.len());
+
+        for node in nodes {
+            bounds.update(node.lat, node.lon);
+            node_spatial_entries.push(NodeSpatialEntry {
+                id: node.id,
+                point: [node.lon, node.lat],
+            });
+            nodes_by_id.insert(node.id, node);
+        }
+
+        let nodes_spatial = RTree::bulk_load(node_spatial_entries);
+
+        let mut ways_by_id = HashMap::with_capacity(ways.len());
+        let mut way_spatial_entries = Vec::with_capacity(ways.len());
+
+        for way in ways {
+            let mut bbox = BoundingBox::empty();
+            for node_id in &way.point_ids {
+                if let Some(node) = nodes_by_id.get(node_id) {
+                    bbox.expand_point(node.lat, node.lon);
+                }
+            }
+
+            if bbox.is_empty() {
+                continue;
+            }
+
+            way_spatial_entries.push(WaySpatialEntry {
+                id: way.id,
+                envelope: bbox.to_aabb(),
+            });
+            ways_by_id.insert(way.id, WayWithBounds { way, bbox });
+        }
+
+        let ways_spatial = RTree::bulk_load(way_spatial_entries);
+
+        let mut relations_by_id = HashMap::with_capacity(relations.len());
+        let mut relation_spatial_entries = Vec::with_capacity(relations.len());
+
+        for relation in relations {
+            let mut bbox = BoundingBox::empty();
+            for member in &relation.members {
+                match member.member_type {
+                    OsmRelationMemberType::Node => {
+                        if let Some(node) = nodes_by_id.get(&member.member_ref) {
+                            bbox.expand_point(node.lat, node.lon);
+                        }
+                    }
+                    OsmRelationMemberType::Way => {
+                        if let Some(way) = ways_by_id.get(&member.member_ref) {
+                            bbox.expand_bbox(&way.bbox);
+                        }
+                    }
+                    OsmRelationMemberType::Relation => {}
+                }
+            }
+
+            if bbox.is_empty() {
+                continue;
+            }
+
+            relation_spatial_entries.push(RelationSpatialEntry {
+                id: relation.id,
+                envelope: bbox.to_aabb(),
+            });
+            relations_by_id.insert(relation.id, RelationWithBounds { relation, bbox });
+        }
+
+        let relations_spatial = RTree::bulk_load(relation_spatial_entries);
+
+        Self {
+            nodes_by_id,
+            ways_by_id,
+            relations_by_id,
+            nodes_spatial,
+            ways_spatial,
+            relations_spatial,
+            bounds,
+        }
     }
 }
 
