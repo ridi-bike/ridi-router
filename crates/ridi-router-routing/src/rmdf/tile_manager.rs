@@ -1,6 +1,7 @@
 const MAX_LOADED_TILES: usize = 100; // Conservative FD limit
 const GRID_CELL_PRECISION: u32 = 100;
 const GRID_SEARCH_RING_RADIUS: i16 = 20;
+const OVERLAP_MARGIN_DEGREES: f32 = 0.005;
 
 use crate::{
     map_data::{
@@ -82,6 +83,7 @@ struct AdjacentLineTags {
     smoothness: Option<String>,
 }
 
+#[allow(dead_code)]
 type AdjacentLineData = (usize, u64, f32, f32, u64, f32, f32);
 
 #[hotpath::measure_all]
@@ -155,7 +157,103 @@ impl TileManager {
         TileId::from_coords(lat, lon, self.tile_size_degrees)
     }
 
-    fn is_tile_available(&self, tile_id: TileId) -> bool {
+    pub(crate) fn overlap_candidate_tiles_for_coords(
+        &self,
+        lat: f32,
+        lon: f32,
+    ) -> SmallVec<[TileId; 4]> {
+        let canonical_tile = self.tile_id_for_coords(lat, lon);
+        let lon_min = (canonical_tile.col as f32 * self.tile_size_degrees) - 180.0;
+        let lon_max = lon_min + self.tile_size_degrees;
+        let lat_min = (canonical_tile.row as f32 * self.tile_size_degrees) - 90.0;
+        let lat_max = lat_min + self.tile_size_degrees;
+
+        let within_west_overlap =
+            canonical_tile.col > 0 && (lon - lon_min) <= OVERLAP_MARGIN_DEGREES;
+        let within_east_overlap =
+            canonical_tile.col < u16::MAX && (lon_max - lon) <= OVERLAP_MARGIN_DEGREES;
+        let within_south_overlap =
+            canonical_tile.row > 0 && (lat - lat_min) <= OVERLAP_MARGIN_DEGREES;
+        let within_north_overlap =
+            canonical_tile.row < u16::MAX && (lat_max - lat) <= OVERLAP_MARGIN_DEGREES;
+
+        let mut candidates = SmallVec::<[TileId; 4]>::new();
+        candidates.push(canonical_tile);
+
+        let mut push_unique = |col: i32, row: i32| {
+            if !(0..=u16::MAX as i32).contains(&col) || !(0..=u16::MAX as i32).contains(&row) {
+                return;
+            }
+
+            let candidate = TileId {
+                col: col as u16,
+                row: row as u16,
+            };
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        };
+
+        if within_north_overlap {
+            push_unique(canonical_tile.col as i32, canonical_tile.row as i32 + 1);
+        }
+        if within_south_overlap {
+            push_unique(canonical_tile.col as i32, canonical_tile.row as i32 - 1);
+        }
+        if within_east_overlap {
+            push_unique(canonical_tile.col as i32 + 1, canonical_tile.row as i32);
+        }
+        if within_west_overlap {
+            push_unique(canonical_tile.col as i32 - 1, canonical_tile.row as i32);
+        }
+        if within_north_overlap && within_east_overlap {
+            push_unique(canonical_tile.col as i32 + 1, canonical_tile.row as i32 + 1);
+        }
+        if within_north_overlap && within_west_overlap {
+            push_unique(canonical_tile.col as i32 - 1, canonical_tile.row as i32 + 1);
+        }
+        if within_south_overlap && within_east_overlap {
+            push_unique(canonical_tile.col as i32 + 1, canonical_tile.row as i32 - 1);
+        }
+        if within_south_overlap && within_west_overlap {
+            push_unique(canonical_tile.col as i32 - 1, canonical_tile.row as i32 - 1);
+        }
+
+        candidates
+    }
+
+    fn neighbor_search_tiles(&self, tile_id: TileId) -> SmallVec<[TileId; 9]> {
+        let mut candidates = SmallVec::<[TileId; 9]>::new();
+        candidates.push(tile_id);
+
+        for row_delta in -1..=1 {
+            for col_delta in -1..=1 {
+                if row_delta == 0 && col_delta == 0 {
+                    continue;
+                }
+
+                let candidate_col = tile_id.col as i32 + col_delta;
+                let candidate_row = tile_id.row as i32 + row_delta;
+                if !(0..=u16::MAX as i32).contains(&candidate_col)
+                    || !(0..=u16::MAX as i32).contains(&candidate_row)
+                {
+                    continue;
+                }
+
+                let candidate = TileId {
+                    col: candidate_col as u16,
+                    row: candidate_row as u16,
+                };
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
+            }
+        }
+
+        candidates
+    }
+
+    pub(crate) fn is_tile_available(&self, tile_id: TileId) -> bool {
         self.available_tiles.contains(&tile_id)
     }
 
@@ -217,6 +315,7 @@ impl TileManager {
     }
 
     /// Get point by OSM ID within a specific tile
+    #[allow(dead_code)]
     pub fn get_point_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<PointRecord> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_point_by_id_if_loaded(tile_id, osm_id)?
@@ -233,6 +332,47 @@ impl TileManager {
         };
 
         loaded_tile.point(osm_id)
+    }
+
+    pub(crate) fn get_point_by_id_with_neighbor_fallback(
+        &mut self,
+        tile_id: TileId,
+        osm_id: u64,
+    ) -> Result<Option<(TileId, PointRecord)>> {
+        for candidate_tile in self.neighbor_search_tiles(tile_id) {
+            if !self.is_tile_available(candidate_tile) {
+                continue;
+            }
+
+            self.ensure_tile_loaded(candidate_tile)?;
+            if let Some(point_record) = self.get_point_by_id_if_loaded(candidate_tile, osm_id)? {
+                return Ok(Some((candidate_tile, point_record)));
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub(crate) fn get_point_copies_for_coords(
+        &mut self,
+        lat: f32,
+        lon: f32,
+        osm_id: u64,
+    ) -> Result<Vec<(TileId, PointRecord)>> {
+        let mut point_copies = Vec::new();
+
+        for candidate_tile in self.overlap_candidate_tiles_for_coords(lat, lon) {
+            if !self.is_tile_available(candidate_tile) {
+                continue;
+            }
+
+            self.ensure_tile_loaded(candidate_tile)?;
+            if let Some(point_record) = self.get_point_by_id_if_loaded(candidate_tile, osm_id)? {
+                point_copies.push((candidate_tile, point_record));
+            }
+        }
+
+        Ok(point_copies)
     }
 
     /// Get line by index within a specific tile
@@ -356,7 +496,7 @@ impl TileManager {
     }
 
     /// Get closest point to coordinates with filtering
-    /// Returns (TileId, osm_id) tuple
+    /// Returns a canonical `(TileId, osm_id)` tuple for the selected point.
     pub fn get_closest_to_coords(
         &mut self,
         lat: f32,
@@ -365,34 +505,22 @@ impl TileManager {
         avoid_proximity_to_residential: bool,
         limit_to_hw_tags: Option<&[&'static str]>,
     ) -> Result<Option<(TileId, u64)>> {
-        let tile_id = TileId::from_coords(lat, lon, self.tile_size_degrees);
-        if !self.is_tile_available(tile_id) {
-            return Ok(None);
-        }
-        self.ensure_tile_loaded(tile_id)?;
-
-        let loaded_tile = self.loaded_tiles.get(&tile_id).unwrap();
-        let tile = &loaded_tile.tile;
-        let points = tile.get_points()?;
-        let line_refs = tile.get_line_refs()?;
         let avoid_tags = Self::collect_avoid_tags(rules);
         let check_limit_tags = Self::should_check_limit_tags(limit_to_hw_tags, &avoid_tags);
+        let mut closest = None;
 
-        let closest = if let Some(closest) = Self::find_closest_in_grid_rings(
-            tile_id,
-            tile,
-            points,
-            line_refs,
-            lat,
-            lon,
-            avoid_proximity_to_residential,
-            &avoid_tags,
-            limit_to_hw_tags,
-            check_limit_tags,
-        )? {
-            Some(closest)
-        } else {
-            Self::find_closest_in_points(
+        for tile_id in self.overlap_candidate_tiles_for_coords(lat, lon) {
+            if !self.is_tile_available(tile_id) {
+                continue;
+            }
+
+            self.ensure_tile_loaded(tile_id)?;
+            let loaded_tile = self.loaded_tiles.get(&tile_id).unwrap();
+            let tile = &loaded_tile.tile;
+            let points = tile.get_points()?;
+            let line_refs = tile.get_line_refs()?;
+
+            let tile_closest = if let Some(tile_closest) = Self::find_closest_in_grid_rings(
                 tile_id,
                 tile,
                 points,
@@ -403,10 +531,47 @@ impl TileManager {
                 &avoid_tags,
                 limit_to_hw_tags,
                 check_limit_tags,
-            )?
+            )? {
+                Some(tile_closest)
+            } else {
+                Self::find_closest_in_points(
+                    tile_id,
+                    tile,
+                    points,
+                    line_refs,
+                    lat,
+                    lon,
+                    avoid_proximity_to_residential,
+                    &avoid_tags,
+                    limit_to_hw_tags,
+                    check_limit_tags,
+                )?
+            };
+
+            if let Some(tile_closest) = tile_closest {
+                let should_replace = closest
+                    .as_ref()
+                    .is_none_or(|(_, min_dist)| tile_closest.1 < *min_dist);
+                if should_replace {
+                    closest = Some(tile_closest);
+                }
+            }
+        }
+
+        let Some(((source_tile_id, osm_id), _)) = closest else {
+            return Ok(None);
         };
 
-        Ok(closest.map(|(id_tuple, _)| id_tuple))
+        let point_record = self
+            .get_point_by_id_if_loaded(source_tile_id, osm_id)?
+            .with_context(|| {
+                format!("Closest point {osm_id} disappeared from loaded tile {source_tile_id:?}")
+            })?;
+
+        Ok(Some((
+            self.tile_id_for_coords(point_record.lat, point_record.lon),
+            osm_id,
+        )))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -725,6 +890,7 @@ impl TileManager {
     /// Get adjacent lines and points from a point using only already loaded tiles.
     /// Returns Ok(None) if the center tile is not loaded or if a cross-tile neighbor would
     /// require loading another tile.
+    #[allow(dead_code)]
     pub fn get_adjacent_by_id_if_loaded(
         &self,
         tile_id: TileId,
@@ -770,6 +936,7 @@ impl TileManager {
     }
 
     /// Get adjacent lines and points from a point (handles border crossing)
+    #[allow(dead_code)]
     pub fn get_adjacent_by_id(&mut self, tile_id: TileId, osm_id: u64) -> Result<AdjacentRefs> {
         self.ensure_tile_loaded(tile_id)?;
 
@@ -789,17 +956,14 @@ impl TileManager {
             point_b_lon,
         ) in line_indices_and_data
         {
-            // Determine which endpoint is the "other" point
             let (other_osm_id, other_lat, other_lon) = if point_a_osm_id == osm_id {
                 (point_b_osm_id, point_b_lat, point_b_lon)
             } else {
                 (point_a_osm_id, point_a_lat, point_a_lon)
             };
 
-            // Determine which tile contains the other point
             let other_tile_id = TileId::from_coords(other_lat, other_lon, self.tile_size_degrees);
 
-            // Check if we need to load a different tile
             if other_tile_id != tile_id {
                 if !self.is_tile_available(other_tile_id) {
                     tracing::debug!(
@@ -809,13 +973,9 @@ impl TileManager {
                     continue;
                 }
 
-                // Border crossing detected
                 match self.ensure_tile_loaded(other_tile_id) {
-                    Ok(_) => {
-                        // Tile loaded successfully
-                    }
+                    Ok(_) => {}
                     Err(_) => {
-                        // Tile missing - skip this line (dead-end)
                         tracing::warn!(
                             "Tile {:?} not available, treating line as dead-end",
                             other_tile_id
@@ -834,6 +994,7 @@ impl TileManager {
         Ok(result)
     }
 
+    #[allow(dead_code)]
     fn collect_adjacent_line_data_if_loaded(
         &self,
         tile_id: TileId,
@@ -2489,5 +2650,130 @@ mod tests {
         assert_eq!(manager.loaded_tile_order_for_test(), vec![fixture.tile_a]);
 
         std::fs::remove_dir_all(fixture_dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_closest_to_coords_searches_overlap_candidates_and_returns_canonical_tile() {
+        let dir = unique_test_dir("tile-manager-overlap-closest");
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let bounds_a = bounds_for_tile(tile_a);
+        let bounds_b = bounds_for_tile(tile_b);
+        let boundary_osm_id = 40_000;
+        let right_osm_id = 40_001;
+
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                spatial_index: Vec::new(),
+                points: Vec::new(),
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                spatial_index: Vec::new(),
+                points: vec![point_record(boundary_osm_id, 10.50, 20.998, 0, 1)],
+                lines: vec![line_record(
+                    boundary_osm_id,
+                    10.50,
+                    20.998,
+                    right_osm_id,
+                    10.50,
+                    21.002,
+                )],
+                line_refs: vec![0],
+                tag_values: Vec::new(),
+                tag_sets: vec![tag_set_record(None, None, None)],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        write_manifest(
+            &dir,
+            &TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: 1.0,
+                format_version: 1,
+                generated_at: "2026-04-05T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: vec![
+                    TileMetadata {
+                        filename: tile_a.to_filename(),
+                        col: tile_a.col,
+                        row: tile_a.row,
+                        bounds: manifest_bounds(bounds_a),
+                        neighbors: empty_neighbors(),
+                        size_bytes: fs::metadata(&tile_a_path).unwrap().len(),
+                        point_count: 0,
+                        line_count: 0,
+                        checksum: "sha256:overlap-closest-a".to_string(),
+                        military_geojson_filename: None,
+                    },
+                    TileMetadata {
+                        filename: tile_b.to_filename(),
+                        col: tile_b.col,
+                        row: tile_b.row,
+                        bounds: manifest_bounds(bounds_b),
+                        neighbors: empty_neighbors(),
+                        size_bytes: fs::metadata(&tile_b_path).unwrap().len(),
+                        point_count: 1,
+                        line_count: 1,
+                        checksum: "sha256:overlap-closest-b".to_string(),
+                        military_geojson_filename: None,
+                    },
+                ],
+            },
+        );
+
+        let mut manager = TileManager::new(dir.clone()).unwrap();
+        let closest = manager
+            .get_closest_to_coords(10.50, 20.998, &RouterRules::default(), false, None)
+            .unwrap();
+
+        assert_eq!(closest, Some((tile_a, boundary_osm_id)));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_overlap_candidate_tiles_include_corner_four_way_set() {
+        let manager = TileManager::from_manifest(
+            TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: 1.0,
+                format_version: 1,
+                generated_at: "2026-04-05T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: Vec::new(),
+            },
+            PathBuf::from("test"),
+        );
+
+        let candidates = manager.overlap_candidate_tiles_for_coords(10.996, 20.998);
+
+        assert_eq!(
+            candidates.as_slice(),
+            &[
+                TileId { col: 200, row: 100 },
+                TileId { col: 200, row: 101 },
+                TileId { col: 201, row: 100 },
+                TileId { col: 201, row: 101 },
+            ]
+        );
     }
 }

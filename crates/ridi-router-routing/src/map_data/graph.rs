@@ -148,10 +148,15 @@ impl<T> Debug for MapDataElementRef<T> {
     }
 }
 
+#[allow(dead_code)]
 pub type MapDataLineRef = MapDataElementRef<MapDataLine>;
+#[allow(dead_code)]
 pub type MapDataPointRef = MapDataElementRef<MapDataPoint>;
+#[allow(dead_code)]
 pub(crate) const ADJACENT_INLINE_CAPACITY: usize = 8;
+#[allow(dead_code)]
 pub(crate) type AdjacentRef = (MapDataLineRef, MapDataPointRef);
+#[allow(dead_code)]
 pub(crate) type AdjacentRefs = SmallVec<[AdjacentRef; ADJACENT_INLINE_CAPACITY]>;
 
 pub struct MapDataGraph {
@@ -261,38 +266,227 @@ impl MapDataGraph {
         }
     }
 
-    // Get point data from tiles (or test storage in test mode)
-    pub fn get_point_from_tiles(&self, tile_id: crate::rmdf::TileId, osm_id: u64) -> MapDataPoint {
-        // In test mode, check test storage first
-        #[cfg(test)]
-        if let Some(point) = self.get_test_point(osm_id) {
-            return point;
+    fn logical_line_key(point_a_osm_id: u64, point_b_osm_id: u64) -> (u64, u64) {
+        (point_a_osm_id, point_b_osm_id)
+    }
+
+    fn logical_line_key_from_record(line_record: &crate::rmdf::format::LineRecord) -> (u64, u64) {
+        Self::logical_line_key(line_record.point_a_osm_id, line_record.point_b_osm_id)
+    }
+
+    fn normalize_rule_line_keys(
+        tile_manager: &mut crate::rmdf::TileManager,
+        line_refs: &[MapDataLineRef],
+        representative_line_refs: &mut std::collections::HashMap<(u64, u64), MapDataLineRef>,
+    ) -> Option<Vec<(u64, u64)>> {
+        let mut line_keys = Vec::with_capacity(line_refs.len());
+
+        for line_ref in line_refs {
+            let line_record = tile_manager
+                .get_line_by_index(line_ref.get_tile_id(), line_ref.get_element_id() as usize)
+                .ok()?;
+            let line_key = Self::logical_line_key_from_record(&line_record);
+            representative_line_refs
+                .entry(line_key)
+                .or_insert_with(|| line_ref.clone());
+            line_keys.push(line_key);
         }
 
-        if let Some(point_record) = self.get_point_record_from_tiles(tile_id, osm_id) {
-            let lines = if point_record.lines_count == 0 {
-                Vec::new()
-            } else {
-                let tile_manager = self.tile_manager.read().unwrap();
-                tile_manager
-                    .get_line_indices_for_point_if_loaded(tile_id, &point_record)
-                    .expect("Failed to get line refs from loaded tile")
-                    .expect("Loaded tile disappeared during point line lookup")
-                    .iter()
-                    .map(|&line_index| MapDataLineRef::new(tile_id, line_index))
-                    .collect()
-            };
-            let rules = if point_record.rules_count == 0 {
-                Vec::new()
-            } else {
-                self.tile_manager
-                    .read()
-                    .unwrap()
-                    .get_rules_for_point_if_loaded(tile_id, &point_record)
-                    .expect("Failed to get rules from loaded tile")
-                    .expect("Loaded tile disappeared during point rule lookup")
-            };
+        line_keys.sort_unstable();
+        line_keys.dedup();
+        Some(line_keys)
+    }
 
+    fn get_merged_point_from_tiles(
+        &self,
+        tile_id: crate::rmdf::TileId,
+        osm_id: u64,
+    ) -> Option<(
+        crate::rmdf::format::PointRecord,
+        Vec<MapDataLineRef>,
+        Vec<crate::map_data::rule::MapDataRule>,
+    )> {
+        #[cfg(test)]
+        if let Some(point) = self.get_test_point(osm_id) {
+            let mut flags = 0;
+            if point.residential_in_proximity {
+                flags |= crate::rmdf::format::PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
+            }
+            if point.nogo_area {
+                flags |= crate::rmdf::format::PointRecord::NOGO_AREA_FLAG;
+            }
+
+            return Some((
+                crate::rmdf::format::PointRecord {
+                    osm_id: point.id,
+                    lat: point.lat,
+                    lon: point.lon,
+                    lines_offset: 0,
+                    lines_count: point.lines.len() as u32,
+                    _padding1: 0,
+                    rules_offset: 0,
+                    rules_count: point.rules.len() as u32,
+                    flags,
+                    _padding2: 0,
+                },
+                point.lines,
+                point.rules,
+            ));
+        }
+
+        let mut tile_manager = self.tile_manager.write().unwrap();
+        let (source_tile_id, source_point_record) = tile_manager
+            .get_point_by_id_with_neighbor_fallback(tile_id, osm_id)
+            .ok()??;
+        let mut point_copies = tile_manager
+            .get_point_copies_for_coords(source_point_record.lat, source_point_record.lon, osm_id)
+            .ok()?;
+        if point_copies.is_empty() {
+            point_copies.push((source_tile_id, source_point_record));
+        }
+
+        let (base_tile_id, base_point_record) = point_copies.first().copied()?;
+        let mut merged_flags = 0_u16;
+        let mut representative_line_refs =
+            std::collections::HashMap::<(u64, u64), MapDataLineRef>::new();
+        let mut line_order = Vec::<(u64, u64)>::new();
+
+        for (copy_tile_id, point_record) in &point_copies {
+            merged_flags |= point_record.flags;
+
+            if point_record.lat != base_point_record.lat
+                || point_record.lon != base_point_record.lon
+                || point_record.flags != base_point_record.flags
+            {
+                warn!(
+                    requested_tile = ?tile_id,
+                    ?base_tile_id,
+                    ?copy_tile_id,
+                    osm_id,
+                    "Point copies differ across overlap tiles; merging deterministically"
+                );
+            }
+
+            let line_indices = tile_manager
+                .get_line_indices_for_point(*copy_tile_id, point_record)
+                .ok()?
+                .to_vec();
+
+            for line_index in line_indices {
+                let line_record = tile_manager
+                    .get_line_by_index(*copy_tile_id, line_index as usize)
+                    .ok()?;
+                let line_key = Self::logical_line_key_from_record(&line_record);
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    representative_line_refs.entry(line_key)
+                {
+                    entry.insert(MapDataLineRef::new(*copy_tile_id, line_index));
+                    line_order.push(line_key);
+                }
+            }
+        }
+
+        let lines = line_order
+            .iter()
+            .filter_map(|line_key| representative_line_refs.get(line_key).cloned())
+            .collect::<Vec<_>>();
+
+        let mut rules = Vec::new();
+        let mut seen_rules =
+            std::collections::HashSet::<(u8, Vec<(u64, u64)>, Vec<(u64, u64)>)>::new();
+
+        for (copy_tile_id, point_record) in &point_copies {
+            let copy_rules = tile_manager
+                .get_rules_for_point(*copy_tile_id, point_record)
+                .ok()?;
+
+            for rule in copy_rules {
+                let Some(from_line_keys) = Self::normalize_rule_line_keys(
+                    &mut tile_manager,
+                    &rule.from_lines,
+                    &mut representative_line_refs,
+                ) else {
+                    warn!(
+                        requested_tile = ?tile_id,
+                        ?copy_tile_id,
+                        osm_id,
+                        "Skipping overlap-merged rule with unreadable from-line refs"
+                    );
+                    continue;
+                };
+                let Some(to_line_keys) = Self::normalize_rule_line_keys(
+                    &mut tile_manager,
+                    &rule.to_lines,
+                    &mut representative_line_refs,
+                ) else {
+                    warn!(
+                        requested_tile = ?tile_id,
+                        ?copy_tile_id,
+                        osm_id,
+                        "Skipping overlap-merged rule with unreadable to-line refs"
+                    );
+                    continue;
+                };
+
+                let rule_kind = match rule.rule_type {
+                    crate::map_data::rule::MapDataRuleType::OnlyAllowed => 0,
+                    crate::map_data::rule::MapDataRuleType::NotAllowed => 1,
+                };
+                if !seen_rules.insert((rule_kind, from_line_keys.clone(), to_line_keys.clone())) {
+                    continue;
+                }
+
+                let from_lines = from_line_keys
+                    .iter()
+                    .filter_map(|line_key| representative_line_refs.get(line_key).cloned())
+                    .collect::<Vec<_>>();
+                let to_lines = to_line_keys
+                    .iter()
+                    .filter_map(|line_key| representative_line_refs.get(line_key).cloned())
+                    .collect::<Vec<_>>();
+
+                if from_lines.len() != from_line_keys.len() || to_lines.len() != to_line_keys.len()
+                {
+                    warn!(
+                        requested_tile = ?tile_id,
+                        ?copy_tile_id,
+                        osm_id,
+                        "Skipping overlap-merged rule after representative registration failed"
+                    );
+                    continue;
+                }
+
+                rules.push(crate::map_data::rule::MapDataRule {
+                    from_lines,
+                    to_lines,
+                    rule_type: rule.rule_type,
+                });
+            }
+        }
+
+        Some((
+            crate::rmdf::format::PointRecord {
+                osm_id: base_point_record.osm_id,
+                lat: base_point_record.lat,
+                lon: base_point_record.lon,
+                lines_offset: 0,
+                lines_count: lines.len() as u32,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: rules.len() as u32,
+                flags: merged_flags,
+                _padding2: 0,
+            },
+            lines,
+            rules,
+        ))
+    }
+
+    // Get point data from tiles (or test storage in test mode)
+    pub fn get_point_from_tiles(&self, tile_id: crate::rmdf::TileId, osm_id: u64) -> MapDataPoint {
+        if let Some((point_record, lines, rules)) =
+            self.get_merged_point_from_tiles(tile_id, osm_id)
+        {
             return MapDataPoint {
                 id: point_record.osm_id,
                 lat: point_record.lat,
@@ -312,45 +506,8 @@ impl MapDataGraph {
         tile_id: crate::rmdf::TileId,
         osm_id: u64,
     ) -> Option<crate::rmdf::format::PointRecord> {
-        #[cfg(test)]
-        if let Some(point) = self.get_test_point(osm_id) {
-            let mut flags = 0;
-            if point.residential_in_proximity {
-                flags |= crate::rmdf::format::PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
-            }
-            if point.nogo_area {
-                flags |= crate::rmdf::format::PointRecord::NOGO_AREA_FLAG;
-            }
-
-            return Some(crate::rmdf::format::PointRecord {
-                osm_id: point.id,
-                lat: point.lat,
-                lon: point.lon,
-                lines_offset: 0,
-                lines_count: point.lines.len() as u32,
-                _padding1: 0,
-                rules_offset: 0,
-                rules_count: point.rules.len() as u32,
-                flags,
-                _padding2: 0,
-            });
-        }
-
-        if let Some(point_record) = self
-            .tile_manager
-            .read()
-            .unwrap()
-            .get_point_by_id_if_loaded(tile_id, osm_id)
-            .expect("Failed to get point from loaded tile")
-        {
-            return Some(point_record);
-        }
-
-        self.tile_manager
-            .write()
-            .unwrap()
-            .get_point_by_id(tile_id, osm_id)
-            .ok()
+        self.get_merged_point_from_tiles(tile_id, osm_id)
+            .map(|(point_record, _, _)| point_record)
     }
 
     // Get line data from tiles (or test storage in test mode)
@@ -373,7 +530,10 @@ impl MapDataGraph {
             {
                 return MapDataLine {
                     points: (
-                        MapDataPointRef::new(tile_id, line_record.point_a_osm_id),
+                        MapDataPointRef::new(
+                            tm.tile_id_for_coords(line_record.point_a_lat, line_record.point_a_lon),
+                            line_record.point_a_osm_id,
+                        ),
                         MapDataPointRef::new(
                             tm.tile_id_for_coords(line_record.point_b_lat, line_record.point_b_lon),
                             line_record.point_b_osm_id,
@@ -396,7 +556,10 @@ impl MapDataGraph {
             .expect("Failed to get line from tile");
         MapDataLine {
             points: (
-                MapDataPointRef::new(tile_id, line_record.point_a_osm_id),
+                MapDataPointRef::new(
+                    tm.tile_id_for_coords(line_record.point_a_lat, line_record.point_a_lon),
+                    line_record.point_a_osm_id,
+                ),
                 MapDataPointRef::new(
                     tm.tile_id_for_coords(line_record.point_b_lat, line_record.point_b_lon),
                     line_record.point_b_osm_id,
@@ -497,22 +660,52 @@ impl MapDataGraph {
             }
         }
 
-        let adjacent = {
-            let tm = self.tile_manager.read().unwrap();
-            tm.get_adjacent_by_id_if_loaded(
-                center_point.get_tile_id(),
-                center_point.get_element_id(),
-            )
-            .expect("Failed to get adjacent points")
-        };
+        let point =
+            self.get_point_from_tiles(center_point.get_tile_id(), center_point.get_element_id());
+        let mut adjacent = Vec::with_capacity(point.lines.len());
 
-        let adjacent = adjacent.unwrap_or_else(|| {
-            let mut tm = self.tile_manager.write().unwrap();
-            tm.get_adjacent_by_id(center_point.get_tile_id(), center_point.get_element_id())
-                .expect("Failed to get adjacent points")
-        });
+        for line_ref in point.lines {
+            let line = self
+                .get_line_from_tiles(line_ref.get_tile_id(), line_ref.get_element_id() as usize);
+            let Some(other_point) =
+                (if line.points.0.get_element_id() == center_point.get_element_id() {
+                    Some(line.points.1.clone())
+                } else if line.points.1.get_element_id() == center_point.get_element_id() {
+                    Some(line.points.0.clone())
+                } else {
+                    None
+                })
+            else {
+                warn!(
+                    ?center_point,
+                    ?line_ref,
+                    "Merged adjacent line no longer references the requested point"
+                );
+                continue;
+            };
 
-        adjacent.into_vec()
+            if other_point.get_tile_id() != center_point.get_tile_id() {
+                let other_tile_available = self
+                    .tile_manager
+                    .read()
+                    .unwrap()
+                    .is_tile_available(other_point.get_tile_id());
+                if !other_tile_available
+                    || self
+                        .get_point_record_from_tiles(
+                            other_point.get_tile_id(),
+                            other_point.get_element_id(),
+                        )
+                        .is_none()
+                {
+                    continue;
+                }
+            }
+
+            adjacent.push((line_ref, other_point));
+        }
+
+        adjacent
     }
 
     pub fn get_closest_to_coords(
@@ -1139,5 +1332,972 @@ mod tests {
             in_tile_neighbor_osm_id,
             cross_tile_neighbor_osm_id,
         }
+    }
+
+    struct OverlapFixture {
+        dir: std::path::PathBuf,
+        tile_a: TileId,
+        tile_b: TileId,
+        boundary_osm_id: u64,
+        left_osm_id: u64,
+        right_osm_id: u64,
+    }
+
+    fn write_overlap_manifest(
+        dir: &std::path::Path,
+        tile_a: TileId,
+        tile_b: TileId,
+        bounds_a: ridi_router_common::format::TileBounds,
+        bounds_b: ridi_router_common::format::TileBounds,
+        tile_a_path: &std::path::Path,
+        tile_b_path: &std::path::Path,
+        tile_a_point_count: u64,
+        tile_a_line_count: u64,
+        tile_b_point_count: u64,
+        tile_b_line_count: u64,
+    ) {
+        let tile_a_filename = tile_a.to_filename();
+        let tile_b_filename = tile_b.to_filename();
+        write_manifest(
+            dir,
+            &TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: 1.0,
+                format_version: 1,
+                generated_at: "2026-04-05T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: vec![
+                    TileMetadata {
+                        filename: tile_a_filename.clone(),
+                        col: tile_a.col,
+                        row: tile_a.row,
+                        bounds: manifest_bounds(bounds_a),
+                        neighbors: TileNeighbors {
+                            north: None,
+                            south: None,
+                            east: Some(tile_b_filename.clone()),
+                            west: None,
+                            northeast: None,
+                            northwest: None,
+                            southeast: None,
+                            southwest: None,
+                        },
+                        size_bytes: fs::metadata(tile_a_path).unwrap().len(),
+                        point_count: tile_a_point_count,
+                        line_count: tile_a_line_count,
+                        checksum: "sha256:graph-overlap-a".to_string(),
+                        military_geojson_filename: None,
+                    },
+                    TileMetadata {
+                        filename: tile_b_filename,
+                        col: tile_b.col,
+                        row: tile_b.row,
+                        bounds: manifest_bounds(bounds_b),
+                        neighbors: TileNeighbors {
+                            north: None,
+                            south: None,
+                            east: None,
+                            west: Some(tile_a_filename),
+                            northeast: None,
+                            northwest: None,
+                            southeast: None,
+                            southwest: None,
+                        },
+                        size_bytes: fs::metadata(tile_b_path).unwrap().len(),
+                        point_count: tile_b_point_count,
+                        line_count: tile_b_line_count,
+                        checksum: "sha256:graph-overlap-b".to_string(),
+                        military_geojson_filename: None,
+                    },
+                ],
+            },
+        );
+    }
+
+    fn create_overlap_missing_canonical_fixture(prefix: &str) -> OverlapFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let boundary_osm_id = 30_000;
+        let left_osm_id = 30_001;
+        let right_osm_id = 30_002;
+
+        let bounds_a = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 20.0,
+            lon_max: 21.0,
+        };
+        let bounds_b = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 21.0,
+            lon_max: 22.0,
+        };
+
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                spatial_index: Vec::new(),
+                points: vec![PointRecord {
+                    osm_id: left_osm_id,
+                    lat: 10.50,
+                    lon: 20.996,
+                    lines_offset: 0,
+                    lines_count: 0,
+                    _padding1: 0,
+                    rules_offset: 0,
+                    rules_count: 0,
+                    flags: 0,
+                    _padding2: 0,
+                }],
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                spatial_index: Vec::new(),
+                points: vec![
+                    PointRecord {
+                        osm_id: boundary_osm_id,
+                        lat: 10.50,
+                        lon: 20.998,
+                        lines_offset: 0,
+                        lines_count: 2,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: right_osm_id,
+                        lat: 10.50,
+                        lon: 21.002,
+                        lines_offset: 2,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                ],
+                lines: vec![
+                    LineRecord {
+                        point_a_osm_id: boundary_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.998,
+                        point_b_osm_id: left_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 20.996,
+                        direction: 0,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                    LineRecord {
+                        point_a_osm_id: boundary_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.998,
+                        point_b_osm_id: right_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 21.002,
+                        direction: 1,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                ],
+                line_refs: vec![0, 1],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        write_overlap_manifest(
+            &dir,
+            tile_a,
+            tile_b,
+            bounds_a,
+            bounds_b,
+            &tile_a_path,
+            &tile_b_path,
+            1,
+            0,
+            2,
+            2,
+        );
+
+        OverlapFixture {
+            dir,
+            tile_a,
+            tile_b,
+            boundary_osm_id,
+            left_osm_id,
+            right_osm_id,
+        }
+    }
+
+    fn create_overlap_dedupe_fixture(prefix: &str) -> OverlapFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let boundary_osm_id = 31_000;
+        let left_osm_id = 31_001;
+        let right_osm_id = 31_002;
+
+        let bounds_a = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 20.0,
+            lon_max: 21.0,
+        };
+        let bounds_b = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 21.0,
+            lon_max: 22.0,
+        };
+
+        let duplicated_points = vec![PointRecord {
+            osm_id: boundary_osm_id,
+            lat: 10.50,
+            lon: 20.998,
+            lines_offset: 0,
+            lines_count: 2,
+            _padding1: 0,
+            rules_offset: 0,
+            rules_count: 1,
+            flags: 0,
+            _padding2: 0,
+        }];
+        let duplicated_lines = vec![
+            LineRecord {
+                point_a_osm_id: boundary_osm_id,
+                point_a_lat: 10.50,
+                point_a_lon: 20.998,
+                point_b_osm_id: left_osm_id,
+                point_b_lat: 10.50,
+                point_b_lon: 20.996,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: boundary_osm_id,
+                point_a_lat: 10.50,
+                point_a_lon: 20.998,
+                point_b_osm_id: right_osm_id,
+                point_b_lat: 10.50,
+                point_b_lon: 21.002,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+        ];
+        let duplicated_rules = vec![RuleRecord {
+            from_lines_offset: 0,
+            from_lines_count: 1,
+            _padding1: 0,
+            to_lines_offset: 1,
+            to_lines_count: 1,
+            rule_type: 0,
+            _padding2: 0,
+            _padding3: 0,
+        }];
+        let duplicated_rule_line_refs = vec![0, 1];
+
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                spatial_index: Vec::new(),
+                points: duplicated_points.clone(),
+                lines: duplicated_lines.clone(),
+                line_refs: vec![0, 1],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: duplicated_rules.clone(),
+                rule_line_refs: duplicated_rule_line_refs.clone(),
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                spatial_index: Vec::new(),
+                points: duplicated_points,
+                lines: duplicated_lines,
+                line_refs: vec![0, 1],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: duplicated_rules,
+                rule_line_refs: duplicated_rule_line_refs,
+            },
+        );
+
+        write_overlap_manifest(
+            &dir,
+            tile_a,
+            tile_b,
+            bounds_a,
+            bounds_b,
+            &tile_a_path,
+            &tile_b_path,
+            1,
+            2,
+            1,
+            2,
+        );
+
+        OverlapFixture {
+            dir,
+            tile_a,
+            tile_b,
+            boundary_osm_id,
+            left_osm_id,
+            right_osm_id,
+        }
+    }
+
+    #[test]
+    fn test_get_point_from_tiles_falls_back_to_overlap_copy_when_canonical_missing() {
+        let fixture =
+            create_overlap_missing_canonical_fixture("map-data-graph-overlap-missing-canonical");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let point = graph.get_point_from_tiles(fixture.tile_a, fixture.boundary_osm_id);
+        assert_eq!(point.id, fixture.boundary_osm_id);
+        assert_eq!(
+            point.lines,
+            vec![
+                MapDataLineRef::new(fixture.tile_b, 0),
+                MapDataLineRef::new(fixture.tile_b, 1),
+            ]
+        );
+
+        let boundary_line = graph.get_line_from_tiles(fixture.tile_b, 0);
+        assert_eq!(
+            boundary_line.points.0,
+            MapDataPointRef::new(fixture.tile_a, fixture.boundary_osm_id)
+        );
+
+        let adjacent = graph.get_adjacent(MapDataPointRef::new(
+            fixture.tile_a,
+            fixture.boundary_osm_id,
+        ));
+        assert_eq!(adjacent.len(), 2);
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_b, 0),
+            MapDataPointRef::new(fixture.tile_a, fixture.left_osm_id),
+        )));
+        assert!(adjacent.contains(&(
+            MapDataLineRef::new(fixture.tile_b, 1),
+            MapDataPointRef::new(fixture.tile_b, fixture.right_osm_id),
+        )));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_point_from_tiles_dedupes_overlap_lines_and_rules() {
+        let fixture = create_overlap_dedupe_fixture("map-data-graph-overlap-dedupe-lines-rules");
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
+
+        let point = graph.get_point_from_tiles(fixture.tile_a, fixture.boundary_osm_id);
+        assert_eq!(
+            point.lines,
+            vec![
+                MapDataLineRef::new(fixture.tile_a, 0),
+                MapDataLineRef::new(fixture.tile_a, 1),
+            ]
+        );
+        assert_eq!(point.rules.len(), 1);
+        assert_eq!(point.rules[0].rule_type, MapDataRuleType::OnlyAllowed);
+        assert_eq!(
+            point.rules[0].from_lines,
+            vec![MapDataLineRef::new(fixture.tile_a, 0)]
+        );
+        assert_eq!(
+            point.rules[0].to_lines,
+            vec![MapDataLineRef::new(fixture.tile_a, 1)]
+        );
+
+        fs::remove_dir_all(fixture.dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_point_from_tiles_keeps_opposite_direction_overlap_lines_distinct() {
+        let dir = unique_test_dir("map-data-graph-overlap-directional-lines");
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let bounds_a = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 20.0,
+            lon_max: 21.0,
+        };
+        let bounds_b = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 21.0,
+            lon_max: 22.0,
+        };
+        let boundary_osm_id = 32_000;
+        let incoming_osm_id = 32_001;
+        let outgoing_osm_id = 32_002;
+
+        let duplicated_point = PointRecord {
+            osm_id: boundary_osm_id,
+            lat: 10.50,
+            lon: 20.998,
+            lines_offset: 0,
+            lines_count: 1,
+            _padding1: 0,
+            rules_offset: 0,
+            rules_count: 0,
+            flags: 0,
+            _padding2: 0,
+        };
+
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                spatial_index: Vec::new(),
+                points: vec![
+                    duplicated_point,
+                    PointRecord {
+                        osm_id: outgoing_osm_id,
+                        lat: 10.50,
+                        lon: 20.999,
+                        lines_offset: 1,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                ],
+                lines: vec![LineRecord {
+                    point_a_osm_id: boundary_osm_id,
+                    point_a_lat: 10.50,
+                    point_a_lon: 20.998,
+                    point_b_osm_id: outgoing_osm_id,
+                    point_b_lat: 10.50,
+                    point_b_lon: 20.999,
+                    direction: 1,
+                    _padding1: 0,
+                    _padding2: 0,
+                    tag_set_index: 0,
+                }],
+                line_refs: vec![0],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                spatial_index: Vec::new(),
+                points: vec![
+                    duplicated_point,
+                    PointRecord {
+                        osm_id: incoming_osm_id,
+                        lat: 10.50,
+                        lon: 20.996,
+                        lines_offset: 1,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                ],
+                lines: vec![LineRecord {
+                    point_a_osm_id: incoming_osm_id,
+                    point_a_lat: 10.50,
+                    point_a_lon: 20.996,
+                    point_b_osm_id: boundary_osm_id,
+                    point_b_lat: 10.50,
+                    point_b_lon: 20.998,
+                    direction: 1,
+                    _padding1: 0,
+                    _padding2: 0,
+                    tag_set_index: 0,
+                }],
+                line_refs: vec![0],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        write_overlap_manifest(
+            &dir,
+            tile_a,
+            tile_b,
+            bounds_a,
+            bounds_b,
+            &tile_a_path,
+            &tile_b_path,
+            2,
+            1,
+            2,
+            1,
+        );
+
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(dir.clone()).unwrap());
+        let point = graph.get_point_from_tiles(tile_a, boundary_osm_id);
+
+        assert_eq!(
+            point.lines,
+            vec![
+                MapDataLineRef::new(tile_a, 0),
+                MapDataLineRef::new(tile_b, 0),
+            ]
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_point_from_tiles_merges_split_overlap_rules() {
+        let dir = unique_test_dir("map-data-graph-overlap-split-rules");
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let bounds_a = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 20.0,
+            lon_max: 21.0,
+        };
+        let bounds_b = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 21.0,
+            lon_max: 22.0,
+        };
+        let boundary_osm_id = 33_000;
+        let from_osm_id = 33_001;
+        let left_to_osm_id = 33_002;
+        let right_to_osm_id = 33_003;
+
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                spatial_index: Vec::new(),
+                points: vec![
+                    PointRecord {
+                        osm_id: boundary_osm_id,
+                        lat: 10.50,
+                        lon: 20.998,
+                        lines_offset: 0,
+                        lines_count: 2,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 1,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: from_osm_id,
+                        lat: 10.50,
+                        lon: 20.996,
+                        lines_offset: 2,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 1,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: left_to_osm_id,
+                        lat: 10.60,
+                        lon: 20.999,
+                        lines_offset: 2,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 1,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                ],
+                lines: vec![
+                    LineRecord {
+                        point_a_osm_id: from_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.996,
+                        point_b_osm_id: boundary_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 20.998,
+                        direction: 1,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                    LineRecord {
+                        point_a_osm_id: boundary_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.998,
+                        point_b_osm_id: left_to_osm_id,
+                        point_b_lat: 10.60,
+                        point_b_lon: 20.999,
+                        direction: 1,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                ],
+                line_refs: vec![0, 1],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: vec![RuleRecord {
+                    from_lines_offset: 0,
+                    from_lines_count: 1,
+                    _padding1: 0,
+                    to_lines_offset: 1,
+                    to_lines_count: 1,
+                    rule_type: 1,
+                    _padding2: 0,
+                    _padding3: 0,
+                }],
+                rule_line_refs: vec![0, 1],
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                spatial_index: Vec::new(),
+                points: vec![
+                    PointRecord {
+                        osm_id: boundary_osm_id,
+                        lat: 10.50,
+                        lon: 20.998,
+                        lines_offset: 0,
+                        lines_count: 2,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 1,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: from_osm_id,
+                        lat: 10.50,
+                        lon: 20.996,
+                        lines_offset: 2,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 1,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: right_to_osm_id,
+                        lat: 10.40,
+                        lon: 21.002,
+                        lines_offset: 2,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 1,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                ],
+                lines: vec![
+                    LineRecord {
+                        point_a_osm_id: from_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.996,
+                        point_b_osm_id: boundary_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 20.998,
+                        direction: 1,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                    LineRecord {
+                        point_a_osm_id: boundary_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.998,
+                        point_b_osm_id: right_to_osm_id,
+                        point_b_lat: 10.40,
+                        point_b_lon: 21.002,
+                        direction: 1,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                ],
+                line_refs: vec![0, 1],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: vec![RuleRecord {
+                    from_lines_offset: 0,
+                    from_lines_count: 1,
+                    _padding1: 0,
+                    to_lines_offset: 1,
+                    to_lines_count: 1,
+                    rule_type: 0,
+                    _padding2: 0,
+                    _padding3: 0,
+                }],
+                rule_line_refs: vec![0, 1],
+            },
+        );
+
+        write_overlap_manifest(
+            &dir,
+            tile_a,
+            tile_b,
+            bounds_a,
+            bounds_b,
+            &tile_a_path,
+            &tile_b_path,
+            3,
+            2,
+            3,
+            2,
+        );
+
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(dir.clone()).unwrap());
+        let point = graph.get_point_from_tiles(tile_a, boundary_osm_id);
+
+        assert_eq!(
+            point.lines,
+            vec![
+                MapDataLineRef::new(tile_a, 0),
+                MapDataLineRef::new(tile_a, 1),
+                MapDataLineRef::new(tile_b, 1),
+            ]
+        );
+        assert_eq!(point.rules.len(), 2);
+        assert!(point.rules.iter().any(|rule| {
+            rule.rule_type == MapDataRuleType::NotAllowed
+                && rule.from_lines == vec![MapDataLineRef::new(tile_a, 0)]
+                && rule.to_lines == vec![MapDataLineRef::new(tile_a, 1)]
+        }));
+        assert!(point.rules.iter().any(|rule| {
+            rule.rule_type == MapDataRuleType::OnlyAllowed
+                && rule.from_lines == vec![MapDataLineRef::new(tile_a, 0)]
+                && rule.to_lines == vec![MapDataLineRef::new(tile_b, 1)]
+        }));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_get_point_from_tiles_keeps_rule_when_representative_line_only_appears_in_rule_refs() {
+        let dir = unique_test_dir("map-data-graph-overlap-rule-only-representative");
+        fs::create_dir_all(&dir).unwrap();
+
+        let tile_a = TileId { col: 200, row: 100 };
+        let tile_b = TileId { col: 201, row: 100 };
+        let bounds_a = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 20.0,
+            lon_max: 21.0,
+        };
+        let bounds_b = ridi_router_common::format::TileBounds {
+            lat_min: 10.0,
+            lat_max: 11.0,
+            lon_min: 21.0,
+            lon_max: 22.0,
+        };
+        let boundary_osm_id = 34_000;
+        let from_osm_id = 34_001;
+        let hidden_to_osm_id = 34_002;
+
+        let tile_a_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_a,
+                bounds: bounds_a,
+                spatial_index: Vec::new(),
+                points: vec![PointRecord {
+                    osm_id: boundary_osm_id,
+                    lat: 10.50,
+                    lon: 20.998,
+                    lines_offset: 0,
+                    lines_count: 0,
+                    _padding1: 0,
+                    rules_offset: 0,
+                    rules_count: 0,
+                    flags: 0,
+                    _padding2: 0,
+                }],
+                lines: Vec::new(),
+                line_refs: Vec::new(),
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        let tile_b_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: tile_b,
+                bounds: bounds_b,
+                spatial_index: Vec::new(),
+                points: vec![
+                    PointRecord {
+                        osm_id: boundary_osm_id,
+                        lat: 10.50,
+                        lon: 20.998,
+                        lines_offset: 0,
+                        lines_count: 1,
+                        _padding1: 0,
+                        rules_offset: 0,
+                        rules_count: 1,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: from_osm_id,
+                        lat: 10.50,
+                        lon: 20.996,
+                        lines_offset: 1,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 1,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                    PointRecord {
+                        osm_id: hidden_to_osm_id,
+                        lat: 10.50,
+                        lon: 21.002,
+                        lines_offset: 1,
+                        lines_count: 0,
+                        _padding1: 0,
+                        rules_offset: 1,
+                        rules_count: 0,
+                        flags: 0,
+                        _padding2: 0,
+                    },
+                ],
+                lines: vec![
+                    LineRecord {
+                        point_a_osm_id: from_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.996,
+                        point_b_osm_id: boundary_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 20.998,
+                        direction: 1,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                    LineRecord {
+                        point_a_osm_id: boundary_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.998,
+                        point_b_osm_id: hidden_to_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 21.002,
+                        direction: 1,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    },
+                ],
+                line_refs: vec![0],
+                tag_values: Vec::new(),
+                tag_sets: Vec::new(),
+                rules: vec![RuleRecord {
+                    from_lines_offset: 0,
+                    from_lines_count: 1,
+                    _padding1: 0,
+                    to_lines_offset: 1,
+                    to_lines_count: 1,
+                    rule_type: 1,
+                    _padding2: 0,
+                    _padding3: 0,
+                }],
+                rule_line_refs: vec![0, 1],
+            },
+        );
+
+        write_overlap_manifest(
+            &dir,
+            tile_a,
+            tile_b,
+            bounds_a,
+            bounds_b,
+            &tile_a_path,
+            &tile_b_path,
+            1,
+            0,
+            3,
+            2,
+        );
+
+        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(dir.clone()).unwrap());
+        let point = graph.get_point_from_tiles(tile_a, boundary_osm_id);
+
+        assert_eq!(point.rules.len(), 1);
+        assert_eq!(
+            point.rules[0].from_lines,
+            vec![MapDataLineRef::new(tile_b, 0)]
+        );
+        assert_eq!(
+            point.rules[0].to_lines,
+            vec![MapDataLineRef::new(tile_b, 1)]
+        );
+        assert_eq!(point.rules[0].rule_type, MapDataRuleType::NotAllowed);
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }
