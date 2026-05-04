@@ -47,7 +47,7 @@ cmd_help() {
     echo "Commands:"
     echo "  pbf <country>                       Download PBF file for a country"
     echo "  generate-tiles <countries>          Generate tiles for comma-separated countries"
-    echo "  route <start> <finish> [preset]     Generate a GPX route and progress JSONL using OSM place lookup"
+    echo "  route [-p] <start> <finish> [preset]  Generate a GPX route using OSM place lookup"
     echo "  build                               Build the project"
     echo "  run                                 Run the CLI"
     echo "  rmdf-view                           Run the RMDF debug viewer"
@@ -57,6 +57,7 @@ cmd_help() {
     echo "  ./dev.sh generate-tiles latvia"
     echo "  ./dev.sh route riga,latvia cesis,latvia"
     echo "  ./dev.sh route riga,latvia cesis,latvia prefer-unpaved"
+    echo "  ./dev.sh route -p riga,latvia cesis,latvia prefer-unpaved"
     echo ""
     echo "Route preset mapping: <preset> -> $RULE_EXAMPLES_DIR/rules-<preset>.json"
     echo "If no preset is provided, dev.sh uses the default preset."
@@ -291,9 +292,11 @@ cmd_generate_tiles() {
 }
 
 cmd_route() {
-    local start_input="${1:-}"
-    local finish_input="${2:-}"
-    local preset="${3:-}"
+    local progress_enabled=false
+    local -a positional_args=()
+    local start_input
+    local finish_input
+    local preset
     local rule_file=""
     local start_result
     local finish_result
@@ -303,13 +306,39 @@ cmd_route() {
     local finish_name
     local -a route_args
 
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -p|--progress)
+                progress_enabled=true
+                shift
+                ;;
+            --)
+                shift
+                positional_args+=("$@")
+                break
+                ;;
+            -*)
+                echo "Error: Unknown route option '$1'. Usage: ./dev.sh route [-p] riga,latvia cesis,latvia [preset]" >&2
+                exit 1
+                ;;
+            *)
+                positional_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    start_input="${positional_args[0]:-}"
+    finish_input="${positional_args[1]:-}"
+    preset="${positional_args[2]:-}"
+
     if [[ -z "$start_input" || -z "$finish_input" ]]; then
-        echo "Error: Missing route locations. Usage: ./dev.sh route riga,latvia cesis,latvia [preset]" >&2
+        echo "Error: Missing route locations. Usage: ./dev.sh route [-p] riga,latvia cesis,latvia [preset]" >&2
         exit 1
     fi
 
-    if [[ $# -gt 3 ]]; then
-        echo "Error: Too many arguments. Usage: ./dev.sh route riga,latvia cesis,latvia [preset]" >&2
+    if [[ ${#positional_args[@]} -gt 3 ]]; then
+        echo "Error: Too many arguments. Usage: ./dev.sh route [-p] riga,latvia cesis,latvia [preset]" >&2
         exit 1
     fi
 
@@ -347,16 +376,21 @@ cmd_route() {
 
     echo "Cleaning $ROUTE_DIR..."
     rm -rf "$ROUTE_DIR"
-    echo "Cleaning $PROGRESS_DIR..."
-    rm -rf "$PROGRESS_DIR"
+    if [[ "$progress_enabled" == true ]]; then
+        echo "Cleaning $PROGRESS_DIR..."
+        rm -rf "$PROGRESS_DIR"
+    fi
 
     route_args=(
         generate-route
         --tiles "$OUTPUT_DIR"
         --output-dir "$ROUTE_DIR"
-        --progress-dir "$PROGRESS_DIR"
         --format gpx
     )
+
+    if [[ "$progress_enabled" == true ]]; then
+        route_args+=(--progress-dir "$PROGRESS_DIR")
+    fi
 
     if [[ -n "$rule_file" ]]; then
         route_args+=(--rule-file "$rule_file")
@@ -371,7 +405,9 @@ cmd_route() {
     echo "Generating route..."
     run_cli_release "${route_args[@]}"
     echo "Route files written to $ROUTE_DIR"
-    echo "Progress files written to $PROGRESS_DIR"
+    if [[ "$progress_enabled" == true ]]; then
+        echo "Progress files written to $PROGRESS_DIR"
+    fi
 }
 
 cmd_build() {
