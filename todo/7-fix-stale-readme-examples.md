@@ -1,18 +1,14 @@
 # Fix stale README examples
 
-## Problem
+## Status
 
-The README contains stale and incorrect examples.
+Resolved.
 
-## Evidence
+## Resolution
 
-- It references `rule-examples/rules-fast.json`, which does not exist.
-- The round-trip example duplicates `--distance 100000`.
+- README route examples now use the existing `rule-examples/rules-default.json` preset.
+- The round-trip example now lists `--distance 100000` only once.
 
-## Why it matters
+## Verification
 
-Broken docs mislead users and make the project look less reliable than it is.
-
-## Suggested fix
-
-Update the README to use an existing rule preset and clean up the duplicated round-trip argument.
+- `rg -n "rules-fast|distance 100000" README.md`

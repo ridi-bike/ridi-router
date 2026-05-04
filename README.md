@@ -84,7 +84,6 @@ ridi-router-cli generate-route \
   --start-finish 56.951861,24.113821 \
   --bearing 35 \
   --distance 100000
-  --distance 100000
 ```
 
 ## Output behavior
