@@ -81,15 +81,6 @@ pub mod rmdf {
         pub missing_neighbor_osm_id: u64,
     }
 
-    #[derive(Debug, Clone)]
-    pub struct BorderOverlapFixture {
-        pub dir: PathBuf,
-        pub tile_a: TileId,
-        pub tile_b: TileId,
-        pub center_osm_id: u64,
-        pub duplicated_neighbor_osm_id: u64,
-    }
-
     pub fn unique_test_dir(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "ridi-router-{prefix}-{}-{}",
@@ -397,6 +388,7 @@ pub mod rmdf {
             },
         );
 
+        let east_filename = missing_tile.to_filename();
         let west_filename = tile_a.to_filename();
 
         write_manifest(
@@ -407,27 +399,55 @@ pub mod rmdf {
                 format_version: 1,
                 generated_at: "2026-04-03T00:00:00Z".to_string(),
                 source_files: vec!["synthetic".to_string()],
-                tiles: vec![TileMetadata {
-                    filename: west_filename.clone(),
-                    col: tile_a.col,
-                    row: tile_a.row,
-                    bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
-                    neighbors: TileNeighbors {
-                        north: None,
-                        south: None,
-                        east: None,
-                        west: None,
-                        northeast: None,
-                        northwest: None,
-                        southeast: None,
-                        southwest: None,
+                tiles: vec![
+                    TileMetadata {
+                        filename: west_filename.clone(),
+                        col: tile_a.col,
+                        row: tile_a.row,
+                        bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
+                        neighbors: TileNeighbors {
+                            north: None,
+                            south: None,
+                            east: Some(east_filename.clone()),
+                            west: None,
+                            northeast: None,
+                            northwest: None,
+                            southeast: None,
+                            southwest: None,
+                        },
+                        size_bytes: fs::metadata(&tile_a_path).unwrap().len(),
+                        point_count: 2,
+                        line_count: 2,
+                        checksum: "sha256:test-tile-a".to_string(),
+                        military_geojson_filename: None,
                     },
-                    size_bytes: fs::metadata(&tile_a_path).unwrap().len(),
-                    point_count: 2,
-                    line_count: 2,
-                    checksum: "sha256:test-tile-a".to_string(),
-                    military_geojson_filename: None,
-                }],
+                    TileMetadata {
+                        filename: east_filename,
+                        col: missing_tile.col,
+                        row: missing_tile.row,
+                        bounds: manifest_bounds(TileBounds {
+                            lat_min: 10.0,
+                            lat_max: 11.0,
+                            lon_min: 21.0,
+                            lon_max: 22.0,
+                        }),
+                        neighbors: TileNeighbors {
+                            north: None,
+                            south: None,
+                            east: None,
+                            west: Some(west_filename),
+                            northeast: None,
+                            northwest: None,
+                            southeast: None,
+                            southwest: None,
+                        },
+                        size_bytes: 0,
+                        point_count: 0,
+                        line_count: 0,
+                        checksum: "sha256:missing".to_string(),
+                        military_geojson_filename: None,
+                    },
+                ],
             },
         );
 
@@ -438,168 +458,6 @@ pub mod rmdf {
             center_osm_id,
             in_tile_neighbor_osm_id,
             missing_neighbor_osm_id,
-        }
-    }
-
-    pub fn create_border_overlap_fixture(prefix: &str) -> BorderOverlapFixture {
-        let dir = unique_test_dir(prefix);
-        fs::create_dir_all(&dir).unwrap();
-
-        let tile_a = SYNTHETIC_TILE_ID;
-        let tile_b = TileId { col: 201, row: 100 };
-        let center_osm_id = 3000;
-        let duplicated_neighbor_osm_id = 3001;
-
-        let tile_a_points = vec![
-            PointRecord {
-                osm_id: center_osm_id,
-                lat: 10.5,
-                lon: 20.95,
-                lines_offset: 0,
-                lines_count: 1,
-                _padding1: 0,
-                rules_offset: 0,
-                rules_count: 0,
-                flags: 0,
-                _padding2: 0,
-            },
-            PointRecord {
-                osm_id: duplicated_neighbor_osm_id,
-                lat: 10.5,
-                lon: 21.05,
-                lines_offset: 1,
-                lines_count: 1,
-                _padding1: 0,
-                rules_offset: 0,
-                rules_count: 0,
-                flags: 0,
-                _padding2: 0,
-            },
-        ];
-        let tile_a_lines = vec![LineRecord {
-            point_a_osm_id: center_osm_id,
-            point_a_lat: 10.5,
-            point_a_lon: 20.95,
-            point_b_osm_id: duplicated_neighbor_osm_id,
-            point_b_lat: 10.5,
-            point_b_lon: 21.05,
-            direction: 0,
-            _padding1: 0,
-            _padding2: 0,
-            tag_set_index: 0,
-        }];
-        let tile_a_path = write_tile(
-            &dir,
-            &TileSpec {
-                tile_id: tile_a,
-                bounds: SYNTHETIC_TILE_BOUNDS,
-                spatial_index: Vec::new(),
-                points: tile_a_points,
-                lines: tile_a_lines,
-                line_refs: vec![0, 0],
-                tag_values: Vec::new(),
-                tag_sets: Vec::new(),
-                rules: Vec::new(),
-                rule_line_refs: Vec::new(),
-            },
-        );
-
-        let tile_b_bounds = TileBounds {
-            lat_min: 10.0,
-            lat_max: 11.0,
-            lon_min: 21.0,
-            lon_max: 22.0,
-        };
-        let tile_b_path = write_tile(
-            &dir,
-            &TileSpec {
-                tile_id: tile_b,
-                bounds: tile_b_bounds,
-                spatial_index: Vec::new(),
-                points: vec![PointRecord {
-                    osm_id: duplicated_neighbor_osm_id,
-                    lat: 10.5,
-                    lon: 21.05,
-                    lines_offset: 0,
-                    lines_count: 0,
-                    _padding1: 0,
-                    rules_offset: 0,
-                    rules_count: 0,
-                    flags: 0,
-                    _padding2: 0,
-                }],
-                lines: Vec::new(),
-                line_refs: Vec::new(),
-                tag_values: Vec::new(),
-                tag_sets: Vec::new(),
-                rules: Vec::new(),
-                rule_line_refs: Vec::new(),
-            },
-        );
-
-        let tile_a_filename = tile_a.to_filename();
-        let tile_b_filename = tile_b.to_filename();
-        write_manifest(
-            &dir,
-            &TileManifest {
-                version: "test".to_string(),
-                tile_size_degrees: SYNTHETIC_TILE_SIZE_DEGREES,
-                format_version: 1,
-                generated_at: "2026-05-04T00:00:00Z".to_string(),
-                source_files: vec!["synthetic".to_string()],
-                tiles: vec![
-                    TileMetadata {
-                        filename: tile_a_filename.clone(),
-                        col: tile_a.col,
-                        row: tile_a.row,
-                        bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
-                        neighbors: TileNeighbors {
-                            north: None,
-                            south: None,
-                            east: Some(tile_b_filename.clone()),
-                            west: None,
-                            northeast: None,
-                            northwest: None,
-                            southeast: None,
-                            southwest: None,
-                        },
-                        size_bytes: fs::metadata(&tile_a_path).unwrap().len(),
-                        point_count: 2,
-                        line_count: 1,
-                        checksum: "sha256:border-overlap-a".to_string(),
-                        military_geojson_filename: None,
-                    },
-                    TileMetadata {
-                        filename: tile_b_filename,
-                        col: tile_b.col,
-                        row: tile_b.row,
-                        bounds: manifest_bounds(tile_b_bounds),
-                        neighbors: TileNeighbors {
-                            north: None,
-                            south: None,
-                            east: None,
-                            west: Some(tile_a_filename),
-                            northeast: None,
-                            northwest: None,
-                            southeast: None,
-                            southwest: None,
-                        },
-                        size_bytes: fs::metadata(&tile_b_path).unwrap().len(),
-                        point_count: 1,
-                        line_count: 0,
-                        checksum: "sha256:border-overlap-b".to_string(),
-                        military_geojson_filename: None,
-                    },
-                ],
-            },
-        );
-
-        BorderOverlapFixture {
-            dir,
-            tile_a,
-            tile_b,
-            center_osm_id,
-            duplicated_neighbor_osm_id,
         }
     }
 

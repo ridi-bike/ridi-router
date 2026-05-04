@@ -1,13 +1,11 @@
 pub mod intermediate;
 pub mod manifest;
 mod pbf_streamer;
-mod tile_materializer;
 mod writer;
 
 pub use manifest::ManifestGenerator;
 pub use pbf_streamer::PbfStreamer;
 
-use self::tile_materializer::extract_materialized_tile;
 use crate::generation::GenerationGraph;
 use crate::osm_data::in_memory_pbf::InMemoryPbf;
 use crate::proximity::RasterizedProximityGrid;
@@ -18,10 +16,10 @@ use geo::MultiPolygon;
 use geo::{Intersects, LineString, Polygon};
 use intermediate::GridStorage;
 use rayon::prelude::*;
-use ridi_router_common::osm::OsmNode;
+use ridi_router_common::osm::{OsmNode, OsmRelationMemberType};
 #[cfg(feature = "debug-polygons")]
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -489,19 +487,106 @@ impl MultiPbfGenerator {
         pbf_data: &InMemoryPbf,
         tile_id: TileId,
     ) -> Result<intermediate::IntermediateTile> {
+        // Calculate bounds for this tile
         let core_bounds = self.calculate_tile_bounds(tile_id);
         let buffered_bounds = self.add_buffer_to_bounds(core_bounds);
-        let tile_data = extract_materialized_tile(pbf_data, buffered_bounds)?;
+
+        // Query in-memory structure
+        let nodes_in_bounds = pbf_data.query_nodes_in_bounds(&buffered_bounds);
+        let ways_in_bounds = pbf_data.query_ways_in_bounds(&buffered_bounds);
+        let relations_in_bounds = pbf_data.query_relations_in_bounds(&buffered_bounds);
+
+        // Create intermediate tile
         let mut tile = intermediate::IntermediateTile::new(tile_id);
 
-        for node in tile_data.nodes.into_values() {
-            tile.add_node(node);
+        // Add nodes
+        for node in nodes_in_bounds {
+            tile.add_node(node.clone());
         }
-        for way in tile_data.ways {
-            tile.add_way(way);
+
+        // Early exit if no nodes
+        if tile.nodes.is_empty() {
+            return Ok(tile);
         }
-        for relation in tile_data.relations {
-            tile.add_relation(relation);
+
+        // Build set of node IDs for way filtering
+        let node_ids: HashSet<u64> = tile.nodes.keys().copied().collect();
+
+        // Add ways (highway ways only for routing)
+        const ALLOWED_HIGHWAY_VALUES: [&str; 17] = [
+            "motorway",
+            "trunk",
+            "primary",
+            "secondary",
+            "tertiary",
+            "unclassified",
+            "residential",
+            "motorway_link",
+            "trunk_link",
+            "primary_link",
+            "secondary_link",
+            "tertiary_link",
+            "living_street",
+            "track",
+            "escape",
+            "raceway",
+            "road",
+        ];
+
+        for way_with_bounds in ways_in_bounds {
+            let way = &way_with_bounds.way;
+
+            // Skip ways that don't have nodes in the tile
+            let has_nodes_in_tile = way.point_ids.iter().any(|id| node_ids.contains(id));
+            if !has_nodes_in_tile {
+                continue;
+            }
+
+            // Check if this is a highway way
+            if let Some(ref tags) = way.tags {
+                if let Some(highway_value) = tags.get("highway") {
+                    let is_highway = ALLOWED_HIGHWAY_VALUES.contains(&highway_value.as_str())
+                        || (highway_value == "path"
+                            && tags.get("motorcycle").map(|v| v.as_str()) == Some("yes"));
+
+                    if is_highway {
+                        tile.add_way(way.clone());
+                    }
+                }
+            }
+        }
+
+        // Build set of way IDs for relation filtering
+        let way_ids: HashSet<u64> = tile.ways.iter().map(|w| w.id).collect();
+
+        // Add relations (restriction relations only)
+        for rel_with_bounds in relations_in_bounds {
+            let relation = &rel_with_bounds.relation;
+
+            // Check if relation has any members in the tile
+            let has_members_in_tile =
+                relation
+                    .members
+                    .iter()
+                    .any(|member| match member.member_type {
+                        OsmRelationMemberType::Node => node_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Way => way_ids.contains(&member.member_ref),
+                        OsmRelationMemberType::Relation => true,
+                    });
+
+            if !has_members_in_tile {
+                continue;
+            }
+
+            // Only collect restriction relations
+            if relation
+                .tags
+                .get("type")
+                .map(|v| v.starts_with("restriction"))
+                .unwrap_or(false)
+            {
+                tile.add_relation(relation.clone());
+            }
         }
 
         Ok(tile)
@@ -862,10 +947,7 @@ impl MultiPbfGenerator {
         // Create RmdfWriter
         let writer = RmdfWriter::new(self.tile_size_degrees);
 
-        graph.validate_line_endpoints().with_context(|| {
-            format!("Generation graph for tile {tile_id:?} contains orphaned line endpoints")
-        })?;
-
+        // Write tile directly from GenerationGraph data.
         writer
             .write_tile_from_graph(tile_id, graph, &output_path)
             .with_context(|| format!("Failed to write RMDF tile {tile_id:?}"))?;
@@ -933,328 +1015,5 @@ impl MultiPbfGenerator {
             info!("Cleaned up intermediate storage: {:?}", self.db_path);
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::generation::{GenerationGraph, LineDirection};
-    use crate::rmdf::generator::{manifest::ManifestGenerator, pbf_streamer::PbfStreamer};
-    use ridi_router_common::osm::{OsmNode, OsmWay};
-    use ridi_router_routing::{
-        Coords, RouteMode, RouteRequest, RouterRules, RoutingExecutor, RoutingExecutorConfig,
-    };
-    use serde_json::Value;
-    use std::{
-        collections::HashMap,
-        fs,
-        path::{Path, PathBuf},
-        process,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(prefix: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "ridi-router-tiles-generator-{prefix}-{}-{}",
-                process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            fs::create_dir_all(&path).unwrap();
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            if self.path.exists() {
-                let _ = fs::remove_dir_all(&self.path);
-            }
-        }
-    }
-
-    #[test]
-    fn single_and_multi_generation_match_border_point_output() {
-        let pbf = synthetic_border_pbf();
-        let single_output = TestDir::new("single-output");
-        let multi_output = TestDir::new("multi-output");
-        let multi_input = TestDir::new("multi-input");
-        let db_path = multi_output.path().join("intermediate.redb");
-
-        generate_single_tiles(&pbf, single_output.path(), 1.0);
-        generate_multi_tiles(
-            &pbf,
-            multi_input.path().to_path_buf(),
-            multi_output.path().to_path_buf(),
-            db_path,
-            1.0,
-        );
-
-        let single_counts = manifest_tile_counts(single_output.path());
-        let multi_counts = manifest_tile_counts(multi_output.path());
-
-        assert_eq!(
-            single_counts,
-            vec![
-                ("tile_180_90.rmdf".to_string(), 2, 1),
-                ("tile_181_90.rmdf".to_string(), 2, 1),
-            ]
-        );
-        assert_eq!(single_counts, multi_counts);
-        assert_eq!(single_counts, multi_counts);
-    }
-
-    #[test]
-    fn single_and_multi_generation_keep_returning_border_way_connected() {
-        let pbf = synthetic_returning_border_pbf();
-        let single_output = TestDir::new("single-return-output");
-        let multi_output = TestDir::new("multi-return-output");
-        let multi_input = TestDir::new("multi-return-input");
-        let db_path = multi_output.path().join("intermediate.redb");
-
-        generate_single_tiles(&pbf, single_output.path(), 1.0);
-        generate_multi_tiles(
-            &pbf,
-            multi_input.path().to_path_buf(),
-            multi_output.path().to_path_buf(),
-            db_path,
-            1.0,
-        );
-
-        let single_counts = manifest_tile_counts(single_output.path());
-        let multi_counts = manifest_tile_counts(multi_output.path());
-
-        assert_eq!(
-            single_counts,
-            vec![
-                ("tile_180_90.rmdf".to_string(), 3, 2),
-                ("tile_181_90.rmdf".to_string(), 3, 2),
-            ]
-        );
-        assert_eq!(single_counts, multi_counts);
-    }
-
-    #[test]
-    fn preserved_overlap_generation_does_not_fail_with_missing_point() {
-        let pbf = synthetic_border_pbf();
-        let single_output = TestDir::new("single-missing-point-output");
-        let multi_output = TestDir::new("multi-missing-point-output");
-        let multi_input = TestDir::new("multi-missing-point-input");
-        let db_path = multi_output.path().join("intermediate.redb");
-
-        let single_result = try_generate_single_tiles(&pbf, single_output.path(), 1.0);
-        assert!(
-            single_result.is_ok(),
-            "single generation unexpectedly failed: {single_result:?}"
-        );
-
-        let multi_result = try_generate_multi_tiles(
-            &pbf,
-            multi_input.path().to_path_buf(),
-            multi_output.path().to_path_buf(),
-            db_path,
-            1.0,
-        );
-        assert!(
-            multi_result.is_ok(),
-            "multi generation unexpectedly failed: {multi_result:?}"
-        );
-    }
-
-    #[test]
-    fn generated_border_tiles_support_routing_without_panic() {
-        let pbf = synthetic_border_routing_pbf();
-        let output = TestDir::new("routing-output");
-
-        generate_single_tiles(&pbf, output.path(), 1.0);
-
-        let executor = RoutingExecutor::open(RoutingExecutorConfig {
-            tiles_dir: output.path().to_path_buf(),
-        })
-        .unwrap();
-        let computation = executor
-            .generate(RouteRequest {
-                mode: RouteMode::StartFinish {
-                    start: Coords { lat: 0.5, lon: 0.1 },
-                    finish: Coords { lat: 0.5, lon: 1.3 },
-                },
-                rules: RouterRules::default(),
-            })
-            .unwrap();
-
-        assert!(!computation.routes.is_empty());
-        assert!(computation
-            .routes
-            .iter()
-            .all(|route| !route.coords.is_empty()));
-    }
-
-    #[test]
-    fn multi_pbf_write_rmdf_tile_validates_line_endpoints_before_writer() {
-        let input_dir = TestDir::new("multi-validate-input");
-        let output_dir = TestDir::new("multi-validate-output");
-        let db_path = output_dir.path().join("intermediate.redb");
-        let generator = MultiPbfGenerator::new(
-            input_dir.path().to_path_buf(),
-            output_dir.path().to_path_buf(),
-            1.0,
-            db_path,
-        )
-        .unwrap();
-
-        let err = generator
-            .write_rmdf_tile(TileId { col: 180, row: 90 }, orphaned_graph())
-            .unwrap_err();
-
-        assert!(err.to_string().contains("contains orphaned line endpoints"));
-    }
-
-    fn generate_single_tiles(pbf: &InMemoryPbf, output_dir: &Path, tile_size: f32) {
-        try_generate_single_tiles(pbf, output_dir, tile_size).unwrap();
-    }
-
-    fn try_generate_single_tiles(
-        pbf: &InMemoryPbf,
-        output_dir: &Path,
-        tile_size: f32,
-    ) -> anyhow::Result<()> {
-        let streamer = PbfStreamer::new(pbf, output_dir, tile_size);
-        streamer.partition_parallel()?;
-
-        let manifest_gen = ManifestGenerator::new(tile_size);
-        let tile_ids = manifest_gen.discover_tiles(output_dir)?;
-        manifest_gen.generate(output_dir, &tile_ids, "synthetic-border.pbf")?;
-        Ok(())
-    }
-
-    fn generate_multi_tiles(
-        pbf: &InMemoryPbf,
-        input_dir: PathBuf,
-        output_dir: PathBuf,
-        db_path: PathBuf,
-        tile_size: f32,
-    ) {
-        try_generate_multi_tiles(pbf, input_dir, output_dir, db_path, tile_size).unwrap();
-    }
-
-    fn try_generate_multi_tiles(
-        pbf: &InMemoryPbf,
-        input_dir: PathBuf,
-        output_dir: PathBuf,
-        db_path: PathBuf,
-        tile_size: f32,
-    ) -> anyhow::Result<()> {
-        let generator = MultiPbfGenerator::new(input_dir, output_dir, tile_size, db_path.clone())?;
-        let db = redb::Database::create(&db_path)?;
-
-        for tile_id in generator.calculate_tiles_from_bounds(&pbf.bounds) {
-            let tile = generator.extract_tile_data_for_redb(pbf, tile_id)?;
-            if !tile.is_empty() {
-                tile.save_to_redb(&db)?;
-            }
-        }
-
-        generator.write_final_tiles(&db, &[PathBuf::from("synthetic-border.pbf")], &[])?;
-        Ok(())
-    }
-
-    fn manifest_tile_counts(output_dir: &Path) -> Vec<(String, u64, u64)> {
-        let manifest: Value =
-            serde_json::from_slice(&fs::read(output_dir.join("manifest.json")).unwrap()).unwrap();
-
-        manifest["tiles"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|tile| {
-                (
-                    tile["filename"].as_str().unwrap().to_string(),
-                    tile["point_count"].as_u64().unwrap(),
-                    tile["line_count"].as_u64().unwrap(),
-                )
-            })
-            .collect()
-    }
-
-    fn synthetic_border_pbf() -> InMemoryPbf {
-        InMemoryPbf::from_parts(
-            vec![make_node(1, 0.5, 0.5), make_node(2, 0.5, 1.1)],
-            vec![make_way(10, &[1, 2])],
-            vec![],
-        )
-    }
-
-    fn synthetic_returning_border_pbf() -> InMemoryPbf {
-        InMemoryPbf::from_parts(
-            vec![
-                make_node(1, 0.5, 0.5),
-                make_node(2, 0.5, 1.1),
-                make_node(3, 0.5, 0.9),
-            ],
-            vec![make_way(10, &[1, 2, 3])],
-            vec![],
-        )
-    }
-
-    fn synthetic_border_routing_pbf() -> InMemoryPbf {
-        let point_ids: Vec<u64> = (1..=13).collect();
-        let nodes = point_ids
-            .iter()
-            .enumerate()
-            .map(|(idx, &id)| make_node(id, 0.5, 0.1 + idx as f64 * 0.1))
-            .collect();
-
-        InMemoryPbf::from_parts(nodes, vec![make_way(20, &point_ids)], vec![])
-    }
-
-    fn make_node(id: u64, lat: f64, lon: f64) -> OsmNode {
-        OsmNode {
-            id,
-            lat,
-            lon,
-            residential_in_proximity: false,
-            nogo_area: false,
-        }
-    }
-
-    fn make_way(id: u64, point_ids: &[u64]) -> OsmWay {
-        OsmWay {
-            id,
-            point_ids: point_ids.to_vec(),
-            tags: Some(HashMap::from([(
-                "highway".to_string(),
-                "primary".to_string(),
-            )])),
-        }
-    }
-
-    fn orphaned_graph() -> GenerationGraph {
-        let mut graph = GenerationGraph::new();
-        let highway = "primary".to_string();
-        let tags = graph
-            .tags
-            .get_or_create(None, None, Some(&highway), None, None);
-
-        graph.insert_node(make_node(1, 0.5, 0.5));
-        graph.lines.push(crate::generation::GenerationLine {
-            from_node_id: 1,
-            to_node_id: 999,
-            direction: LineDirection::BothWays,
-            tags,
-        });
-
-        graph
     }
 }

@@ -551,10 +551,10 @@ mod tests {
     use super::*;
     use crate::map_data::rule::MapDataRuleType;
     use ridi_router_test_support::rmdf::{
-        create_border_overlap_fixture, create_missing_neighbor_fixture, empty_neighbors,
-        manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord, PointRecord,
-        RuleRecord, TileId, TileManifest, TileMetadata, TileNeighbors, TileSpec,
-        SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+        create_missing_neighbor_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
+        write_manifest, write_tile, LineRecord, PointRecord, RuleRecord, TileId, TileManifest,
+        TileMetadata, TileNeighbors, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
+        SYNTHETIC_TILE_SIZE_DEGREES,
     };
 
     #[test]
@@ -675,30 +675,6 @@ mod tests {
             MapDataLineRef::new(fixture.tile_a, 1),
             MapDataPointRef::new(fixture.tile_b, fixture.cross_tile_neighbor_osm_id),
         )));
-
-        fs::remove_dir_all(fixture.dir).unwrap();
-    }
-
-    #[test]
-    fn test_get_adjacent_prefers_current_tile_border_point_without_loading_neighbor() {
-        let fixture = create_border_overlap_fixture("map-data-graph-border-overlap");
-        let graph = MapDataGraph::new(crate::rmdf::TileManager::new(fixture.dir.clone()).unwrap());
-
-        let adjacent =
-            graph.get_adjacent(MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id));
-
-        assert_eq!(
-            adjacent,
-            vec![(
-                MapDataLineRef::new(fixture.tile_a, 0),
-                MapDataPointRef::new(fixture.tile_a, fixture.duplicated_neighbor_osm_id),
-            )]
-        );
-
-        let duplicated =
-            graph.get_point_from_tiles(fixture.tile_a, fixture.duplicated_neighbor_osm_id);
-        assert_eq!(duplicated.id, fixture.duplicated_neighbor_osm_id);
-        assert_eq!(graph.tile_manager.read().unwrap().loaded_tile_count(), 1);
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }

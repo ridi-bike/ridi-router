@@ -3,9 +3,8 @@ use std::collections::{BTreeSet, HashMap};
 use tracing::warn;
 
 use super::{
-    GenerationError, GenerationLine, GenerationPoint, GenerationRestrictionRule,
-    GenerationRestrictionRuleType, GenerationRestrictionSkipReason, GenerationRestrictionSkipStats,
-    GenerationTags, LineDirection,
+    GenerationLine, GenerationPoint, GenerationRestrictionRule, GenerationRestrictionRuleType,
+    GenerationRestrictionSkipReason, GenerationRestrictionSkipStats, GenerationTags, LineDirection,
 };
 use ridi_router_common::osm::{
     OsmNode, OsmRelation, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
@@ -59,24 +58,6 @@ impl GenerationGraph {
     #[allow(dead_code)]
     pub fn get_restriction_skip_stats(&self) -> &GenerationRestrictionSkipStats {
         &self.restriction_skip_stats
-    }
-
-    pub fn validate_line_endpoints(&self) -> Result<(), GenerationError> {
-        for line in &self.lines {
-            if !self.points_map.contains_key(&line.from_node_id) {
-                return Err(GenerationError::MissingPoint {
-                    point_id: line.from_node_id,
-                });
-            }
-
-            if !self.points_map.contains_key(&line.to_node_id) {
-                return Err(GenerationError::MissingPoint {
-                    point_id: line.to_node_id,
-                });
-            }
-        }
-
-        Ok(())
     }
 
     pub fn insert_node(&mut self, node: OsmNode) {
@@ -508,24 +489,6 @@ mod tests {
 
         assert_eq!(graph.way_line_indices.get(&10), Some(&vec![0, 1]));
         assert_eq!(graph.lines.len(), 2);
-    }
-
-    #[test]
-    fn test_validate_line_endpoints_rejects_orphaned_lines() {
-        let mut graph = seeded_graph();
-        let tags = graph.tags.get_or_create(None, None, None, None, None);
-
-        graph.lines.push(GenerationLine {
-            from_node_id: 1,
-            to_node_id: 999,
-            direction: LineDirection::BothWays,
-            tags,
-        });
-
-        assert_eq!(
-            graph.validate_line_endpoints(),
-            Err(GenerationError::MissingPoint { point_id: 999 })
-        );
     }
 
     #[test]

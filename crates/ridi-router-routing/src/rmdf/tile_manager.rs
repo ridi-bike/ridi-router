@@ -84,11 +84,6 @@ struct AdjacentLineTags {
 
 type AdjacentLineData = (usize, u64, f32, f32, u64, f32, f32);
 
-enum AdjacentEndpointResolution {
-    Resolved(MapDataPointRef),
-    ColdNeighbor(TileId),
-    MissingManifestNeighbor(TileId),
-}
 #[hotpath::measure_all]
 impl TileManager {
     /// Initialize TileManager from directory containing manifest.json
@@ -727,59 +722,6 @@ impl TileManager {
         Haversine.distance(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
     }
 
-    /// Current-tile-first contract: prefer duplicated border endpoints already present
-    /// in the loaded source tile. Stage two still derives a single neighbor tile from
-    /// the endpoint coordinates as a heuristic.
-    fn resolve_adjacent_endpoint_ref_staged(
-        &self,
-        current_tile_id: TileId,
-        other_osm_id: u64,
-        other_lat: f32,
-        other_lon: f32,
-    ) -> Result<AdjacentEndpointResolution> {
-        if self
-            .get_point_by_id_if_loaded(current_tile_id, other_osm_id)?
-            .is_some()
-        {
-            return Ok(AdjacentEndpointResolution::Resolved(MapDataPointRef::new(
-                current_tile_id,
-                other_osm_id,
-            )));
-        }
-
-        let neighbor_tile_id = self.tile_id_for_coords(other_lat, other_lon);
-        if neighbor_tile_id == current_tile_id {
-            return Ok(AdjacentEndpointResolution::Resolved(MapDataPointRef::new(
-                current_tile_id,
-                other_osm_id,
-            )));
-        }
-
-        if !self.is_tile_available(neighbor_tile_id) {
-            return Ok(AdjacentEndpointResolution::MissingManifestNeighbor(
-                neighbor_tile_id,
-            ));
-        }
-
-        if self
-            .get_point_by_id_if_loaded(neighbor_tile_id, other_osm_id)?
-            .is_some()
-        {
-            return Ok(AdjacentEndpointResolution::Resolved(MapDataPointRef::new(
-                neighbor_tile_id,
-                other_osm_id,
-            )));
-        }
-
-        if self.loaded_tile(neighbor_tile_id).is_none() {
-            return Ok(AdjacentEndpointResolution::ColdNeighbor(neighbor_tile_id));
-        }
-
-        anyhow::bail!(
-            "Adjacent endpoint {other_osm_id} missing in both current tile {current_tile_id:?} and derived neighbor tile {neighbor_tile_id:?}"
-        );
-    }
-
     /// Get adjacent lines and points from a point using only already loaded tiles.
     /// Returns Ok(None) if the center tile is not loaded or if a cross-tile neighbor would
     /// require loading another tile.
@@ -812,26 +754,15 @@ impl TileManager {
                 (point_a_osm_id, point_a_lat, point_a_lon)
             };
 
-            let other_point_ref = match self.resolve_adjacent_endpoint_ref_staged(
-                tile_id,
-                other_osm_id,
-                other_lat,
-                other_lon,
-            )? {
-                AdjacentEndpointResolution::Resolved(point_ref) => point_ref,
-                AdjacentEndpointResolution::ColdNeighbor(_) => return Ok(None),
-                AdjacentEndpointResolution::MissingManifestNeighbor(other_tile_id) => {
-                    tracing::debug!(
-                        ?other_tile_id,
-                        "Tile not present in manifest, treating line as dead-end"
-                    );
-                    continue;
-                }
-            };
+            let other_tile_id = TileId::from_coords(other_lat, other_lon, self.tile_size_degrees);
+
+            if other_tile_id != tile_id && self.loaded_tile(other_tile_id).is_none() {
+                return Ok(None);
+            }
 
             result.push((
                 MapDataLineRef::new(tile_id, line_idx as u64),
-                other_point_ref,
+                MapDataPointRef::new(other_tile_id, other_osm_id),
             ));
         }
 
@@ -858,44 +789,45 @@ impl TileManager {
             point_b_lon,
         ) in line_indices_and_data
         {
+            // Determine which endpoint is the "other" point
             let (other_osm_id, other_lat, other_lon) = if point_a_osm_id == osm_id {
                 (point_b_osm_id, point_b_lat, point_b_lon)
             } else {
                 (point_a_osm_id, point_a_lat, point_a_lon)
             };
 
-            let other_point_ref = match self.resolve_adjacent_endpoint_ref_staged(
-                tile_id,
-                other_osm_id,
-                other_lat,
-                other_lon,
-            )? {
-                AdjacentEndpointResolution::Resolved(point_ref) => point_ref,
-                AdjacentEndpointResolution::MissingManifestNeighbor(other_tile_id) => {
+            // Determine which tile contains the other point
+            let other_tile_id = TileId::from_coords(other_lat, other_lon, self.tile_size_degrees);
+
+            // Check if we need to load a different tile
+            if other_tile_id != tile_id {
+                if !self.is_tile_available(other_tile_id) {
                     tracing::debug!(
                         ?other_tile_id,
                         "Tile not present in manifest, treating line as dead-end"
                     );
                     continue;
                 }
-                AdjacentEndpointResolution::ColdNeighbor(neighbor_tile_id) => {
-                    self.ensure_tile_loaded(neighbor_tile_id)?;
-                    if self
-                        .get_point_by_id_if_loaded(neighbor_tile_id, other_osm_id)?
-                        .is_some()
-                    {
-                        MapDataPointRef::new(neighbor_tile_id, other_osm_id)
-                    } else {
-                        anyhow::bail!(
-                            "Adjacent endpoint {other_osm_id} missing in both current tile {tile_id:?} and derived neighbor tile {neighbor_tile_id:?}"
+
+                // Border crossing detected
+                match self.ensure_tile_loaded(other_tile_id) {
+                    Ok(_) => {
+                        // Tile loaded successfully
+                    }
+                    Err(_) => {
+                        // Tile missing - skip this line (dead-end)
+                        tracing::warn!(
+                            "Tile {:?} not available, treating line as dead-end",
+                            other_tile_id
                         );
+                        continue;
                     }
                 }
-            };
+            }
 
             result.push((
                 MapDataLineRef::new(tile_id, line_idx as u64),
-                other_point_ref,
+                MapDataPointRef::new(other_tile_id, other_osm_id),
             ));
         }
 
@@ -1070,10 +1002,10 @@ mod tests {
     use crate::router::rules::{RouterRules, RulesTagValueAction};
     use ridi_router_common::format::RuleRecord;
     use ridi_router_test_support::rmdf::{
-        create_border_overlap_fixture, create_missing_neighbor_fixture, empty_neighbors,
-        manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord, PointRecord,
-        TagSetRecord, TileBounds, TileId, TileManifest, TileMetadata, TileNeighbors, TileSpec,
-        SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+        create_missing_neighbor_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
+        write_manifest, write_tile, LineRecord, PointRecord, TagSetRecord, TileBounds, TileId,
+        TileManifest, TileMetadata, TileNeighbors, TileSpec, SYNTHETIC_TILE_BOUNDS,
+        SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
     };
     use std::{collections::HashMap, fs, path::PathBuf};
 
@@ -1492,138 +1424,6 @@ mod tests {
             ],
         };
         write_manifest(&dir, &manifest);
-
-        SyntheticCrossTileFixture {
-            dir,
-            tile_a,
-            tile_b,
-            center_osm_id,
-            in_tile_neighbor_osm_id,
-            cross_tile_neighbor_osm_id,
-        }
-    }
-
-    fn create_missing_endpoint_in_both_tiles_fixture(prefix: &str) -> SyntheticCrossTileFixture {
-        let dir = unique_test_dir(prefix);
-        fs::create_dir_all(&dir).unwrap();
-
-        let tile_a = TileId { col: 200, row: 100 };
-        let tile_b = TileId { col: 201, row: 100 };
-        let bounds_a = bounds_for_tile(tile_a);
-        let bounds_b = bounds_for_tile(tile_b);
-
-        let center_osm_id = 21_000;
-        let in_tile_neighbor_osm_id = 21_001;
-        let cross_tile_neighbor_osm_id = 21_002;
-
-        let tile_a_path = write_tile(
-            &dir,
-            &TileSpec {
-                tile_id: tile_a,
-                bounds: bounds_a,
-                spatial_index: Vec::new(),
-                points: vec![
-                    point_record(center_osm_id, 10.50, 20.95, 0, 2),
-                    point_record(in_tile_neighbor_osm_id, 10.60, 20.80, 2, 1),
-                ],
-                lines: vec![
-                    line_record(
-                        center_osm_id,
-                        10.50,
-                        20.95,
-                        in_tile_neighbor_osm_id,
-                        10.60,
-                        20.80,
-                    ),
-                    line_record(
-                        center_osm_id,
-                        10.50,
-                        20.95,
-                        cross_tile_neighbor_osm_id,
-                        10.50,
-                        21.05,
-                    ),
-                ],
-                line_refs: vec![0, 1, 0],
-                tag_values: Vec::new(),
-                tag_sets: Vec::new(),
-                rules: Vec::new(),
-                rule_line_refs: Vec::new(),
-            },
-        );
-
-        let tile_b_path = write_tile(
-            &dir,
-            &TileSpec {
-                tile_id: tile_b,
-                bounds: bounds_b,
-                spatial_index: Vec::new(),
-                points: Vec::new(),
-                lines: Vec::new(),
-                line_refs: Vec::new(),
-                tag_values: Vec::new(),
-                tag_sets: Vec::new(),
-                rules: Vec::new(),
-                rule_line_refs: Vec::new(),
-            },
-        );
-
-        let tile_b_filename = tile_b.to_filename();
-        let tile_a_filename = tile_a.to_filename();
-        write_manifest(
-            &dir,
-            &TileManifest {
-                version: "test".to_string(),
-                tile_size_degrees: 1.0,
-                format_version: 1,
-                generated_at: "2026-05-04T00:00:00Z".to_string(),
-                source_files: vec!["synthetic".to_string()],
-                tiles: vec![
-                    TileMetadata {
-                        filename: tile_a_filename.clone(),
-                        col: tile_a.col,
-                        row: tile_a.row,
-                        bounds: manifest_bounds(bounds_a),
-                        neighbors: TileNeighbors {
-                            north: None,
-                            south: None,
-                            east: Some(tile_b_filename.clone()),
-                            west: None,
-                            northeast: None,
-                            northwest: None,
-                            southeast: None,
-                            southwest: None,
-                        },
-                        size_bytes: fs::metadata(&tile_a_path).unwrap().len(),
-                        point_count: 2,
-                        line_count: 2,
-                        checksum: "sha256:missing-endpoint-a".to_string(),
-                        military_geojson_filename: None,
-                    },
-                    TileMetadata {
-                        filename: tile_b_filename,
-                        col: tile_b.col,
-                        row: tile_b.row,
-                        bounds: manifest_bounds(bounds_b),
-                        neighbors: TileNeighbors {
-                            north: None,
-                            south: None,
-                            east: None,
-                            west: Some(tile_a_filename),
-                            northeast: None,
-                            northwest: None,
-                            southeast: None,
-                            southwest: None,
-                        },
-                        size_bytes: fs::metadata(&tile_b_path).unwrap().len(),
-                        point_count: 0,
-                        line_count: 0,
-                        checksum: "sha256:missing-endpoint-b".to_string(),
-                        military_geojson_filename: None,
-                    },
-                ],
-            },
-        );
 
         SyntheticCrossTileFixture {
             dir,
@@ -2549,57 +2349,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_adjacent_by_id_prefers_current_tile_border_point_when_duplicated() {
-        let fixture = create_border_overlap_fixture("tile-manager-border-overlap-current-first");
-        let fixture_dir = fixture.dir.clone();
-
-        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
-        let adjacent = manager
-            .get_adjacent_by_id(fixture.tile_a, fixture.center_osm_id)
-            .unwrap();
-
-        assert_eq!(adjacent.len(), 1);
-        assert_eq!(
-            adjacent[0],
-            (
-                MapDataLineRef::new(fixture.tile_a, 0),
-                MapDataPointRef::new(fixture.tile_a, fixture.duplicated_neighbor_osm_id),
-            )
-        );
-        assert_eq!(manager.loaded_tile_count(), 1);
-        assert_eq!(manager.loaded_tile_order_for_test(), vec![fixture.tile_a]);
-
-        fs::remove_dir_all(fixture_dir).unwrap();
-    }
-
-    #[test]
-    fn test_get_adjacent_by_id_if_loaded_uses_current_tile_duplicate_without_loading_neighbor() {
-        let fixture = create_border_overlap_fixture("tile-manager-border-overlap-if-loaded");
-        let fixture_dir = fixture.dir.clone();
-
-        let mut manager = TileManager::new(fixture.dir.clone()).unwrap();
-        manager.ensure_tile_loaded(fixture.tile_a).unwrap();
-
-        let adjacent = manager
-            .get_adjacent_by_id_if_loaded(fixture.tile_a, fixture.center_osm_id)
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(adjacent.len(), 1);
-        assert_eq!(
-            adjacent[0],
-            (
-                MapDataLineRef::new(fixture.tile_a, 0),
-                MapDataPointRef::new(fixture.tile_a, fixture.duplicated_neighbor_osm_id),
-            )
-        );
-        assert_eq!(manager.loaded_tile_count(), 1);
-        assert_eq!(manager.loaded_tile_order_for_test(), vec![fixture.tile_a]);
-
-        fs::remove_dir_all(fixture_dir).unwrap();
-    }
-
-    #[test]
     fn test_get_adjacent_by_id_if_loaded_returns_none_when_center_tile_is_cold() {
         let SyntheticCrossTileFixture {
             dir,
@@ -2673,45 +2422,6 @@ mod tests {
         )));
         assert_eq!(manager.loaded_tile_count(), 2);
         assert_eq!(manager.loaded_tile_order_for_test(), vec![tile_a, tile_b]);
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn test_get_adjacent_by_id_fails_loudly_when_endpoint_is_missing_in_both_tiles() {
-        let SyntheticCrossTileFixture {
-            dir,
-            tile_a,
-            tile_b,
-            center_osm_id,
-            ..
-        } = create_missing_endpoint_in_both_tiles_fixture(
-            "tile-manager-adjacent-missing-endpoint-in-both-tiles",
-        );
-
-        let mut manager = TileManager::new(dir.clone()).unwrap();
-        manager.ensure_tile_loaded(tile_a).unwrap();
-        manager.ensure_tile_loaded(tile_b).unwrap();
-
-        let error = manager
-            .get_adjacent_by_id(tile_a, center_osm_id)
-            .expect_err("lookup should fail loudly when endpoint is missing in both tiles");
-
-        assert!(
-            error.to_string().contains("missing in both current tile"),
-            "unexpected error: {error:?}"
-        );
-
-        let error = manager
-            .get_adjacent_by_id_if_loaded(tile_a, center_osm_id)
-            .expect_err(
-                "loaded-only lookup should fail loudly when both tiles are warm but endpoint is missing"
-            );
-
-        assert!(
-            error.to_string().contains("missing in both current tile"),
-            "unexpected error: {error:?}"
-        );
 
         fs::remove_dir_all(dir).unwrap();
     }
