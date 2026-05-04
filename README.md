@@ -51,6 +51,12 @@ ridi-router-cli generate-tiles \
   --tile-size-deg 1.0
 ```
 
+Tile generation materializes OSM turn restrictions for a motorcycle routing profile:
+`restriction:motorcycle`, `restriction:motor_vehicle`, and `restriction:vehicle` override generic `restriction=*`;
+matching `*:conditional` values are parsed and applied as unconditional motorcycle restrictions;
+and `except=*` suppresses a restriction when it contains `motorcycle`, `motor_vehicle`, or `vehicle`.
+Via-way turn restrictions are still ignored because the RMDF restriction model is via-node based; generation emits a warning when this happens.
+
 ### 2. Generate routes from tiles
 
 Start-finish mode:

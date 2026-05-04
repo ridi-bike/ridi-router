@@ -18,9 +18,6 @@ pub struct GenerationRestrictionRule {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GenerationRestrictionSkipReason {
     ViaWay,
-    Conditional,
-    RestrictionVariant,
-    Except,
     MalformedOrUnresolved,
 }
 
@@ -28,9 +25,6 @@ impl GenerationRestrictionSkipReason {
     pub fn label(self) -> &'static str {
         match self {
             Self::ViaWay => "via_way",
-            Self::Conditional => "conditional",
-            Self::RestrictionVariant => "restriction_variant",
-            Self::Except => "except",
             Self::MalformedOrUnresolved => "malformed_or_unresolved",
         }
     }
@@ -39,9 +33,6 @@ impl GenerationRestrictionSkipReason {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GenerationRestrictionSkipStats {
     pub via_way_relations: u64,
-    pub conditional_relations: u64,
-    pub restriction_variant_relations: u64,
-    pub except_relations: u64,
     pub malformed_or_unresolved_relations: u64,
 }
 
@@ -49,11 +40,6 @@ impl GenerationRestrictionSkipStats {
     pub fn increment(&mut self, reason: GenerationRestrictionSkipReason) {
         match reason {
             GenerationRestrictionSkipReason::ViaWay => self.via_way_relations += 1,
-            GenerationRestrictionSkipReason::Conditional => self.conditional_relations += 1,
-            GenerationRestrictionSkipReason::RestrictionVariant => {
-                self.restriction_variant_relations += 1
-            }
-            GenerationRestrictionSkipReason::Except => self.except_relations += 1,
             GenerationRestrictionSkipReason::MalformedOrUnresolved => {
                 self.malformed_or_unresolved_relations += 1
             }
@@ -61,11 +47,7 @@ impl GenerationRestrictionSkipStats {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.via_way_relations == 0
-            && self.conditional_relations == 0
-            && self.restriction_variant_relations == 0
-            && self.except_relations == 0
-            && self.malformed_or_unresolved_relations == 0
+        self.via_way_relations == 0 && self.malformed_or_unresolved_relations == 0
     }
 
     pub fn summary_parts(&self) -> Vec<String> {
@@ -73,18 +55,6 @@ impl GenerationRestrictionSkipStats {
 
         if self.via_way_relations > 0 {
             parts.push(format!("via_way={}", self.via_way_relations));
-        }
-        if self.conditional_relations > 0 {
-            parts.push(format!("conditional={}", self.conditional_relations));
-        }
-        if self.restriction_variant_relations > 0 {
-            parts.push(format!(
-                "restriction_variant={}",
-                self.restriction_variant_relations
-            ));
-        }
-        if self.except_relations > 0 {
-            parts.push(format!("except={}", self.except_relations));
         }
         if self.malformed_or_unresolved_relations > 0 {
             parts.push(format!(

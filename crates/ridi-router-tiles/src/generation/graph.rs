@@ -148,51 +148,11 @@ impl GenerationGraph {
             return;
         }
 
-        if relation
-            .tags
-            .keys()
-            .any(|key| key.ends_with(":conditional"))
-        {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::Conditional,
-                "conditional restrictions are not supported".to_string(),
-            );
-            return;
-        }
-
-        if relation.tags.contains_key("except") {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::Except,
-                "except=* restrictions are not supported".to_string(),
-            );
-            return;
-        }
-
-        if relation
-            .tags
-            .keys()
-            .any(|key| key.starts_with("restriction:"))
-        {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::RestrictionVariant,
-                "restriction:* variants are not supported".to_string(),
-            );
-            return;
-        }
-
-        let Some(restriction_value) = relation.tags.get("restriction") else {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                "missing restriction=* tag".to_string(),
-            );
+        let Some(restriction_value) = self.resolve_motorcycle_restriction_value(&relation) else {
             return;
         };
 
-        let Some(rule_type) = Self::map_restriction_value(restriction_value) else {
+        let Some(rule_type) = Self::map_restriction_value(&restriction_value) else {
             self.warn_and_count_skipped_relation(
                 relation.id,
                 GenerationRestrictionSkipReason::MalformedOrUnresolved,
@@ -363,6 +323,100 @@ impl GenerationGraph {
             reason.label(),
             details
         );
+    }
+
+    fn resolve_motorcycle_restriction_value(&mut self, relation: &OsmRelation) -> Option<String> {
+        if Self::except_list_excludes_motorcycle(relation.tags.get("except").map(String::as_str)) {
+            return None;
+        }
+
+        if let Some(value) = Self::first_motorcycle_conditional_restriction_value(&relation.tags) {
+            return Some(value);
+        }
+
+        if let Some(value) = Self::first_motorcycle_variant_restriction_value(&relation.tags) {
+            return Some(value.to_string());
+        }
+
+        if let Some(value) = relation.tags.get("restriction") {
+            return Some(value.to_string());
+        }
+
+        if let Some(value) = Self::generic_conditional_restriction_value(&relation.tags) {
+            return Some(value);
+        }
+
+        if Self::has_any_restriction_key(&relation.tags) {
+            return None;
+        }
+
+        self.warn_and_count_skipped_relation(
+            relation.id,
+            GenerationRestrictionSkipReason::MalformedOrUnresolved,
+            "missing restriction=* tag".to_string(),
+        );
+        None
+    }
+
+    fn except_list_excludes_motorcycle(except: Option<&str>) -> bool {
+        except
+            .map(|value| {
+                value
+                    .split([';', ',', ' '])
+                    .map(str::trim)
+                    .any(Self::restriction_vehicle_applies_to_motorcycle)
+            })
+            .unwrap_or(false)
+    }
+
+    fn first_motorcycle_conditional_restriction_value(
+        tags: &HashMap<String, String>,
+    ) -> Option<String> {
+        [
+            "restriction:motorcycle:conditional",
+            "restriction:motor_vehicle:conditional",
+            "restriction:vehicle:conditional",
+        ]
+        .into_iter()
+        .find_map(|key| {
+            tags.get(key)
+                .and_then(|value| Self::parse_conditional_restriction_value(value))
+        })
+    }
+
+    fn first_motorcycle_variant_restriction_value(tags: &HashMap<String, String>) -> Option<&str> {
+        [
+            "restriction:motorcycle",
+            "restriction:motor_vehicle",
+            "restriction:vehicle",
+        ]
+        .into_iter()
+        .find_map(|key| tags.get(key).map(String::as_str))
+    }
+
+    fn generic_conditional_restriction_value(tags: &HashMap<String, String>) -> Option<String> {
+        tags.get("restriction:conditional")
+            .and_then(|value| Self::parse_conditional_restriction_value(value))
+    }
+
+    fn parse_conditional_restriction_value(value: &str) -> Option<String> {
+        value.split(';').find_map(|clause| {
+            let restriction = clause
+                .split_once('@')
+                .map(|(restriction, _condition)| restriction)
+                .unwrap_or(clause)
+                .trim();
+
+            (!restriction.is_empty()).then(|| restriction.to_string())
+        })
+    }
+
+    fn restriction_vehicle_applies_to_motorcycle(vehicle: &str) -> bool {
+        matches!(vehicle, "motorcycle" | "motor_vehicle" | "vehicle")
+    }
+
+    fn has_any_restriction_key(tags: &HashMap<String, String>) -> bool {
+        tags.keys().any(|key| key.starts_with("restriction:"))
     }
 
     fn map_restriction_value(value: &str) -> Option<GenerationRestrictionRuleType> {
@@ -642,12 +696,106 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_relation_materializes_motorcycle_specific_restrictions() {
+        let mut graph = seeded_graph();
+        insert_base_ways(&mut graph);
+
+        let members = || {
+            vec![
+                relation_way_member(OsmRelationMemberRole::From, 10),
+                relation_node_member(OsmRelationMemberRole::Via, 2),
+                relation_way_member(OsmRelationMemberRole::To, 30),
+            ]
+        };
+
+        graph.insert_relation(make_relation(
+            400,
+            "no_right_turn",
+            members(),
+            HashMap::from([(
+                "restriction:motorcycle".to_string(),
+                "only_right_turn".to_string(),
+            )]),
+        ));
+        graph.insert_relation(make_relation(
+            401,
+            "no_right_turn",
+            members(),
+            HashMap::from([(
+                "restriction:motorcycle:conditional".to_string(),
+                "only_straight_on @ (Mo-Fr 08:00-18:00)".to_string(),
+            )]),
+        ));
+        graph.insert_relation(make_relation(
+            402,
+            "no_right_turn",
+            members(),
+            HashMap::from([("except".to_string(), "motorcycle".to_string())]),
+        ));
+        graph.insert_relation(make_relation(
+            403,
+            "no_right_turn",
+            members(),
+            HashMap::from([("except".to_string(), "bicycle".to_string())]),
+        ));
+        graph.insert_relation(make_relation_with_tags(
+            404,
+            members(),
+            HashMap::from([
+                ("type".to_string(), "restriction".to_string()),
+                (
+                    "restriction:conditional".to_string(),
+                    "only_u_turn @ (Mo-Fr 08:00-18:00)".to_string(),
+                ),
+            ]),
+        ));
+        graph.insert_relation(make_relation_with_tags(
+            405,
+            members(),
+            HashMap::from([
+                ("type".to_string(), "restriction".to_string()),
+                (
+                    "restriction:bicycle".to_string(),
+                    "no_right_turn".to_string(),
+                ),
+            ]),
+        ));
+
+        let rules = graph.restrictions_by_via.get(&2).unwrap();
+        assert_eq!(rules.len(), 4);
+        assert_eq!(
+            rules
+                .iter()
+                .map(|rule| rule.relation_id)
+                .collect::<Vec<_>>(),
+            vec![400, 401, 403, 404]
+        );
+        assert_eq!(
+            rules[0].rule_type,
+            GenerationRestrictionRuleType::OnlyAllowed
+        );
+        assert_eq!(
+            rules[1].rule_type,
+            GenerationRestrictionRuleType::OnlyAllowed
+        );
+        assert_eq!(
+            rules[2].rule_type,
+            GenerationRestrictionRuleType::NotAllowed
+        );
+        assert_eq!(
+            rules[3].rule_type,
+            GenerationRestrictionRuleType::OnlyAllowed
+        );
+        assert!(graph.restriction_skip_stats.is_empty());
+    }
+
+    #[test]
     fn test_insert_relation_skips_unsupported_and_malformed_relations() {
         let mut graph = seeded_graph();
         insert_base_ways(&mut graph);
 
         graph.insert_relation(make_relation(
-            400,
+            500,
             "no_right_turn",
             vec![
                 relation_way_member(OsmRelationMemberRole::From, 10),
@@ -657,43 +805,7 @@ mod tests {
             HashMap::new(),
         ));
         graph.insert_relation(make_relation(
-            401,
-            "no_right_turn",
-            vec![
-                relation_way_member(OsmRelationMemberRole::From, 10),
-                relation_node_member(OsmRelationMemberRole::Via, 2),
-                relation_way_member(OsmRelationMemberRole::To, 30),
-            ],
-            HashMap::from([(
-                "restriction:conditional".to_string(),
-                "no_right_turn @ (Mo-Fr 08:00-18:00)".to_string(),
-            )]),
-        ));
-        graph.insert_relation(make_relation(
-            402,
-            "no_right_turn",
-            vec![
-                relation_way_member(OsmRelationMemberRole::From, 10),
-                relation_node_member(OsmRelationMemberRole::Via, 2),
-                relation_way_member(OsmRelationMemberRole::To, 30),
-            ],
-            HashMap::from([(
-                "restriction:motorcycle".to_string(),
-                "no_right_turn".to_string(),
-            )]),
-        ));
-        graph.insert_relation(make_relation(
-            403,
-            "no_right_turn",
-            vec![
-                relation_way_member(OsmRelationMemberRole::From, 10),
-                relation_node_member(OsmRelationMemberRole::Via, 2),
-                relation_way_member(OsmRelationMemberRole::To, 30),
-            ],
-            HashMap::from([("except".to_string(), "bicycle".to_string())]),
-        ));
-        graph.insert_relation(make_relation(
-            404,
+            501,
             "no_right_turn",
             vec![
                 relation_way_member(OsmRelationMemberRole::From, 9999),
@@ -705,12 +817,6 @@ mod tests {
 
         assert!(graph.restrictions_by_via.is_empty());
         assert_eq!(graph.restriction_skip_stats.via_way_relations, 1);
-        assert_eq!(graph.restriction_skip_stats.conditional_relations, 1);
-        assert_eq!(
-            graph.restriction_skip_stats.restriction_variant_relations,
-            1
-        );
-        assert_eq!(graph.restriction_skip_stats.except_relations, 1);
         assert_eq!(
             graph
                 .restriction_skip_stats
@@ -795,6 +901,14 @@ mod tests {
         ]);
         tags.extend(extra_tags);
 
+        OsmRelation { id, members, tags }
+    }
+
+    fn make_relation_with_tags(
+        id: u64,
+        members: Vec<OsmRelationMember>,
+        tags: HashMap<String, String>,
+    ) -> OsmRelation {
         OsmRelation { id, members, tags }
     }
 
