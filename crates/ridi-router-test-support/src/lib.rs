@@ -72,6 +72,16 @@ pub mod rmdf {
     }
 
     #[derive(Debug, Clone)]
+    pub struct RoundTripSingleTileFixture {
+        pub dir: PathBuf,
+        pub rule_file: PathBuf,
+        pub tile_id: TileId,
+        pub start_finish_osm_id: u64,
+        pub start_finish_lat: f32,
+        pub start_finish_lon: f32,
+    }
+
+    #[derive(Debug, Clone)]
     pub struct MissingNeighborFixture {
         pub dir: PathBuf,
         pub tile_a: TileId,
@@ -195,6 +205,53 @@ pub mod rmdf {
         rule_file
     }
 
+    fn write_round_trip_rules_file(dir: &Path) -> PathBuf {
+        fs::create_dir_all(dir).unwrap();
+
+        let rules = serde_json::json!({
+            "basic": {
+                "step_limit": 100,
+                "progression_direction": {
+                    "enabled": false,
+                    "check_junctions_back": 100
+                },
+                "progression_speed": {
+                    "enabled": false,
+                    "check_steps_back": 1000,
+                    "last_step_distance_below_avg_with_ratio": 1.3
+                },
+                "no_short_detours": {
+                    "enabled": false,
+                    "min_detour_len_m": 5000.0
+                }
+            },
+            "generation": {
+                "waypoint_generation": {
+                    "start_finish": {
+                        "variation_distances_m": [],
+                        "variation_bearing_deg": []
+                    },
+                    "round_trip": {
+                        "variation_distance_ratios": [1.0],
+                        "variation_bearing_deg": [0.0]
+                    }
+                },
+                "route_generation_retry": {
+                    "trigger_min_route_count": 1,
+                    "round_trip_adjustment_bearing_deg": [],
+                    "avoid_residential": [false]
+                }
+            },
+            "highway": null,
+            "surface": null,
+            "smoothness": null
+        });
+
+        let rule_file = dir.join("round-trip-rules.json");
+        fs::write(&rule_file, serde_json::to_vec(&rules).unwrap()).unwrap();
+        rule_file
+    }
+
     pub fn create_linear_single_tile_fixture(prefix: &str) -> LinearSingleTileFixture {
         let dir = unique_test_dir(prefix);
         fs::create_dir_all(&dir).unwrap();
@@ -304,6 +361,201 @@ pub mod rmdf {
             start_lon: SYNTHETIC_START_LON,
             finish_lat: SYNTHETIC_FINISH_LAT,
             finish_lon: SYNTHETIC_FINISH_LON,
+        }
+    }
+
+    pub fn create_round_trip_single_tile_fixture(prefix: &str) -> RoundTripSingleTileFixture {
+        let dir = unique_test_dir(prefix);
+        fs::create_dir_all(&dir).unwrap();
+
+        let start_finish_osm_id = 2000;
+        let north_west_osm_id = 2001;
+        let north_east_osm_id = 2002;
+        let south_east_osm_id = 2003;
+
+        let points = vec![
+            PointRecord {
+                osm_id: start_finish_osm_id,
+                lat: 10.0,
+                lon: 20.0,
+                lines_offset: 0,
+                lines_count: 3,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+            PointRecord {
+                osm_id: north_west_osm_id,
+                lat: 10.01,
+                lon: 20.0,
+                lines_offset: 3,
+                lines_count: 3,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+            PointRecord {
+                osm_id: north_east_osm_id,
+                lat: 10.01,
+                lon: 20.01,
+                lines_offset: 6,
+                lines_count: 3,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+            PointRecord {
+                osm_id: south_east_osm_id,
+                lat: 10.0,
+                lon: 20.01,
+                lines_offset: 9,
+                lines_count: 3,
+                _padding1: 0,
+                rules_offset: 0,
+                rules_count: 0,
+                flags: 0,
+                _padding2: 0,
+            },
+        ];
+
+        let lines = vec![
+            LineRecord {
+                point_a_osm_id: start_finish_osm_id,
+                point_a_lat: 10.0,
+                point_a_lon: 20.0,
+                point_b_osm_id: north_west_osm_id,
+                point_b_lat: 10.01,
+                point_b_lon: 20.0,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: north_west_osm_id,
+                point_a_lat: 10.01,
+                point_a_lon: 20.0,
+                point_b_osm_id: north_east_osm_id,
+                point_b_lat: 10.01,
+                point_b_lon: 20.01,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: north_east_osm_id,
+                point_a_lat: 10.01,
+                point_a_lon: 20.01,
+                point_b_osm_id: south_east_osm_id,
+                point_b_lat: 10.0,
+                point_b_lon: 20.01,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: south_east_osm_id,
+                point_a_lat: 10.0,
+                point_a_lon: 20.01,
+                point_b_osm_id: start_finish_osm_id,
+                point_b_lat: 10.0,
+                point_b_lon: 20.0,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: start_finish_osm_id,
+                point_a_lat: 10.0,
+                point_a_lon: 20.0,
+                point_b_osm_id: north_east_osm_id,
+                point_b_lat: 10.01,
+                point_b_lon: 20.01,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+            LineRecord {
+                point_a_osm_id: north_west_osm_id,
+                point_a_lat: 10.01,
+                point_a_lon: 20.0,
+                point_b_osm_id: south_east_osm_id,
+                point_b_lat: 10.0,
+                point_b_lon: 20.01,
+                direction: 0,
+                _padding1: 0,
+                _padding2: 0,
+                tag_set_index: 0,
+            },
+        ];
+
+        let line_refs = vec![0, 3, 4, 0, 1, 5, 1, 2, 4, 2, 3, 5];
+        let point_count = points.len() as u64;
+        let line_count = lines.len() as u64;
+        let tile_path = write_tile(
+            &dir,
+            &TileSpec {
+                tile_id: SYNTHETIC_TILE_ID,
+                bounds: SYNTHETIC_TILE_BOUNDS,
+                spatial_index: Vec::new(),
+                points,
+                lines,
+                line_refs,
+                tag_values: vec!["secondary".to_string()],
+                tag_sets: vec![TagSetRecord {
+                    name_idx: TagSetRecord::NONE,
+                    hw_ref_idx: TagSetRecord::NONE,
+                    highway_idx: 0,
+                    surface_idx: TagSetRecord::NONE,
+                    smoothness_idx: TagSetRecord::NONE,
+                }],
+                rules: Vec::new(),
+                rule_line_refs: Vec::new(),
+            },
+        );
+
+        write_manifest(
+            &dir,
+            &TileManifest {
+                version: "test".to_string(),
+                tile_size_degrees: SYNTHETIC_TILE_SIZE_DEGREES,
+                format_version: 1,
+                generated_at: "2026-04-03T00:00:00Z".to_string(),
+                source_files: vec!["synthetic".to_string()],
+                tiles: vec![TileMetadata {
+                    filename: SYNTHETIC_TILE_ID.to_filename(),
+                    col: SYNTHETIC_TILE_ID.col,
+                    row: SYNTHETIC_TILE_ID.row,
+                    bounds: manifest_bounds(SYNTHETIC_TILE_BOUNDS),
+                    neighbors: empty_neighbors(),
+                    size_bytes: fs::metadata(&tile_path).unwrap().len(),
+                    point_count,
+                    line_count,
+                    checksum: "sha256:test-round-trip".to_string(),
+                    military_geojson_filename: None,
+                }],
+            },
+        );
+
+        let rule_file = write_round_trip_rules_file(&dir);
+
+        RoundTripSingleTileFixture {
+            dir,
+            rule_file,
+            tile_id: SYNTHETIC_TILE_ID,
+            start_finish_osm_id,
+            start_finish_lat: 10.0,
+            start_finish_lon: 20.0,
         }
     }
 

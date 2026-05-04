@@ -1,18 +1,15 @@
 # Add end-to-end CLI coverage for round-trip routing
 
-## Problem
+## Status
 
-Round-trip mode exists, but CLI integration tests only cover `start-finish` flows.
+Resolved.
 
-## Evidence
+## Resolution
 
-- Round-trip mode exists and is tested at library level.
-- CLI integration tests currently cover only `start-finish` flows.
+- Added deterministic synthetic round-trip RMDF fixture support.
+- Added end-to-end `generate-route round-trip` CLI coverage for JSON output.
+- Added end-to-end `generate-route round-trip` CLI coverage for GPX output.
 
-## Why it matters
+## Verification
 
-The CLI exposes round-trip routing as a user-facing feature, but the end-to-end path is under-tested.
-
-## Suggested fix
-
-Add CLI integration tests for round-trip routing using synthetic tiles and stable rule fixtures.
+- `cargo test -p ridi-router-cli --test generate_route_cli`

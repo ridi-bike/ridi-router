@@ -4,7 +4,9 @@ use std::{
     process::Command,
 };
 
-use ridi_router_test_support::rmdf::{create_linear_single_tile_fixture, unique_test_dir};
+use ridi_router_test_support::rmdf::{
+    create_linear_single_tile_fixture, create_round_trip_single_tile_fixture, unique_test_dir,
+};
 
 fn base_generate_route_command(
     tiles_dir: &Path,
@@ -30,6 +32,36 @@ fn base_generate_route_command(
         .arg(start)
         .arg("--finish")
         .arg(finish);
+    command
+}
+
+fn base_generate_round_trip_command(
+    tiles_dir: &Path,
+    rule_file: &Path,
+    output_dir: &Path,
+    format: &str,
+    start_finish: &str,
+    bearing: &str,
+    distance: &str,
+) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ridi-router-cli"));
+    command
+        .arg("generate-route")
+        .arg("--tiles")
+        .arg(tiles_dir)
+        .arg("--output-dir")
+        .arg(output_dir)
+        .arg("--format")
+        .arg(format)
+        .arg("--rule-file")
+        .arg(rule_file)
+        .arg("round-trip")
+        .arg("--start-finish")
+        .arg(start_finish)
+        .arg("--bearing")
+        .arg(bearing)
+        .arg("--distance")
+        .arg(distance);
     command
 }
 
@@ -278,6 +310,52 @@ fn generate_route_synthetic_json_writes_route_file() {
 }
 
 #[test]
+fn generate_route_round_trip_json_writes_route_file() {
+    let fixture = create_round_trip_single_tile_fixture("cli-round-trip-json-fixture");
+    let output_dir = unique_test_dir("cli-round-trip-json-output");
+    let start_finish = format!("{},{}", fixture.start_finish_lat, fixture.start_finish_lon);
+
+    let output = base_generate_round_trip_command(
+        &fixture.dir,
+        &fixture.rule_file,
+        &output_dir,
+        "json",
+        &start_finish,
+        "45",
+        "4000",
+    )
+    .output()
+    .expect("failed to execute synthetic round-trip JSON route generation");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert!(output.stdout.is_empty(), "stdout should stay empty");
+    assert!(!stderr.contains("No routes found"), "stderr: {stderr}");
+
+    let files = fs::read_dir(&output_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(files.len(), 1, "expected one route file, got: {files:?}");
+    assert_eq!(
+        files[0].extension().and_then(|ext| ext.to_str()),
+        Some("json")
+    );
+
+    let content = fs::read_to_string(&files[0]).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+    let coords = json
+        .get("coords")
+        .and_then(|v| v.as_array())
+        .expect("round-trip JSON should contain coords");
+    assert!(coords.len() >= 2, "coords: {coords:?}");
+    assert!(json.get("stats").is_some());
+
+    fs::remove_dir_all(output_dir).unwrap();
+    fs::remove_dir_all(fixture.dir).unwrap();
+}
+
+#[test]
 fn generate_route_synthetic_gpx_writes_route_file() {
     let (tiles_dir, rule_file) = create_synthetic_success_fixture();
     let output_dir = unique_test_dir("cli-synthetic-gpx-output");
@@ -313,4 +391,45 @@ fn generate_route_synthetic_gpx_writes_route_file() {
 
     fs::remove_dir_all(output_dir).unwrap();
     fs::remove_dir_all(tiles_dir).unwrap();
+}
+
+#[test]
+fn generate_route_round_trip_gpx_writes_route_file() {
+    let fixture = create_round_trip_single_tile_fixture("cli-round-trip-gpx-fixture");
+    let output_dir = unique_test_dir("cli-round-trip-gpx-output");
+    let start_finish = format!("{},{}", fixture.start_finish_lat, fixture.start_finish_lon);
+
+    let output = base_generate_round_trip_command(
+        &fixture.dir,
+        &fixture.rule_file,
+        &output_dir,
+        "gpx",
+        &start_finish,
+        "45",
+        "4000",
+    )
+    .output()
+    .expect("failed to execute synthetic round-trip GPX route generation");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert!(output.stdout.is_empty(), "stdout should stay empty");
+    assert!(!stderr.contains("No routes found"), "stderr: {stderr}");
+
+    let files = fs::read_dir(&output_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(files.len(), 1, "expected one route file, got: {files:?}");
+    assert_eq!(
+        files[0].extension().and_then(|ext| ext.to_str()),
+        Some("gpx")
+    );
+
+    let content = fs::read_to_string(&files[0]).unwrap();
+    assert!(content.contains("<gpx"), "content: {content}");
+    assert!(content.contains("<rtept"), "content: {content}");
+
+    fs::remove_dir_all(output_dir).unwrap();
+    fs::remove_dir_all(fixture.dir).unwrap();
 }
