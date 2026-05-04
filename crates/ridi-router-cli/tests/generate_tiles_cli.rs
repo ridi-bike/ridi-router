@@ -63,7 +63,7 @@ fn montenegro_pbf() -> PathBuf {
 }
 
 fn fixture_rule_file() -> PathBuf {
-    repo_path("rule-examples/rules-fast.json")
+    repo_path("rule-examples/rules-default.json")
 }
 
 fn run_generate_tiles(command_args: &[&str]) -> Output {

@@ -22,7 +22,7 @@ fn fixture_tiles_dir() -> PathBuf {
 }
 
 fn fixture_rule_file() -> PathBuf {
-    repo_path("rule-examples/rules-fast.json")
+    repo_path("rule-examples/rules-default.json")
 }
 
 fn repo_fixture_tiles_available() -> bool {

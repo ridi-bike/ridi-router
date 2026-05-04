@@ -60,7 +60,7 @@ ridi-router-cli generate-route \
   --tiles ./tiles \
   --output-dir ./routes \
   --format gpx \
-  --rule-file ./rule-examples/rules-fast.json \
+  --rule-file ./rule-examples/rules-default.json \
   start-finish \
   --start 56.951861,24.113821 \
   --finish 57.313103,25.281460
@@ -73,7 +73,7 @@ ridi-router-cli generate-route \
   --tiles ./tiles \
   --output-dir ./routes \
   --format json \
-  --rule-file ./rule-examples/rules-fast.json \
+  --rule-file ./rule-examples/rules-default.json \
   round-trip \
   --start-finish 56.951861,24.113821 \
   --bearing 35 \
