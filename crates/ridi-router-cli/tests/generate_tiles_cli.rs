@@ -58,8 +58,8 @@ fn heavy_test_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
 }
 
-fn montenegro_pbf() -> PathBuf {
-    repo_path("map-data/pbf/montenegro-latest.osm.pbf")
+fn tiny_routing_pbf() -> PathBuf {
+    repo_path("crates/ridi-router-cli/tests/fixtures/tiny-routing.osm.pbf")
 }
 
 fn fixture_rule_file() -> PathBuf {
@@ -156,7 +156,7 @@ fn generate_tiles_cli_requires_input_or_input_dir() {
 
 #[test]
 fn generate_tiles_cli_single_file_writes_manifest_and_tiles() {
-    let input_file = montenegro_pbf();
+    let input_file = tiny_routing_pbf();
     if !input_file.exists() {
         eprintln!("Skipping test: missing fixture {input_file:?}");
         return;
@@ -181,7 +181,7 @@ fn generate_tiles_cli_single_file_writes_manifest_and_tiles() {
 
 #[test]
 fn generate_tiles_directory_input_then_generate_route_end_to_end() {
-    let fixture_pbf = montenegro_pbf();
+    let fixture_pbf = tiny_routing_pbf();
     if !fixture_pbf.exists() {
         eprintln!("Skipping test: missing fixture {fixture_pbf:?}");
         return;
@@ -190,7 +190,7 @@ fn generate_tiles_directory_input_then_generate_route_end_to_end() {
     let _heavy_test_lock = heavy_test_lock();
     let input_dir = TestDir::new("tiles-cli-directory-input");
     fs::create_dir_all(input_dir.path()).unwrap();
-    let linked_pbf = input_dir.path().join("montenegro-latest.osm.pbf");
+    let linked_pbf = input_dir.path().join("tiny-routing.osm.pbf");
     link_or_copy_fixture(&fixture_pbf, &linked_pbf);
 
     let tiles_dir = TestDir::new("tiles-cli-directory-output");
@@ -226,9 +226,9 @@ fn generate_tiles_directory_input_then_generate_route_end_to_end() {
         fixture_rule_file().to_str().unwrap(),
         "start-finish",
         "--start",
-        "42.45785,18.50767",
+        "10.0,20.0",
         "--finish",
-        "41.92802,19.22959",
+        "10.12,20.0",
     ]);
 
     let route_stderr = String::from_utf8_lossy(&route_output.stderr);
