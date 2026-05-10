@@ -1,0 +1,266 @@
+// Map layer rendering guide for Protomaps Basemap v4 tiles.
+// Source layer reference: https://docs.protomaps.com/basemaps/layers
+//
+// Zoom ranges are inclusive. Rules inside each zoom range are rendered in list order.
+// Filters use Protomaps layer names and documented attributes.
+// Note: user typos were normalized to documented values:
+// - boundaries:counry -> boundaries kind=country
+// - roads:turnk_link -> roads kind_detail=trunk_link
+(
+    version: 1,
+    source: "protomaps-basemap-v4",
+    defaults: (
+        background: "#386666",
+        text_font: "Noto Sans CJK",
+        font_paths: [
+            "assets/fonts/NotoSansCJK-Regular.ttc",
+            "assets/fonts/NotoSansCJK-Regular.otf",
+            "crates/ridi-app/assets/fonts/NotoSansCJK-Regular.otf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ],
+    ),
+    zoom_ranges: [
+        (
+            name: "world",
+            min_zoom: 0,
+            max_zoom: 20,
+            render_order: [
+                (
+                    id: "water_ocean_fill",
+                    layer: "water",
+                    filter: (kind: Some("ocean")),
+                    render: Fill((
+                        color: "#386666",
+                    )),
+                ),
+                (
+                    id: "earth_fill",
+                    layer: "earth",
+                    filter: (kind: Some("earth")),
+                    render: Fill((
+                        color: "#DCB372",
+                    )),
+                ),
+                (
+                    id: "landuse_park",
+                    layer: "landuse",
+                    filter: (
+                        kind_any: Some(["park", "national_park"]),
+                    ),
+                    render: Fill((
+                        color: "#767f5a",
+                    )),
+                ),
+                (
+                    id: "landuse_forest",
+                    layer: "landuse",
+                    filter: (
+                        kind_any: Some(["forest", "nature_reserve", "wood"]),
+                    ),
+                    render: Fill((
+                        color: "#535D36",
+                    )),
+                ),
+                (
+                    id: "landuse_grass",
+                    layer: "landuse",
+                    filter: (
+                        kind_any: Some([
+                            "camp_site",
+                            "cemetery",
+                            "dog_park",
+                            "garden",
+                            "golf_course",
+                            "grass",
+                            "meadow",
+                            "playground",
+                            "scrub",
+                            "zoo",
+                        ]),
+                    ),
+                    render: Fill((
+                        color: "#A39245",
+                    )),
+                ),
+                (
+                    id: "landuse_industrial_concrete",
+                    layer: "landuse",
+                    filter: (
+                        kind_any: Some([
+                            "aerodrome",
+                            "bare_rock",
+                            "commercial",
+                            "hospital",
+                            "hotel",
+                            "industrial",
+                            "runway",
+                            "supermarket",
+                            "taxiway",
+                            "university",
+                            "townhall",
+                        ]),
+                    ),
+                    render: Fill((
+                        color: "#826454",
+                    )),
+                ),
+                (
+                    id: "landuse_farm",
+                    layer: "landuse",
+                    filter: (kind_any: Some(["farmland", "farmyard"])),
+                    render: Fill((
+                        color: "#BC9250",
+                    )),
+                ),
+                (
+                    id: "landuse_residential",
+                    layer: "landuse",
+                    filter: (kind_any: Some(["residential", "school"])),
+                    render: Fill((
+                        color: "#CA9B1B",
+                    )),
+                ),
+                (
+                    id: "water_lake",
+                    layer: "water",
+                    filter: (kind: Some("lake")),
+                    render: Fill((
+                        color: "#386666",
+                    )),
+                ),
+                (
+                    id: "water_lake_details",
+                    layer: "water",
+                    filter: (
+                        kind: Some("water"),
+                        kind_detail_any: Some(["canal", "dock", "lake", "reservoir"]),
+                    ),
+                    render: Fill((
+                        color: "#386666",
+                    )),
+                ),
+                (
+                    id: "water_playa",
+                    layer: "water",
+                    filter: (kind: Some("playa")),
+                    render: Fill((
+                        color: "#DCB372",
+                    )),
+                ),
+                (
+                    id: "water_non_ocean_lines",
+                    layer: "water",
+                    filter: (
+                        kind: Some("water"),
+                        kind_detail_any: Some(["river", "canal", "ditch", "drain", "stream"]),
+                    ),
+                    render: Line((
+                        color: "#386666",
+                        width_px: 1.2,
+                    )),
+                ),
+                (
+                    id: "highway_road",
+                    layer: "roads",
+                    filter: (kind: Some("highway")),
+                    render: Line((
+                        color: "#C76B24",
+                        width_px: 1.4,
+                    )),
+                ),
+                (
+                    id: "major_roads",
+                    layer: "roads",
+                    filter: (kind: Some("major_road")),
+                    render: Line((
+                        color: "#C76B24",
+                        width_px: 2,
+                    )),
+                ),
+                (
+                    id: "minor_roads",
+                    layer: "roads",
+                    filter: (kind: Some("minor_road")),
+                    render: Line((
+                        color: "#706167",
+                        width_px: 2,
+                    )),
+                ),
+                (
+                    id: "path_roads",
+                    layer: "roads",
+                    filter: (kind: Some("path")),
+                    render: Line((
+                        color: "#875D2B",
+                        width_px: 3,
+                        dash: Some([0.0, 5.0]),
+                    )),
+                ),
+                (
+                    id: "rail_roads",
+                    layer: "roads",
+                    filter: (kind: Some("rail")),
+                    render: Line((
+                        color: "#75666B",
+                        width_px: 2,
+                        dash: Some([6.0, 4.0]),
+                    )),
+                ),
+                (
+                    id: "country_names",
+                    layer: "places",
+                    filter: (kind: Some("country")),
+                    render: Text((
+                        fields: Some(["name:en", "name"]),
+                        color: "#4c4c4c",
+                        size_px: 15.0,
+                        weight: "bold",
+                        transform: Some(Uppercase),
+                        halo_color: Some("#DCB372"),
+                        halo_width_px: Some(2.0),
+                    )),
+                ),
+                (
+                    id: "city_dots",
+                    layer: "places",
+                    filter: (kind_detail: Some("city")),
+                    render: Circle((
+                        color: "#3f3f3f",
+                        radius_px: 2.0,
+                        stroke_color: Some("#ffffff"),
+                        stroke_width_px: Some(0.75),
+                    )),
+                ),
+                (
+                    id: "city_names",
+                    layer: "places",
+                    filter: (kind_detail: Some("city")),
+                    render: Text((
+                        fields: Some(["name:en", "name"]),
+                        color: "#333333",
+                        size_px: 13.0,
+                        weight: "normal",
+                        transform: None,
+                        halo_color: Some("#DCB372"),
+                        halo_width_px: Some(1.75),
+                        offset_px: Some((x: 4.0, y: 0.0)),
+                    )),
+                ),
+                (
+                    id: "country_boundaries",
+                    layer: "boundaries",
+                    filter: (kind: Some("country")),
+                    render: Line((
+                        color: "#8f8f8f",
+                        width_px: 1.2,
+                        dash: Some([4.0, 2.0]),
+                    )),
+                ),
+            ],
+        ),
+    ],
+)

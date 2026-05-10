@@ -1,0 +1,17 @@
+[package]
+name = "ridi-app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+macroquad.workspace = true
+anyhow.workspace = true
+geozero = { version = "0.15.1", default-features = false, features = ["with-mvt"] }
+i_triangle = "0.34"
+memmap2.workspace = true
+pmtiles = { version = "0.18.2", default-features = false, features = ["http-async", "reqwest-rustls-tls"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+ron = "0.8"
+serde.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
