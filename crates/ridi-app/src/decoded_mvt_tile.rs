@@ -44,7 +44,11 @@ impl DecodedMvtTile {
     }
 
     pub fn layers(&self) -> impl Iterator<Item = MvtLayer<'_>> {
-        self.tile.layers.iter().map(|layer| MvtLayer { layer })
+        self.tile
+            .layers
+            .iter()
+            .enumerate()
+            .map(|(layer_index, layer)| MvtLayer { layer, layer_index })
     }
 
     pub fn features(&self) -> impl Iterator<Item = MvtFeature<'_>> {
@@ -64,6 +68,7 @@ impl DecodedMvtTile {
 #[derive(Debug, Clone, Copy)]
 pub struct MvtLayer<'a> {
     layer: &'a tile::Layer,
+    layer_index: usize,
 }
 
 impl<'a> MvtLayer<'a> {
@@ -75,11 +80,21 @@ impl<'a> MvtLayer<'a> {
         self.layer.extent.unwrap_or(4096)
     }
 
+    pub fn layer_index(self) -> usize {
+        self.layer_index
+    }
+
     pub fn features(self) -> impl Iterator<Item = MvtFeature<'a>> {
-        self.layer.features.iter().map(move |feature| MvtFeature {
-            layer: self.layer,
-            feature,
-        })
+        self.layer
+            .features
+            .iter()
+            .enumerate()
+            .map(move |(feature_index, feature)| MvtFeature {
+                layer: self.layer,
+                layer_index: self.layer_index,
+                feature,
+                feature_index,
+            })
     }
 
     pub fn process<P: FeatureProcessor>(self, processor: &mut P) -> geozero::error::Result<()> {
@@ -91,7 +106,9 @@ impl<'a> MvtLayer<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct MvtFeature<'a> {
     layer: &'a tile::Layer,
+    layer_index: usize,
     feature: &'a tile::Feature,
+    feature_index: usize,
 }
 
 impl<'a> MvtFeature<'a> {
@@ -104,7 +121,15 @@ impl<'a> MvtFeature<'a> {
     }
 
     pub fn geometry_type(self) -> Option<tile::GeomType> {
-        self.feature.r#type.and_then(|value| value.try_into().ok())
+        self.feature.r#type.and_then(tile::GeomType::from_i32)
+    }
+
+    pub fn layer_index(self) -> usize {
+        self.layer_index
+    }
+
+    pub fn feature_index(self) -> usize {
+        self.feature_index
     }
 
     pub fn extent(self) -> u32 {

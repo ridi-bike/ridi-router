@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use i_triangle::float::triangulatable::Triangulatable;
 use macroquad::prelude::*;
 
@@ -7,17 +9,164 @@ use crate::map_rendering_spec::{
     RenderInstruction, TextStyle, TextTransform,
 };
 use crate::mvt_geometry::MvtGeometryLines;
-use crate::space::{GpsCoord, Space};
+use crate::space::{lat_to_mercator_y, lon_to_mercator_x, GpsCoord, Space};
 use crate::tile_address::TileAddress;
+
+const MAX_CACHED_FILL_TILES: usize = 96;
+
+#[derive(Debug, Clone, Copy)]
+struct CachedFillTriangle {
+    a: [f64; 2],
+    b: [f64; 2],
+    c: [f64; 2],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScreenTransform {
+    min_x: f64,
+    min_y: f64,
+    x_scale: f64,
+    y_scale: f64,
+    screen_x: f64,
+    screen_y: f64,
+}
+
+impl ScreenTransform {
+    fn from_space(space: &Space) -> Self {
+        let min_x = lon_to_mercator_x(space.world.min.lon);
+        let max_x = lon_to_mercator_x(space.world.max.lon);
+        let min_y = lat_to_mercator_y(space.world.max.lat);
+        let max_y = lat_to_mercator_y(space.world.min.lat);
+
+        Self {
+            min_x,
+            min_y,
+            x_scale: space.screen.width / (max_x - min_x),
+            y_scale: space.screen.height / (max_y - min_y),
+            screen_x: space.screen.x,
+            screen_y: space.screen.y,
+        }
+    }
+
+    fn mvt_point_to_screen(self, address: TileAddress, point: [f64; 2], extent: f64) -> Vec2 {
+        let n = 2.0_f64.powi(address.z as i32);
+        let mercator_x = (address.x as f64 + point[0] / extent) / n;
+        let mercator_y = (address.y as f64 + point[1] / extent) / n;
+        let x = self.screen_x + (mercator_x - self.min_x) * self.x_scale;
+        let y = self.screen_y + (mercator_y - self.min_y) * self.y_scale;
+
+        Vec2::new(x as f32, y as f32)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FillGeometryCacheKey {
+    address: TileAddress,
+    layer_index: usize,
+    feature_index: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FillGeometryCacheStats {
+    pub feature_hits: u64,
+    pub feature_misses: u64,
+    pub cached_tiles: usize,
+    pub cached_features: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct FillGeometryCache {
+    triangles_by_feature: HashMap<FillGeometryCacheKey, Vec<CachedFillTriangle>>,
+    tile_last_used: HashMap<TileAddress, u64>,
+    use_counter: u64,
+    current_frame_stats: FillGeometryCacheStats,
+    last_frame_stats: FillGeometryCacheStats,
+}
+
+impl FillGeometryCache {
+    fn mark_visible_tiles<'a>(&mut self, tiles: impl IntoIterator<Item = &'a DecodedMvtTile>) {
+        self.use_counter = self.use_counter.wrapping_add(1);
+        for tile in tiles {
+            self.tile_last_used.insert(tile.address, self.use_counter);
+        }
+        self.evict_old_tiles();
+        self.current_frame_stats = FillGeometryCacheStats {
+            cached_tiles: self.tile_last_used.len(),
+            cached_features: self.triangles_by_feature.len(),
+            ..Default::default()
+        };
+    }
+
+    fn triangles_for_feature(
+        &mut self,
+        address: TileAddress,
+        feature: MvtFeature<'_>,
+    ) -> &[CachedFillTriangle] {
+        let key = FillGeometryCacheKey {
+            address,
+            layer_index: feature.layer_index(),
+            feature_index: feature.feature_index(),
+        };
+        if self.triangles_by_feature.contains_key(&key) {
+            self.current_frame_stats.feature_hits += 1;
+        } else {
+            self.current_frame_stats.feature_misses += 1;
+            let triangles = triangulate_feature_fill(feature);
+            self.triangles_by_feature.insert(key, triangles);
+        }
+
+        self.triangles_by_feature
+            .get(&key)
+            .expect("fill geometry was just inserted or already present")
+    }
+
+    fn evict_old_tiles(&mut self) {
+        if self.tile_last_used.len() <= MAX_CACHED_FILL_TILES {
+            return;
+        }
+
+        let mut tiles_by_age: Vec<_> = self
+            .tile_last_used
+            .iter()
+            .map(|(&address, &last_used)| (address, last_used))
+            .collect();
+        tiles_by_age.sort_by_key(|&(_address, last_used)| last_used);
+
+        let evict_count = tiles_by_age.len() - MAX_CACHED_FILL_TILES;
+        let evicted_addresses: HashSet<_> = tiles_by_age
+            .into_iter()
+            .take(evict_count)
+            .map(|(address, _last_used)| address)
+            .collect();
+
+        self.tile_last_used
+            .retain(|address, _last_used| !evicted_addresses.contains(address));
+        self.triangles_by_feature
+            .retain(|key, _triangles| !evicted_addresses.contains(&key.address));
+    }
+
+    fn finish_frame(&mut self) {
+        self.current_frame_stats.cached_tiles = self.tile_last_used.len();
+        self.current_frame_stats.cached_features = self.triangles_by_feature.len();
+        self.last_frame_stats = self.current_frame_stats;
+    }
+
+    pub fn last_frame_stats(&self) -> FillGeometryCacheStats {
+        self.last_frame_stats
+    }
+}
 
 pub fn draw_map_tiles<'a>(
     tiles: impl IntoIterator<Item = &'a DecodedMvtTile>,
     space: &Space,
     spec: &MapRenderingSpec,
     label_font: Option<&Font>,
+    fill_geometry_cache: &mut FillGeometryCache,
 ) {
     let mut tiles: Vec<_> = tiles.into_iter().collect();
     tiles.sort_by_key(|tile| (tile.address.z, tile.address.y, tile.address.x));
+    fill_geometry_cache.mark_visible_tiles(tiles.iter().copied());
+    let screen_transform = ScreenTransform::from_space(space);
 
     let Some(first_tile) = tiles.first() else {
         return;
@@ -40,7 +189,13 @@ pub fn draw_map_tiles<'a>(
             {
                 match &rule.render {
                     RenderInstruction::Fill(style) => {
-                        draw_styled_feature_fill(tile.address, feature, space, style);
+                        draw_styled_feature_fill(
+                            tile.address,
+                            feature,
+                            screen_transform,
+                            style,
+                            fill_geometry_cache,
+                        );
                     }
                     RenderInstruction::Line(style) => {
                         draw_styled_feature_lines(tile.address, feature, space, style);
@@ -55,6 +210,7 @@ pub fn draw_map_tiles<'a>(
             }
         }
     }
+    fill_geometry_cache.finish_frame();
 }
 
 fn matches_filter(feature: MvtFeature<'_>, filter: &FeatureFilter) -> bool {
@@ -154,15 +310,54 @@ fn draw_styled_feature_points(
 fn draw_styled_feature_fill(
     address: TileAddress,
     feature: MvtFeature<'_>,
-    space: &Space,
+    screen_transform: ScreenTransform,
     style: &FillStyle,
+    fill_geometry_cache: &mut FillGeometryCache,
 ) {
+    let fill_color = style.color();
+    let extent = feature.extent() as f64;
+    let cached_triangles = fill_geometry_cache.triangles_for_feature(address, feature);
+
+    match (&style.dots, fill_color) {
+        (Some(dots), _) => {
+            let triangles: Vec<_> = cached_triangles
+                .iter()
+                .map(|triangle| {
+                    (
+                        screen_transform.mvt_point_to_screen(address, triangle.a, extent),
+                        screen_transform.mvt_point_to_screen(address, triangle.b, extent),
+                        screen_transform.mvt_point_to_screen(address, triangle.c, extent),
+                    )
+                })
+                .collect();
+
+            if let Some(color) = fill_color {
+                for &(a, b, c) in &triangles {
+                    draw_triangle(a, b, c, color);
+                }
+            }
+
+            draw_dotted_fill_triangles(&triangles, dots);
+        }
+        (None, Some(color)) => {
+            for triangle in cached_triangles {
+                draw_triangle(
+                    screen_transform.mvt_point_to_screen(address, triangle.a, extent),
+                    screen_transform.mvt_point_to_screen(address, triangle.b, extent),
+                    screen_transform.mvt_point_to_screen(address, triangle.c, extent),
+                    color,
+                );
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+fn triangulate_feature_fill(feature: MvtFeature<'_>) -> Vec<CachedFillTriangle> {
     let mut lines = MvtGeometryLines::default();
     if feature.process_geometry(&mut lines).is_err() {
-        return;
+        return Vec::new();
     }
-    let extent = feature.extent() as f64;
-    let fill_color = style.color();
 
     let mut triangles = Vec::new();
 
@@ -171,37 +366,18 @@ fn draw_styled_feature_fill(
             continue;
         }
 
-        let contour: Vec<[f64; 2]> = line
-            .into_iter()
-            .map(|point| {
-                let point = mvt_coord_to_gps(address, point.0, point.1, extent);
-                let point = space.world_to_screen(point);
-                [point.x, point.y]
-            })
-            .collect();
+        let contour: Vec<[f64; 2]> = line.into_iter().map(|point| [point.0, point.1]).collect();
         let triangulation = vec![contour].triangulate().to_triangulation::<u32>();
 
         for triangle in triangulation.indices.chunks_exact(3) {
             let a = triangulation.points[triangle[0] as usize];
             let b = triangulation.points[triangle[1] as usize];
             let c = triangulation.points[triangle[2] as usize];
-            triangles.push((
-                Vec2::new(a[0] as f32, a[1] as f32),
-                Vec2::new(b[0] as f32, b[1] as f32),
-                Vec2::new(c[0] as f32, c[1] as f32),
-            ));
+            triangles.push(CachedFillTriangle { a, b, c });
         }
     }
 
-    if let Some(color) = fill_color {
-        for &(a, b, c) in &triangles {
-            draw_triangle(a, b, c, color);
-        }
-    }
-
-    if let Some(dots) = &style.dots {
-        draw_dotted_fill_triangles(&triangles, dots);
-    }
+    triangles
 }
 
 fn draw_dotted_fill_triangles(triangles: &[(Vec2, Vec2, Vec2)], dots: &DottedFillStyle) {

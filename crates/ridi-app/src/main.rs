@@ -1,28 +1,35 @@
+#![allow(dead_code)]
 pub mod decoded_mvt_tile;
 mod drag;
+mod gesture;
 mod keyboard_pan;
 mod map_rendering_spec;
 mod mvt_geometry;
 pub mod pmtiles_source;
+mod render_cache;
+mod render_scheduler;
+mod render_worker;
+mod retained_renderer;
 mod screen_layout;
 mod space;
 pub mod tile_address;
-mod tile_renderer;
 mod viewport;
-mod visible_tiles;
 pub mod web_mercator_tiles;
 mod zoom;
 
 use drag::DragState;
+use gesture::{TouchGesture, TouchGestureState};
 use keyboard_pan::KeyboardPan;
 use macroquad::prelude::*;
 use map_rendering_spec::MapRenderingSpec;
+use render_cache::{RenderCacheStats, RenderedTileCache};
+use render_scheduler::RenderScheduler;
+use render_worker::{spawn_render_worker, WorkerFreshness};
 use screen_layout::padded_screen_rect;
 use space::{GpsCoord, ScreenCoord};
-use tile_renderer::draw_map_tiles;
-use tracing::{debug, error, info};
+use std::sync::{mpsc::sync_channel, Arc};
+use tracing::info;
 use viewport::Viewport;
-use visible_tiles::VisibleTileDownloader;
 use zoom::zoom_factor;
 
 const MAX_TILE_ZOOM: u8 = 15;
@@ -50,17 +57,24 @@ async fn main() {
         },
         8,
     );
+    simulate_mouse_with_touch(false);
+    let mut touch_gestures = TouchGestureState::default();
     let mut drag = DragState::default();
-    let mut tile_downloader = match VisibleTileDownloader::open_ridi_map() {
-        Ok(tile_downloader) => {
-            info!("tile downloader initialized");
-            Some(tile_downloader)
-        }
-        Err(error) => {
-            error!(%error, "tile downloader initialization failed");
-            None
-        }
-    };
+    let style_revision = rendering_spec.version as u64;
+    let freshness = Arc::new(WorkerFreshness::new(style_revision));
+    let (work_tx, work_rx) = sync_channel(128);
+    let (completed_tx, completed_rx) = sync_channel(512);
+    let _render_worker = spawn_render_worker(
+        rendering_spec.clone(),
+        work_rx,
+        completed_tx,
+        freshness.clone(),
+    );
+    let mut render_scheduler = RenderScheduler::new(work_tx, freshness, style_revision);
+    let mut render_cache = RenderedTileCache::new();
+    let mut frame_time_window_elapsed = 0.0_f32;
+    let mut frame_time_window_max_ms = 0.0_f32;
+    let mut displayed_max_frame_time_ms = 0.0_f32;
 
     loop {
         clear_background(rendering_spec.background_color());
@@ -79,7 +93,11 @@ async fn main() {
             up: is_key_down(KeyCode::Up) || is_key_down(KeyCode::W),
             down: is_key_down(KeyCode::Down) || is_key_down(KeyCode::S),
         };
-        viewport.pan_by_fraction(keyboard_pan.lat_fraction(), keyboard_pan.lon_fraction());
+        viewport.pan_by_fraction(
+            screen,
+            keyboard_pan.lat_fraction(),
+            keyboard_pan.lon_fraction(),
+        );
 
         if let Some(previous_mouse_position) =
             drag.update(is_mouse_button_down(MouseButton::Left), mouse_screen)
@@ -87,6 +105,22 @@ async fn main() {
             viewport.pan_between_screen_points(screen, previous_mouse_position, mouse_screen);
         }
 
+        let touch_snapshot = touches();
+        let touch_gesture = touch_gestures.update(&touch_snapshot);
+        match touch_gesture {
+            Some(TouchGesture::Drag { previous, current }) => {
+                viewport.pan_between_screen_points(screen, previous, current);
+            }
+            Some(TouchGesture::Pinch {
+                previous_center,
+                current_center,
+                zoom,
+            }) => {
+                viewport.pan_between_screen_points(screen, previous_center, current_center);
+                viewport.zoom_around_screen_point(screen, current_center, zoom);
+            }
+            None => {}
+        }
         viewport.zoom_around_screen_point(
             screen,
             mouse_screen,
@@ -108,19 +142,128 @@ async fn main() {
         }
 
         let space = viewport.space(screen);
-        let bounds = viewport.world_bounds();
+        let bounds = space.world;
+        let tile_zoom = viewport.zoom_level(MAX_TILE_ZOOM);
 
-        if let Some(tile_downloader) = &mut tile_downloader {
-            debug!("updating and drawing visible tiles");
-            tile_downloader.update_visible_tiles(bounds, MAX_TILE_ZOOM);
-            draw_map_tiles(
-                tile_downloader.visible_tiles(bounds, MAX_TILE_ZOOM),
-                &space,
-                &rendering_spec,
-                label_font.as_ref(),
-            );
+        render_scheduler.request_visible_tiles(bounds, tile_zoom);
+        render_cache.drain_worker_messages(&completed_rx, &mut render_scheduler);
+        render_cache.upload_ready_parts_with_budget();
+        render_cache.draw_retained_tiles(
+            render_scheduler.visible_tiles(),
+            render_scheduler.fallback_tiles(),
+            render_scheduler.style_revision(),
+            &space,
+            label_font.as_ref(),
+        );
+
+        let frame_time = get_frame_time();
+        let frame_time_ms = frame_time * 1000.0;
+        frame_time_window_elapsed += frame_time;
+        frame_time_window_max_ms = frame_time_window_max_ms.max(frame_time_ms);
+        if frame_time_window_elapsed >= 1.0 {
+            displayed_max_frame_time_ms = frame_time_window_max_ms;
+            frame_time_window_elapsed = 0.0;
+            frame_time_window_max_ms = 0.0;
         }
 
+        draw_debug_overlays(
+            &touch_snapshot,
+            touch_gesture.as_ref(),
+            frame_time_ms,
+            displayed_max_frame_time_ms,
+            render_cache.stats(),
+        );
+
         next_frame().await;
+    }
+}
+
+fn draw_debug_overlays(
+    touches: &[Touch],
+    gesture: Option<&TouchGesture>,
+    frame_time_ms: f32,
+    max_frame_time_ms: f32,
+    render_cache_stats: RenderCacheStats,
+) {
+    let line_height = 18.0;
+    let padding = 8.0;
+    let touch_lines = touches.len().min(4);
+    let line_count = 5 + touch_lines;
+    let width = 520.0;
+    let height = padding * 2.0 + line_height * line_count as f32;
+
+    draw_rectangle(8.0, 8.0, width, height, Color::new(0.0, 0.0, 0.0, 0.65));
+
+    let mut y = 8.0 + padding + 14.0;
+    draw_text(
+        &format!(
+            "frame: {:.1} ms ({:.2} fps), max 1s: {:.1} ms",
+            frame_time_ms,
+            1000.0 / frame_time_ms.max(0.001),
+            max_frame_time_ms,
+        ),
+        16.0,
+        y,
+        18.0,
+        WHITE,
+    );
+
+    y += line_height;
+    draw_text(&format!("touches: {}", touches.len()), 16.0, y, 18.0, WHITE);
+
+    y += line_height;
+    draw_text(
+        &format!(
+            "gesture: {}",
+            gesture
+                .map(|gesture| format!("{gesture:?}"))
+                .unwrap_or_else(|| "none".to_owned()),
+        ),
+        16.0,
+        y,
+        18.0,
+        WHITE,
+    );
+
+    y += line_height;
+    draw_text(
+        &format!(
+            "retained cache: tiles={} cpu={:.1}MB gpu={:.1}MB pending_uploads={}",
+            render_cache_stats.tiles,
+            render_cache_stats.cpu_bytes as f32 / (1024.0 * 1024.0),
+            render_cache_stats.gpu_bytes as f32 / (1024.0 * 1024.0),
+            render_cache_stats.pending_uploads,
+        ),
+        16.0,
+        y,
+        18.0,
+        WHITE,
+    );
+
+    for touch in touches.iter().take(4) {
+        y += line_height;
+        draw_text(
+            &format!(
+                "touch id={} phase={} x={:.0} y={:.0}",
+                touch.id,
+                touch_phase_name(touch.phase),
+                touch.position.x,
+                touch.position.y,
+            ),
+            16.0,
+            y,
+            18.0,
+            WHITE,
+        );
+    }
+}
+
+fn touch_phase_name(phase: TouchPhase) -> &'static str {
+    match phase {
+        TouchPhase::Started => "started",
+        TouchPhase::Stationary => "stationary",
+        TouchPhase::Moved => "moved",
+        TouchPhase::Ended => "ended",
+        TouchPhase::Cancelled => "cancelled",
     }
 }

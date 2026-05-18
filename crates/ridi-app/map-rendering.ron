@@ -11,16 +11,12 @@
     source: "protomaps-basemap-v4",
     defaults: (
         background: "#386666",
-        text_font: "Noto Sans CJK",
+        text_font: "KG Happy",
         font_paths: [
-            "assets/fonts/NotoSansCJK-Regular.ttc",
-            "assets/fonts/NotoSansCJK-Regular.otf",
-            "crates/ridi-app/assets/fonts/NotoSansCJK-Regular.otf",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
-            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "assets/fonts/KGHAPPY.ttf",
+            "assets/fonts/KGHAPPYSolid.ttf",
+            "assets/fonts/KGHAPPYShadows.ttf",
+            "crates/ridi-app/assets/fonts/KGHAPPY.ttf",
         ],
     ),
     zoom_ranges: [

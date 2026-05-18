@@ -52,12 +52,18 @@ cmd_help() {
     echo "  run                                 Run the CLI"
     echo "  rmdf-view                           Run the RMDF debug viewer"
     echo "  test                                Run tests"
+    echo "  app-build                           Build Android release APK"
+    echo "  app-build-debug                     Build Android debug APK"
+    echo "  app-run-debug                       Build, install, launch, and stream logs via adb"
+    echo "  app-logcat                          Stream Android logs for app debugging"
     echo ""
     echo "Examples:"
     echo "  ./dev.sh generate-tiles latvia"
     echo "  ./dev.sh route riga,latvia cesis,latvia"
     echo "  ./dev.sh route riga,latvia cesis,latvia prefer-unpaved"
     echo "  ./dev.sh route -p riga,latvia cesis,latvia prefer-unpaved"
+    echo "  ./dev.sh app-run-debug"
+    echo "  ./dev.sh app-logcat"
     echo ""
     echo "Route preset mapping: <preset> -> $RULE_EXAMPLES_DIR/rules-<preset>.json"
     echo "If no preset is provided, dev.sh uses the default preset."
@@ -430,8 +436,142 @@ cmd_rmdf_view() {
     run_cli_release_with_features "rmdf-viewer" rmdf-viewer --input-dir "$OUTPUT_DIR"
 }
 
+cmd_app_build() {
+    local profile="${1:-release}"
+    local apk_profile_dir
+
+    if [[ "$profile" != "release" && "$profile" != "debug" ]]; then
+        echo "Error: unknown Android app build profile '$profile'" >&2
+        exit 1
+    fi
+
+    ANDROID_APP_BUILD_DIR="$SCRIPT_DIR/target/android-ridi-app"
+    ANDROID_CARGO_REGISTRY_DIR="$SCRIPT_DIR/target/android-cargo-registry"
+    ANDROID_CARGO_GIT_DIR="$SCRIPT_DIR/target/android-cargo-git"
+    ANDROID_RUSTUP_HOME="$SCRIPT_DIR/target/android-rustup-home"
+    ANDROID_DOT_ANDROID_DIR="$SCRIPT_DIR/target/android-dot-android"
+    ANDROID_RUST_TOOLCHAIN="${ANDROID_RUST_TOOLCHAIN:-stable}"
+    apk_profile_dir="$profile"
+
+    mkdir -p \
+        "$ANDROID_APP_BUILD_DIR" \
+        "$ANDROID_CARGO_REGISTRY_DIR" \
+        "$ANDROID_CARGO_GIT_DIR" \
+        "$ANDROID_RUSTUP_HOME" \
+        "$ANDROID_DOT_ANDROID_DIR"
+
+    rm -rf "$ANDROID_APP_BUILD_DIR/src" "$ANDROID_APP_BUILD_DIR/assets"
+    cp "$SCRIPT_DIR/crates/ridi-app/Cargo.toml" "$ANDROID_APP_BUILD_DIR/"
+    cp "$SCRIPT_DIR/crates/ridi-app/map-rendering.ron" "$ANDROID_APP_BUILD_DIR/"
+    cp -R "$SCRIPT_DIR/crates/ridi-app/src" "$ANDROID_APP_BUILD_DIR/"
+    cp -R "$SCRIPT_DIR/crates/ridi-app/assets" "$ANDROID_APP_BUILD_DIR/"
+
+    docker run --rm \
+       -e ANDROID_RUST_TOOLCHAIN="$ANDROID_RUST_TOOLCHAIN" \
+       -e ANDROID_APP_BUILD_PROFILE="$profile" \
+       -e CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git \
+       -v "$ANDROID_APP_BUILD_DIR:/root/src" \
+       -v "$ANDROID_CARGO_REGISTRY_DIR:/usr/local/cargo/registry" \
+       -v "$ANDROID_CARGO_GIT_DIR:/usr/local/cargo/git" \
+       -v "$ANDROID_RUSTUP_HOME:/usr/local/rustup" \
+       -v "$ANDROID_DOT_ANDROID_DIR:/root/.android" \
+       -w /root/src \
+       notfl3/cargo-apk \
+       sh -lc 'set -e
+if ! rustup toolchain list | grep -Eq "^${ANDROID_RUST_TOOLCHAIN}(-| )"; then
+    rustup toolchain install "$ANDROID_RUST_TOOLCHAIN" --profile minimal
+fi
+rustup target add --toolchain "$ANDROID_RUST_TOOLCHAIN" aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+rustup default "$ANDROID_RUST_TOOLCHAIN"
+manifest_hash=$(sha256sum Cargo.toml | awk "{print \$1}")
+fetch_stamp=/usr/local/cargo/registry/.ridi-app-fetch-$manifest_hash
+if [ ! -f "$fetch_stamp" ]; then
+    cargo fetch --target aarch64-linux-android --target armv7-linux-androideabi --target i686-linux-android --target x86_64-linux-android
+    touch "$fetch_stamp"
+fi
+legacy_registry=github.com-1ecc6299db9ec823
+legacy_cache=/usr/local/cargo/registry/cache/$legacy_registry
+legacy_src=/usr/local/cargo/registry/src/$legacy_registry
+mkdir -p "$legacy_cache" "$legacy_src"
+find /usr/local/cargo/registry/cache -name "*.crate" -exec cp -n {} "$legacy_cache" \;
+for crate in "$legacy_cache"/*.crate; do
+    package=$(basename "$crate" .crate)
+    if [ ! -d "$legacy_src/$package" ]; then
+        tar -xzf "$crate" -C "$legacy_src"
+        touch "$legacy_src/$package/.cargo-ok"
+    fi
+done
+rm -f Cargo.lock
+build_profile_arg=""
+if [ "$ANDROID_APP_BUILD_PROFILE" = "release" ]; then
+    build_profile_arg="--release"
+fi
+for attempt in $(seq 1 20); do
+    find /usr/local/cargo/registry/src -name Cargo.toml -exec sed -i "s/^edition = \"2024\"$/edition = \"2021\"/" {} +
+    if cargo quad-apk build $build_profile_arg --offline; then
+        exit 0
+    fi
+    echo "cargo quad-apk failed; patched any newly downloaded 2024-edition manifests and will retry ($attempt/20)" >&2
+done
+exit 1'
+
+    echo "Android $profile APK: $ANDROID_APP_BUILD_DIR/target/android-artifacts/$apk_profile_dir/apk/app.apk"
+}
+
+cmd_app_debug_apk_path() {
+    printf '%s\n' "$SCRIPT_DIR/target/android-ridi-app/target/android-artifacts/debug/apk/app.apk"
+}
+
+cmd_app_require_adb() {
+    if ! command -v adb >/dev/null 2>&1; then
+        echo "Error: adb not found. Install Android platform tools, e.g. on Arch: sudo pacman -S android-tools" >&2
+        exit 1
+    fi
+}
+
+cmd_app_logcat() {
+    cmd_app_require_adb
+    adb logcat -v time | grep -E --line-buffered 'AndroidRuntime|FATAL EXCEPTION|DEBUG|libc|ridi|Ridi|bike\.ridi\.app|RustStdoutStderr'
+}
+
+cmd_app_run_debug() {
+    local apk
+    apk="$(cmd_app_debug_apk_path)"
+
+    cmd_app_require_adb
+    cmd_app_build debug
+
+    if [[ ! -f "$apk" ]]; then
+        echo "Error: debug APK not found: $apk" >&2
+        exit 1
+    fi
+
+    adb devices
+    if ! adb install -r "$apk"; then
+        echo "Install failed; uninstalling existing debug app and retrying." >&2
+        adb uninstall bike.ridi.app || true
+        adb install "$apk"
+    fi
+    adb logcat -c
+    adb shell monkey -p bike.ridi.app -c android.intent.category.LAUNCHER 1
+    echo "Streaming logs. Press Ctrl-C to stop."
+    cmd_app_logcat
+}
+
 # Main
 case "${1:-}" in
+    app-build)
+        cmd_app_build
+        ;;
+    app-build-debug)
+        cmd_app_build debug
+        ;;
+    app-run-debug)
+        cmd_app_run_debug
+        ;;
+    app-logcat)
+        cmd_app_logcat
+        ;;
     pbf)
         download_pbf "${2:-}"
         ;;

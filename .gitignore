@@ -5,3 +5,4 @@
 /test_data/tiles_backup/
 /test_data/*.gpx
 /test_data/*.json
+/profiling

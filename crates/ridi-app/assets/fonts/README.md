@@ -1,8 +1,14 @@
 # Bundled fonts
 
-`NotoSansCJK-Regular.otf` is Noto Sans CJK SC Regular from the Google Noto CJK project:
-https://github.com/notofonts/noto-cjk
+This directory contains the KG Happy font family copied from:
 
-It is used for map labels that need broad Unicode coverage, including Latin diacritics, Cyrillic, Chinese, and Japanese glyphs.
+`/home/toms/Downloads/kg_happy`
 
-Noto fonts are distributed under the SIL Open Font License 1.1. See the upstream repository for the full license text.
+Included files:
+
+- `KGHAPPY.ttf`
+- `KGHAPPYSolid.ttf`
+- `KGHAPPYShadows.ttf`
+- `KGFonts-TOU.txt`
+
+The map renderer prefers `KGHAPPY.ttf` and falls back to the other KG Happy variants if needed.
