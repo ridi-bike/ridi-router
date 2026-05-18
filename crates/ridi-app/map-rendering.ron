@@ -27,7 +27,7 @@
         (
             name: "world",
             min_zoom: 0,
-            max_zoom: 20,
+            max_zoom: 15,
             render_order: [
                 (
                     id: "water_ocean_fill",
@@ -43,16 +43,6 @@
                     filter: (kind: Some("earth")),
                     render: Fill((
                         color: "#DCB372",
-                    )),
-                ),
-                (
-                    id: "landuse_park",
-                    layer: "landuse",
-                    filter: (
-                        kind_any: Some(["park", "national_park"]),
-                    ),
-                    render: Fill((
-                        color: "#767f5a",
                     )),
                 ),
                 (
@@ -117,6 +107,34 @@
                     )),
                 ),
                 (
+                    id: "landuse_park",
+                    layer: "landuse",
+                    filter: (
+                        kind_any: Some(["park", "national_park"]),
+                    ),
+                    render: Fill((
+                        dots: Some((
+                            color: "#767f5a",
+                            spacing_px: 8.0,
+                            radius_px: 1,
+                        )),
+                    ))
+                ),
+                (
+                    id: "landuse_military_fill",
+                    layer: "landuse",
+                    filter: (
+                        kind_any: Some(["military"]),
+                    ),
+                    render: Fill((
+                        dots: Some((
+                            color: "#9a3d3d",
+                            spacing_px: 8.0,
+                            radius_px: 1,
+                        )),
+                    ))
+                ),
+                (
                     id: "landuse_residential",
                     layer: "landuse",
                     filter: (kind_any: Some(["residential", "school"])),
@@ -144,6 +162,16 @@
                     )),
                 ),
                 (
+                    id: "water_lake_other",
+                    layer: "water",
+                    filter: (
+                        kind_any: Some(["other", "water"]),
+                    ),
+                    render: Fill((
+                        color: "#386666",
+                    )),
+                ),
+                (
                     id: "water_playa",
                     layer: "water",
                     filter: (kind: Some("playa")),
@@ -156,7 +184,18 @@
                     layer: "water",
                     filter: (
                         kind: Some("water"),
-                        kind_detail_any: Some(["river", "canal", "ditch", "drain", "stream"]),
+                        kind_detail_any: Some(["river"]),
+                    ),
+                    render: Fill((
+                        color: "#386666"
+                    )),
+                ),
+                (
+                    id: "water_non_ocean_lines",
+                    layer: "water",
+                    filter: (
+                        kind: Some("water"),
+                        kind_detail_any: Some(["canal", "ditch", "drain", "stream"]),
                     ),
                     render: Line((
                         color: "#386666",
@@ -169,7 +208,7 @@
                     filter: (kind: Some("highway")),
                     render: Line((
                         color: "#C76B24",
-                        width_px: 1.4,
+                        width_px: 4,
                     )),
                 ),
                 (
@@ -178,7 +217,7 @@
                     filter: (kind: Some("major_road")),
                     render: Line((
                         color: "#C76B24",
-                        width_px: 2,
+                        width_px: 3,
                     )),
                 ),
                 (
@@ -186,7 +225,16 @@
                     layer: "roads",
                     filter: (kind: Some("minor_road")),
                     render: Line((
-                        color: "#706167",
+                        color: "#c66a23",
+                        width_px: 2,
+                    )),
+                ),
+                (
+                    id: "minor_other",
+                    layer: "roads",
+                    filter: (kind: Some("other")),
+                    render: Line((
+                        color: "#c66a23",
                         width_px: 2,
                     )),
                 ),

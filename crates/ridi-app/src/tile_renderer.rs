@@ -3,8 +3,8 @@ use macroquad::prelude::*;
 
 use crate::decoded_mvt_tile::{DecodedMvtTile, MvtFeature};
 use crate::map_rendering_spec::{
-    CircleStyle, FeatureFilter, LineStyle, MapRenderingSpec, RenderInstruction, TextStyle,
-    TextTransform,
+    CircleStyle, DottedFillStyle, FeatureFilter, FillStyle, LineStyle, MapRenderingSpec,
+    RenderInstruction, TextStyle, TextTransform,
 };
 use crate::mvt_geometry::MvtGeometryLines;
 use crate::space::{GpsCoord, Space};
@@ -40,7 +40,7 @@ pub fn draw_map_tiles<'a>(
             {
                 match &rule.render {
                     RenderInstruction::Fill(style) => {
-                        draw_feature_triangles(tile.address, feature, space, style.color());
+                        draw_styled_feature_fill(tile.address, feature, space, style);
                     }
                     RenderInstruction::Line(style) => {
                         draw_styled_feature_lines(tile.address, feature, space, style);
@@ -151,17 +151,20 @@ fn draw_styled_feature_points(
     draw_feature_points(address, feature, space, style.color(), style.radius_px);
 }
 
-fn draw_feature_triangles(
+fn draw_styled_feature_fill(
     address: TileAddress,
     feature: MvtFeature<'_>,
     space: &Space,
-    color: Color,
+    style: &FillStyle,
 ) {
     let mut lines = MvtGeometryLines::default();
     if feature.process_geometry(&mut lines).is_err() {
         return;
     }
     let extent = feature.extent() as f64;
+    let fill_color = style.color();
+
+    let mut triangles = Vec::new();
 
     for line in lines.lines() {
         if line.len() < 3 {
@@ -182,15 +185,79 @@ fn draw_feature_triangles(
             let a = triangulation.points[triangle[0] as usize];
             let b = triangulation.points[triangle[1] as usize];
             let c = triangulation.points[triangle[2] as usize];
-
-            draw_triangle(
+            triangles.push((
                 Vec2::new(a[0] as f32, a[1] as f32),
                 Vec2::new(b[0] as f32, b[1] as f32),
                 Vec2::new(c[0] as f32, c[1] as f32),
-                color,
-            );
+            ));
         }
     }
+
+    if let Some(color) = fill_color {
+        for &(a, b, c) in &triangles {
+            draw_triangle(a, b, c, color);
+        }
+    }
+
+    if let Some(dots) = &style.dots {
+        draw_dotted_fill_triangles(&triangles, dots);
+    }
+}
+
+fn draw_dotted_fill_triangles(triangles: &[(Vec2, Vec2, Vec2)], dots: &DottedFillStyle) {
+    if triangles.is_empty() {
+        return;
+    }
+
+    let spacing = dots.spacing_px.max(1.0);
+    let radius = dots.radius_px.max(0.1);
+    let color = dots.color();
+
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for &(a, b, c) in triangles {
+        min_x = min_x.min(a.x).min(b.x).min(c.x);
+        max_x = max_x.max(a.x).max(b.x).max(c.x);
+        min_y = min_y.min(a.y).min(b.y).min(c.y);
+        max_y = max_y.max(a.y).max(b.y).max(c.y);
+    }
+
+    let start_x = (min_x / spacing).floor() * spacing;
+    let start_y = (min_y / spacing).floor() * spacing;
+
+    let mut y = start_y;
+    while y <= max_y {
+        let mut x = start_x;
+        while x <= max_x {
+            let point = Vec2::new(x, y);
+            if triangles
+                .iter()
+                .any(|&(a, b, c)| point_in_triangle(point, a, b, c))
+            {
+                draw_circle(x, y, radius, color);
+            }
+            x += spacing;
+        }
+        y += spacing;
+    }
+}
+
+fn point_in_triangle(point: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
+    let d1 = triangle_sign(point, a, b);
+    let d2 = triangle_sign(point, b, c);
+    let d3 = triangle_sign(point, c, a);
+
+    let has_negative = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let has_positive = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+
+    !(has_negative && has_positive)
+}
+
+fn triangle_sign(p1: Vec2, p2: Vec2, p3: Vec2) -> f32 {
+    (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
 }
 
 fn draw_feature_lines(

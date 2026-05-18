@@ -6,8 +6,8 @@ const WORLD_MAX_LAT: f64 = 90.0;
 const WORLD_MIN_LON: f64 = -180.0;
 const WORLD_MAX_LON: f64 = 180.0;
 
-const MIN_LAT_SPAN: f64 = (WORLD_MAX_LAT - WORLD_MIN_LAT) / (1_u64 << 20) as f64;
-const MIN_LON_SPAN: f64 = (WORLD_MAX_LON - WORLD_MIN_LON) / (1_u64 << 20) as f64;
+const MIN_LAT_SPAN: f64 = (WORLD_MAX_LAT - WORLD_MIN_LAT) / (1_u64 << 15) as f64;
+const MIN_LON_SPAN: f64 = (WORLD_MAX_LON - WORLD_MIN_LON) / (1_u64 << 15) as f64;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Viewport {

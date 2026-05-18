@@ -25,7 +25,7 @@ use viewport::Viewport;
 use visible_tiles::VisibleTileDownloader;
 use zoom::zoom_factor;
 
-const MAX_TILE_ZOOM: u8 = 20;
+const MAX_TILE_ZOOM: u8 = 15;
 
 #[macroquad::main("Ridi App")]
 async fn main() {
