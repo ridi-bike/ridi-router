@@ -1,7 +1,7 @@
 use macroquad::prelude::*;
 
 use crate::map_rendering_spec::{CircleStyle, DottedFillStyle, FillStyle, LineStyle, TextStyle};
-use crate::space::{lat_to_mercator_y, lon_to_mercator_x, Space};
+use crate::space::Space;
 use crate::tile_address::TileAddress;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -188,16 +188,12 @@ pub struct RenderedTilePart {
 }
 
 pub fn local_to_screen(space: &Space, address: TileAddress, local: [f32; 2]) -> Vec2 {
-    let min_x = lon_to_mercator_x(space.world.min.lon);
-    let max_x = lon_to_mercator_x(space.world.max.lon);
-    let min_y = lat_to_mercator_y(space.world.max.lat);
-    let max_y = lat_to_mercator_y(space.world.min.lat);
     let n = 2.0_f64.powi(address.z as i32);
     let mercator_x = (address.x as f64 + local[0] as f64) / n;
     let mercator_y = (address.y as f64 + local[1] as f64) / n;
-    let x = space.screen.x + (mercator_x - min_x) * space.screen.width / (max_x - min_x);
-    let y = space.screen.y + (mercator_y - min_y) * space.screen.height / (max_y - min_y);
-    vec2(x as f32, y as f32)
+    let screen =
+        space.mercator_to_map_screen(mercator_x, mercator_y, screen_width(), screen_height());
+    vec2(screen.x as f32, screen.y as f32)
 }
 
 pub fn line_batch_from_style(style: &LineStyle, casing: bool) -> (Color, f32, Option<Vec<f32>>) {

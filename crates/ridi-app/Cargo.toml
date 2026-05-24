@@ -20,6 +20,17 @@ serde = { version = "1.0.201", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["json"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "Navigator", "Geolocation"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc = { package = "objc-rs", version = "0.2" }
+
 [package.metadata.android]
 package_name = "bike.ridi.app"
 label = "Ridi"
@@ -42,3 +53,9 @@ fullscreen = true
 
 [[package.metadata.android.permission]]
 name = "android.permission.INTERNET"
+
+[[package.metadata.android.permission]]
+name = "android.permission.ACCESS_FINE_LOCATION"
+
+[[package.metadata.android.permission]]
+name = "android.permission.ACCESS_COARSE_LOCATION"

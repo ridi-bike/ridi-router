@@ -13,6 +13,7 @@ use crate::space::{lat_to_mercator_y, lon_to_mercator_x, GpsCoord, Space};
 use crate::tile_address::TileAddress;
 
 const MAX_CACHED_FILL_TILES: usize = 96;
+const MAP_LABEL_TEXT_SCALE: f32 = 3.0;
 
 #[derive(Debug, Clone, Copy)]
 struct CachedFillTriangle {
@@ -655,7 +656,9 @@ fn draw_text_with_style(
         y,
         TextParams {
             font: label_font,
-            font_size: style.size_px.round().clamp(1.0, u16::MAX as f32) as u16,
+            font_size: (style.size_px * MAP_LABEL_TEXT_SCALE)
+                .round()
+                .clamp(1.0, u16::MAX as f32) as u16,
             color,
             ..Default::default()
         },

@@ -14,6 +14,7 @@ const TARGET_CACHE_BYTES: usize = 100 * 1024 * 1024;
 const HARD_CACHE_BYTES: usize = 200 * 1024 * 1024;
 const UPLOAD_BUDGET: Duration = Duration::from_millis(3);
 const MAX_U16_VERTICES: usize = u16::MAX as usize;
+const MAP_LABEL_TEXT_SCALE: f32 = 3.0;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderCacheStats {
@@ -835,7 +836,9 @@ fn draw_labels(batch: &LabelBatch, address: TileAddress, space: &Space, label_fo
                     y + dy,
                     TextParams {
                         font: label_font,
-                        font_size: batch.size_px.round().clamp(1.0, u16::MAX as f32) as u16,
+                        font_size: (batch.size_px * MAP_LABEL_TEXT_SCALE)
+                            .round()
+                            .clamp(1.0, u16::MAX as f32) as u16,
                         color: halo_color,
                         ..Default::default()
                     },
@@ -848,7 +851,9 @@ fn draw_labels(batch: &LabelBatch, address: TileAddress, space: &Space, label_fo
             y,
             TextParams {
                 font: label_font,
-                font_size: batch.size_px.round().clamp(1.0, u16::MAX as f32) as u16,
+                font_size: (batch.size_px * MAP_LABEL_TEXT_SCALE)
+                    .round()
+                    .clamp(1.0, u16::MAX as f32) as u16,
                 color: batch.color,
                 ..Default::default()
             },
