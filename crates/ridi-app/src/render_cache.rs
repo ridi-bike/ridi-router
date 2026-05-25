@@ -14,7 +14,7 @@ const TARGET_CACHE_BYTES: usize = 100 * 1024 * 1024;
 const HARD_CACHE_BYTES: usize = 200 * 1024 * 1024;
 const UPLOAD_BUDGET: Duration = Duration::from_millis(3);
 const MAX_U16_VERTICES: usize = u16::MAX as usize;
-const MAP_LABEL_TEXT_SCALE: f32 = 3.0;
+const MAP_LABEL_TEXT_SCALE: f32 = 1.5;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderCacheStats {

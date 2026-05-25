@@ -13,7 +13,7 @@ use crate::space::{lat_to_mercator_y, lon_to_mercator_x, GpsCoord, Space};
 use crate::tile_address::TileAddress;
 
 const MAX_CACHED_FILL_TILES: usize = 96;
-const MAP_LABEL_TEXT_SCALE: f32 = 3.0;
+const MAP_LABEL_TEXT_SCALE: f32 = 1.5;
 
 #[derive(Debug, Clone, Copy)]
 struct CachedFillTriangle {
