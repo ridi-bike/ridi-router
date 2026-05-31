@@ -1,0 +1,7 @@
+module ridi_router_mobileFFI {
+    header "ridi_router_mobileFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

@@ -56,6 +56,14 @@ cmd_help() {
     echo "  app-build-debug                     Build Android debug APK"
     echo "  app-run-debug                       Build, install, launch, and stream logs via adb"
     echo "  app-logcat                          Stream Android logs for app debugging"
+    echo "  rust-router android                 Build/copy Rust Android libraries for all ABIs"
+    echo "  rust-router ios                     Build/copy Rust iOS xcframework"
+    echo "  rust-router bindings                Generate/copy UniFFI Kotlin and Swift bindings"
+    echo "  rust-router build                   Generate bindings and build all native artifacts"
+    echo "  mobile android device               Launch Expo Android app on device"
+    echo "  mobile android simulator            Launch Expo Android app on emulator"
+    echo "  mobile ios device                   Launch Expo iOS app on device"
+    echo "  mobile ios simulator                Launch Expo iOS app on simulator"
     echo ""
     echo "Examples:"
     echo "  ./dev.sh generate-tiles latvia"
@@ -558,8 +566,186 @@ cmd_app_run_debug() {
     cmd_app_logcat
 }
 
+RUST_ROUTER_CRATE="$SCRIPT_DIR/crates/ridi-router-mobile"
+RUST_ROUTER_UDL="$RUST_ROUTER_CRATE/src/ridi_router_mobile.udl"
+RUST_ROUTER_ANDROID_DIR="$SCRIPT_DIR/apps/ridi-mobile/modules/ridi-router/android"
+RUST_ROUTER_IOS_DIR="$SCRIPT_DIR/apps/ridi-mobile/modules/ridi-router/ios"
+RUST_ROUTER_IOS_RUST_DIR="$RUST_ROUTER_IOS_DIR/rust"
+RUST_ROUTER_TARGET_DIR="$SCRIPT_DIR/target/ridi-router-mobile"
+
+require_command() {
+    local command_name="$1"
+    local install_hint="${2:-}"
+
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Error: $command_name not found.$install_hint" >&2
+        exit 1
+    fi
+}
+
+rust_target_installed() {
+    local target="$1"
+    rustup target list --installed | grep -Fxq "$target"
+}
+
+require_rust_targets() {
+    local target
+    for target in "$@"; do
+        if ! rust_target_installed "$target"; then
+            echo "Error: Rust target '$target' is not installed. Run: rustup target add $*" >&2
+            exit 1
+        fi
+    done
+}
+
+cmd_rust_router_bindings() {
+    local out_dir="$RUST_ROUTER_TARGET_DIR/bindings"
+    local kotlin_out="$out_dir/kotlin"
+    local swift_out="$out_dir/swift"
+
+    rm -rf "$out_dir"
+    mkdir -p "$kotlin_out" "$swift_out"
+
+    cargo run -p ridi-router-mobile --features uniffi/cli --bin ridi-router-mobile-uniffi-bindgen -- \
+        generate "$RUST_ROUTER_UDL" --language kotlin --out-dir "$kotlin_out"
+    cargo run -p ridi-router-mobile --features uniffi/cli --bin ridi-router-mobile-uniffi-bindgen -- \
+        generate "$RUST_ROUTER_UDL" --language swift --out-dir "$swift_out"
+
+    rm -rf "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile"
+    mkdir -p "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile"
+    find "$kotlin_out" -type f -name '*.kt' -exec cp {} "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile/" \;
+
+    mkdir -p "$RUST_ROUTER_IOS_RUST_DIR"
+    find "$RUST_ROUTER_IOS_DIR" -maxdepth 1 -type f \( -name 'ridi_router_mobile.swift' -o -name 'ridi_router_mobileFFI.*' -o -name '*.modulemap' \) -delete
+    find "$swift_out" -maxdepth 1 -type f \( -name '*.swift' -o -name '*.h' -o -name '*.modulemap' \) -exec cp {} "$RUST_ROUTER_IOS_DIR/" \;
+
+    echo "Generated UniFFI bindings in Expo module native source trees."
+}
+
+cmd_rust_router_android() {
+    local android_targets=(
+        aarch64-linux-android
+        armv7-linux-androideabi
+        i686-linux-android
+        x86_64-linux-android
+    )
+
+    require_command cargo-ndk " Install with: cargo install cargo-ndk"
+    require_rust_targets "${android_targets[@]}"
+
+    if [[ -n "${NDK_HOME:-}" ]]; then
+        export NDK_HOME="${NDK_HOME%/}"
+    fi
+    if [[ -n "${ANDROID_NDK_HOME:-}" ]]; then
+        export ANDROID_NDK_HOME="${ANDROID_NDK_HOME%/}"
+    fi
+
+    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 -P 24 -o "$RUST_ROUTER_ANDROID_DIR/src/main/jniLibs" \
+        build -p ridi-router-mobile --release
+
+    echo "Copied Android Rust libraries to $RUST_ROUTER_ANDROID_DIR/src/main/jniLibs"
+}
+
+cmd_rust_router_ios() {
+    local ios_targets=(
+        aarch64-apple-ios
+        aarch64-apple-ios-sim
+        x86_64-apple-ios
+    )
+
+    require_command xcodebuild " Install Xcode command line tools."
+    require_command lipo " Install Xcode command line tools."
+    require_rust_targets "${ios_targets[@]}"
+
+    cargo build -p ridi-router-mobile --release --target aarch64-apple-ios
+    cargo build -p ridi-router-mobile --release --target aarch64-apple-ios-sim
+    cargo build -p ridi-router-mobile --release --target x86_64-apple-ios
+
+    local build_dir="$RUST_ROUTER_TARGET_DIR/ios"
+    local sim_universal_dir="$build_dir/simulator-universal"
+    local headers_dir="$build_dir/headers"
+    local framework_dir="$RUST_ROUTER_IOS_RUST_DIR/RidiRouterMobile.xcframework"
+
+    rm -rf "$build_dir" "$framework_dir"
+    mkdir -p "$sim_universal_dir" "$headers_dir" "$RUST_ROUTER_IOS_RUST_DIR"
+
+    lipo -create \
+        "$SCRIPT_DIR/target/aarch64-apple-ios-sim/release/libridi_router_mobile.a" \
+        "$SCRIPT_DIR/target/x86_64-apple-ios/release/libridi_router_mobile.a" \
+        -output "$sim_universal_dir/libridi_router_mobile.a"
+
+    find "$RUST_ROUTER_IOS_DIR" -maxdepth 1 -type f -name '*.h' -exec cp {} "$headers_dir/" \;
+    if ! find "$headers_dir" -type f -name '*.h' | grep -q .; then
+        printf '%s\n' '/* UniFFI headers are generated by ./dev.sh rust-router bindings. */' > "$headers_dir/RidiRouterMobile.h"
+    fi
+
+    xcodebuild -create-xcframework \
+        -library "$SCRIPT_DIR/target/aarch64-apple-ios/release/libridi_router_mobile.a" -headers "$headers_dir" \
+        -library "$sim_universal_dir/libridi_router_mobile.a" -headers "$headers_dir" \
+        -output "$framework_dir"
+
+    echo "Copied iOS Rust xcframework to $framework_dir"
+}
+
+cmd_rust_router() {
+    local subcommand="${1:-}"
+
+    case "$subcommand" in
+        android)
+            cmd_rust_router_android
+            ;;
+        ios)
+            cmd_rust_router_ios
+            ;;
+        bindings)
+            cmd_rust_router_bindings
+            ;;
+        build)
+            cmd_rust_router_bindings
+            cmd_rust_router_android
+            cmd_rust_router_ios
+            ;;
+        *)
+            echo "Usage: ./dev.sh rust-router {android|ios|bindings|build}" >&2
+            exit 1
+            ;;
+    esac
+}
+
+cmd_mobile() {
+    local platform="${1:-}"
+    local target="${2:-}"
+
+    case "$platform:$target" in
+        android:device)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" android -- --device
+            ;;
+        android:simulator)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" android
+            ;;
+        ios:device)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" ios -- --device
+            ;;
+        ios:simulator)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" ios -- --simulator
+            ;;
+        *)
+            echo "Usage: ./dev.sh mobile {android|ios} {device|simulator}" >&2
+            exit 1
+            ;;
+    esac
+}
+
 # Main
 case "${1:-}" in
+    rust-router)
+        shift
+        cmd_rust_router "$@"
+        ;;
+    mobile)
+        shift
+        cmd_mobile "$@"
+        ;;
     app-build)
         cmd_app_build
         ;;
