@@ -415,10 +415,10 @@ Decisions:
 6. Delete requires confirmation.
 7. Cellular downloads are allowed only after a warning/confirmation.
 8. Default map camera uses user location first, then falls back to the approximate manifest center.
+9. Tiles with `point_count: 0` and `line_count: 0` are still downloadable/selectable.
 
 Open questions:
 
 1. Should the screen support offline use with only cached manifest data?
 2. Should we allow selecting many tiles by dragging/lasso, or only tapping one tile at a time for MVP?
 3. Should outdated local tiles be detected when the remote manifest version/checksum changes?
-4. Should tiles with `point_count: 0` and `line_count: 0` be downloadable/selectable?
