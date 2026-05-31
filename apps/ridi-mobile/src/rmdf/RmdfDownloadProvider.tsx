@@ -2,14 +2,12 @@ import { useEffect, useMemo, type PropsWithChildren } from 'react';
 import { Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { registerRmdfBackgroundTask } from './backgroundTask';
 import { installRmdfNotificationHandlers } from './downloads';
 import { formatBytes } from './tiles';
-import { useLocalValue, useRmdfDownloadingTileIds, useRmdfQueuedTileIds } from '@/tinybase/hooks';
+import { useLocalValue, useRmdfDownloadingTileIds, useRmdfQueueTable, useRmdfQueuedTileIds } from '@/tinybase/hooks';
 
 export function RmdfDownloadProvider({ children }: PropsWithChildren) {
   useEffect(() => {
-    void registerRmdfBackgroundTask();
     const notificationSubscription = installRmdfNotificationHandlers();
     return () => notificationSubscription.remove();
   }, []);
@@ -23,30 +21,26 @@ export function RmdfDownloadProvider({ children }: PropsWithChildren) {
 }
 
 export function useRmdfDownloads() {
+  const queue = useRmdfQueueTable();
   const queuedIds = useRmdfQueuedTileIds();
   const downloadingIds = useRmdfDownloadingTileIds();
-  const storedActive = useLocalValue('rmdf_downloads_active');
-  const totalCount = Number(useLocalValue('rmdf_download_total_count') ?? 0);
-  const completedCount = Number(useLocalValue('rmdf_download_completed_count') ?? 0);
-  const totalBytes = Number(useLocalValue('rmdf_download_total_bytes') ?? 0);
-  const completedBytes = Number(useLocalValue('rmdf_download_completed_bytes') ?? 0);
   const warning = (useLocalValue('rmdf_download_warning') as string | undefined) ?? null;
   const lastSummary = (useLocalValue('rmdf_download_last_summary') as string | undefined) ?? null;
 
-  return useMemo(
-    () => ({
-      active: Boolean(storedActive) || queuedIds.size > 0 || downloadingIds.size > 0,
+  return useMemo(() => {
+    const activeRows = Object.values(queue).filter((row) => row.state === 'queued' || row.state === 'running');
+    const remainingBytes = activeRows.reduce((sum, row) => sum + Number(row.expected_bytes ?? 0), 0);
+
+    return {
+      active: activeRows.length > 0,
       queuedIds,
       downloadingIds,
-      totalCount,
-      completedCount,
-      totalBytes,
-      completedBytes,
+      remainingCount: activeRows.length,
+      remainingBytes,
       warning,
       lastSummary,
-    }),
-    [storedActive, queuedIds, downloadingIds, totalCount, completedCount, totalBytes, completedBytes, warning, lastSummary]
-  );
+    };
+  }, [queue, queuedIds, downloadingIds, warning, lastSummary]);
 }
 
 function GlobalDownloadIndicator() {
@@ -62,7 +56,7 @@ function GlobalDownloadIndicator() {
     >
       <Text className="text-foreground text-sm font-bold">Downloading map data</Text>
       <Text className="text-muted text-xs">
-        {downloads.completedCount}/{downloads.totalCount} tiles · {formatBytes(downloads.completedBytes)} / {formatBytes(downloads.totalBytes)}
+        {downloads.remainingCount} tiles remaining · {formatBytes(downloads.remainingBytes)}
       </Text>
     </View>
   );

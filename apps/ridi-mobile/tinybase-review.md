@@ -1,144 +1,225 @@
-# TinyBase Review
+# TinyBase Branch Review
 
-Focus: unnecessary plumbing, overly complex code, and simplification opportunities against `tinybase-plan.md`.
+Scope: review current TinyBase/RMDF implementation against `tinybase-plan.md`, with emphasis on unnecessary plumbing, complexity, and simplification opportunities.
 
-## Summary
+## Overall Assessment
 
-The branch broadly follows the plan: two stores exist, persistence is centralized, startup blocks route rendering, and RMDF durable state has moved into `localStore`.
+The branch broadly follows the plan: two stores exist, app rendering is blocked until TinyBase initializes, persistence is centralized, RMDF durable state moved into `localStore`, and routes do not create stores or persisters.
 
-The main issue is that the implementation keeps several state systems alive at once:
+The main issue is not missing architecture. The main issue is excess coordination code around that architecture: duplicate provider state, thin wrapper modules, a global download manager that has to be manually attached to TinyBase, and persisted aggregate values that duplicate queue/tile state.
 
-1. TinyBase local store
-2. `RmdfDownloadManager` snapshot state
-3. React `RmdfDownloadProvider` context state
-4. legacy JSON queue file plumbing
-5. inert background-task plumbing
+## Highest-Value Simplifications
 
-This creates extra synchronization code and makes the RMDF path harder to reason about than the plan requires.
+### 1. Remove one of the two TinyBase provider layers
 
-## High-value simplifications
+`TinyBaseProvider` currently maintains a custom React context and also mounts TinyBase's `Provider` with `storesById`.
 
-### 1. Remove the duplicate RMDF download snapshot layer
+Relevant code:
 
-`src/rmdf/downloads.ts` keeps a full `RmdfDownloadSnapshot`, subscribes to TinyBase table/value listeners, clones Sets/Maps, and emits updates to `src/rmdf/RmdfDownloadProvider.tsx`.
+- `src/tinybase/TinyBaseProvider.tsx`
+- `src/tinybase/hooks.ts`
 
-But the snapshot is mostly derived from `localStore`, and `src/tinybase/hooks.ts` already derives the same sets from TinyBase:
+Why this feels over-plumbed:
 
-- downloaded IDs
-- selected IDs
-- queued IDs
-- downloading IDs
-- failed IDs
-- queue positions
+- `useLocalStore()` and `useSyncedStore()` read from the custom context.
+- `useLocalCell()`, `useLocalValue()`, `useRmdfTileTable()`, etc. read through TinyBase's own provider by store ID.
+- This creates two store access paths that must stay consistent.
 
-This duplicates TinyBase reactivity with a second observer system.
+Simpler options:
+
+1. Prefer TinyBase's provider as the only provider, and implement `useLocalStore()` / `useSyncedStore()` through TinyBase's store hook if available.
+2. Or keep the custom context and pass concrete stores directly into lower-level hooks instead of using TinyBase store IDs.
+
+Recommendation: use TinyBase's provider as the single source of truth. The custom context adds little value beyond fatal-startup gating.
+
+### 2. Collapse pass-through store and persistence modules
+
+Several modules are only constant-binding wrappers:
+
+- `src/tinybase/local/store.ts`
+- `src/tinybase/synced/store.ts`
+- `src/tinybase/local/persistence.ts`
+- `src/tinybase/synced/persistence.ts`
+- `src/tinybase/store.ts`
+- `src/tinybase/persistence.ts`
+
+This matches the proposed file layout, but the implementation is small enough that the indirection makes the code harder to follow than necessary.
 
 Simpler shape:
 
-- Keep `RmdfDownloadManager` as an imperative service only: `enqueue`, `removeQueuedOrDelete`, worker loop, notifications.
-- Remove `RmdfDownloadSnapshot`, manager listeners, `cloneSnapshot`, and `syncSnapshotFromStore` as public UI state plumbing.
-- Replace `RmdfDownloadProvider` state with TinyBase hooks such as `useLocalValue('rmdf_downloads_active')` and small RMDF selectors.
-- Let `GlobalDownloadIndicator` read TinyBase directly.
+- Keep `local/schema.ts` and `synced/schema.ts` separate.
+- Put store creation and SQLite persister creation in one runtime factory module.
+- Keep constants in `ids.ts` or `config.ts`.
 
-This better matches the plan: “The global downloading-files indicator should be driven by `localStore`, not separate React-only state.”
+This would reduce the startup path from several wrapper hops to one readable sequence:
 
-### 2. Delete or isolate the legacy JSON queue file path
+1. create stores
+2. apply schemas
+3. create persisters
+4. load
+5. reconcile
+6. start autosave
 
-`migrateLegacyRmdfQueueToLocalStore` reads `getRmdfQueuePath()`, and `RmdfDownloadManager.hydrate()` writes `[]` back to that file every time.
+The future `syncedStore` switch to `MergeableStore` can still be contained in the runtime factory without preserving all the current pass-through files.
 
-After this migration, the queue source of truth is TinyBase. Keeping the old file path active adds confusion: there are still two apparent queue stores.
+### 3. Replace the global attach/detach download manager with explicit store ownership
+
+`rmdfDownloadManager` is a module-level singleton with mutable lifecycle state:
+
+- `attachLocalStore()`
+- `detachLocalStore()`
+- `requireLocalStore()`
+- `hydrated`
+- `processing`
+- `notificationId`
+
+Relevant code:
+
+- `src/rmdf/downloads.ts`
+- `src/tinybase/runtime.ts`
+- `src/tinybase/TinyBaseProvider.tsx`
+- `src/rmdf/backgroundTask.ts`
+
+Why this is complex:
+
+- TinyBase runtime owns store creation, but the download manager owns long-lived behavior and needs manual attachment.
+- Provider teardown has a special branch just to detach the manager if initialization did not finish.
+- Background tasks initialize a full TinyBase runtime, attach the singleton, process work, then destroy the runtime.
+- The singleton can outlive the runtime it was attached to.
 
 Simpler options:
 
-- If no released app needs migration, delete the legacy queue migration entirely.
-- If migration is needed, run it once and then remove routine writes to the legacy queue file from `hydrate()`.
-- Keep the migration code clearly named as one-time compatibility code, not part of normal download startup.
+1. Create a download manager instance inside `initializeTinyBaseRuntime()` and return it with the runtime.
+2. Or make download operations plain functions that take `localStore` explicitly.
+3. Or expose an `RmdfDownloadService` from the provider, scoped to the provider lifecycle.
 
-### 3. Remove background task plumbing until it actually initializes TinyBase
+Recommendation: avoid a global mutable singleton. The store is already initialized before routes render, so callers can access it through hooks or a scoped service.
 
-`TaskManager.defineTask` calls `rmdfDownloadManager.hydrate()`, but the manager has no attached `localStore` in a headless background task. As written, the task does not restore the store, load persistence, or process queue rows.
+### 4. Do not persist aggregate download UI values unless they are true durable state
 
-That makes the background task look functional while doing almost nothing useful.
+The local store persists these values:
+
+- `rmdf_downloads_active`
+- `rmdf_download_total_count`
+- `rmdf_download_completed_count`
+- `rmdf_download_total_bytes`
+- `rmdf_download_completed_bytes`
+- `rmdf_download_warning`
+- `rmdf_download_last_summary`
+
+Some of these are useful UX state, but several duplicate data already present in queue rows and tile rows.
+
+Examples:
+
+- `rmdf_downloads_active` is already derived from queued/running rows. `useRmdfDownloads()` also ORs it with queue state, which confirms it is not authoritative.
+- completed counts and bytes are manually incremented while tile rows and queue rows are also updated.
+- totals are reset conditionally based on whether active rows exist, which creates batch-like behavior without an explicit batch model.
 
 Simpler options:
 
-- Remove `expo-background-task` / `expo-task-manager` integration for now.
-- Or make the background task explicitly initialize TinyBase persistence before calling the manager.
+1. Derive `active` from queue rows only.
+2. Derive queued/running counts from `rmdf_download_queue`.
+3. Keep only user-visible non-derived values, such as warning and last summary.
+4. If batch progress must survive restart, introduce a small explicit `rmdf_download_batches` table instead of loose aggregate values.
 
-Until then, this is misleading plumbing.
+Recommendation: remove `rmdf_downloads_active` first. It is the clearest duplicate. Then decide whether the total/completed fields are a real persisted batch model or just UI state.
 
-### 4. Collapse duplicated local/synced persistence setup
+### 5. Avoid reconstructing fake manifest tiles from TinyBase rows
 
-`src/tinybase/local/persistence.ts` and `src/tinybase/synced/persistence.ts` are almost identical. Same for the local/synced store factories.
-
-A small shared helper would reduce files and surface area:
+`downloads.ts` reconstructs `RmdfManifestTile` values from TinyBase rows with placeholder geometry:
 
 ```ts
-createSqlitePersistence({ store, databaseName, tableName, logPrefix })
+{
+  filename,
+  col: 0,
+  row: 0,
+  bounds: { lat_min: 0, lat_max: 0, lon_min: 0, lon_max: 0 },
+  neighbors: {},
+  size_bytes,
+  point_count: 0,
+  line_count: 0,
+  checksum,
+}
 ```
 
-Then local/synced modules can export only their config or typed wrapper. This keeps the planned split while avoiding duplicate mechanics.
-
-### 5. Separate hooks from imperative RMDF store writes
-
-`src/tinybase/hooks.ts` mixes React hooks with imperative mutation helpers:
-
-- `upsertRmdfManifestTile`
-- `setRmdfTileSelected`
-- `clearRmdfTileSelection`
-
-These are not hooks, and typing their `localStore` parameter as `ReturnType<typeof useLocalStore>` couples non-React helpers to React hook types.
+This is a sign that the download worker does not actually need a full manifest tile.
 
 Simpler shape:
 
-- Keep `hooks.ts` for hooks only.
-- Move RMDF store actions to something like `src/tinybase/local/rmdfTiles.ts` or `src/rmdf/rmdfStoreActions.ts`.
-- Type them with `LocalStore` directly.
+- Define a narrow `DownloadTile` or `QueuedDownload` type with only:
+  - `filename`
+  - `size_bytes` / `expected_bytes`
+  - `checksum` if needed
+- Let manifest tiles be used at the UI/manifest boundary only.
+- Let queue rows drive download workers directly.
 
-### 6. Trim unused progress/resume fields until implemented
+This removes invalid placeholder data and makes the queue table a clearer source of truth.
 
-The schema and manager carry partial-progress fields:
+## Plan Alignment Issues That Also Affect Simplicity
 
-- `rmdf_download_current_bytes`
-- queue `downloaded_bytes`
-- queue `temp_path`
-- tile `downloaded_bytes`
+### 6. Partial download restart is planned but not represented
 
-But `downloadTile()` uses `FileSystem.downloadAsync`, deletes the temp file before each attempt, and does not update byte progress. So partial resume/progress is not currently implemented.
+The plan includes queue fields for partial download recovery:
 
-Either implement resumable/progress downloads, or simplify now:
+- `downloaded_bytes`
+- `temp_path`
 
-- keep only total/completed counts and bytes;
-- remove `currentBytes` UI plumbing;
-- avoid pretending queue rows support resume when they do not.
+The implementation does not include these fields in `src/tinybase/local/schema.ts`, and `downloadTile()` deletes the temp file before each download.
 
-### 7. Reduce duplicated RMDF derived selectors
+This is simpler than the plan, but it conflicts with the stated requirement that partial downloads can be restarted with enough local state to support restart.
 
-`useRmdfLocalTileSets()` derives sets from TinyBase. `RmdfDownloadManager.syncSnapshotFromStore()` derives many of the same sets. `app/rmdf-download.tsx` then consumes both `downloads` and TinyBase-derived sets.
+Recommendation: choose one explicit direction:
 
-Pick one derived-data path for UI. Prefer TinyBase hooks for UI and keep the manager write-only/imperative.
+- If restart means "retry from scratch", update the plan/schema and remove partial-download wording.
+- If resumable partial downloads are required, add the fields and make the downloader use them.
 
-### 8. Reconsider redundant persisted cells
+Do not keep halfway plumbing for restart semantics.
 
-The plan includes both row IDs and cells like `tile_id` / `filename`, but in this implementation they are always the same value for RMDF tiles. `local_path` is also derivable from filename.
+### 7. Background task support may be premature
 
-Because the plan explicitly lists these cells, this is not a correctness issue. But to reduce code noise:
+`src/rmdf/backgroundTask.ts` initializes the full TinyBase runtime, including the unused synced store, just to process local RMDF queue work.
 
-- avoid passing all three values through every call site unless needed;
-- centralize row creation in one helper;
-- treat row ID as the primary tile identity in app logic.
+This adds complexity:
 
-## Concrete cleanup order
+- background task registration
+- task definition at module load
+- full runtime startup inside the task
+- singleton download manager attach/detach through runtime initialization
+- full runtime destroy afterward
 
-1. Make UI read download state directly from TinyBase hooks.
-2. Shrink `RmdfDownloadManager` to imperative actions and worker state.
-3. Remove `RmdfDownloadProvider` state/context, or reduce it to notification-handler installation plus indicator rendering.
-4. Remove routine legacy queue-file writes.
-5. Remove or fix background-task support.
-6. Merge duplicated persistence helpers.
-7. Move non-hook store mutations out of `hooks.ts`.
-8. Drop unused progress/resume fields, or implement real progress/resume.
+If background downloading is not required for the first TinyBase migration, defer it. If it is required, consider a local-only runtime initializer for the background task so the synced store is not opened for local queue work.
 
-## Bottom line
+## Smaller Cleanups
 
-The TinyBase foundation is in place, but the branch still carries old state-management patterns beside TinyBase. The biggest simplification is to let TinyBase be the only UI-observable RMDF state source and make the download manager an imperative writer, not a second store.
+### 8. Legacy queue migration can be removed before release if no released app wrote it
+
+`migrateLegacyRmdfQueueToLocalStore()` reads `download-queue.json`, imports rows, and overwrites the file with `[]`.
+
+If this app version has not shipped with the legacy queue file, this migration is unnecessary plumbing. Remove it before release, or isolate it behind a clearly named one-time legacy migration module.
+
+### 9. Keep RMDF-specific write helpers, but avoid making every write path a helper
+
+`src/tinybase/local/rmdfTiles.ts` is useful because it centralizes row IDs and stable persisted cells. However, some helpers are just small wrappers around one or two TinyBase calls.
+
+Keep helpers that preserve invariants:
+
+- upsert manifest tile
+- queue manifest tile
+- mark downloaded
+- mark remote-only
+
+Avoid adding more wrappers for simple one-off writes unless they protect a real invariant.
+
+## Suggested Simplification Order
+
+1. Remove or derive `rmdf_downloads_active`.
+2. Replace fake `RmdfManifestTile` reconstruction with a narrow queue/download type.
+3. Remove one provider access path: custom context or TinyBase provider store lookups.
+4. Scope the download manager to the TinyBase runtime/provider instead of using a global attach/detach singleton.
+5. Collapse pass-through TinyBase store/persistence modules if the code remains small.
+6. Decide whether partial-download restart is required; then either implement it fully or remove the unused schema/planning surface.
+7. Defer or localize background-task runtime startup.
+
+## Bottom Line
+
+The implementation is functionally close to the plan, but it has more lifecycle and state synchronization code than the feature currently needs. The clearest simplification is to make `localStore` queue rows the source of truth, derive UI state from them, and avoid global mutable services that must be manually wired to TinyBase.

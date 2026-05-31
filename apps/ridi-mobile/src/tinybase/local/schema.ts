@@ -24,6 +24,8 @@ export const localTableSchemas = {
     state: rmdfDownloadQueueStateSchema.default('queued'),
     attempts: z.number().default(0),
     expected_bytes: z.number().optional(),
+    downloaded_bytes: z.number().default(0),
+    temp_path: z.string().optional(),
     queued_at: z.string(),
     started_at: z.string().optional(),
     updated_at: z.string().optional(),
@@ -34,11 +36,6 @@ export const localTableSchemas = {
 export const localValueSchemas = {
   local_schema_version: z.number().default(1),
   rmdf_last_reconciled_at: z.string().optional(),
-  rmdf_downloads_active: z.boolean().default(false),
-  rmdf_download_total_count: z.number().default(0),
-  rmdf_download_completed_count: z.number().default(0),
-  rmdf_download_total_bytes: z.number().default(0),
-  rmdf_download_completed_bytes: z.number().default(0),
   rmdf_download_warning: z.string().optional(),
   rmdf_download_last_summary: z.string().optional(),
 };

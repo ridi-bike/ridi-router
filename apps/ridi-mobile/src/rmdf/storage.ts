@@ -14,9 +14,6 @@ export function getRmdfManifestPath(): string {
   return `${getRmdfDirectory()}${RMDF_MANIFEST_FILENAME}`;
 }
 
-export function getRmdfQueuePath(): string {
-  return `${getRmdfDirectory()}download-queue.json`;
-}
 
 export function getRmdfTilePath(filename: string): string {
   return `${getRmdfDirectory()}${filename}`;

@@ -2,12 +2,10 @@ import * as FileSystem from 'expo-file-system/legacy';
 import type { Store } from 'tinybase';
 
 import { RMDF_DOWNLOAD_QUEUE_TABLE, RMDF_TILES_TABLE } from '../ids';
-import { markRmdfManifestTileDownloaded, queueRmdfManifestTile } from './rmdfTiles';
+import { markRmdfManifestTileDownloaded } from './rmdfTiles';
 import { readCachedManifest } from '@/rmdf/manifest';
-import { ensureRmdfDirectory, getRmdfDirectory, getRmdfTilePath, readTextIfExists, getRmdfQueuePath, writeText } from '@/rmdf/storage';
+import { ensureRmdfDirectory, getRmdfDirectory, getRmdfTilePath } from '@/rmdf/storage';
 import type { RmdfManifest, RmdfManifestTile } from '@/rmdf/types';
-
-type LegacyQueueItem = { tile?: RmdfManifestTile };
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -20,32 +18,6 @@ function isComplete(info: FileSystem.FileInfo, expectedBytes?: number): boolean 
 
 function manifestByFilename(manifest: RmdfManifest | null): Map<string, RmdfManifestTile> {
   return new Map((manifest?.tiles ?? []).map((tile) => [tile.filename, tile]));
-}
-
-export async function migrateLegacyRmdfQueueToLocalStore(store: Store): Promise<void> {
-  const text = await readTextIfExists(getRmdfQueuePath());
-  if (!text) return;
-
-  let parsed: LegacyQueueItem[];
-  try {
-    parsed = JSON.parse(text) as LegacyQueueItem[];
-  } catch {
-    await writeText(getRmdfQueuePath(), '[]');
-    return;
-  }
-
-  const queued = Array.isArray(parsed) ? parsed.map((item) => item.tile).filter((tile): tile is RmdfManifestTile => Boolean(tile?.filename)) : [];
-  if (queued.length === 0) {
-    await writeText(getRmdfQueuePath(), '[]');
-    return;
-  }
-
-  const queuedAt = nowIso();
-  store.transaction(() => {
-    queued.forEach((tile, index) => queueRmdfManifestTile(store, tile, index, queuedAt));
-  });
-
-  await writeText(getRmdfQueuePath(), '[]');
 }
 
 export async function reconcileLocalRmdfTiles(store: Store, manifest: RmdfManifest | null = null): Promise<void> {

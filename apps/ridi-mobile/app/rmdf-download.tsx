@@ -7,7 +7,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ridiMapStyle } from '@/map/ridiMapStyle';
 import { CELLULAR_WARNING } from '@/rmdf/constants';
-import { isCellularConnection, rmdfDownloadManager } from '@/rmdf/downloads';
+import { isCellularConnection } from '@/rmdf/downloads';
+import { useRmdfDownloadManager } from '@/rmdf/RmdfDownloadManagerContext';
 import { loadRmdfManifest } from '@/rmdf/manifest';
 import { buildTileViewModels, formatBytes, getManifestCenter, hitTestTile, splitSelectedTiles, tilesToGeoJson } from '@/rmdf/tiles';
 import type { RmdfManifest, RmdfManifestTile } from '@/rmdf/types';
@@ -72,6 +73,7 @@ export default function RmdfDownloadScreen() {
   const downloads = useRmdfDownloads();
   const [loadState, setLoadState] = useState<LoadState>({ kind: 'loading' });
   const localStore = useLocalStore();
+  const rmdfDownloadManager = useRmdfDownloadManager();
   const { downloadedIds, selectedIds, queuedIds, downloadingIds, failedIds, queuePositions } = useRmdfLocalTileSets();
   const [cameraCenter, setCameraCenter] = useState<[number, number]>([11.5761, 48.1372]);
 
@@ -244,7 +246,7 @@ export default function RmdfDownloadScreen() {
             </View>
             {downloads.active ? (
               <Text className="text-foreground text-sm font-semibold">
-                Downloading map data: {downloads.completedCount}/{downloads.totalCount} tiles · {formatBytes(downloads.completedBytes)} / {formatBytes(downloads.totalBytes)}
+                Downloading map data: {downloads.remainingCount} tiles remaining · {formatBytes(downloads.remainingBytes)}
               </Text>
             ) : null}
             {downloads.lastSummary ? <Text className="text-primary text-sm font-semibold">{downloads.lastSummary}</Text> : null}

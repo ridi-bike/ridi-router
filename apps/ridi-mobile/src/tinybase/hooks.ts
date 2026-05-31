@@ -1,15 +1,18 @@
 import { useMemo } from 'react';
-import { useCell, useRow, useTable, useValue } from 'tinybase/ui-react';
+import { useCell, useRow, useStore, useTable, useValue } from 'tinybase/ui-react';
 
 import { LOCAL_STORE_ID, RMDF_DOWNLOAD_QUEUE_TABLE, RMDF_TILES_TABLE, SYNCED_STORE_ID } from './ids';
-import { useTinyBaseContext } from './TinyBaseProvider';
 
 export function useLocalStore() {
-  return useTinyBaseContext().localStore;
+  const store = useStore(LOCAL_STORE_ID);
+  if (!store) throw new Error('TinyBase localStore must be used within TinyBaseProvider.');
+  return store;
 }
 
 export function useSyncedStore() {
-  return useTinyBaseContext().syncedStore;
+  const store = useStore(SYNCED_STORE_ID);
+  if (!store) throw new Error('TinyBase syncedStore must be used within TinyBaseProvider.');
+  return store;
 }
 
 export function useLocalCell(tableId: string, rowId: string, cellId: string) {

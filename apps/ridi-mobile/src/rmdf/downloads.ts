@@ -9,10 +9,16 @@ import { RMDF_BASE_URL, RMDF_DOWNLOAD_CONCURRENCY, RMDF_NOTIFICATION_CHANNEL_ID,
 import { deleteRmdfTiles, ensureRmdfDirectory, getRmdfTempTilePath, getRmdfTilePath } from './storage';
 import type { RmdfManifestTile } from './types';
 import { getRmdfDownloadQueueRowId, RMDF_DOWNLOAD_QUEUE_TABLE, RMDF_TILES_TABLE } from '@/tinybase/ids';
-import { markRmdfManifestTileDownloaded, markRmdfTileRemoteOnly, queueRmdfManifestTile } from '@/tinybase/local/rmdfTiles';
+import { markRmdfDownloadTileDownloaded, markRmdfTileRemoteOnly, queueRmdfManifestTile } from '@/tinybase/local/rmdfTiles';
+
+type DownloadTile = {
+  filename: string;
+  size_bytes: number;
+  checksum?: string;
+};
 
 type DownloadQueueItem = {
-  tile: RmdfManifestTile;
+  tile: DownloadTile;
 };
 
 type QueueRowEntry = [string, ReturnType<Store['getRow']>];
@@ -21,18 +27,13 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function tileFromStore(store: Store, tileId: string): RmdfManifestTile {
-  const row = store.getRow(RMDF_TILES_TABLE, tileId);
+function downloadTileFromRows(store: Store, queueRow: ReturnType<Store['getRow']>): DownloadTile {
+  const filename = String(queueRow.filename ?? queueRow.tile_id ?? '');
+  const tileRow = store.getRow(RMDF_TILES_TABLE, filename);
   return {
-    filename: String(row.filename ?? tileId),
-    col: 0,
-    row: 0,
-    bounds: { lat_min: 0, lat_max: 0, lon_min: 0, lon_max: 0 },
-    neighbors: {},
-    size_bytes: Number(row.size_bytes ?? 0),
-    point_count: 0,
-    line_count: 0,
-    checksum: String(row.checksum ?? ''),
+    filename,
+    size_bytes: Number(queueRow.expected_bytes ?? tileRow.size_bytes ?? 0),
+    checksum: typeof tileRow.checksum === 'string' ? tileRow.checksum : undefined,
   };
 }
 
@@ -45,43 +46,33 @@ function getSortedQueueEntries(store: Store): QueueRowEntry[] {
 function getQueuedItems(store: Store, state: 'queued' | 'running'): DownloadQueueItem[] {
   return getSortedQueueEntries(store)
     .filter(([, row]) => row.state === state)
-    .map(([, row]) => ({ tile: tileFromStore(store, String(row.tile_id)) }));
-}
-
-function getDownloadedCount(store: Store): number {
-  return Object.values(store.getTable(RMDF_TILES_TABLE)).filter((row) => row.status === 'downloaded').length;
+    .map(([, row]) => ({ tile: downloadTileFromRows(store, row) }));
 }
 
 function getFailedCount(store: Store): number {
   return Object.values(store.getTable(RMDF_TILES_TABLE)).filter((row) => row.status === 'failed').length;
 }
 
-class RmdfDownloadManager {
+function getActiveQueueRows(store: Store) {
+  return Object.values(store.getTable(RMDF_DOWNLOAD_QUEUE_TABLE)).filter((row) => row.state === 'queued' || row.state === 'running');
+}
+
+export class RmdfDownloadManager {
   private processing = false;
   private notificationId: string | null = null;
   private hydrated = false;
-  private localStore: Store | null = null;
 
-  attachLocalStore(store: Store) {
-    if (this.localStore === store) return;
-    this.detachLocalStore();
-    this.localStore = store;
-  }
-
-  detachLocalStore() {
-    this.localStore = null;
-    this.hydrated = false;
-  }
+  constructor(private readonly localStore: Store) {}
 
   async hydrate() {
     if (this.hydrated) return;
     this.hydrated = true;
     await ensureRmdfDirectory();
-    this.resetInterruptedRunningRows();
+    await this.resetInterruptedRunningRows();
   }
 
   async enqueue(tiles: RmdfManifestTile[]) {
-    const store = this.requireLocalStore();
+    const store = this.localStore;
     await ensureRmdfDirectory();
     const existing = new Set<string>();
     for (const [rowId, row] of Object.entries(store.getTable(RMDF_TILES_TABLE))) {
@@ -91,22 +82,11 @@ class RmdfDownloadManager {
     const newTiles = tiles.filter((tile) => !existing.has(tile.filename));
     if (newTiles.length === 0) return;
 
-    const activeBeforeEnqueue = this.hasActiveRows(store);
-    const addedBytes = newTiles.reduce((sum, tile) => sum + tile.size_bytes, 0);
     const queuedAt = nowIso();
     store.transaction(() => {
-      if (!activeBeforeEnqueue) {
-        store.setValue('rmdf_download_total_count', 0);
-        store.setValue('rmdf_download_completed_count', 0);
-        store.setValue('rmdf_download_total_bytes', 0);
-        store.setValue('rmdf_download_completed_bytes', 0);
-      }
       for (const tile of newTiles) {
         queueRmdfManifestTile(store, tile, store.getRowCount(RMDF_DOWNLOAD_QUEUE_TABLE), queuedAt);
       }
-      store.setValue('rmdf_download_total_count', Number(store.getValue('rmdf_download_total_count') ?? 0) + newTiles.length);
-      store.setValue('rmdf_download_total_bytes', Number(store.getValue('rmdf_download_total_bytes') ?? 0) + addedBytes);
-      store.setValue('rmdf_downloads_active', true);
       store.delValue('rmdf_download_last_summary');
     });
 
@@ -115,7 +95,7 @@ class RmdfDownloadManager {
   }
 
   async removeQueuedOrDelete(filenames: string[]) {
-    const store = this.requireLocalStore();
+    const store = this.localStore;
     const downloadingIds = new Set(getQueuedItems(store, 'running').map((item) => item.tile.filename));
     const downloadedIds = new Set(Object.entries(store.getTable(RMDF_TILES_TABLE)).filter(([, row]) => row.status === 'downloaded').map(([rowId]) => rowId));
 
@@ -141,42 +121,41 @@ class RmdfDownloadManager {
   }
 
   clearSummary() {
-    this.localStore?.delValue('rmdf_download_last_summary');
+    this.localStore.delValue('rmdf_download_last_summary');
   }
 
   async processQueuedDownloads() {
-    if (getQueuedItems(this.requireLocalStore(), 'queued').length === 0) return;
+    if (getQueuedItems(this.localStore, 'queued').length === 0) return;
     await this.startProcessing();
   }
 
   private async startProcessing() {
-    const store = this.requireLocalStore();
+    const store = this.localStore;
     if (this.processing) return;
     this.processing = true;
-    store.setValue('rmdf_downloads_active', true);
 
     try {
       const workers = Array.from({ length: RMDF_DOWNLOAD_CONCURRENCY }, () => this.worker());
       await Promise.all(workers);
     } finally {
       this.processing = false;
-      const active = this.hasActiveRows(store);
-      store.setValue('rmdf_downloads_active', active);
-      if (!active) {
-        store.setValue('rmdf_download_last_summary', `Downloaded ${Number(store.getValue('rmdf_download_completed_count') ?? getDownloadedCount(store))} map tile(s).${getFailedCount(store) ? ` ${getFailedCount(store)} failed.` : ''}`);
+      if (!this.hasActiveRows(store)) {
+        store.setValue('rmdf_download_last_summary', `Downloaded queued map tile(s).${getFailedCount(store) ? ` ${getFailedCount(store)} failed.` : ''}`);
         await this.finishNotification();
       }
     }
   }
 
   private async worker() {
-    const store = this.requireLocalStore();
+    const store = this.localStore;
     for (;;) {
       const item = this.takeNextQueuedItem();
       if (!item) return;
       const tile = item.tile;
+      if (!tile.filename) continue;
       const queueRowId = getRmdfDownloadQueueRowId(tile.filename);
       const startedAt = nowIso();
+      const tempPath = getRmdfTempTilePath(tile.filename);
 
       store.transaction(() => {
         store.setPartialRow(RMDF_DOWNLOAD_QUEUE_TABLE, queueRowId, {
@@ -184,6 +163,8 @@ class RmdfDownloadManager {
           attempts: Number(store.getCell(RMDF_DOWNLOAD_QUEUE_TABLE, queueRowId, 'attempts') ?? 0) + 1,
           started_at: startedAt,
           updated_at: startedAt,
+          temp_path: tempPath,
+          downloaded_bytes: 0,
         });
         store.setCell(RMDF_TILES_TABLE, tile.filename, 'status', 'downloading');
       });
@@ -194,18 +175,19 @@ class RmdfDownloadManager {
         const completedAt = nowIso();
         store.transaction(() => {
           store.delRow(RMDF_DOWNLOAD_QUEUE_TABLE, queueRowId);
-          markRmdfManifestTileDownloaded(store, tile, completedAt);
-          store.setValue('rmdf_download_completed_count', Number(store.getValue('rmdf_download_completed_count') ?? 0) + 1);
-          store.setValue('rmdf_download_completed_bytes', Number(store.getValue('rmdf_download_completed_bytes') ?? 0) + tile.size_bytes);
+          markRmdfDownloadTileDownloaded(store, tile, completedAt);
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Tile download failed.';
         const failedAt = nowIso();
+        const tempInfo = await FileSystem.getInfoAsync(tempPath).catch(() => null);
         store.transaction(() => {
           store.setPartialRow(RMDF_DOWNLOAD_QUEUE_TABLE, queueRowId, {
             state: 'failed',
             updated_at: failedAt,
             error_message: message,
+            temp_path: tempPath,
+            downloaded_bytes: tempInfo?.exists && !tempInfo.isDirectory ? tempInfo.size : 0,
           });
           store.setPartialRow(RMDF_TILES_TABLE, tile.filename, {
             status: 'failed',
@@ -220,17 +202,21 @@ class RmdfDownloadManager {
   }
 
   private takeNextQueuedItem(): DownloadQueueItem | null {
-    const store = this.requireLocalStore();
-    const row = getSortedQueueEntries(store).filter(([, queueRow]) => queueRow.state === 'queued')[0];
+    const row = getSortedQueueEntries(this.localStore).filter(([, queueRow]) => queueRow.state === 'queued')[0];
     if (!row) return null;
     const [, queueRow] = row;
-    return { tile: tileFromStore(store, String(queueRow.tile_id)) };
+    return { tile: downloadTileFromRows(this.localStore, queueRow) };
   }
 
-  private async downloadTile(tile: RmdfManifestTile) {
+  private async downloadTile(tile: DownloadTile) {
     const destination = getRmdfTilePath(tile.filename);
     const temp = getRmdfTempTilePath(tile.filename);
-    await FileSystem.deleteAsync(temp, { idempotent: true });
+    const tempInfo = await FileSystem.getInfoAsync(temp).catch(() => null);
+    if (tempInfo?.exists && !tempInfo.isDirectory && tempInfo.size === tile.size_bytes) {
+      await FileSystem.deleteAsync(destination, { idempotent: true });
+      await FileSystem.moveAsync({ from: temp, to: destination });
+      return;
+    }
     const result = await FileSystem.downloadAsync(`${RMDF_BASE_URL}${tile.filename}`, temp);
     if (result.status < 200 || result.status >= 300) {
       throw new Error(`Tile download failed with HTTP ${result.status}.`);
@@ -244,27 +230,37 @@ class RmdfDownloadManager {
     await FileSystem.moveAsync({ from: temp, to: destination });
   }
 
-  private resetInterruptedRunningRows() {
+  private async resetInterruptedRunningRows() {
     const store = this.localStore;
-    if (!store) return;
     const updatedAt = nowIso();
+    const updates: { rowId: string; tileId?: string; downloadedBytes: number; tempPath?: string }[] = [];
+    for (const [rowId, row] of Object.entries(store.getTable(RMDF_DOWNLOAD_QUEUE_TABLE))) {
+      if (row.state !== 'running') continue;
+      const tileId = typeof row.tile_id === 'string' ? row.tile_id : undefined;
+      const tempPath = typeof row.temp_path === 'string' ? row.temp_path : tileId ? getRmdfTempTilePath(tileId) : undefined;
+      const tempInfo = tempPath ? await FileSystem.getInfoAsync(tempPath).catch(() => null) : null;
+      updates.push({
+        rowId,
+        tileId,
+        tempPath,
+        downloadedBytes: tempInfo?.exists && !tempInfo.isDirectory ? tempInfo.size : 0,
+      });
+    }
     store.transaction(() => {
-      for (const [rowId, row] of Object.entries(store.getTable(RMDF_DOWNLOAD_QUEUE_TABLE))) {
-        if (row.state === 'running') {
-          store.setPartialRow(RMDF_DOWNLOAD_QUEUE_TABLE, rowId, { state: 'queued', updated_at: updatedAt });
-          if (typeof row.tile_id === 'string') store.setCell(RMDF_TILES_TABLE, row.tile_id, 'status', 'queued');
-        }
+      for (const update of updates) {
+        store.setPartialRow(RMDF_DOWNLOAD_QUEUE_TABLE, update.rowId, {
+          state: 'queued',
+          updated_at: updatedAt,
+          downloaded_bytes: update.downloadedBytes,
+          ...(update.tempPath ? { temp_path: update.tempPath } : null),
+        });
+        if (update.tileId) store.setCell(RMDF_TILES_TABLE, update.tileId, 'status', 'queued');
       }
     });
   }
 
   private hasActiveRows(store: Store): boolean {
-    return Object.values(store.getTable(RMDF_DOWNLOAD_QUEUE_TABLE)).some((row) => row.state === 'queued' || row.state === 'running');
-  }
-
-  private requireLocalStore(): Store {
-    if (!this.localStore) throw new Error('RMDF downloads require TinyBase localStore initialization.');
-    return this.localStore;
+    return getActiveQueueRows(store).length > 0;
   }
 
   private async prepareNotification() {
@@ -278,21 +274,21 @@ class RmdfDownloadManager {
       }
       const permission = await Notifications.requestPermissionsAsync();
       if (!permission.granted) {
-        store?.setValue('rmdf_download_warning', NOTIFICATIONS_DISABLED_WARNING);
+        store.setValue('rmdf_download_warning', NOTIFICATIONS_DISABLED_WARNING);
         return;
       }
       await this.updateNotification();
     } catch {
-      store?.setValue('rmdf_download_warning', NOTIFICATIONS_DISABLED_WARNING);
+      store.setValue('rmdf_download_warning', NOTIFICATIONS_DISABLED_WARNING);
     }
   }
 
   private async updateNotification() {
     const store = this.localStore;
-    if (!store || store.getValue('rmdf_download_warning') === NOTIFICATIONS_DISABLED_WARNING) return;
-    const completedCount = Number(store.getValue('rmdf_download_completed_count') ?? 0);
-    const totalCount = Number(store.getValue('rmdf_download_total_count') ?? 0);
-    const body = `${completedCount}/${totalCount} tiles downloaded`;
+    if (store.getValue('rmdf_download_warning') === NOTIFICATIONS_DISABLED_WARNING) return;
+    const rows = getActiveQueueRows(store);
+    const runningCount = rows.filter((row) => row.state === 'running').length;
+    const body = `${runningCount}/${rows.length} tiles downloading`;
     try {
       if (this.notificationId) {
         await Notifications.dismissNotificationAsync(this.notificationId).catch(() => undefined);
@@ -317,8 +313,6 @@ class RmdfDownloadManager {
     this.notificationId = null;
   }
 }
-
-export const rmdfDownloadManager = new RmdfDownloadManager();
 
 export async function isCellularConnection(): Promise<boolean> {
   const state = await Network.getNetworkStateAsync();

@@ -1,20 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
+import { useEffect, useState, type PropsWithChildren } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Provider as TinyBaseReactProvider } from 'tinybase/ui-react';
 
 import { LOCAL_STORE_ID, SYNCED_STORE_ID } from './ids';
-import { initializeTinyBaseRuntime, destroyTinyBaseRuntime, type TinyBaseRuntime } from './runtime';
-import type { LocalStore } from './local/store';
-import type { SyncedStore } from './synced/store';
-import { rmdfDownloadManager } from '@/rmdf/downloads';
-
-type TinyBaseContextValue = {
-  localStore: LocalStore;
-  syncedStore: SyncedStore;
-};
-
-const TinyBaseContext = createContext<TinyBaseContextValue | null>(null);
-
+import { destroyTinyBaseRuntime, initializeTinyBaseRuntime, type TinyBaseRuntime } from './runtime';
+import { RmdfDownloadManagerProvider } from '@/rmdf/RmdfDownloadManagerContext';
 
 export function TinyBaseProvider({ children }: PropsWithChildren) {
   const [runtime, setRuntime] = useState<TinyBaseRuntime | null>(null);
@@ -39,18 +29,9 @@ export function TinyBaseProvider({ children }: PropsWithChildren) {
 
     return () => {
       cancelled = true;
-      if (initialized) {
-        void destroyTinyBaseRuntime(initialized);
-      } else {
-        rmdfDownloadManager.detachLocalStore();
-      }
+      if (initialized) void destroyTinyBaseRuntime(initialized);
     };
   }, []);
-
-  const contextValue = useMemo<TinyBaseContextValue | null>(() => {
-    if (!runtime) return null;
-    return { localStore: runtime.localStore, syncedStore: runtime.syncedStore };
-  }, [runtime]);
 
   if (error) {
     return (
@@ -61,7 +42,7 @@ export function TinyBaseProvider({ children }: PropsWithChildren) {
     );
   }
 
-  if (!contextValue) {
+  if (!runtime) {
     return (
       <View className="flex-1 items-center justify-center bg-background">
         <ActivityIndicator />
@@ -71,16 +52,8 @@ export function TinyBaseProvider({ children }: PropsWithChildren) {
   }
 
   return (
-    <TinyBaseContext.Provider value={contextValue}>
-      <TinyBaseReactProvider storesById={{ [LOCAL_STORE_ID]: contextValue.localStore, [SYNCED_STORE_ID]: contextValue.syncedStore }}>
-        {children}
-      </TinyBaseReactProvider>
-    </TinyBaseContext.Provider>
+    <TinyBaseReactProvider storesById={{ [LOCAL_STORE_ID]: runtime.localStore, [SYNCED_STORE_ID]: runtime.syncedStore }}>
+      <RmdfDownloadManagerProvider manager={runtime.rmdfDownloadManager}>{children}</RmdfDownloadManagerProvider>
+    </TinyBaseReactProvider>
   );
-}
-
-export function useTinyBaseContext(): TinyBaseContextValue {
-  const value = useContext(TinyBaseContext);
-  if (!value) throw new Error('TinyBase hooks must be used within TinyBaseProvider.');
-  return value;
 }
