@@ -324,12 +324,14 @@ Implementation approach:
 6. Render a global top overlay on every screen when a job is active: **Downloading map data** plus progress.
 7. Use a system notification titled **Downloading map data** while downloads are active.
 8. On notification tap, deep-link back to the RMDF download screen if possible.
+9. If notification permission is denied or unavailable, warn that downloads may be interrupted, allow the download anyway, and hide/skip the notification.
 
 Native/platform notes:
 
 - Use Expo BackgroundTask as the primary abstraction for scheduling and OS constraints.
 - Confirm the exact behavior on iOS and Android during implementation.
 - If true closed-app continuation has platform limits, document them and keep the app behavior aligned with Expo BackgroundTask support.
+- Notification permission denial must not block downloads. The app should warn once and continue without showing the notification.
 
 ## Native Router Integration
 
@@ -427,6 +429,25 @@ Automated/unit tests, if the app test setup exists or is added:
 - download button label formats total selected missing tile size correctly in MB/GB;
 - storage helpers ignore non-RMDF files.
 
+## Sane Defaults
+
+Use these defaults unless implementation reveals a strong reason to change them:
+
+- Download concurrency: 3 tiles at a time.
+- Byte formatting: show MB below 1 GB with 1 decimal place; show GB at 1 GB and above with 2 decimal places.
+- Available tile border: muted gray.
+- Downloaded tile: translucent green/blue fill.
+- Selected missing tile: primary translucent fill.
+- Selected downloaded tile: orange/red translucent fill.
+- Queued tile: blue translucent fill with queue number label.
+- Downloading tile: stronger primary fill plus progress in the bottom overlay/global indicator.
+- Failed tile: red translucent fill.
+- Notification permission denied wording: `Downloads may be interrupted because notifications are disabled. Downloads will continue while the app is active.`
+- Cellular warning wording: `These map downloads may use mobile data. Continue?`
+- Delete confirmation wording: `Delete {count} downloaded map tile(s)?`
+- Network-disrupted warning wording: `Network connection is disrupted. Showing cached map data; downloads are unavailable until connection is restored.`
+
+
 ## Decisions and Open Questions
 
 Decisions:
@@ -449,6 +470,8 @@ Decisions:
 16. Queued tiles show a visual state and queue number.
 17. Available disk-space warnings are skipped for MVP.
 18. Download button shows the selected missing tile total size in MB or GB, whichever is more relevant.
+19. If notification permission is denied, warn that downloads may be interrupted, allow downloads, and do not show a notification.
+20. For unspecified UI details, use the sane defaults section.
 
 Open questions:
 
