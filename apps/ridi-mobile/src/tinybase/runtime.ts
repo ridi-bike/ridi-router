@@ -1,3 +1,4 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
 import { createStore, type Store } from 'tinybase';
 import { createExpoSqlitePersister, type ExpoSqlitePersister } from 'tinybase/persisters/persister-expo-sqlite';
@@ -29,8 +30,49 @@ function createVersionedStore(tablesSchema: Parameters<Store['setTablesSchema']>
   return createStore().setTablesSchema(tablesSchema).setValuesSchema(valuesSchema).setValue(schemaVersionValueId, 1);
 }
 
+function isBlockedSqliteDirectoryError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('Path already points to a non-normal file');
+}
+
+async function getFallbackSqliteDirectory(): Promise<string | null> {
+  if (!FileSystem.documentDirectory) {
+    return null;
+  }
+
+  const directory = `${FileSystem.documentDirectory}tinybase-sqlite/`;
+  const info = await FileSystem.getInfoAsync(directory);
+  if (info.exists && !info.isDirectory) {
+    await FileSystem.deleteAsync(directory, { idempotent: true });
+  }
+  if (!info.exists || !info.isDirectory) {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+  }
+
+  return directory;
+}
+
+async function openTinyBaseDatabase(databaseName: string, logPrefix: string): Promise<SQLite.SQLiteDatabase> {
+  try {
+    return await SQLite.openDatabaseAsync(databaseName);
+  } catch (error) {
+    if (!isBlockedSqliteDirectoryError(error)) {
+      throw error;
+    }
+
+    const fallbackDirectory = await getFallbackSqliteDirectory();
+    if (!fallbackDirectory) {
+      throw error;
+    }
+
+    if (__DEV__) {
+      console.warn(`[${logPrefix}] Expo SQLite default directory is blocked by a file. Retrying in ${fallbackDirectory}.`, error);
+    }
+    return SQLite.openDatabaseAsync(databaseName, undefined, fallbackDirectory);
+  }
+}
+
 async function createSqlitePersistence(store: Store, databaseName: string, tableName: string, logPrefix: string): Promise<SqlitePersistence> {
-  const db = await SQLite.openDatabaseAsync(databaseName);
+  const db = await openTinyBaseDatabase(databaseName, logPrefix);
   await db.execAsync('PRAGMA journal_mode = WAL;');
   const persister = createExpoSqlitePersister(
     store,
