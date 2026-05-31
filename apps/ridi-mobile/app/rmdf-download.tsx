@@ -9,10 +9,12 @@ import { ridiMapStyle } from '@/map/ridiMapStyle';
 import { CELLULAR_WARNING } from '@/rmdf/constants';
 import { isCellularConnection, rmdfDownloadManager } from '@/rmdf/downloads';
 import { loadRmdfManifest } from '@/rmdf/manifest';
-import { getDownloadedTileIds } from '@/rmdf/storage';
 import { buildTileViewModels, formatBytes, getManifestCenter, hitTestTile, splitSelectedTiles, tilesToGeoJson } from '@/rmdf/tiles';
 import type { RmdfManifest, RmdfManifestTile } from '@/rmdf/types';
 import { useRmdfDownloads } from '@/rmdf/RmdfDownloadProvider';
+import { clearRmdfTileSelection, setRmdfTileSelected } from '@/tinybase/local/rmdfTiles';
+import { reconcileLocalRmdfTiles } from '@/tinybase/local/rmdfReconcile';
+import { useLocalStore, useRmdfLocalTileSets } from '@/tinybase/hooks';
 
 type LoadState =
   | { kind: 'loading' }
@@ -69,22 +71,21 @@ export default function RmdfDownloadScreen() {
   const insets = useSafeAreaInsets();
   const downloads = useRmdfDownloads();
   const [loadState, setLoadState] = useState<LoadState>({ kind: 'loading' });
-  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(new Set());
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const localStore = useLocalStore();
+  const { downloadedIds, selectedIds, queuedIds, downloadingIds, failedIds, queuePositions } = useRmdfLocalTileSets();
   const [cameraCenter, setCameraCenter] = useState<[number, number]>([11.5761, 48.1372]);
 
   const load = useCallback(async () => {
     setLoadState({ kind: 'loading' });
     try {
       const result = await loadRmdfManifest();
-      const downloaded = await getDownloadedTileIds(result.manifest.tiles);
-      setDownloadedIds(downloaded);
+      await reconcileLocalRmdfTiles(localStore, result.manifest);
       setLoadState({ kind: 'ready', manifest: result.manifest, deleteOnly: result.deleteOnly, warning: result.warning });
       setCameraCenter(await resolveInitialCamera(result.manifest));
     } catch (error) {
       setLoadState({ kind: 'error', message: error instanceof Error ? error.message : 'Failed to load manifest.' });
     }
-  }, []);
+  }, [localStore]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {
@@ -94,17 +95,14 @@ export default function RmdfDownloadScreen() {
   }, [load]);
 
   const manifest = loadState.kind === 'ready' ? loadState.manifest : null;
-  const effectiveDownloadedIds = useMemo(
-    () => new Set([...downloadedIds, ...downloads.completedIds]),
-    [downloadedIds, downloads.completedIds]
-  );
+  const effectiveDownloadedIds = downloadedIds;
   const split = useMemo(
     () => splitSelectedTiles(manifest?.tiles ?? [], selectedIds, effectiveDownloadedIds),
     [manifest?.tiles, selectedIds, effectiveDownloadedIds]
   );
   const selectedQueuedTiles = useMemo(
-    () => split.selectedTiles.filter((tile) => downloads.queuedIds.has(tile.filename)),
-    [split.selectedTiles, downloads.queuedIds]
+    () => split.selectedTiles.filter((tile) => queuedIds.has(tile.filename)),
+    [split.selectedTiles, queuedIds]
   );
   const selectedDeletableTiles = useMemo(() => {
     const byFilename = new globalThis.Map<string, RmdfManifestTile>();
@@ -113,8 +111,8 @@ export default function RmdfDownloadScreen() {
     return [...byFilename.values()];
   }, [split.selectedDownloadedTiles, selectedQueuedTiles]);
   const selectedDownloadableTiles = useMemo(
-    () => split.selectedMissingTiles.filter((tile) => !downloads.queuedIds.has(tile.filename) && !downloads.downloadingIds.has(tile.filename)),
-    [split.selectedMissingTiles, downloads.queuedIds, downloads.downloadingIds]
+    () => split.selectedMissingTiles.filter((tile) => !queuedIds.has(tile.filename) && !downloadingIds.has(tile.filename)),
+    [split.selectedMissingTiles, queuedIds, downloadingIds]
   );
   const selectedDownloadableBytes = useMemo(
     () => selectedDownloadableTiles.reduce((sum, tile) => sum + tile.size_bytes, 0),
@@ -127,12 +125,12 @@ export default function RmdfDownloadScreen() {
       tiles: manifest.tiles,
       downloadedIds: effectiveDownloadedIds,
       selectedIds,
-      queuedIds: downloads.queuedIds,
-      downloadingIds: downloads.downloadingIds,
-      failedIds: downloads.failedIds,
-      queuePositions: downloads.queuePositions,
+      queuedIds,
+      downloadingIds,
+      failedIds,
+      queuePositions,
     });
-  }, [manifest, effectiveDownloadedIds, selectedIds, downloads.queuedIds, downloads.downloadingIds, downloads.failedIds, downloads.queuePositions]);
+  }, [manifest, effectiveDownloadedIds, selectedIds, queuedIds, downloadingIds, failedIds, queuePositions]);
 
   const geoJson = useMemo(() => tilesToGeoJson(tileViewModels), [tileViewModels]);
 
@@ -141,19 +139,14 @@ export default function RmdfDownloadScreen() {
     const [longitude, latitude] = event.nativeEvent.lngLat;
     const tile = hitTestTile(manifest.tiles, longitude, latitude);
     if (!tile) return;
-    setSelectedIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(tile.filename)) next.delete(tile.filename);
-      else next.add(tile.filename);
-      return next;
-    });
+    setRmdfTileSelected(localStore, tile, !selectedIds.has(tile.filename));
   };
 
   const handleDownload = async () => {
     if (loadState.kind !== 'ready' || loadState.deleteOnly || selectedDownloadableTiles.length === 0) return;
     const start = async () => {
       await rmdfDownloadManager.enqueue(selectedDownloadableTiles);
-      setSelectedIds(new Set());
+      clearRmdfTileSelection(localStore, selectedDownloadableTiles.map((tile) => tile.filename));
     };
     try {
       if (await isCellularConnection()) {
@@ -188,17 +181,7 @@ export default function RmdfDownloadScreen() {
 
   const deleteSelectedTiles = async (tiles: RmdfManifestTile[]) => {
     const filenames = tiles.map((tile) => tile.filename);
-    const result = await rmdfDownloadManager.removeQueuedOrDelete(filenames);
-    setDownloadedIds((previous) => {
-      const next = new Set(previous);
-      for (const filename of result.deleted) next.delete(filename);
-      return next;
-    });
-    setSelectedIds((previous) => {
-      const next = new Set(previous);
-      for (const filename of filenames) next.delete(filename);
-      return next;
-    });
+    await rmdfDownloadManager.removeQueuedOrDelete(filenames);
   };
 
   const warning = loadState.kind === 'ready' ? loadState.warning : null;

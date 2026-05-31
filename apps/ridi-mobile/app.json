@@ -34,7 +34,8 @@
         }
       ],
       "@maplibre/maplibre-react-native",
-      "expo-background-task"
+      "expo-background-task",
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,
