@@ -2,13 +2,12 @@
 
 ## Goals
 
-Set up TinyBase as the app's local-first data layer with:
+Set up TinyBase as the app-wide state layer with two stores:
 
-- Expo SQLite persistence.
-- Zod-backed TinyBase schemas.
-- A clean app-level provider API for React components.
-- A schema evolution policy that keeps future synced data additive-only.
-- No sync implementation yet, but no choices that block sync later.
+- `localStore`: persisted locally, never synced.
+- `syncedStore`: persisted locally now, designed for future sync.
+
+Initial implementation will use the local store for RMDF download state. Sync behavior is out of scope, but the plumbing for a future synced store must exist from the start.
 
 ## Current App Context
 
@@ -16,312 +15,450 @@ Set up TinyBase as the app's local-first data layer with:
 - React Native: `0.85.3`.
 - Routing: `expo-router`.
 - TypeScript strict mode is enabled.
-- `expo-sqlite`, `tinybase`, and `zod` are not currently listed in `package.json`.
+- Existing RMDF code lives under `src/rmdf`.
+- `expo-sqlite`, `tinybase`, and `zod` need to be added.
 
 ## Target Architecture
 
 ```text
-React app
-  |
-  | TinyBaseProvider
-  v
-Typed TinyBase Store
-  |
-  | setSchema(from Zod schematizer)
-  v
-ExpoSqlitePersister
+App startup
   |
   v
-SQLite database file
+Initialize TinyBase before route rendering
+  |
+  +-- localStore
+  |     |
+  |     +-- Expo SQLite persister
+  |     +-- RMDF filesystem reconciliation
+  |
+  +-- syncedStore
+        |
+        +-- Expo SQLite persister now
+        +-- future Cloudflare Durable Object sync
 ```
 
 ## Dependencies
 
-Install the required packages with Expo-compatible versions where applicable:
+Install:
 
 ```sh
 npx expo install expo-sqlite
-pnpm add tinybase zod
+pnpm add tinybase zod ksuid
 ```
 
 Notes:
 
 - Use `npx expo install` for `expo-sqlite` because this app is on Expo SDK 56.
-- TinyBase's Expo SQLite persister imports from `tinybase/persisters/persister-expo-sqlite`.
-- TinyBase's Zod schematizer imports from `tinybase/schematizers/schematizer-zod`.
+- Use TinyBase Expo SQLite persistence from `tinybase/persisters/persister-expo-sqlite`.
+- Use the Zod schematizer from `tinybase/schematizers/schematizer-zod`.
+- Use domain-derived row IDs where possible. Use `ksuid` only when there is no stable domain ID.
+
+## Store Responsibilities
+
+### Local Store
+
+Use for device-local state that will never sync.
+
+Initial responsibilities:
+
+- RMDF tile download queue.
+- RMDF downloaded tile tracking.
+- RMDF selected/active tile state.
+- Local-only operational state that can be rebuilt or deleted without affecting other devices.
+
+Rules:
+
+- Hard deletes are allowed.
+- It may mirror filesystem state, but the filesystem remains authoritative for actual downloaded tile files.
+- On startup, TinyBase state must be reconciled with the filesystem so stale rows are removed or marked accurately.
+
+### Synced Store
+
+Use for user-owned data that should eventually sync between the user's devices.
+
+Initial responsibilities:
+
+- No domain features yet.
+- Create the store, schema, provider plumbing, and persistence now.
+
+Future sync target:
+
+- User-owned data synced between multiple devices through a central Cloudflare Durable Object sync service.
+- Shared multi-user state is out of scope for now.
+
+Rules:
+
+- Use soft deletes with `deleted_at`.
+- Do not hard-delete synced domain entities.
+- Prefer additive-only schema changes.
+- Treat unknown future fields and values as data to ignore, not as errors.
 
 ## File Layout
 
-Create a dedicated data module under `src/tinybase`:
-
 ```text
 src/tinybase/
-  schema.ts          # Zod schemas and TinyBase schema conversion
-  store.ts           # Store factory and store singleton helpers
-  persistence.ts     # SQLite database and ExpoSqlitePersister setup
+  ids.ts
   TinyBaseProvider.tsx
-  hooks.ts           # App-specific typed hooks/re-exports
-  ids.ts             # Table IDs, value IDs, and stable row ID helpers
+  hooks.ts
+
+  local/
+    schema.ts
+    store.ts
+    persistence.ts
+    rmdfReconcile.ts
+
+  synced/
+    schema.ts
+    store.ts
+    persistence.ts
 ```
 
-Keep domain-specific schemas either in `schema.ts` initially or split later into:
+Keep route and feature components unaware of store creation and persistence details.
 
-```text
-src/tinybase/schemas/
-  rides.ts
-  devices.ts
-  settings.ts
+## Startup Sequence
+
+TinyBase must load before the app renders routes so screens do not need TinyBase loading states.
+
+1. Create both stores.
+2. Apply Zod-derived TinyBase schemas.
+3. Open both SQLite databases.
+4. Create both Expo SQLite persisters.
+5. Load both persisted stores.
+6. Reconcile local RMDF TinyBase state with the filesystem.
+7. Start auto persistence for both stores.
+8. Render the app.
+
+If initialization fails, render a root-level fatal error screen instead of partial app UI.
+
+## Persistence Strategy
+
+Use one SQLite database per store.
+
+```ts
+const LOCAL_DATABASE_NAME = 'ridi-local-tinybase.db';
+const SYNCED_DATABASE_NAME = 'ridi-synced-tinybase.db';
+
+const LOCAL_STORE_TABLE_NAME = 'local_store';
+const SYNCED_STORE_TABLE_NAME = 'synced_store';
 ```
 
-## Store Type Decision
+Use TinyBase Expo SQLite persister JSON mode initially.
 
-Use a regular TinyBase `Store` for the first implementation.
+Reasons:
 
-Reason:
+- Simple setup.
+- Good fit while schemas are still small.
+- Avoids early SQL table mapping decisions.
+- Keeps a future switch to `MergeableStore` contained inside store setup.
 
-- Current scope is local persistence only.
-- TinyBase sync can use `MergeableStore` later for CRDT-style synchronization.
-- The provider and persistence modules should hide store creation so the app can switch from `createStore()` to `createMergeableStore()` later with minimal surface-area change.
-
-Future-proofing rule:
-
-- Do not import `createStore()` directly from feature components.
-- Components should consume the store through provider/hooks only.
+Use development-only logging hooks for SQL and ignored persistence errors.
 
 ## Schema Strategy
 
-Define schemas in Zod first, then derive TinyBase schemas with `createZodSchematizer()`.
-
-Example shape:
+Define Zod schemas first, then convert them to TinyBase schemas.
 
 ```ts
 import {z} from 'zod';
 import {createZodSchematizer} from 'tinybase/schematizers/schematizer-zod';
 
-export const tableSchemas = {
-  exampleEntities: z.object({
-    name: z.string(),
-    createdAt: z.string(),
-    updatedAt: z.string().optional(),
-    deletedAt: z.string().optional(),
-  }),
-};
-
-export const valueSchemas = {
-  schemaVersion: z.number().default(1),
-};
-
 const schematizer = createZodSchematizer();
 
-export const tinybaseTablesSchema =
-  schematizer.toTablesSchema(tableSchemas);
-
-export const tinybaseValuesSchema =
-  schematizer.toValuesSchema(valueSchemas);
-```
-
-Apply both schemas during store creation:
-
-```ts
-createStore().setSchema(tinybaseTablesSchema, tinybaseValuesSchema);
+export const tinybaseTablesSchema = schematizer.toTablesSchema(tableSchemas);
+export const tinybaseValuesSchema = schematizer.toValuesSchema(valueSchemas);
 ```
 
 Guidelines:
 
-- Use Zod for app-level validation before writing external or user-provided data.
-- Use TinyBase schemas for store-level type/default enforcement.
-- Prefer primitive cells: `string`, `number`, `boolean`, nullable values, arrays, and plain objects only where needed.
-- Store dates as ISO strings, not `Date` objects, because unsupported Zod types may be omitted by the schematizer.
+- Store dates as ISO strings.
+- Use snake_case for persisted cell names so future sync payloads are stable and platform-neutral.
+- Avoid Zod `date()` in TinyBase-backed schemas.
+- Use Zod validation before writing untrusted or external data.
+- Use TinyBase schemas for runtime defaults and basic cell validation.
 
-## Additive-Only Data Evolution Policy
+## Initial Local Schema
 
-Because future app versions will sync data between devices, old clients must tolerate data produced by newer clients.
+Purpose: track RMDF download state while reconciling with actual tile files.
 
-Rules:
+### Tables
 
-1. Never rename a table, row ID format, cell, or value ID.
-2. Never remove a table, cell, or value that a released app may read.
-3. Never change the meaning or type of an existing cell.
-4. Only add new optional cells or cells with safe defaults.
-5. Only add new tables that old app versions can ignore.
-6. Do not add new required cells to existing tables unless every writer supplies a default that old readers can ignore.
-7. Use tombstones instead of deletes for synced domain entities.
-8. Keep enum-like fields backward-compatible by treating unknown values as `unknown` or ignoring the row in UI code.
-9. Add migrations only for local repair/backfill, not for destructive reshaping of synced data.
+#### `rmdf_tiles`
 
-Recommended baseline fields for synced rows:
+One row per known RMDF tile.
+
+Row ID:
+
+- Domain-derived tile ID.
+- Prefer an existing stable RMDF tile key if one exists.
+- Otherwise use a deterministic ID from tile coordinates or tile URL parts.
+
+Cells:
 
 ```ts
-{
-  createdAt: z.string(),
-  updatedAt: z.string().optional(),
-  deletedAt: z.string().optional(),
-  schemaVersion: z.number().default(1),
+rmdf_tiles: z.object({
+  tile_id: z.string(),
+  source_id: z.string().optional(),
+  url: z.string().optional(),
+  local_path: z.string().optional(),
+
+  status: z.string().default('known'),
+  // known | queued | downloading | downloaded | failed | missing
+
+  selected: z.boolean().default(false),
+
+  byte_size: z.number().optional(),
+  downloaded_at: z.string().optional(),
+  last_checked_at: z.string().optional(),
+  error_message: z.string().optional(),
+})
+```
+
+Notes:
+
+- `downloaded` means TinyBase believes the file exists.
+- Filesystem reconciliation must verify that `local_path` still exists.
+- If a file is missing, either hard-delete the row or set `status = 'missing'` depending on UX needs.
+- The actual file remains outside TinyBase.
+
+#### `rmdf_download_queue`
+
+One row per queued or active download job.
+
+Row ID:
+
+- Domain-derived from tile ID, for example `tile:${tile_id}`.
+
+Cells:
+
+```ts
+rmdf_download_queue: z.object({
+  tile_id: z.string(),
+  priority: z.number().default(0),
+  state: z.string().default('queued'),
+  // queued | running | paused | failed
+
+  attempts: z.number().default(0),
+  queued_at: z.string(),
+  started_at: z.string().optional(),
+  updated_at: z.string().optional(),
+  error_message: z.string().optional(),
+})
+```
+
+Notes:
+
+- Completed jobs should be hard-deleted from this local-only queue.
+- Failed jobs can remain until retried or dismissed.
+
+### Values
+
+```ts
+localValues: {
+  local_schema_version: z.number().default(1),
+  selected_rmdf_tile_id: z.string().optional(),
+  rmdf_last_reconciled_at: z.string().optional(),
 }
 ```
 
-Use `deletedAt` as a tombstone for entities that may sync later. UI queries can filter tombstoned rows, but the data remains available for conflict resolution.
+## Initial Synced Schema
 
-## Persistence Strategy
+Purpose: establish plumbing and conventions before synced features exist.
 
-Use TinyBase's Expo SQLite persister in JSON serialization mode first.
+### Tables
 
-Reason:
+Start with no feature tables unless a concrete synced feature is added.
 
-- It is the simplest mode.
-- It persists the whole TinyBase store into a single SQLite table.
-- It avoids early commitment to SQL table mappings.
-- TinyBase documents JSON mode as compatible with regular `Store` and with persisting metadata for `MergeableStore`.
-
-Database naming:
+Add a reserved metadata table only if needed by implementation:
 
 ```ts
-const DATABASE_NAME = 'ridi-tinybase.db';
-const STORE_TABLE_NAME = 'tinybase_store';
+sync_metadata: z.object({
+  key: z.string(),
+  value: z.string().optional(),
+  updated_at: z.string().optional(),
+})
 ```
 
-Persister setup:
+Prefer TinyBase values for simple metadata.
+
+### Values
 
 ```ts
-import {openDatabaseSync} from 'expo-sqlite';
-import {createExpoSqlitePersister} from 'tinybase/persisters/persister-expo-sqlite';
-
-const db = openDatabaseSync(DATABASE_NAME);
-const persister = createExpoSqlitePersister(
-  store,
-  db,
-  STORE_TABLE_NAME,
-);
+syncedValues: {
+  synced_schema_version: z.number().default(1),
+  sync_client_id: z.string().optional(),
+  last_successful_sync_at: z.string().optional(),
+}
 ```
 
-Startup sequence:
-
-1. Create the store and apply schemas.
-2. Open the SQLite database.
-3. Create the Expo SQLite persister.
-4. Load persisted content with `await persister.load()`.
-5. Apply local migrations/backfills if needed.
-6. Start auto-save with `await persister.startAutoSave()` or `await persister.startAutoPersisting()`.
-7. Mark the TinyBase layer as ready for React rendering.
-
-Shutdown/cleanup:
-
-- Call `persister.destroy()` when the provider unmounts.
-- Stop auto-save if the provider manages explicit lifecycle boundaries.
-
-Development logging:
-
-- Pass `onSqlCommand` and `onIgnoredError` only in development builds.
-- Use the Expo SQLite devtools inspector to view the local database during development.
-
-## Provider Plan
-
-Add `TinyBaseProvider.tsx` that owns initialization and readiness.
-
-Responsibilities:
-
-- Create the store once.
-- Create and own the persister once.
-- Load persisted state before rendering children that depend on data.
-- Expose loading and error states.
-- Destroy the persister on unmount.
-
-Integration point:
-
-- Wrap the app in `app/_layout.tsx` inside existing global providers.
-- Keep route components free of persistence setup.
-
-Provider behavior:
-
-```text
-initializing -> load persisted store -> start auto-save -> ready
-             -> error if load/setup fails
-```
-
-## Hook Plan
-
-Create `src/tinybase/hooks.ts` for app usage.
-
-Export only app-approved hooks, for example:
+Future synced entity baseline:
 
 ```ts
-export {useCell, useRow, useTable, useValue} from 'tinybase/ui-react';
+{
+  created_at: z.string(),
+  updated_at: z.string().optional(),
+  deleted_at: z.string().optional(),
+  schema_version: z.number().default(1),
+}
 ```
 
-Then add typed helper hooks around common tables and values as the schema becomes concrete.
+## RMDF Filesystem Reconciliation
+
+TinyBase must not blindly trust persisted RMDF download state.
+
+On startup after loading `localStore`:
+
+1. Read known RMDF download directory contents.
+2. Build a set of actual tile file paths or tile IDs.
+3. For every `rmdf_tiles` row with `status = 'downloaded'`:
+   - if `local_path` exists, update `last_checked_at`;
+   - if missing, set `status = 'missing'` or delete the row.
+4. For files found on disk but missing from TinyBase:
+   - add a `rmdf_tiles` row if the tile ID can be derived;
+   - otherwise ignore or record a repair warning.
+5. Remove queue rows for tiles that are already downloaded.
+6. Set `rmdf_last_reconciled_at`.
+
+Open decision:
+
+- Should missing files be shown as `missing` for user awareness, or should local state be hard-deleted silently?
+
+## Additive-Only Synced Data Policy
+
+For the synced store:
+
+1. Never rename a table, row ID format, cell, or value ID after release.
+2. Never remove a table, cell, or value that a released app may read.
+3. Never change the meaning or type of an existing cell.
+4. Only add optional cells or cells with safe defaults.
+5. Only add new tables that old app versions can ignore.
+6. Do not add new required fields to existing synced tables.
+7. Use `deleted_at` tombstones instead of hard deletes.
+8. Treat unknown enum-like values as unknown/unsupported, not fatal.
+9. Use migrations only for additive backfills and local repair.
+
+The local store does not need this full policy because it is never synced, but stable schemas are still preferred.
+
+## Derived and Cache Data
+
+Derived/cache data means data that can be recreated from another source of truth.
+
+Examples that may fit the local store:
+
+- Download queue rows derived from user actions.
+- Tile file existence derived from the filesystem.
+- Last filesystem reconciliation timestamp.
+- Cached tile byte sizes from file metadata.
+- Last download error text.
+- UI selection state such as selected RMDF tile.
+
+Examples that should usually not go in synced store:
+
+- Render-only map viewport state.
+- Temporary loading flags.
+- Rebuildable aggregates.
+- Network request progress.
+- Data copied from server responses if it can be fetched again and is not user-owned.
 
 Rule:
 
-- Feature code should not know how persistence is configured.
-- Feature code should not create stores or persisters.
+- Put rebuildable operational state in `localStore`.
+- Put user-authored or user-owned durable state in `syncedStore`.
+
+## Store Creation Rules
+
+- Components must not call `createStore()` directly.
+- Components must not create persisters.
+- Components access stores through `TinyBaseProvider` and app hooks.
+- Store creation should be centralized so `syncedStore` can become a TinyBase `MergeableStore` later.
+
+## Provider Plan
+
+`TinyBaseProvider` owns both stores and both persisters.
+
+Responsibilities:
+
+- Initialize stores before rendering children.
+- Persist both stores.
+- Run RMDF filesystem reconciliation for local store.
+- Expose stores through context.
+- Destroy persisters on unmount.
+- Show root-level initialization failure if setup fails.
+
+## Hook Plan
+
+Create `src/tinybase/hooks.ts` with app-approved accessors:
+
+- `useLocalStore()`
+- `useSyncedStore()`
+- `useLocalCell(...)`
+- `useSyncedCell(...)`
+- RMDF-specific hooks as needed, such as `useRmdfTile(tileId)`.
+
+Feature code should use these wrappers instead of importing TinyBase primitives directly unless there is a clear reason.
 
 ## Migration Plan
 
-Use two separate migration concepts:
+### SQLite container migrations
 
-### SQLite container migration
+Use SQLite `PRAGMA user_version` only for database-level concerns:
 
-Use SQLite `PRAGMA user_version` only for database-level concerns, such as:
+- WAL mode.
+- Persistence table changes.
+- Future SQL helper tables.
 
-- Enabling WAL.
-- Changing the persistence table name.
-- Adding future SQL-side support tables.
+### TinyBase store migrations
 
-### TinyBase data migration
+Use TinyBase values:
 
-Use a TinyBase value such as `schemaVersion` for store data backfills.
+- `local_schema_version`
+- `synced_schema_version`
 
-Allowed migrations:
+Local migrations may hard-delete invalid local-only rows.
 
-- Add missing default cells.
-- Backfill new optional cells.
-- Normalize invalid local-only values.
+Synced migrations must be additive only.
 
-Disallowed migrations:
+## Future Sync Plan
 
-- Deleting old cells that synced clients may still use.
-- Renaming fields in place.
-- Converting a cell type in a way old app versions cannot read.
+When sync becomes in scope:
 
-## Future Sync Compatibility
-
-Do not implement sync now, but prepare for it:
-
-- Centralize store creation so `Store` can become `MergeableStore` later.
-- Use stable row IDs generated by app code, not array indexes or local counters.
-- Include creation/update/tombstone metadata on domain rows.
-- Avoid hard deletes for synced entities.
-- Treat remote/unknown fields as valid data the current UI may ignore.
-- Keep write APIs additive and defensive.
-
-When sync is in scope, evaluate TinyBase `MergeableStore` and synchronizers before changing persistence.
+1. Evaluate switching `syncedStore` from `Store` to `MergeableStore`.
+2. Keep `localStore` as a regular non-syncing store.
+3. Persist `syncedStore` locally before and after sync.
+4. Add Cloudflare Durable Object sync transport.
+5. Keep soft delete and additive schema rules.
+6. Add sync conflict tests before shipping.
 
 ## Implementation Order
 
 1. Install dependencies.
-2. Add `src/tinybase/schema.ts` with initial Zod schemas and schematizer conversion.
-3. Add `src/tinybase/store.ts` with a single store factory.
-4. Add `src/tinybase/persistence.ts` with SQLite and persister setup.
-5. Add `src/tinybase/TinyBaseProvider.tsx` with async initialization.
-6. Wrap the app in `app/_layout.tsx`.
-7. Add `src/tinybase/hooks.ts` and migrate one small read/write path to prove the setup.
-8. Add a development-only smoke test screen or log to confirm persistence survives app restart.
-9. Document schema evolution rules near the schemas.
+2. Add local and synced schema modules.
+3. Add local and synced store factories.
+4. Add local and synced persistence setup.
+5. Add RMDF filesystem reconciliation.
+6. Add `TinyBaseProvider` and block app rendering until initialization completes.
+7. Wrap `app/_layout.tsx` with the provider.
+8. Add hooks.
+9. Migrate RMDF download state into `localStore`.
+10. Verify persisted RMDF state survives restart.
+11. Verify deleted tile files are detected on startup.
 
 ## Validation Checklist
 
-- App starts with an empty database.
-- Store schema defaults are applied.
-- Data written through TinyBase appears after app restart.
-- Provider does not render data-dependent children before load completes.
-- Persistence errors are visible in development.
-- No feature component creates a store or persister directly.
-- New schema fields are optional or have safe defaults.
-- Deletes for future-synced entities use tombstones.
+- App does not render routes until both TinyBase stores are loaded.
+- Local store persists across app restarts.
+- Synced store persists locally even though sync is not active.
+- RMDF tile rows are reconciled against real files on startup.
+- Queue rows are removed for already-downloaded tiles.
+- Missing files do not leave stale `downloaded` state.
+- Components do not create stores or persisters.
+- Local hard deletes are allowed.
+- Synced entities use `deleted_at` soft deletes.
+- Domain-derived IDs are used where available.
+- `ksuid` is available for entities without domain IDs.
 
-## Open Decisions
+## Remaining Questions
 
-- Initial domain tables and values.
-- Whether to use TinyBase JSON persistence long-term or move to tabular mode for easier SQL inspection.
-- Whether the first sync implementation should use TinyBase `MergeableStore` directly or another transport layer.
-- How row IDs should be generated for each domain entity.
+1. What is the exact RMDF tile identity format available today?
+2. Should missing RMDF files be shown to the user as `missing`, or should rows be hard-deleted silently?
+3. Should `selected_rmdf_tile_id` allow only one selected tile, or can multiple tiles be selected at once?
+4. Should queued downloads survive app restart, or should the queue be rebuilt from selected/missing tiles?
+5. Should download progress percentages be persisted, or treated as transient UI state?
