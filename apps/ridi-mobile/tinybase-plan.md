@@ -61,9 +61,10 @@ Use for device-local state that will never sync.
 
 Initial responsibilities:
 
-- RMDF tile download queue.
-- RMDF downloaded tile tracking.
-- RMDF selected/active tile state.
+- RMDF tile download queue, including queued and in-progress work that survives app restart.
+- RMDF downloaded tile tracking, verified against the filesystem.
+- RMDF multi-tile selection state.
+- The global "downloading files" indicator shown on all screens.
 - Local-only operational state that can be rebuilt or deleted without affecting other devices.
 
 Rules:
@@ -187,25 +188,27 @@ One row per known RMDF tile.
 
 Row ID:
 
-- Domain-derived tile ID.
-- Prefer an existing stable RMDF tile key if one exists.
-- Otherwise use a deterministic ID from tile coordinates or tile URL parts.
+- Use `RmdfManifestTile.filename`.
+- Investigation result: current code already treats `tile.filename` as the stable tile ID.
+- `filename` is used for selection, queue membership, downloaded IDs, GeoJSON feature IDs, local file paths, and deletion.
+- Keep using this ID to avoid changing download, selection, and delete behavior.
 
 Cells:
 
 ```ts
 rmdf_tiles: z.object({
   tile_id: z.string(),
-  source_id: z.string().optional(),
-  url: z.string().optional(),
+  filename: z.string(),
+  checksum: z.string().optional(),
   local_path: z.string().optional(),
 
-  status: z.string().default('known'),
-  // known | queued | downloading | downloaded | failed | missing
+  status: z.string().default('remoteOnly'),
+  // remoteOnly | queued | downloading | downloaded | failed
 
   selected: z.boolean().default(false),
 
-  byte_size: z.number().optional(),
+  size_bytes: z.number().optional(),
+  downloaded_bytes: z.number().default(0),
   downloaded_at: z.string().optional(),
   last_checked_at: z.string().optional(),
   error_message: z.string().optional(),
@@ -214,10 +217,11 @@ rmdf_tiles: z.object({
 
 Notes:
 
-- `downloaded` means TinyBase believes the file exists.
-- Filesystem reconciliation must verify that `local_path` still exists.
-- If a file is missing, either hard-delete the row or set `status = 'missing'` depending on UX needs.
-- The actual file remains outside TinyBase.
+- `tile_id` and row ID should both be the manifest `filename`.
+- `downloaded` means TinyBase believes the final `.rmdf` file exists.
+- Filesystem reconciliation must verify that `local_path` still exists and has the expected size when the manifest is available.
+- If a downloaded file is missing, silently hard-delete the local TinyBase row or clear its downloaded state. Do not show a `missing` state to the user.
+- The actual final file and partial temp file remain outside TinyBase.
 
 #### `rmdf_download_queue`
 
@@ -232,11 +236,15 @@ Cells:
 ```ts
 rmdf_download_queue: z.object({
   tile_id: z.string(),
+  filename: z.string(),
   priority: z.number().default(0),
   state: z.string().default('queued'),
   // queued | running | paused | failed
 
   attempts: z.number().default(0),
+  expected_bytes: z.number().optional(),
+  downloaded_bytes: z.number().default(0),
+  temp_path: z.string().optional(),
   queued_at: z.string(),
   started_at: z.string().optional(),
   updated_at: z.string().optional(),
@@ -248,15 +256,25 @@ Notes:
 
 - Completed jobs should be hard-deleted from this local-only queue.
 - Failed jobs can remain until retried or dismissed.
+- Queued and partially downloaded jobs must survive app restart.
+- Partial download metadata should be persisted enough for the download manager to restart or resume from the temp file strategy supported by the current downloader.
 
 ### Values
 
 ```ts
 localValues: {
   local_schema_version: z.number().default(1),
-  selected_rmdf_tile_id: z.string().optional(),
   rmdf_last_reconciled_at: z.string().optional(),
+  rmdf_downloads_active: z.boolean().default(false),
+  rmdf_download_total_count: z.number().default(0),
+  rmdf_download_completed_count: z.number().default(0),
+  rmdf_download_total_bytes: z.number().default(0),
+  rmdf_download_completed_bytes: z.number().default(0),
+  rmdf_download_current_bytes: z.number().default(0),
+  rmdf_download_warning: z.string().optional(),
+  rmdf_download_last_summary: z.string().optional(),
 }
+```
 ```
 
 ## Initial Synced Schema
@@ -307,19 +325,19 @@ TinyBase must not blindly trust persisted RMDF download state.
 On startup after loading `localStore`:
 
 1. Read known RMDF download directory contents.
-2. Build a set of actual tile file paths or tile IDs.
-3. For every `rmdf_tiles` row with `status = 'downloaded'`:
-   - if `local_path` exists, update `last_checked_at`;
-   - if missing, set `status = 'missing'` or delete the row.
-4. For files found on disk but missing from TinyBase:
-   - add a `rmdf_tiles` row if the tile ID can be derived;
-   - otherwise ignore or record a repair warning.
-5. Remove queue rows for tiles that are already downloaded.
-6. Set `rmdf_last_reconciled_at`.
+2. Build a set of actual `.rmdf` filenames.
+3. Treat manifest `filename` as the tile ID.
+4. For every `rmdf_tiles` row with `status = 'downloaded'`:
+   - if the final file exists and has the expected size, update `last_checked_at`;
+   - if the final file is missing, silently remove the downloaded local state.
+5. For final `.rmdf` files found on disk but missing from TinyBase:
+   - add a `rmdf_tiles` row if the filename matches a manifest tile;
+   - otherwise ignore the orphaned file.
+6. Preserve queued and partial-download queue rows so downloads can restart after app relaunch.
+7. Remove queue rows only when the final tile file is already complete.
+8. Set `rmdf_last_reconciled_at`.
 
-Open decision:
-
-- Should missing files be shown as `missing` for user awareness, or should local state be hard-deleted silently?
+Decision: missing downloaded files are silently removed from TinyBase state.
 
 ## Additive-Only Synced Data Policy
 
@@ -348,7 +366,10 @@ Examples that may fit the local store:
 - Last filesystem reconciliation timestamp.
 - Cached tile byte sizes from file metadata.
 - Last download error text.
-- UI selection state such as selected RMDF tile.
+- UI selection state such as selected RMDF tiles.
+
+- Persisted global download indicator values derived from queue and active download rows.
+- Partial-download restart metadata, such as temp path and downloaded byte count.
 
 Examples that should usually not go in synced store:
 
@@ -382,6 +403,7 @@ Responsibilities:
 - Expose stores through context.
 - Destroy persisters on unmount.
 - Show root-level initialization failure if setup fails.
+- Provide the global downloading-files indicator from local TinyBase state, not from separate React-only download manager state.
 
 ## Hook Plan
 
@@ -455,10 +477,12 @@ When sync becomes in scope:
 - Domain-derived IDs are used where available.
 - `ksuid` is available for entities without domain IDs.
 
-## Remaining Questions
+## Decisions From Code Investigation
 
-1. What is the exact RMDF tile identity format available today?
-2. Should missing RMDF files be shown to the user as `missing`, or should rows be hard-deleted silently?
-3. Should `selected_rmdf_tile_id` allow only one selected tile, or can multiple tiles be selected at once?
-4. Should queued downloads survive app restart, or should the queue be rebuilt from selected/missing tiles?
-5. Should download progress percentages be persisted, or treated as transient UI state?
+- RMDF tile identity is `RmdfManifestTile.filename`.
+- Multiple tiles can be selected; keep the current multi-select behavior.
+- Download, selection, and delete UX should not change. Only move durable state into TinyBase.
+- Queued downloads must survive app restart.
+- Partial downloads can be restarted and should have enough local state to support restart.
+- Missing downloaded files are silently removed during filesystem reconciliation.
+- The global downloading indicator is controlled by local TinyBase state.
