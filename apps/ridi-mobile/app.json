@@ -33,7 +33,8 @@
           }
         }
       ],
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      "expo-background-task"
     ],
     "experiments": {
       "typedRoutes": true,
