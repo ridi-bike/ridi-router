@@ -101,12 +101,13 @@ Use a single RMDF directory in app-owned storage:
 Implementation notes:
 
 - Save the latest downloaded manifest as `manifest.json` for offline display and consistency checks.
-- Treat a tile as downloaded only if its file exists and, ideally, matches the manifest checksum.
+- Treat a tile as downloaded only if its file exists and its byte size matches `size_bytes` from the manifest.
+- Checksum verification is not required for MVP.
 - Use a temporary filename during download, then move into place after success.
 
 ```text
 tile_1908_1439.rmdf.tmp
-  -> verify size/checksum
+  -> verify size
   -> tile_1908_1439.rmdf
 ```
 
@@ -137,6 +138,10 @@ Download behavior:
 3. Download selected missing tiles from the CDN.
 4. Limit concurrent downloads to avoid slow or unstable mobile behavior.
 5. Show progress as count and bytes where available.
+6. Warn before starting downloads on cellular data.
+7. Continue downloads after the user leaves the RMDF download screen.
+8. Show a global **Downloading map data** indicator at the top of every screen while downloads are active.
+9. Show a **Downloading map data** system notification so downloads can continue if the user closes or backgrounds the app.
 
 ## Map Rendering
 
@@ -187,6 +192,12 @@ Performance notes:
 - Avoid rendering a separate React component per tile if MapLibre layers can handle it as one GeoJSON collection.
 - Keep selected and downloaded tile ids in `Set<string>` and derive feature state/properties.
 
+Default camera:
+
+1. Prefer the user's current location when location permission is granted.
+2. If location is unavailable or denied, center on the approximate center of all manifest tile bounds.
+3. Use a zoom level that makes nearby/selectable tiles visible without requiring immediate zooming.
+
 ## Screen Layout
 
 Route proposal:
@@ -216,6 +227,8 @@ Full screen map
     downloaded count / total size
     Download button
     Delete button
+global overlay on all app screens while active:
+  Downloading map data indicator
 ```
 
 Button enablement:
@@ -234,6 +247,11 @@ Actions:
 - **Download** downloads only `selectedMissingTiles`.
 - **Delete** deletes only `selectedDownloadedTiles`.
 - If both downloaded and missing tiles are selected, both buttons are enabled.
+
+Delete confirmation:
+
+- Tapping **Delete** opens a confirmation dialog before files are removed.
+- The confirmation should clearly show how many downloaded tiles will be deleted.
 
 ## File-System Service
 
@@ -268,12 +286,35 @@ Responsibilities:
 - Download many selected tiles with a concurrency limit.
 - Write temp files and atomically move into place.
 - Verify downloaded size/checksum if practical.
+- Continue active download batches after leaving the RMDF download screen.
+- Publish global download state for the app-wide indicator.
+- Publish notification state for background/closed-app download visibility.
+- Detect cellular network usage and require user confirmation before starting.
 
 ### Tile Utilities
 
 - Convert manifest tiles to GeoJSON.
 - Hit-test a coordinate against manifest tile bounds.
 - Format byte sizes and selected counts.
+
+## Background Download and Global Indicator
+
+Downloads must not be tied to the RMDF screen component lifecycle.
+
+Implementation approach:
+
+1. Create an app-level download manager/provider mounted near `apps/ridi-mobile/app/_layout.tsx`.
+2. Store active jobs, queued tiles, completed tiles, failed tiles, and byte/count progress in shared state.
+3. Keep downloads running when the RMDF screen unmounts.
+4. Render a global top overlay on every screen when a job is active: **Downloading map data** plus progress.
+5. Use a system notification titled **Downloading map data** while downloads are active.
+6. On notification tap, deep-link back to the RMDF download screen if possible.
+
+Native/platform notes:
+
+- Add the required Expo notification/background dependencies if they are not already installed.
+- Confirm iOS and Android constraints for long-running background downloads before implementation.
+- If true closed-app continuation is not fully supported by Expo APIs alone, document the limitation and implement the closest supported behavior with resumable/background-capable downloads where available.
 
 ## Native Router Integration
 
@@ -296,31 +337,44 @@ Handle these cases explicitly:
 - manifest JSON is invalid;
 - app storage directory cannot be created;
 - tile download fails;
-- downloaded tile size/checksum does not match manifest;
+- downloaded tile size does not match manifest;
 - delete fails;
-- user leaves screen during active downloads.
+- user leaves screen during active downloads;
+- app is backgrounded or closed during active downloads;
+- notification permission is denied or unavailable.
 
 UI should show:
 
 - loading state while fetching manifest;
 - retry action for manifest failures;
 - per-batch progress during downloads;
+- app-wide active download indicator;
+- system notification for active downloads;
+- cellular download warning;
+- delete confirmation before removing files;
 - summary after download/delete completes.
 
 ## Implementation Steps
 
 1. Add `expo-file-system` to `apps/ridi-mobile/package.json` if needed.
-2. Add RMDF TypeScript types and constants.
-3. Add storage helpers for the RMDF directory.
-4. Add manifest fetch/cache helpers.
-5. Add tile download/delete helpers.
-6. Add manifest-to-GeoJSON and tile hit-test helpers.
-7. Add `app/rmdf-download.tsx` with MapLibre map and overlays.
-8. Add the Settings screen button and route navigation.
-9. Wire button enablement and selected tile actions.
-10. Add basic validation and error states.
-11. Confirm route generation uses the same RMDF directory.
-12. Test on device/simulator with a small manifest and then the production-sized manifest.
+2. Add notification/background-download dependencies after confirming the Expo APIs to use.
+3. Add RMDF TypeScript types and constants.
+4. Add storage helpers for the RMDF directory.
+5. Add manifest fetch/cache helpers.
+6. Add tile download/delete helpers.
+7. Add app-level download manager/provider.
+8. Add global **Downloading map data** indicator.
+9. Add active-download system notification.
+10. Add manifest-to-GeoJSON and tile hit-test helpers.
+11. Add `app/rmdf-download.tsx` with MapLibre map and overlays.
+12. Add user-location camera initialization with manifest-center fallback.
+13. Add the Settings screen button and route navigation.
+14. Wire button enablement and selected tile actions.
+15. Add delete confirmation.
+16. Add cellular download warning.
+17. Add basic validation and error states.
+18. Confirm route generation uses the same RMDF directory.
+19. Test on device/simulator with a small manifest and then the production-sized manifest.
 
 ## Testing Plan
 
@@ -333,9 +387,13 @@ Manual tests:
 5. Tap a downloaded tile: Delete button enables, Download remains disabled.
 6. Select one missing and one downloaded tile: both buttons enable.
 7. Download selected missing tiles.
-8. Restart app and confirm downloaded state persists.
-9. Delete selected downloaded tiles.
-10. Disable network and confirm cached manifest fallback works.
+8. Leave the screen and confirm downloads continue with a global indicator.
+9. Background or close the app and confirm the download notification appears and behavior matches platform support.
+10. Restart app and confirm downloaded state persists.
+11. Delete selected downloaded tiles and confirm the delete dialog appears first.
+12. Disable network and confirm cached manifest fallback works.
+13. Deny location permission and confirm the map centers on manifest bounds.
+14. Start a download on cellular and confirm the warning appears.
 
 Automated/unit tests, if the app test setup exists or is added:
 
@@ -345,15 +403,22 @@ Automated/unit tests, if the app test setup exists or is added:
 - button enablement splits selected downloaded and missing tiles correctly;
 - storage helpers ignore non-RMDF files.
 
-## Open Questions
+## Decisions and Open Questions
 
-1. Should checksum verification be required for MVP, or is file existence plus size enough?
-2. Should the screen support offline use with only cached manifest data?
-3. Should downloads continue in the background after leaving the screen, or cancel/pause?
-4. Should we allow selecting many tiles by dragging/lasso, or only tapping one tile at a time for MVP?
-5. Should there be a confirmation dialog before deleting downloaded routing data?
-6. Should the app prevent downloading on cellular, warn first, or allow it?
-7. What should the default map camera be: user location, all manifest bounds, or a fixed region?
-8. Should empty tiles with `point_count: 0` and `line_count: 0` be downloadable/selectable?
-9. Should outdated local tiles be detected when the remote manifest version/checksum changes?
-10. Is `https://maps.ridi.bike/rmdf/{filename}` the final tile URL pattern?
+Decisions:
+
+1. MVP downloaded-state validation uses file existence plus byte size. Checksums are not required.
+2. Tile URL pattern is `https://maps.ridi.bike/rmdf/{filename}`.
+3. Downloads should continue after leaving the RMDF screen.
+4. A global **Downloading map data** indicator should appear at the top of every screen while downloads are active.
+5. A system notification titled **Downloading map data** should support ongoing downloads when the app is backgrounded or closed, subject to platform/API constraints.
+6. Delete requires confirmation.
+7. Cellular downloads are allowed only after a warning/confirmation.
+8. Default map camera uses user location first, then falls back to the approximate manifest center.
+
+Open questions:
+
+1. Should the screen support offline use with only cached manifest data?
+2. Should we allow selecting many tiles by dragging/lasso, or only tapping one tile at a time for MVP?
+3. Should outdated local tiles be detected when the remote manifest version/checksum changes?
+4. Should tiles with `point_count: 0` and `line_count: 0` be downloadable/selectable?
