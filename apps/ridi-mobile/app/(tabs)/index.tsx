@@ -126,6 +126,11 @@ export default function RideScreen() {
       layers: [...INTERACTIVE_MAP_LAYER_IDS],
     });
     const feature = features?.[0] as FeatureLike | undefined;
+
+    if (!feature) {
+      return;
+    }
+
     const selectedDetails = selectedFeatureDetails(feature);
     const selectedCoordinate = selectedFeatureCoordinate(feature) ?? { latitude, longitude };
 
