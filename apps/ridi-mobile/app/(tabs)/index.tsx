@@ -260,7 +260,7 @@ export default function RideScreen() {
 
       <Animated.View
         pointerEvents={selectedPoint ? 'auto' : 'none'}
-        className="absolute bottom-0 left-0 right-0 rounded-t-[28px] bg-neutral-950 px-5 pt-3 shadow-2xl"
+        className="absolute bottom-0 left-0 right-0 rounded-t-[28px] border border-border bg-card px-5 pt-5 shadow-2xl"
         style={[
           styles.drawer,
           {
@@ -271,26 +271,22 @@ export default function RideScreen() {
       >
         {selectedPoint ? (
           <>
-            <View className="mb-5 items-center">
-              <View className="h-1.5 w-20 rounded-full bg-neutral-500" />
-            </View>
-
             <View className="flex-row items-start justify-between gap-4">
               <View className="flex-1">
-                <Text className="text-3xl font-semibold text-white">{drawerTitle(selectedPoint)}</Text>
-                <Text className="mt-3 text-base text-neutral-300">
+                <Text className="text-3xl font-semibold text-foreground">{drawerTitle(selectedPoint)}</Text>
+                <Text className="mt-3 text-base text-muted">
                   {selectedPoint.latitude.toFixed(6)}, {selectedPoint.longitude.toFixed(6)}
                 </Text>
-                <Text className="mt-2 text-sm uppercase tracking-wider text-neutral-500">{selectedPoint.classification}</Text>
+                <Text className="mt-2 text-sm uppercase tracking-wider text-muted">{selectedPoint.classification}</Text>
               </View>
 
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close selected point details"
-                className="h-12 w-12 items-center justify-center rounded-full bg-neutral-800"
+                className="h-12 w-12 items-center justify-center rounded-full bg-background"
                 onPress={() => setSelectedPoint(null)}
               >
-                <Text className="text-4xl leading-10 text-neutral-200">×</Text>
+                <Text className="text-4xl leading-10 text-foreground">×</Text>
               </Pressable>
             </View>
 
@@ -298,8 +294,8 @@ export default function RideScreen() {
               <View className="mt-5 gap-2">
                 {selectedPoint.details.map((detail) => (
                   <View className="flex-row justify-between gap-4" key={detail.label}>
-                    <Text className="text-base capitalize text-neutral-400">{detail.label}</Text>
-                    <Text className="flex-1 text-right text-base text-neutral-100">{detail.value}</Text>
+                    <Text className="text-base capitalize text-muted">{detail.label}</Text>
+                    <Text className="flex-1 text-right text-base text-foreground">{detail.value}</Text>
                   </View>
                 ))}
               </View>
