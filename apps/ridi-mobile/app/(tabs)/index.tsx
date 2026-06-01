@@ -238,7 +238,7 @@ export default function RideScreen() {
       return;
     }
     const finish = routePointFromSelection(selectedPoint);
-    const start = userLocation ? currentLocationPoint(userLocation, manifestTiles, downloadedTileIds) : undefined;
+    const start = routeGeneration.draft.start ?? (userLocation ? currentLocationPoint(userLocation, manifestTiles, downloadedTileIds) : undefined);
     const nextDraft: RouteDraft = { ...routeGeneration.draft, start, finish, rulePresetId: routeGeneration.draft.rulePresetId ?? DEFAULT_ROUTE_RULE_PRESET_ID };
     routeGeneration.setDraft(nextDraft);
     if (!start) routeGeneration.showWarning(MISSING_START_TILE_WARNING);
@@ -333,7 +333,8 @@ export default function RideScreen() {
 
       <Animated.View pointerEvents={selectedPoint ? 'auto' : 'none'} className="absolute bottom-0 left-0 right-0 rounded-t-[28px] border border-border bg-card px-5 pt-5 shadow-2xl" style={[styles.drawer, { paddingBottom: insets.bottom + 96, maxHeight: windowHeight * 0.52, transform: [{ translateY: bottomDrawerTranslateY }] }]}>
         {selectedPoint ? <><View className="flex-row items-start justify-between gap-4"><View className="flex-1"><Text className="text-3xl font-semibold text-foreground">{drawerTitle(selectedPoint)}</Text><Text className="mt-3 text-base text-muted">{selectedPoint.latitude.toFixed(6)}, {selectedPoint.longitude.toFixed(6)}</Text><Text className="mt-2 text-sm uppercase tracking-wider text-muted">{selectedPoint.classification}</Text></View><Pressable className="h-12 w-12 items-center justify-center rounded-full bg-background" onPress={() => setMode({ kind: 'idle' })}><Text className="text-4xl leading-10 text-foreground">×</Text></Pressable></View>
-          {selectedPoint.hasDownloadedTile ? <View className="mt-4 flex-row gap-3"><Pressable className="flex-1 rounded-full bg-primary py-3" onPress={() => beginRideTo(selectedPoint)}><Text className="text-center font-semibold text-primary-foreground">Ride to</Text></Pressable>{!planningDraft.start ? <Pressable className="flex-1 rounded-full bg-background py-3" onPress={() => beginRideFrom(selectedPoint)}><Text className="text-center font-semibold text-foreground">Ride from</Text></Pressable> : null}</View> : <Text className="mt-4 rounded-2xl bg-yellow-100 p-3 text-sm font-semibold text-yellow-950">No downloaded routing tile exists for this point.</Text>}
+          <View className="mt-4 flex-row gap-3"><Pressable className="flex-1 rounded-full bg-primary py-3" onPress={() => beginRideTo(selectedPoint)}><Text className="text-center font-semibold text-primary-foreground">Ride to</Text></Pressable><Pressable className="flex-1 rounded-full bg-background py-3" onPress={() => beginRideFrom(selectedPoint)}><Text className="text-center font-semibold text-foreground">Ride from</Text></Pressable></View>
+          {!selectedPoint.hasDownloadedTile ? <Text className="mt-4 rounded-2xl bg-yellow-100 p-3 text-sm font-semibold text-yellow-950">No downloaded routing tile exists for this point.</Text> : null}
           {selectedPoint.details.length > 0 ? <ScrollView className="mt-5" contentContainerStyle={styles.detailsContent} showsVerticalScrollIndicator><View className="gap-2">{selectedPoint.details.map((detail) => <View className="flex-row justify-between gap-4" key={detail.label}><Text className="text-base capitalize text-muted">{detail.label}</Text><Text className="flex-1 text-right text-base text-foreground">{detail.value}</Text></View>)}</View></ScrollView> : null}</> : null}
       </Animated.View>
 
