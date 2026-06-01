@@ -598,6 +598,29 @@ require_rust_targets() {
     done
 }
 
+patch_rust_router_android_uniffi_library_name() {
+    local binding_file="$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile/ridi_router_mobile.kt"
+
+    if [[ ! -f "$binding_file" ]]; then
+        echo "Error: Android UniFFI binding not found: $binding_file" >&2
+        exit 1
+    fi
+
+    python3 - "$binding_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+patched = re.sub(r'return "uniffi_ridi_router_mobile"', 'return "ridi_router_mobile"', text)
+if patched == text and 'return "ridi_router_mobile"' not in text:
+    raise SystemExit(f"Could not patch UniFFI library name in {path}")
+path.write_text(patched)
+PY
+    echo "Patched Android UniFFI binding to load libridi_router_mobile.so."
+}
+
 cmd_rust_router_bindings() {
     local out_dir="$RUST_ROUTER_TARGET_DIR/bindings"
     local kotlin_out="$out_dir/kotlin"
@@ -614,6 +637,7 @@ cmd_rust_router_bindings() {
     rm -rf "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile"
     mkdir -p "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile"
     find "$kotlin_out" -type f -name '*.kt' -exec cp {} "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile/" \;
+    patch_rust_router_android_uniffi_library_name
 
     mkdir -p "$RUST_ROUTER_IOS_RUST_DIR"
     find "$RUST_ROUTER_IOS_DIR" -maxdepth 1 -type f \( -name 'ridi_router_mobile.swift' -o -name 'ridi_router_mobileFFI.*' -o -name '*.modulemap' \) -delete
