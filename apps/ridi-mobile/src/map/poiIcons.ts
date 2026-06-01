@@ -50,7 +50,7 @@ const FOOD_AND_DRINK = [
 ] as const;
 
 const BARS_AND_BEVERAGES = [
-  'bar', 'pub', 'biergarten', 'beer', 'beverages', 'alcohol', 'alcohol_shop', 'wine', 'winery', 'brewery', 'nightclub',
+  'bar', 'pub', 'biergarten', 'nightclub',
 ] as const;
 
 const SHOPS = [
@@ -69,14 +69,14 @@ const HERITAGE = ['castle', 'manor', 'mansion', 'memorial', 'ruins', 'wayside_cr
 const TRANSPORT = ['aerodrome', 'airfield', 'bus_stop', 'harbourmaster', 'marina', 'slipway', 'station', 'taxi'] as const;
 const CAR = ['atv', 'boat_storage', 'car', 'car_rental', 'car_repair', 'car_sharing', 'car_wash', 'motorcycle', 'snowmobile'] as const;
 const PARKING = ['bicycle_parking', 'motorcycle_parking', 'parking'] as const;
-const HEALTH = ['baby_hatch', 'clinic', 'emergency_phone', 'hospital'] as const;
+const HEALTH = ['baby_hatch', 'clinic', 'hospital'] as const;
 const EDUCATION = ['childcare', 'kindergarten', 'school'] as const;
 const UTILITIES = ['customs', 'district', 'fire_station', 'military', 'naval_base', 'social_facility', 'telephone', 'townhall'] as const;
 const WASTE = ['recycling', 'waste_basket', 'waste_disposal'] as const;
 const WATER_DRINKING = ['drinking_water', 'water_point', 'watering_place'] as const;
 const WATER_SANITATION = ['sanitary_dump_station', 'shower', 'toilets'] as const;
 const PICNIC = ['bench', 'firepit', 'picnic_site', 'picnic_table', 'shelter'] as const;
-const SPORTS = ['fishing', 'hunting_stand', 'pitch', 'playground', 'scuba_diving', 'stadium', 'swimming_area', 'trail_riding_station'] as const;
+const SPORTS = ['fishing', 'hunting_stand', 'pitch', 'stadium', 'trail_riding_station'] as const;
 const WORSHIP = ['cemetery', 'church', 'mosque', 'place_of_worship', 'religion', 'religious', 'shrine', 'synagogue', 'temple'] as const;
 
 export const POI_ICON_IMAGE_EXPRESSION = [
