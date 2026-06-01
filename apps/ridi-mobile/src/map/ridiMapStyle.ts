@@ -344,7 +344,7 @@ export const ridiMapStyle: MapProps["mapStyle"] = {
       type: "circle",
       source: SOURCE_ID,
       "source-layer": SOURCE_LAYER.places,
-      filter: ["==", ["get", "kind_detail"], "city"],
+      filter: ["in", ["get", "kind_detail"], ["literal", ["city", "town", "village", "hamlet"]]],
       paint: {
         "circle-color": "#3F3F3F",
         "circle-radius": 2,
@@ -414,7 +414,7 @@ export const ridiMapStyle: MapProps["mapStyle"] = {
       type: "symbol",
       source: SOURCE_ID,
       "source-layer": SOURCE_LAYER.places,
-      filter: ["==", ["get", "kind_detail"], "city"],
+      filter: ["in", ["get", "kind_detail"], ["literal", ["city", "town", "village", "hamlet"]]],
       layout: {
         "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
         "text-font": ["Open Sans Regular"],
