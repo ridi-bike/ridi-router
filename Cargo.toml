@@ -5,7 +5,6 @@ members = [
   "crates/ridi-router-routing",
   "crates/ridi-router-test-support",
   "crates/ridi-router-tiles",
-  "crates/ridi-app",
   "crates/ridi-router-mobile",
   "crates/rmdf-diff",
 ]
