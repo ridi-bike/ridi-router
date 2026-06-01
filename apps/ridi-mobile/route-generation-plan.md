@@ -10,6 +10,14 @@
 - The `All` rule uses the empty rule preset.
 - Do not generate routes unless both start and finish points are covered by downloaded RMDF tiles.
 - MVP tile validation only checks downloaded tile coverage for the start and finish coordinates. It does not check network connectivity or route corridor coverage.
+- Failed native router calls are saved as failed plans with no route rows.
+- Opening a failed plan switches to the map route review view and shows a failure details card instead of route cards.
+- Missing-tile warnings use an in-app timeout banner.
+- Saved plans can be soft-deleted with `deleted_at`.
+- The Data tab shows all non-deleted plans newest-first.
+- After generation finishes, the map switches to route review mode automatically.
+- While generation is running, the user cannot switch out of route review/generation mode.
+- Zero-route successful plans display `0 routes generated`.
 
 ## Goal
 
@@ -237,11 +245,11 @@ Implementation location:
 
 - `src/routes/rulePresets.ts`
 
-Important note:
+Rule source:
 
-- I only found `rules-default.json`, `rules-prefer-unpaved.json`, and `rules-avoid-unpaved.json` in the local repo.
-- If an explicit empty example file exists elsewhere, copy that exact object.
-- Otherwise use the empty object `{}` for `all` and verify the Rust request deserializer accepts it. If it does not, create a full default `RouterRules` object with all rule fields empty/defaulted.
+- `all` must copy `rules-empty.json` from `https://github.com/ridi-bike/ridi-router/blob/main/rule-examples/rules-empty.json`.
+- If the local checkout does not contain that file, fetch/copy it from the linked repository before implementation.
+- Do not substitute `rules-default.json` for `all`.
 
 ## Tile Coverage Guard
 
@@ -309,7 +317,8 @@ Add route display layers to the MapLibre map:
 - Render non-selected routes with a muted stroke.
 - Render selected route with a stronger stroke and higher z-order.
 - Fit camera to generated route bounds after generation or Data row selection.
-- For zero-route plans, show the start/finish markers and planning guide line, plus a `No routes found` message in the top drawer.
+- For zero-route plans, show the start/finish markers and planning guide line, plus `0 routes generated` in the top drawer.
+- For failed plans, show the start/finish markers and planning guide line, plus failure status/details in the top drawer and bottom card area.
 
 Route source shape:
 
@@ -354,6 +363,7 @@ Responsibilities:
 - Persist `plans` and `routes` rows in `syncedStore`.
 - Read persisted plans/routes for the Data tab and map review.
 - Expose selected plan and selected route index.
+- Expose a locked review/generation state so the map tab cannot exit route review mode while generation is running.
 
 ## Drawer Behavior
 
@@ -416,8 +426,9 @@ When viewing a saved plan:
   - rule name
   - generated route count
   - total distance
-- Show `No routes found` if `route_count = 0`.
-- Show `×` to close route view.
+- Show `0 routes generated` if `route_count = 0`.
+- For failed plans, show failure details in the overview.
+- Show `×` to close route view only when generation is not running.
 - Closing route view clears selected map review state but does not delete the saved plan.
 
 ### Bottom Slider: Route Review
@@ -426,7 +437,8 @@ Use a horizontal paged list at the bottom:
 
 - One card per generated route.
 - Swiping updates `selected_route_index` in `plans` and updates map styling.
-- Hide the slider for zero-route plans.
+- Hide route cards for zero-route plans and show a single `0 routes generated` card.
+- For failed plans, show a single failure details card with error code/message/details.
 
 Card details:
 
@@ -437,7 +449,11 @@ Card details:
 - Top highway/surface/smoothness stats, where useful.
 - Cluster if available.
 
-## Global Generation Notification
+## Global Banners
+
+Use in-app banners for both long-running generation and timeout warnings.
+
+### Generation Banner
 
 Show a global in-app notification while route generation is running.
 
@@ -456,6 +472,23 @@ Behavior:
 - Visible on all tabs/screens.
 - Does not block navigation.
 - `Go` remains disabled while visible.
+- While visible, the map remains locked in route review/generation mode.
+
+### Warning Banner
+
+Add a simple in-app timeout banner for warnings.
+
+Use it for:
+
+- Missing downloaded routing tile for a tapped point.
+- Missing downloaded routing tile for current location/start.
+- Missing RMDF manifest or routing tile directory.
+
+Behavior:
+
+- Appears near the top of the screen.
+- Auto-dismisses after a short timeout.
+- Can optionally include a manual close button.
 
 ## Data Tab
 
@@ -470,6 +503,13 @@ Each row should show:
 - Total distance.
 - Generation status.
 - Created time, optional.
+
+List behavior:
+
+- Show all non-deleted plans.
+- Sort newest-first by `created_at`.
+- Include a delete button on each row.
+- Delete sets `deleted_at` and `updated_at`; it does not remove rows from TinyBase.
 
 On row press:
 
@@ -499,11 +539,13 @@ On row press:
 13. App sets `isGenerating = true`.
 14. App builds `RouteRequest` JSON.
 15. App calls native `generateRouteJson`.
-16. App saves a `plans` row for the attempt.
-17. If generation succeeded, app saves zero or more `routes` rows.
-18. Data tab updates from synced TinyBase.
-19. Map enters route review mode and shows generated routes, or a zero-route overview.
-20. `isGenerating = false`.
+16. App immediately enters locked route review/generation mode and shows the generation indicator.
+17. App saves a `plans` row for the attempt.
+18. If generation succeeded, app saves zero or more `routes` rows.
+19. If generation failed, app saves the failed plan with error details and no route rows.
+20. Data tab updates from synced TinyBase.
+21. Map remains in route review mode and shows generated routes, `0 routes generated`, or a failure details card.
+22. `isGenerating = false` and route review can be closed.
 
 ## Error Handling
 
@@ -514,9 +556,9 @@ Handle these cases explicitly:
 - Tapped point has no downloaded tile: show warning toast and block route actions.
 - User clears start/finish: disable `Go` until both exist.
 - RMDF directory missing `manifest.json`: show a clear error and link user toward RMDF download.
-- Native router returns error envelope: save failed plan metadata and display `error.message`; optionally display `error.details` in development.
-- Native router succeeds with no routes: save succeeded plan with `route_count = 0` and no `routes` rows.
-- App navigates away during generation: banner remains visible and result still lands in synced TinyBase.
+- Native router returns error envelope: save failed plan metadata, display `error.message`, and show failure details when opening the plan.
+- Native router succeeds with no routes: save succeeded plan with `route_count = 0` and no `routes` rows; display `0 routes generated`.
+- App navigates away during generation: banner remains visible, but map generation/review state cannot be closed until completion.
 
 ## Implementation Phases
 
@@ -526,6 +568,7 @@ Handle these cases explicitly:
 - Export typed helpers/hooks for plans and routes.
 - Use additive synced schema practices from `AGENTS.md`.
 - Use soft deletes via `deleted_at`.
+- Add soft-delete helper for plans that sets `deleted_at` instead of deleting rows.
 
 ### Phase 2: Route Domain and Persistence
 
@@ -561,6 +604,8 @@ Handle these cases explicitly:
 - Save plan and routes to synced TinyBase.
 - Add global generation banner.
 - Add error display.
+- Switch to locked route review/generation mode immediately after `Go`.
+- Persist failed native generations as failed plans with error details.
 
 ### Phase 6: Generated Route Rendering
 
@@ -570,12 +615,14 @@ Handle these cases explicitly:
 - Add route review top drawer and close behavior.
 - Add bottom route slider.
 - Handle zero-route saved plans.
+- Handle failed saved plans with a failure details card.
 
 ### Phase 7: Data Tab
 
-- Render synced `plans` rows.
+- Render non-deleted synced `plans` rows newest-first.
 - Navigate from row press back to map route review.
 - Keep selected route index in synced `plans.selected_route_index`.
+- Add a delete button that soft-deletes the plan by setting `deleted_at`.
 
 ## Testing Checklist
 
@@ -597,6 +644,10 @@ Manual checks:
 - Global generation banner appears on map, data, and settings tabs.
 - Generated routes persist in synced TinyBase.
 - Zero-route generation persists a plan with no route rows.
+- Failed generation persists a failed plan and opens with a failure details card.
+- During generation, route review/generation mode cannot be closed.
+- Data tab lists non-deleted plans newest-first.
+- Delete button soft-deletes a plan with `deleted_at`.
 - Data tab gets one row per saved plan.
 - Pressing Data row returns to map and opens review UI.
 - Swiping route cards changes selected route line and updates selected route index.
@@ -617,7 +668,4 @@ Automated checks:
 
 ## Remaining Questions
 
-1. Where is the exact “empty example rule file”? I only found `rules-default.json`, `rules-prefer-unpaved.json`, and `rules-avoid-unpaved.json` locally.
-2. What toast system should we use for warnings? There is no obvious toast component in the app yet.
-3. Should failed native generation attempts be saved as failed plans, or only successful/zero-route plans?
-4. Should the Data tab include soft-deleted plans behind a filter, or hide them always for MVP?
+No blocking product questions remain. Implementation should still verify the exact `rules-empty.json` contents from GitHub before coding.
