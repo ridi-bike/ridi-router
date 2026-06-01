@@ -7,9 +7,18 @@ const SOURCE_LAYER = {
   earth: "earth",
   landuse: "landuse",
   places: "places",
+  pois: "pois",
   roads: "roads",
   water: "water",
 } as const;
+
+export const INTERACTIVE_MAP_LAYER_IDS = [
+  "poi_names",
+  "poi_dots",
+  "city_names",
+  "city_dots",
+  "country_names",
+] as const;
 
 export const ridiMapStyle: MapProps["mapStyle"] = {
   version: 8,
@@ -339,6 +348,40 @@ export const ridiMapStyle: MapProps["mapStyle"] = {
         "circle-radius": 2,
         "circle-stroke-color": "#FFFFFF",
         "circle-stroke-width": 0.75,
+      },
+    },
+    {
+      id: "poi_dots",
+      type: "circle",
+      source: SOURCE_ID,
+      "source-layer": SOURCE_LAYER.pois,
+      minzoom: 12,
+      filter: ["has", "name"],
+      paint: {
+        "circle-color": "#C35DAD",
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 16, 4.5],
+        "circle-stroke-color": "#3F3F3F",
+        "circle-stroke-width": 1.25,
+      },
+    },
+    {
+      id: "poi_names",
+      type: "symbol",
+      source: SOURCE_ID,
+      "source-layer": SOURCE_LAYER.pois,
+      minzoom: 13,
+      filter: ["has", "name"],
+      layout: {
+        "text-field": ["coalesce", ["get", "name:en"], ["get", "name"]],
+        "text-font": ["Open Sans Regular"],
+        "text-size": 12,
+        "text-offset": [0, 1.1],
+        "text-anchor": "top",
+      },
+      paint: {
+        "text-color": "#4B1F45",
+        "text-halo-color": "#DCB372",
+        "text-halo-width": 1.5,
       },
     },
     {
