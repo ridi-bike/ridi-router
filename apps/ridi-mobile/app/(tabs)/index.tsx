@@ -264,7 +264,7 @@ export default function RideScreen() {
         style={[
           styles.drawer,
           {
-            paddingBottom: insets.bottom + 20,
+            paddingBottom: insets.bottom + 56,
             transform: [{ translateY: drawerTranslateY }],
           },
         ]}
