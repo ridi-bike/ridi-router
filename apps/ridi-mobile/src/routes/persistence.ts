@@ -1,4 +1,3 @@
-import KSUID from 'ksuid';
 import type { Store } from 'tinybase';
 
 import { getRouteRulePreset } from './rulePresets';
@@ -7,6 +6,23 @@ import type { NormalizedRoute, RouteDraft, RoutePlanRow, RouteRow } from './type
 export const ROUTE_PLANS_TABLE = 'plans';
 export const ROUTES_TABLE = 'routes';
 const SCHEMA_VERSION = 1;
+
+function randomHex(bytes: number): string {
+  const buffer = new Uint8Array(bytes);
+  const cryptoLike = globalThis.crypto as { getRandomValues?: (array: Uint8Array) => Uint8Array } | undefined;
+  if (cryptoLike?.getRandomValues) {
+    cryptoLike.getRandomValues(buffer);
+  } else {
+    for (let index = 0; index < buffer.length; index += 1) {
+      buffer[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(buffer, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function createRoutePlanId(createdAt: string): string {
+  return `plan:${createdAt.replace(/[^0-9]/g, '')}:${randomHex(10)}`;
+}
 
 function cleanRow(row: Record<string, unknown>): Record<string, string | number | boolean> {
   return Object.fromEntries(Object.entries(row).filter(([, value]) => value !== undefined)) as Record<string, string | number | boolean>;
@@ -62,7 +78,7 @@ export function routeRowToNormalized(row: RouteRow): NormalizedRoute {
 
 export function persistRouteGeneration(args: PersistArgs): RoutePlanRow {
   const now = new Date().toISOString();
-  const planId = KSUID.randomSync().string;
+  const planId = createRoutePlanId(now);
   const preset = getRouteRulePreset(args.draft.rulePresetId);
   const totalDistance = args.status === 'succeeded' ? args.routes.reduce((sum, route) => sum + route.lengthM, 0) : 0;
   const plan: RoutePlanRow = {
