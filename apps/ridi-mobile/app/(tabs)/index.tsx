@@ -11,6 +11,7 @@ type SelectedPoint = {
   latitude: number;
   longitude: number;
   kind: SelectedFeatureKind;
+  classification: string;
   name?: string;
   details: DetailRow[];
 };
@@ -29,7 +30,22 @@ type FeatureLike = {
   properties?: Record<string, unknown> | null;
 };
 
-const DETAIL_FIELDS = ['kind', 'kind_detail', 'cuisine', 'sport', 'religion', 'shop', 'tourism', 'amenity'] as const;
+const DETAIL_FIELD_ORDER = [
+  'name',
+  'name:en',
+  'kind',
+  'kind_detail',
+  'amenity',
+  'tourism',
+  'shop',
+  'cuisine',
+  'sport',
+  'religion',
+  'population',
+  'capital',
+  'wikidata',
+  'wikipedia',
+] as const;
 
 function stringValue(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim().length > 0) {
@@ -47,16 +63,68 @@ function featureName(properties: Record<string, unknown>): string | undefined {
   return stringValue(properties['name:en']) ?? stringValue(properties.name);
 }
 
-function detailRows(properties: Record<string, unknown>, fields: readonly string[]): DetailRow[] {
-  return fields.flatMap((field) => {
-    const value = stringValue(properties[field]);
-    return value ? [{ label: field.replaceAll('_', ' '), value }] : [];
-  });
+function detailLabel(field: string): string {
+  return field.replaceAll('_', ' ').replaceAll(':', ' ');
 }
 
-function selectedFeatureDetails(feature: FeatureLike | undefined): Pick<SelectedPoint, 'kind' | 'name' | 'details'> {
+function allDetailRows(feature: FeatureLike, properties: Record<string, unknown>): DetailRow[] {
+  const rows: DetailRow[] = [];
+  const addedFields = new Set<string>();
+
+  if (feature.layer?.id) {
+    rows.push({ label: 'map layer', value: feature.layer.id });
+  }
+
+  for (const field of DETAIL_FIELD_ORDER) {
+    const value = stringValue(properties[field]);
+
+    if (value) {
+      rows.push({ label: detailLabel(field), value });
+      addedFields.add(field);
+    }
+  }
+
+  for (const [field, rawValue] of Object.entries(properties)) {
+    if (addedFields.has(field) || field.startsWith('name:')) {
+      continue;
+    }
+
+    const value = stringValue(rawValue);
+
+    if (value) {
+      rows.push({ label: detailLabel(field), value });
+    }
+  }
+
+  return rows;
+}
+
+function poiClassification(properties: Record<string, unknown>): string {
+  return (
+    stringValue(properties.kind_detail) ??
+    stringValue(properties.amenity) ??
+    stringValue(properties.tourism) ??
+    stringValue(properties.shop) ??
+    stringValue(properties.kind) ??
+    'POI'
+  );
+}
+
+function nameClassification(feature: FeatureLike, properties: Record<string, unknown>): string {
+  if (feature.layer?.id === 'country_names') {
+    return 'Country';
+  }
+
+  if (feature.layer?.id === 'city_names' || feature.layer?.id === 'city_dots') {
+    return 'City';
+  }
+
+  return stringValue(properties.kind_detail) ?? stringValue(properties.kind) ?? 'Place name';
+}
+
+function selectedFeatureDetails(feature: FeatureLike | undefined): Pick<SelectedPoint, 'kind' | 'classification' | 'name' | 'details'> {
   if (!feature?.layer?.id || !feature.properties) {
-    return { kind: 'coordinate', details: [] };
+    return { kind: 'coordinate', classification: 'Coordinate', details: [] };
   }
 
   const name = featureName(feature.properties);
@@ -64,15 +132,17 @@ function selectedFeatureDetails(feature: FeatureLike | undefined): Pick<Selected
   if (feature.layer.id === 'poi_names' || feature.layer.id === 'poi_dots') {
     return {
       kind: 'poi',
+      classification: `POI · ${poiClassification(feature.properties)}`,
       name,
-      details: detailRows(feature.properties, DETAIL_FIELDS),
+      details: allDetailRows(feature, feature.properties),
     };
   }
 
   return {
     kind: 'name',
+    classification: nameClassification(feature, feature.properties),
     name,
-    details: detailRows(feature.properties, ['kind', 'kind_detail']),
+    details: allDetailRows(feature, feature.properties),
   };
 }
 
@@ -193,7 +263,7 @@ export default function RideScreen() {
                 <Text className="mt-3 text-base text-neutral-300">
                   {selectedPoint.latitude.toFixed(6)}, {selectedPoint.longitude.toFixed(6)}
                 </Text>
-                <Text className="mt-2 text-sm uppercase tracking-wider text-neutral-500">{selectedPoint.kind}</Text>
+                <Text className="mt-2 text-sm uppercase tracking-wider text-neutral-500">{selectedPoint.classification}</Text>
               </View>
 
               <Pressable
