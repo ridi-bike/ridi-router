@@ -402,7 +402,7 @@ private fun findLibraryName(componentName: String): String {
     if (libOverride != null) {
         return libOverride
     }
-    return "uniffi_ridi_router_mobile"
+    return "ridi_router_mobile"
 }
 
 private inline fun <reified Lib : Library> loadIndirect(componentName: String): Lib =
