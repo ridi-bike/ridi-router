@@ -1,5 +1,7 @@
 import type { MapProps } from "@maplibre/maplibre-react-native";
 
+import { POI_ICON_COLOR_EXPRESSION, POI_ICON_IMAGE_EXPRESSION } from "@/map/poiIcons";
+
 const PMTILES_URL = "https://maps.ridi.bike/map.pmtiles";
 const SOURCE_ID = "protomaps-basemap-v4";
 const SOURCE_LAYER = {
@@ -352,16 +354,21 @@ export const ridiMapStyle: MapProps["mapStyle"] = {
     },
     {
       id: "poi_dots",
-      type: "circle",
+      type: "symbol",
       source: SOURCE_ID,
       "source-layer": SOURCE_LAYER.pois,
       minzoom: 12,
       filter: ["has", "name"],
+      layout: {
+        "icon-allow-overlap": true,
+        "icon-anchor": "center",
+        "icon-image": POI_ICON_IMAGE_EXPRESSION as never,
+        "icon-size": ["interpolate", ["linear"], ["zoom"], 12, 0.22, 16, 0.32],
+      },
       paint: {
-        "circle-color": "#C35DAD",
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 16, 4.5],
-        "circle-stroke-color": "#3F3F3F",
-        "circle-stroke-width": 1.25,
+        "icon-color": POI_ICON_COLOR_EXPRESSION as never,
+        "icon-halo-color": "#FFFFFF",
+        "icon-halo-width": 1.25,
       },
     },
     {
@@ -379,7 +386,7 @@ export const ridiMapStyle: MapProps["mapStyle"] = {
         "text-anchor": "top",
       },
       paint: {
-        "text-color": "#4B1F45",
+        "text-color": POI_ICON_COLOR_EXPRESSION as never,
         "text-halo-color": "#DCB372",
         "text-halo-width": 1.5,
       },

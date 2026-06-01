@@ -5,6 +5,7 @@ import { Animated, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions,
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { INTERACTIVE_MAP_LAYER_IDS, ridiMapStyle } from '@/map/ridiMapStyle';
+import { POI_ICON_IMAGES } from '@/map/poiIcons';
 
 type SelectedFeatureKind = 'coordinate' | 'poi' | 'name';
 
@@ -292,6 +293,7 @@ export default function RideScreen() {
           images={{
             'military-hatch': require('@/assets/map/pattern-military-hatch.png'),
             'park-dot': require('@/assets/map/pattern-park-dot.png'),
+            ...POI_ICON_IMAGES,
           }}
         />
         <Camera ref={cameraRef} initialViewState={{ center: [11.5761, 48.1372], zoom: 10 }} />
