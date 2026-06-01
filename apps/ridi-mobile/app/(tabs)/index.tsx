@@ -11,7 +11,7 @@ import { readCachedManifest } from '@/rmdf/manifest';
 import type { RmdfManifestTile } from '@/rmdf/types';
 import { endpointBounds, formatCoordinate, formatDistance, planFinishPoint, planStartPoint, routeBounds } from '@/routes/format';
 import { generatedRoutesGeoJson, planningGuideGeoJson } from '@/routes/geojson';
-import { getRouteRulePreset, ROUTE_RULE_PRESET_ORDER, ROUTE_RULE_PRESETS } from '@/routes/rulePresets';
+import { DEFAULT_ROUTE_RULE_PRESET_ID, getRouteRulePreset, ROUTE_RULE_PRESET_ORDER, ROUTE_RULE_PRESETS } from '@/routes/rulePresets';
 import { routeRowToNormalized } from '@/routes/persistence';
 import { MISSING_FINISH_TILE_WARNING, MISSING_START_TILE_WARNING, MISSING_TILE_WARNING, validateDownloadedTileCoverage } from '@/routes/tileCoverage';
 import type { RouteDraft, RouteFeatureKind, RoutePoint } from '@/routes/types';
@@ -238,7 +238,7 @@ export default function RideScreen() {
     }
     const finish = routePointFromSelection(selectedPoint);
     const start = userLocation ? currentLocationPoint(userLocation, manifestTiles, downloadedTileIds) : undefined;
-    const nextDraft: RouteDraft = { ...routeGeneration.draft, start, finish, rulePresetId: routeGeneration.draft.rulePresetId ?? 'all' };
+    const nextDraft: RouteDraft = { ...routeGeneration.draft, start, finish, rulePresetId: routeGeneration.draft.rulePresetId ?? DEFAULT_ROUTE_RULE_PRESET_ID };
     routeGeneration.setDraft(nextDraft);
     if (!start) routeGeneration.showWarning(MISSING_START_TILE_WARNING);
     setMode({ kind: 'planning', draft: nextDraft });
@@ -250,7 +250,7 @@ export default function RideScreen() {
       return;
     }
     const start = routePointFromSelection(selectedPoint);
-    const nextDraft: RouteDraft = { ...routeGeneration.draft, start, rulePresetId: routeGeneration.draft.rulePresetId ?? 'all' };
+    const nextDraft: RouteDraft = { ...routeGeneration.draft, start, rulePresetId: routeGeneration.draft.rulePresetId ?? DEFAULT_ROUTE_RULE_PRESET_ID };
     routeGeneration.setDraft(nextDraft);
     setMode({ kind: 'planning', draft: nextDraft });
   };
@@ -267,7 +267,7 @@ export default function RideScreen() {
     if (!startCoverage.ok) { routeGeneration.showWarning(MISSING_START_TILE_WARNING); return; }
     const finishCoverage = validateDownloadedTileCoverage({ tiles: manifestTiles, downloadedTileIds, latitude: draft.finish.latitude, longitude: draft.finish.longitude });
     if (!finishCoverage.ok) { routeGeneration.showWarning(MISSING_FINISH_TILE_WARNING); return; }
-    const completeDraft: Required<RouteDraft> = { start: { ...draft.start, tileId: startCoverage.tileId }, finish: { ...draft.finish, tileId: finishCoverage.tileId }, rulePresetId: draft.rulePresetId ?? 'all' };
+    const completeDraft: Required<RouteDraft> = { start: { ...draft.start, tileId: startCoverage.tileId }, finish: { ...draft.finish, tileId: finishCoverage.tileId }, rulePresetId: draft.rulePresetId ?? DEFAULT_ROUTE_RULE_PRESET_ID };
     setMode({ kind: 'generating', draft: completeDraft });
     const plan = await routeGeneration.generate(completeDraft);
     if (plan) setMode({ kind: 'route_review', planId: plan.plan_id, selectedRouteIndex: 0 });
@@ -327,9 +327,9 @@ export default function RideScreen() {
               return <View key={field} className="mt-3 flex-row items-center rounded-2xl bg-background px-4 py-3"><View className="flex-1"><Text className="text-xs uppercase tracking-wider text-muted">{field}</Text><Text className="mt-1 text-base font-semibold text-foreground" numberOfLines={1}>{point ? point.label : field === 'start' ? 'Choose start' : 'Choose finish'}</Text></View>{point ? <Pressable className="h-9 w-9 items-center justify-center rounded-full bg-card" onPress={() => setDraftAndMode({ ...planningDraft, [field]: undefined })}><Text className="text-2xl text-foreground">×</Text></Pressable> : null}</View>;
             })}
             <View className="mt-4 flex-row gap-2">
-              {ROUTE_RULE_PRESET_ORDER.map((id) => <Pressable key={id} className={(planningDraft.rulePresetId ?? 'all') === id ? 'flex-1 rounded-full bg-primary px-2 py-3' : 'flex-1 rounded-full bg-background px-2 py-3'} onPress={() => setDraftAndMode({ ...planningDraft, rulePresetId: id })}><Text className={(planningDraft.rulePresetId ?? 'all') === id ? 'text-center text-xs font-semibold text-primary-foreground' : 'text-center text-xs font-semibold text-foreground'}>{ROUTE_RULE_PRESETS[id].label}</Text></Pressable>)}
+              {ROUTE_RULE_PRESET_ORDER.map((id) => <Pressable key={id} className={(planningDraft.rulePresetId ?? DEFAULT_ROUTE_RULE_PRESET_ID) === id ? 'flex-1 rounded-full bg-primary px-2 py-3' : 'flex-1 rounded-full bg-background px-2 py-3'} onPress={() => setDraftAndMode({ ...planningDraft, rulePresetId: id })}><Text className={(planningDraft.rulePresetId ?? DEFAULT_ROUTE_RULE_PRESET_ID) === id ? 'text-center text-xs font-semibold text-primary-foreground' : 'text-center text-xs font-semibold text-foreground'}>{ROUTE_RULE_PRESETS[id].label}</Text></Pressable>)}
             </View>
-            <Pressable className={goEnabled ? 'mt-4 rounded-full bg-primary py-4' : 'mt-4 rounded-full bg-muted/30 py-4'} disabled={!goEnabled} onPress={handleGo}><Text className={goEnabled ? 'text-center text-base font-semibold text-primary-foreground' : 'text-center text-base font-semibold text-muted'}>{routeGeneration.isGenerating ? 'Generating…' : `Go · ${getRouteRulePreset(planningDraft.rulePresetId ?? 'all').label}`}</Text></Pressable>
+            <Pressable className={goEnabled ? 'mt-4 rounded-full bg-primary py-4' : 'mt-4 rounded-full bg-muted/30 py-4'} disabled={!goEnabled} onPress={handleGo}><Text className={goEnabled ? 'text-center text-base font-semibold text-primary-foreground' : 'text-center text-base font-semibold text-muted'}>{routeGeneration.isGenerating ? 'Generating…' : `Go · ${getRouteRulePreset(planningDraft.rulePresetId ?? DEFAULT_ROUTE_RULE_PRESET_ID).label}`}</Text></Pressable>
           </View>
         )}
       </Animated.View>
