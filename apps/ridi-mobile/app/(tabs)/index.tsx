@@ -1,4 +1,5 @@
-import { Camera, Images, Map, Marker, type MapProps, type MapRef } from '@maplibre/maplibre-react-native';
+import { Camera, Images, Map, Marker, type CameraRef, type MapProps, type MapRef } from '@maplibre/maplibre-react-native';
+import * as Location from 'expo-location';
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +20,11 @@ type SelectedPoint = {
 type DetailRow = {
   label: string;
   value: string;
+};
+
+type UserLocation = {
+  latitude: number;
+  longitude: number;
 };
 
 type FeatureLike = {
@@ -179,9 +185,11 @@ function drawerTitle(selectedPoint: SelectedPoint): string {
 export default function RideScreen() {
   const { height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const cameraRef = useRef<CameraRef>(null);
   const mapRef = useRef<MapRef>(null);
   const [drawerTranslateY] = useState(() => new Animated.Value(320));
   const [selectedPoint, setSelectedPoint] = useState<SelectedPoint | null>(null);
+  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
 
   useEffect(() => {
     Animated.timing(drawerTranslateY, {
@@ -190,6 +198,46 @@ export default function RideScreen() {
       useNativeDriver: true,
     }).start();
   }, [drawerTranslateY, selectedPoint]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function requestLocationAndCenterMap() {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+
+      if (status !== Location.PermissionStatus.GRANTED) {
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      if (!isMounted) {
+        return;
+      }
+
+      const nextUserLocation = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+
+      setUserLocation(nextUserLocation);
+      cameraRef.current?.easeTo({
+        center: [nextUserLocation.longitude, nextUserLocation.latitude],
+        duration: 700,
+        zoom: 14,
+      });
+    }
+
+    requestLocationAndCenterMap().catch(() => {
+      // Keep the map usable if location services fail or are unavailable.
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleMapPress: NonNullable<MapProps['onPress']> = async (event) => {
     const [longitude, latitude] = event.nativeEvent.lngLat;
@@ -246,7 +294,14 @@ export default function RideScreen() {
             'park-dot': require('@/assets/map/pattern-park-dot.png'),
           }}
         />
-        <Camera initialViewState={{ center: [11.5761, 48.1372], zoom: 10 }} />
+        <Camera ref={cameraRef} initialViewState={{ center: [11.5761, 48.1372], zoom: 10 }} />
+        {userLocation ? (
+          <Marker anchor="center" id="user-location" lngLat={[userLocation.longitude, userLocation.latitude]}>
+            <View className="h-6 w-6 items-center justify-center rounded-full bg-blue-500/25">
+              <View className="h-3.5 w-3.5 rounded-full border-2 border-white bg-blue-500" />
+            </View>
+          </Marker>
+        ) : null}
         {selectedPoint ? (
           <Marker anchor="bottom" id="selected-point" lngLat={[selectedPoint.longitude, selectedPoint.latitude]}>
             <View className="items-center">
