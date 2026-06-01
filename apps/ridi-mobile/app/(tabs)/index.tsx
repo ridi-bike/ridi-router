@@ -123,13 +123,13 @@ function nameClassification(feature: FeatureLike, properties: Record<string, unk
 }
 
 function selectedFeatureDetails(feature: FeatureLike | undefined): Pick<SelectedPoint, 'kind' | 'classification' | 'name' | 'details'> {
-  if (!feature?.layer?.id || !feature.properties) {
+  if (!feature?.properties) {
     return { kind: 'coordinate', classification: 'Coordinate', details: [] };
   }
 
   const name = featureName(feature.properties);
 
-  if (feature.layer.id === 'poi_names' || feature.layer.id === 'poi_dots') {
+  if (feature.layer?.id === 'poi_names' || feature.layer?.id === 'poi_dots') {
     return {
       kind: 'poi',
       classification: `POI · ${poiClassification(feature.properties)}`,
@@ -192,10 +192,22 @@ export default function RideScreen() {
 
   const handleMapPress: NonNullable<MapProps['onPress']> = async (event) => {
     const [longitude, latitude] = event.nativeEvent.lngLat;
-    const features = await mapRef.current?.queryRenderedFeatures(event.nativeEvent.point, {
-      layers: [...INTERACTIVE_MAP_LAYER_IDS],
-    });
-    const feature = features?.[0] as FeatureLike | undefined;
+    let feature: FeatureLike | undefined;
+
+    for (const layerId of INTERACTIVE_MAP_LAYER_IDS) {
+      const features = await mapRef.current?.queryRenderedFeatures(event.nativeEvent.point, {
+        layers: [layerId],
+      });
+      const layerFeature = features?.[0] as FeatureLike | undefined;
+
+      if (layerFeature?.properties) {
+        feature = {
+          ...layerFeature,
+          layer: { ...layerFeature.layer, id: layerFeature.layer?.id ?? layerId },
+        };
+        break;
+      }
+    }
 
     if (!feature) {
       return;
