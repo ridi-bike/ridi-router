@@ -1,5 +1,7 @@
 import { Camera, GeoJSONSource, Images, Layer, Map, Marker, type CameraRef, type MapProps, type MapRef } from '@maplibre/maplibre-react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
+import * as Sharing from 'expo-sharing';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -14,7 +16,7 @@ import { generatedRoutesGeoJson, planningGuideGeoJson } from '@/routes/geojson';
 import { DEFAULT_ROUTE_RULE_PRESET_ID, getRouteRulePreset, ROUTE_RULE_PRESET_ORDER, ROUTE_RULE_PRESETS } from '@/routes/rulePresets';
 import { routeRowToNormalized } from '@/routes/persistence';
 import { MISSING_FINISH_TILE_WARNING, MISSING_START_TILE_WARNING, MISSING_TILE_WARNING, validateDownloadedTileCoverage } from '@/routes/tileCoverage';
-import type { RouteDraft, RouteFeatureKind, RoutePoint } from '@/routes/types';
+import type { NormalizedRoute, RouteDraft, RouteFeatureKind, RoutePoint } from '@/routes/types';
 import { useRouteGeneration } from '@/routes/RouteGenerationProvider';
 import { useRmdfDownloadedTileIds, useSyncedPlan, useSyncedRoutesForPlan } from '@/tinybase/hooks';
 
@@ -49,6 +51,7 @@ type FeatureLike = {
 };
 
 const DETAIL_FIELD_ORDER = ['name', 'name:en', 'kind', 'kind_detail', 'amenity', 'tourism', 'shop', 'cuisine', 'sport', 'religion', 'population', 'capital', 'wikidata', 'wikipedia'] as const;
+const GPX_EXPORT_DIRECTORY = 'ridi-routes/gpx/';
 
 function stringValue(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim().length > 0) return value;
@@ -147,6 +150,31 @@ function topStat(stats: unknown): string | null {
   return `${name} ${Math.round(Number(value?.percentage ?? 0))}%`;
 }
 
+function xmlEscape(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+}
+
+function fileSafe(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'route';
+}
+
+function routeGpx(route: NormalizedRoute, name: string): string {
+  const points = route.coords.map(([latitude, longitude]) => `    <trkpt lat="${latitude}" lon="${longitude}" />`).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Ridi" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${xmlEscape(name)}</name>
+  </metadata>
+  <trk>
+    <name>${xmlEscape(name)}</name>
+    <trkseg>
+${points}
+    </trkseg>
+  </trk>
+</gpx>
+`;
+}
+
 export default function RideScreen() {
   const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -162,6 +190,7 @@ export default function RideScreen() {
   const selectedPlan = useSyncedPlan(routeGeneration.selectedPlanId);
   const selectedRouteRows = useSyncedRoutesForPlan(routeGeneration.selectedPlanId);
   const selectedRoutes = useMemo(() => selectedRouteRows.map(routeRowToNormalized), [selectedRouteRows]);
+  const sortedRoutes = useMemo(() => [...selectedRoutes].sort((a, b) => a.lengthM - b.lengthM), [selectedRoutes]);
 
   const planningDraft = mode.kind === 'planning' || mode.kind === 'generating' ? mode.draft : routeGeneration.draft;
   const reviewStart = selectedPlan ? planStartPoint(selectedPlan) : undefined;
@@ -281,6 +310,25 @@ export default function RideScreen() {
     setMode({ kind: 'idle' });
   };
 
+  const downloadGpx = async (route: NormalizedRoute) => {
+    if (!selectedPlan || !FileSystem.documentDirectory) return;
+    const routeName = `${selectedPlan.start_label} to ${selectedPlan.finish_label} - route ${route.routeIndex + 1}`;
+    const directory = `${FileSystem.documentDirectory}${GPX_EXPORT_DIRECTORY}`;
+    const fileUri = `${directory}${fileSafe(routeName)}.gpx`;
+    try {
+      const directoryInfo = await FileSystem.getInfoAsync(directory);
+      if (!directoryInfo.exists) await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+      await FileSystem.writeAsStringAsync(fileUri, routeGpx(route, routeName));
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, { dialogTitle: 'Download GPX', mimeType: 'application/gpx+xml' });
+      } else {
+        routeGeneration.showWarning(`GPX saved to ${fileUri}`);
+      }
+    } catch {
+      routeGeneration.showWarning('Could not create GPX file.');
+    }
+  };
+
 
   const goEnabled = !!planningDraft.start && !!planningDraft.finish && !routeGeneration.isGenerating;
   const selectedPoint = mode.kind === 'point_selected' ? mode.selectedPoint : null;
@@ -338,7 +386,7 @@ export default function RideScreen() {
           {selectedPoint.details.length > 0 ? <ScrollView className="mt-5" contentContainerStyle={styles.detailsContent} showsVerticalScrollIndicator><View className="gap-2">{selectedPoint.details.map((detail) => <View className="flex-row justify-between gap-4" key={detail.label}><Text className="text-base capitalize text-muted">{detail.label}</Text><Text className="flex-1 text-right text-base text-foreground">{detail.value}</Text></View>)}</View></ScrollView> : null}</> : null}
       </Animated.View>
 
-      {selectedPlan ? <View className="absolute bottom-24 left-0 right-0"><FlatList horizontal pagingEnabled showsHorizontalScrollIndicator={false} data={selectedRoutes.length ? selectedRoutes : [{ routeIndex: 0 } as ReturnType<typeof routeRowToNormalized>]} keyExtractor={(item) => String(item.routeIndex)} onMomentumScrollEnd={(event) => { const index = Math.round(event.nativeEvent.contentOffset.x / event.nativeEvent.layoutMeasurement.width); if (selectedRoutes[index]) routeGeneration.setSelectedRouteIndex(selectedRoutes[index].routeIndex); }} renderItem={({ item }) => <View style={{ width: windowWidth }} className="px-4"><View className="rounded-3xl border border-border bg-card p-5 shadow-xl">{selectedPlan.generation_status === 'failed' ? <><Text className="text-lg font-semibold text-red-500">Route generation failed</Text><Text className="mt-2 text-muted">{selectedPlan.error_message}</Text>{selectedPlan.error_details ? <Text className="mt-2 text-xs text-muted">{selectedPlan.error_details}</Text> : null}</> : selectedRoutes.length === 0 ? <><Text className="text-lg font-semibold text-foreground">0 routes generated</Text><Text className="mt-2 text-muted">Try different endpoints or rules.</Text></> : <><Text className="text-lg font-semibold text-foreground">Route {item.routeIndex + 1}</Text><Text className="mt-2 text-muted">{formatDistance(item.lengthM)} · score {item.score.toFixed(1)} · {item.junctionCount} junctions</Text><Text className="mt-1 text-muted">{[topStat(item.highwayStats), topStat(item.surfaceStats), topStat(item.smoothnessStats)].filter(Boolean).join(' · ')}</Text>{item.cluster !== undefined ? <Text className="mt-1 text-muted">Cluster {item.cluster}</Text> : null}</>}</View></View>} /></View> : null}
+      {selectedPlan ? <View className="absolute bottom-24 left-0 right-0"><FlatList horizontal pagingEnabled showsHorizontalScrollIndicator={false} data={sortedRoutes.length ? sortedRoutes : [{ routeIndex: 0 } as NormalizedRoute]} keyExtractor={(item) => String(item.routeIndex)} onMomentumScrollEnd={(event) => { const index = Math.round(event.nativeEvent.contentOffset.x / event.nativeEvent.layoutMeasurement.width); if (sortedRoutes[index]) routeGeneration.setSelectedRouteIndex(sortedRoutes[index].routeIndex); }} renderItem={({ item }) => <View style={{ width: windowWidth }} className="px-4"><View className="rounded-3xl border border-border bg-card p-5 shadow-xl">{selectedPlan.generation_status === 'failed' ? <><Text className="text-lg font-semibold text-red-500">Route generation failed</Text><Text className="mt-2 text-muted">{selectedPlan.error_message}</Text>{selectedPlan.error_details ? <Text className="mt-2 text-xs text-muted">{selectedPlan.error_details}</Text> : null}</> : sortedRoutes.length === 0 ? <><Text className="text-lg font-semibold text-foreground">0 routes generated</Text><Text className="mt-2 text-muted">Try different endpoints or rules.</Text></> : <><Text className="text-lg font-semibold text-foreground">Route {item.routeIndex + 1}</Text><Text className="mt-2 text-muted">{formatDistance(item.lengthM)} · score {item.score.toFixed(1)} · {item.junctionCount} junctions</Text><Text className="mt-1 text-muted">{[topStat(item.highwayStats), topStat(item.surfaceStats), topStat(item.smoothnessStats)].filter(Boolean).join(' · ')}</Text>{item.cluster !== undefined ? <Text className="mt-1 text-muted">Cluster {item.cluster}</Text> : null}<Pressable className="mt-4 rounded-full bg-primary py-3" onPress={() => downloadGpx(item)}><Text className="text-center font-semibold text-primary-foreground">Download GPX</Text></Pressable></>}</View></View>} /></View> : null}
     </View>
   );
 }
