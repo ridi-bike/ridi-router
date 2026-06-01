@@ -368,7 +368,7 @@ export const ridiMapStyle: MapProps["mapStyle"] = {
       paint: {
         "icon-color": POI_ICON_COLOR_EXPRESSION as never,
         "icon-halo-color": "#FFFFFF",
-        "icon-halo-width": 1.25,
+        "icon-halo-width": 0.5,
       },
     },
     {
