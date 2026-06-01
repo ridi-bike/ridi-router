@@ -192,10 +192,16 @@ export default function RideScreen() {
 
   const handleMapPress: NonNullable<MapProps['onPress']> = async (event) => {
     const [longitude, latitude] = event.nativeEvent.lngLat;
+    const point = event.nativeEvent.point ?? (await mapRef.current?.project([longitude, latitude]));
+
+    if (!point) {
+      return;
+    }
+
     let feature: FeatureLike | undefined;
 
     for (const layerId of INTERACTIVE_MAP_LAYER_IDS) {
-      const features = await mapRef.current?.queryRenderedFeatures(event.nativeEvent.point, {
+      const features = await mapRef.current?.queryRenderedFeatures(point, {
         layers: [layerId],
       });
       const layerFeature = features?.[0] as FeatureLike | undefined;
