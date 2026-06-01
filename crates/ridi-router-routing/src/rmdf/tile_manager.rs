@@ -101,14 +101,24 @@ impl TileManager {
         Ok(Self::from_manifest(manifest, tile_dir))
     }
 
-    /// Create TileManager from manifest directly
+    /// Create TileManager from manifest directly.
+    ///
+    /// A tile is considered available only when it is listed in the manifest and
+    /// its RMDF file exists in the tile directory. This snapshot is computed once
+    /// at startup so route lookup hot paths do not hit the filesystem.
     pub fn from_manifest(manifest: TileManifest, tile_dir: PathBuf) -> Self {
         let available_tiles = manifest
             .tiles
             .iter()
-            .map(|tile| TileId {
-                col: tile.col,
-                row: tile.row,
+            .filter_map(|tile| {
+                let tile_id = TileId {
+                    col: tile.col,
+                    row: tile.row,
+                };
+                tile_dir
+                    .join(tile_id.to_filename())
+                    .is_file()
+                    .then_some(tile_id)
             })
             .collect();
 
@@ -1191,6 +1201,41 @@ mod tests {
             source_files: Vec::new(),
             tiles: Vec::new(),
         }
+    }
+
+    #[test]
+    fn from_manifest_snapshots_available_tiles_from_filesystem_once() {
+        let fixture = create_missing_neighbor_fixture("tile-manager-availability-snapshot");
+        let mut manifest_file = std::fs::File::open(fixture.dir.join("manifest.json")).unwrap();
+        let manifest: TileManifest = serde_json::from_reader(&mut manifest_file).unwrap();
+        let manager = TileManager::from_manifest(manifest.clone(), fixture.dir.clone());
+
+        assert!(manager.is_tile_available(fixture.tile_a));
+        assert!(!manager.is_tile_available(fixture.missing_tile));
+
+        write_tile(
+            &fixture.dir,
+            &TileSpec {
+                tile_id: fixture.missing_tile,
+                bounds: TileBounds {
+                    lat_min: 10.0,
+                    lat_max: 11.0,
+                    lon_min: 21.0,
+                    lon_max: 22.0,
+                },
+                ..TileSpec::default()
+            },
+        );
+
+        assert!(
+            !manager.is_tile_available(fixture.missing_tile),
+            "available tile set should be a startup snapshot, not a per-lookup filesystem check"
+        );
+
+        let refreshed_manager = TileManager::from_manifest(manifest, fixture.dir.clone());
+        assert!(refreshed_manager.is_tile_available(fixture.missing_tile));
+
+        fs::remove_dir_all(fixture.dir).unwrap();
     }
 
     #[derive(Debug)]
