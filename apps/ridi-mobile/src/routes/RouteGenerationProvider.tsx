@@ -1,5 +1,5 @@
 import { generateRouteJson } from '../../modules/ridi-router/src';
-import { getRmdfDirectory } from '@/rmdf/storage';
+import { getRmdfNativeDirectoryPath } from '@/rmdf/storage';
 import { useSyncedStore } from '@/tinybase/hooks';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 import { Text, View } from 'react-native';
@@ -85,7 +85,7 @@ export function RouteGenerationProvider({ children }: PropsWithChildren) {
     setDraftState(completeDraft);
 
     try {
-      const result = await generateRouteJson(getRmdfDirectory(), stringifyRouteRequest(completeDraft));
+      const result = await generateRouteJson(getRmdfNativeDirectoryPath(), stringifyRouteRequest(completeDraft));
       if (result.ok) {
         const routes = normalizeRouteResult(result.value);
         const plan = persistRouteGeneration({ store, draft: completeDraft, routes, status: 'succeeded' });

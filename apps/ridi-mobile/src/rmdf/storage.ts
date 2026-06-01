@@ -10,6 +10,14 @@ export function getRmdfDirectory(): string {
   return `${FileSystem.documentDirectory}${RMDF_DIRECTORY_NAME}/`;
 }
 
+export function getRmdfNativeDirectoryPath(): string {
+  const directory = getRmdfDirectory();
+  if (directory.startsWith('file://')) {
+    return decodeURIComponent(directory.slice('file://'.length));
+  }
+  return directory;
+}
+
 export function getRmdfManifestPath(): string {
   return `${getRmdfDirectory()}${RMDF_MANIFEST_FILENAME}`;
 }
