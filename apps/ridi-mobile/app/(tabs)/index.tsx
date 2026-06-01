@@ -5,7 +5,10 @@ import { Animated, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions,
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { INTERACTIVE_MAP_LAYER_IDS, ridiMapStyle } from '@/map/ridiMapStyle';
+import { configureMapLibreLogs } from '@/map/mapLibreLogs';
 import { POI_ICON_IMAGES } from '@/map/poiIcons';
+
+configureMapLibreLogs();
 
 type SelectedFeatureKind = 'coordinate' | 'poi' | 'name';
 
