@@ -166,9 +166,10 @@ export default function RideScreen() {
   const planningDraft = mode.kind === 'planning' || mode.kind === 'generating' ? mode.draft : routeGeneration.draft;
   const reviewStart = selectedPlan ? planStartPoint(selectedPlan) : undefined;
   const reviewFinish = selectedPlan ? planFinishPoint(selectedPlan) : undefined;
-  const visualStart = reviewStart ?? planningDraft.start;
-  const visualFinish = reviewFinish ?? planningDraft.finish;
-  const generatedRoutes = useMemo(() => generatedRoutesGeoJson(selectedRoutes, routeGeneration.selectedRouteIndex, true), [selectedRoutes, routeGeneration.selectedRouteIndex]);
+  const showRouteOverlay = mode.kind === 'planning' || mode.kind === 'generating' || !!selectedPlan;
+  const visualStart = showRouteOverlay ? (reviewStart ?? planningDraft.start) : undefined;
+  const visualFinish = showRouteOverlay ? (reviewFinish ?? planningDraft.finish) : undefined;
+  const generatedRoutes = useMemo(() => generatedRoutesGeoJson(selectedRoutes, routeGeneration.selectedRouteIndex, !!selectedPlan), [selectedRoutes, routeGeneration.selectedRouteIndex, selectedPlan]);
   const planningGuide = useMemo(() => planningGuideGeoJson(visualStart, visualFinish), [visualStart, visualFinish]);
 
   const fitBounds = useCallback((bounds: [number, number, number, number], bottomPadding = 220) => {
@@ -276,13 +277,10 @@ export default function RideScreen() {
   const closeReview = () => {
     if (routeGeneration.isGenerating) return;
     routeGeneration.closeSelectedPlan();
+    routeGeneration.setDraft({ rulePresetId: DEFAULT_ROUTE_RULE_PRESET_ID });
     setMode({ kind: 'idle' });
   };
 
-  const guideMidpoint = visualStart && visualFinish ? {
-    longitude: (visualStart.longitude + visualFinish.longitude) / 2,
-    latitude: (visualStart.latitude + visualFinish.latitude) / 2,
-  } : null;
 
   const goEnabled = !!planningDraft.start && !!planningDraft.finish && !routeGeneration.isGenerating;
   const selectedPoint = mode.kind === 'point_selected' ? mode.selectedPoint : null;
@@ -302,9 +300,8 @@ export default function RideScreen() {
         </GeoJSONSource>
 
         {userLocation ? <Marker anchor="center" id="user-location" lngLat={[userLocation.longitude, userLocation.latitude]}><View className="h-6 w-6 items-center justify-center rounded-full bg-blue-500/25"><View className="h-3.5 w-3.5 rounded-full border-2 border-white bg-blue-500" /></View></Marker> : null}
-        {visualStart ? <Marker anchor="center" id="route-start" lngLat={[visualStart.longitude, visualStart.latitude]}><View className="h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-green-500 shadow-lg"><Text className="text-lg font-black text-white">▶</Text></View></Marker> : null}
+        {visualStart ? <Marker anchor="bottom" id="route-start" lngLat={[visualStart.longitude, visualStart.latitude]}><View className="items-center"><View className="h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-green-500 shadow-lg"><Text className="text-lg font-black text-white">▶</Text></View><View style={[styles.pinTip, { borderTopColor: '#22c55e' }]} /></View></Marker> : null}
         {visualFinish ? <Marker anchor="bottom" id="route-finish" lngLat={[visualFinish.longitude, visualFinish.latitude]}><View className="items-center"><View className="h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-green-600 shadow-lg"><Text className="text-lg font-black text-white">⚑</Text></View><View style={[styles.pinTip, { borderTopColor: '#16a34a' }]} /></View></Marker> : null}
-        {guideMidpoint ? <Marker anchor="center" id="route-direction" lngLat={[guideMidpoint.longitude, guideMidpoint.latitude]}><View className="h-8 w-8 items-center justify-center rounded-full border border-white bg-green-500/90 shadow-lg"><Text className="text-base font-black text-white">➜</Text></View></Marker> : null}
         {selectedPoint && !visualFinish ? <Marker anchor="bottom" id="selected-point" lngLat={[selectedPoint.longitude, selectedPoint.latitude]}><View className="items-center"><View className="h-10 w-10 items-center justify-center rounded-full border-2 border-white bg-red-500 shadow-lg"><View className="h-3 w-3 rounded-full bg-neutral-900" /></View><View style={styles.pinTip} /></View></Marker> : null}
       </Map>
 
