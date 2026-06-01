@@ -1,6 +1,6 @@
 import { Camera, Images, Map, Marker, type MapProps, type MapRef } from '@maplibre/maplibre-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { INTERACTIVE_MAP_LAYER_IDS, ridiMapStyle } from '@/map/ridiMapStyle';
@@ -177,6 +177,7 @@ function drawerTitle(selectedPoint: SelectedPoint): string {
 }
 
 export default function RideScreen() {
+  const { height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const mapRef = useRef<MapRef>(null);
   const [drawerTranslateY] = useState(() => new Animated.Value(320));
@@ -265,6 +266,7 @@ export default function RideScreen() {
           styles.drawer,
           {
             paddingBottom: insets.bottom + 96,
+            maxHeight: windowHeight * 0.5,
             transform: [{ translateY: drawerTranslateY }],
           },
         ]}
@@ -291,14 +293,20 @@ export default function RideScreen() {
             </View>
 
             {selectedPoint.details.length > 0 ? (
-              <View className="mt-5 gap-2">
-                {selectedPoint.details.map((detail) => (
-                  <View className="flex-row justify-between gap-4" key={detail.label}>
-                    <Text className="text-base capitalize text-muted">{detail.label}</Text>
-                    <Text className="flex-1 text-right text-base text-foreground">{detail.value}</Text>
-                  </View>
-                ))}
-              </View>
+              <ScrollView
+                className="mt-5"
+                contentContainerStyle={styles.detailsContent}
+                showsVerticalScrollIndicator
+              >
+                <View className="gap-2">
+                  {selectedPoint.details.map((detail) => (
+                    <View className="flex-row justify-between gap-4" key={detail.label}>
+                      <Text className="text-base capitalize text-muted">{detail.label}</Text>
+                      <Text className="flex-1 text-right text-base text-foreground">{detail.value}</Text>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
             ) : null}
           </>
         ) : null}
@@ -310,6 +318,9 @@ export default function RideScreen() {
 const styles = StyleSheet.create({
   drawer: {
     minHeight: 230,
+  },
+  detailsContent: {
+    paddingBottom: 12,
   },
   pinTip: {
     borderLeftColor: 'transparent',
