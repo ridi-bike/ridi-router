@@ -57,6 +57,8 @@ cmd_help() {
     echo "  app-run-debug                       Build, install, launch, and stream logs via adb"
     echo "  app-logcat                          Stream Android logs for app debugging"
     echo "  rust-router android                 Build/copy Rust Android libraries for all ABIs"
+    echo "  mobile android release-apk          Build standalone Android release APK"
+    echo "  mobile android install-release      Build, install, and launch release APK via adb"
     echo "  rust-router ios                     Build/copy Rust iOS xcframework"
     echo "  rust-router bindings                Generate/copy UniFFI Kotlin and Swift bindings"
     echo "  rust-router build                   Generate bindings and build all native artifacts"
@@ -64,6 +66,7 @@ cmd_help() {
     echo "  mobile android simulator            Launch Expo Android app on emulator"
     echo "  mobile ios device                   Launch Expo iOS app on device"
     echo "  mobile ios simulator                Launch Expo iOS app on simulator"
+    echo "  mobile release APK path: apps/ridi-mobile/android/app/build/outputs/apk/release/app-release.apk"
     echo ""
     echo "Examples:"
     echo "  ./dev.sh generate-tiles latvia"
@@ -542,6 +545,36 @@ cmd_app_logcat() {
     adb logcat -v time | grep -E --line-buffered 'AndroidRuntime|FATAL EXCEPTION|DEBUG|libc|ridi|Ridi|bike\.ridi\.app|RustStdoutStderr'
 }
 
+cmd_mobile_android_release_apk_path() {
+    printf '%s\n' "$SCRIPT_DIR/apps/ridi-mobile/android/app/build/outputs/apk/release/app-release.apk"
+}
+
+cmd_mobile_android_build_release_apk() {
+    pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" android:release-apk
+    echo "Android release APK: $(cmd_mobile_android_release_apk_path)"
+}
+
+cmd_mobile_android_install_release() {
+    local apk
+    apk="$(cmd_mobile_android_release_apk_path)"
+
+    cmd_app_require_adb
+    cmd_mobile_android_build_release_apk
+
+    if [[ ! -f "$apk" ]]; then
+        echo "Error: release APK not found: $apk" >&2
+        exit 1
+    fi
+
+    adb devices
+    if ! adb install -r "$apk"; then
+        echo "Install failed; uninstalling existing app and retrying." >&2
+        adb uninstall bike.ridi.app || true
+        adb install "$apk"
+    fi
+    adb shell monkey -p bike.ridi.app -c android.intent.category.LAUNCHER 1
+}
+
 cmd_app_run_debug() {
     local apk
     apk="$(cmd_app_debug_apk_path)"
@@ -747,6 +780,12 @@ cmd_mobile() {
         android:simulator)
             pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" android
             ;;
+        android:release-apk)
+            cmd_mobile_android_build_release_apk
+            ;;
+        android:install-release)
+            cmd_mobile_android_install_release
+            ;;
         ios:device)
             pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" ios -- --device
             ;;
@@ -754,7 +793,7 @@ cmd_mobile() {
             pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" ios -- --simulator
             ;;
         *)
-            echo "Usage: ./dev.sh mobile {android|ios} {device|simulator}" >&2
+            echo "Usage: ./dev.sh mobile {android|ios} {device|simulator|release-apk|install-release}" >&2
             exit 1
             ;;
     esac

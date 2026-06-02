@@ -20,6 +20,7 @@
 		"expo-network": "~56.0.4",
 		"expo-notifications": "~56.0.15",
 		"expo-router": "~56.2.8",
+		"expo-sharing": "~56.0.15",
 		"expo-splash-screen": "~56.0.10",
 		"expo-sqlite": "~56.0.4",
 		"expo-status-bar": "~56.0.4",
@@ -49,7 +50,10 @@
 		"clean": "expo prebuild --clean",
 		"android": "expo run:android",
 		"ios": "expo run:ios",
-		"lint": "expo lint"
+		"lint": "expo lint",
+		"android:release-apk": "../../dev.sh rust-router android && cd android && ./gradlew assembleRelease",
+		"android:install-release": "pnpm android:release-apk && adb install -r android/app/build/outputs/apk/release/app-release.apk",
+		"android:run-release": "pnpm android:install-release && adb shell monkey -p bike.ridi.app -c android.intent.category.LAUNCHER 1"
 	},
 	"private": true
 }
