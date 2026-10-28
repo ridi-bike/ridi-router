@@ -10,6 +10,7 @@ use crate::generation::GenerationGraph;
 use crate::osm_data::in_memory_pbf::InMemoryPbf;
 use crate::proximity::RasterizedProximityGrid;
 use crate::rmdf::format::{TileBounds, TileId};
+use crate::SkippedPbfFile;
 use anyhow::{Context, Result};
 use geo::MultiPolygon;
 #[cfg(feature = "debug-polygons")]
@@ -271,15 +272,20 @@ pub struct MultiPbfGenerator {
     output_dir: PathBuf,
     tile_size_degrees: f32,
     db_path: PathBuf,
+    strict: bool,
 }
 
 impl MultiPbfGenerator {
     /// Create a new multi-PBF generator
+    ///
+    /// With `strict`, the first PBF that fails to process aborts generation;
+    /// otherwise failing PBFs are skipped and reported.
     pub fn new(
         input_directory: PathBuf,
         output_dir: PathBuf,
         tile_size_degrees: f32,
         db_path: PathBuf,
+        strict: bool,
     ) -> Result<Self> {
         if tile_size_degrees <= 0.0 || tile_size_degrees > 180.0 {
             anyhow::bail!("Tile size must be between 0 and 180 degrees");
@@ -293,6 +299,7 @@ impl MultiPbfGenerator {
             output_dir,
             tile_size_degrees,
             db_path,
+            strict,
         })
     }
 
@@ -304,7 +311,9 @@ impl MultiPbfGenerator {
     /// 3. Identify overlap zones
     /// 4. Re-evaluate nodes in overlap zones with combined grids
     /// 5. Deduplicate and write final RMDF tiles
-    pub fn generate(&self) -> Result<()> {
+    ///
+    /// Returns the PBF files that were skipped because they failed to process.
+    pub fn generate(&self) -> Result<Vec<SkippedPbfFile>> {
         info!(
             "Starting multi-PBF tile generation from {:?}",
             self.input_directory
@@ -326,9 +335,36 @@ impl MultiPbfGenerator {
             pbf_files.len()
         );
         let mut all_military_polygons = Vec::new();
+        let mut successful_pbf_files = Vec::new();
+        let mut skipped_pbf_files = Vec::new();
         for (pbf_id, pbf_path) in pbf_files.iter().enumerate() {
-            let military_polygons = self.process_single_pbf(&db, pbf_id as u64, pbf_path)?;
-            all_military_polygons.extend(military_polygons);
+            match self.process_single_pbf(&db, pbf_id as u64, pbf_path) {
+                Ok(military_polygons) => {
+                    successful_pbf_files.push(pbf_path.clone());
+                    all_military_polygons.extend(military_polygons);
+                }
+                Err(error) if self.strict => return Err(error),
+                Err(error) => {
+                    // Alternate format keeps the cause chain, e.g. why a grid could not be built
+                    let error = format!("{error:#}");
+                    tracing::warn!(
+                        pbf = ?pbf_path,
+                        error = %error,
+                        "Skipping PBF after processing failure"
+                    );
+                    skipped_pbf_files.push(SkippedPbfFile {
+                        path: pbf_path.clone(),
+                        error,
+                    });
+                }
+            }
+        }
+
+        if successful_pbf_files.is_empty() {
+            anyhow::bail!(
+                "All {} PBF files failed during processing; no RMDF tiles can be generated",
+                pbf_files.len()
+            );
         }
 
         // Phase 2: Identify overlapping regions and affected zones
@@ -344,10 +380,17 @@ impl MultiPbfGenerator {
 
         // Phase 4: Deduplicate and write final tiles
         info!("Phase 4: Writing final RMDF tiles");
-        self.write_final_tiles(&db, &pbf_files, &all_military_polygons)?;
+        self.write_final_tiles(&db, &successful_pbf_files, &all_military_polygons)?;
 
-        info!("Multi-PBF tile generation complete");
-        Ok(())
+        if skipped_pbf_files.is_empty() {
+            info!("Multi-PBF tile generation complete");
+        } else {
+            tracing::warn!(
+                "Multi-PBF tile generation complete with {} skipped PBF file(s)",
+                skipped_pbf_files.len()
+            );
+        }
+        Ok(skipped_pbf_files)
     }
 
     /// Process a single PBF file and store results in redb
@@ -373,10 +416,14 @@ impl MultiPbfGenerator {
             lat_max: bounds.lat_max.unwrap_or(0.0) as f32,
         };
 
+        // Stage the grid and tiles in one transaction, so a failure part-way
+        // through this PBF leaves none of its data in intermediate storage.
+        let write_txn = db.begin_write()?;
+
         // Store grid bytes (actual grid, not placeholder)
         let grid_bytes = proximity_grid.to_bytes();
         GridStorage::store_grid(
-            db,
+            &write_txn,
             pbf_id,
             pbf_path.to_str().unwrap_or(""),
             &grid_bytes,
@@ -384,7 +431,11 @@ impl MultiPbfGenerator {
         )?;
 
         // Save tiles to redb (intermediate storage for multi-PBF processing)
-        self.save_tiles_to_redb(db, &pbf_data)?;
+        self.save_tiles_to_txn(&write_txn, &pbf_data)?;
+
+        write_txn
+            .commit()
+            .with_context(|| format!("Failed to commit intermediate data for {pbf_path:?}"))?;
 
         info!("Completed processing PBF {}", pbf_id);
         Ok(military_polygons)
@@ -392,9 +443,15 @@ impl MultiPbfGenerator {
 
     /// Save tiles from PBF data to redb for intermediate storage
     ///
-    /// This method extracts tile data and saves it to redb instead of writing RMDF files.
+    /// This method extracts tile data and stages it in `write_txn` instead of writing RMDF files.
     /// The data can then be merged, deduplicated, and written as final RMDF tiles later.
-    fn save_tiles_to_redb(&self, db: &redb::Database, pbf_data: &InMemoryPbf) -> Result<()> {
+    /// Tiles are extracted in parallel and written from this thread, since a write
+    /// transaction cannot be shared across threads.
+    fn save_tiles_to_txn(
+        &self,
+        write_txn: &redb::WriteTransaction,
+        pbf_data: &InMemoryPbf,
+    ) -> Result<()> {
         let start_time = Instant::now();
         info!("Extracting and saving tiles to intermediate storage");
 
@@ -408,39 +465,55 @@ impl MultiPbfGenerator {
             return Ok(());
         }
 
-        // Progress counter (shared across threads)
-        let completed = Arc::new(AtomicUsize::new(0));
+        let saved_tiles = std::thread::scope(|scope| -> Result<usize> {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(64);
 
-        // Process tiles in parallel using Rayon
-        tiles.par_iter().try_for_each(|tile_id| -> Result<()> {
-            // Extract data for this tile
-            let tile_data = self.extract_tile_data_for_redb(pbf_data, *tile_id)?;
+            // Extract tiles in parallel using Rayon
+            let extractor = scope.spawn(move || {
+                tiles
+                    .par_iter()
+                    .try_for_each_with(sender, |sender, tile_id| -> Result<()> {
+                        // Extract data for this tile
+                        let tile_data = self.extract_tile_data_for_redb(pbf_data, *tile_id)?;
 
-            // Skip empty tiles
-            if tile_data.nodes.is_empty() && tile_data.ways.is_empty() {
-                return Ok(());
+                        // Skip empty tiles
+                        if tile_data.nodes.is_empty() && tile_data.ways.is_empty() {
+                            return Ok(());
+                        }
+
+                        // The writer only hangs up after failing, and reports its own error
+                        sender
+                            .send(tile_data)
+                            .map_err(|_| anyhow::anyhow!("Intermediate tile writer stopped"))
+                    })
+            });
+
+            let mut count = 0;
+            for tile_data in receiver {
+                // Save to redb
+                tile_data.save_to_txn(write_txn)?;
+
+                // Update progress
+                count += 1;
+                if count % 100 == 0 || count == total_tiles {
+                    info!(
+                        "Tile progress: {}/{} ({:.1}%)",
+                        count,
+                        total_tiles,
+                        (count as f64 / total_tiles as f64) * 100.0
+                    );
+                }
             }
 
-            // Save to redb
-            tile_data.save_to_redb(db)?;
-
-            // Update progress
-            let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
-            if count % 100 == 0 || count == total_tiles {
-                info!(
-                    "Tile progress: {}/{} ({:.1}%)",
-                    count,
-                    total_tiles,
-                    (count as f64 / total_tiles as f64) * 100.0
-                );
-            }
-
-            Ok(())
+            extractor
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))?;
+            Ok(count)
         })?;
 
         info!(
             "Tile extraction complete - {} tiles saved in {:.1}s",
-            completed.load(Ordering::Relaxed),
+            saved_tiles,
             start_time.elapsed().as_secs_f64()
         );
 
@@ -713,7 +786,7 @@ impl MultiPbfGenerator {
             }
 
             // Step 3: Build combined grid
-            let combined_grid = intermediate::build_combined_grid(&grids, zone);
+            let combined_grid = intermediate::build_combined_grid(&grids, zone)?;
             info!(
                 "Zone {}: Combined grid covers {:.3}..{:.3} lat, {:.3}..{:.3} lon",
                 zone_idx, zone.lat_min, zone.lat_max, zone.lon_min, zone.lon_max

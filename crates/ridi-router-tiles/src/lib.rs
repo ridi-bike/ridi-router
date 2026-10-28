@@ -24,12 +24,23 @@ pub struct TileGenerationRequest {
     pub output_dir: PathBuf,
     pub tile_size_deg: f32,
     pub db_path: Option<PathBuf>,
+    /// Directory input only: fail on the first PBF that cannot be processed
+    /// instead of skipping it and reporting it in the summary.
+    pub strict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileGenerationSummary {
     pub output_dir: PathBuf,
     pub tile_count: usize,
+    /// PBF files left out of the output because they failed to process.
+    pub skipped_pbf_files: Vec<SkippedPbfFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedPbfFile {
+    pub path: PathBuf,
+    pub error: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -79,21 +90,24 @@ pub fn generate_tiles(
 ) -> Result<TileGenerationSummary, TileGenerationError> {
     validate_tile_generation_request(&request)?;
 
-    match &request.input {
-        TileInputSource::File(input_file) => TileGenerator::new(
-            input_file.clone(),
-            request.output_dir.clone(),
-            request.tile_size_deg,
-        )
-        .map_err(|error| TileGenerationError::GenerationFailed {
-            input: request.input.clone(),
-            message: error.to_string(),
-        })?
-        .generate()
-        .map_err(|error| TileGenerationError::GenerationFailed {
-            input: request.input.clone(),
-            message: error.to_string(),
-        })?,
+    // Alternate format keeps the cause chain in the message
+    let generation_failed = |error: anyhow::Error| TileGenerationError::GenerationFailed {
+        input: request.input.clone(),
+        message: format!("{error:#}"),
+    };
+
+    let skipped_pbf_files = match &request.input {
+        TileInputSource::File(input_file) => {
+            TileGenerator::new(
+                input_file.clone(),
+                request.output_dir.clone(),
+                request.tile_size_deg,
+            )
+            .map_err(generation_failed)?
+            .generate()
+            .map_err(generation_failed)?;
+            Vec::new()
+        }
         TileInputSource::Directory(input_dir) => MultiPbfGenerator::new(
             input_dir.clone(),
             request.output_dir.clone(),
@@ -102,19 +116,14 @@ pub fn generate_tiles(
                 .db_path
                 .clone()
                 .unwrap_or_else(|| request.output_dir.join(".intermediate.redb")),
+            request.strict,
         )
-        .map_err(|error| TileGenerationError::GenerationFailed {
-            input: request.input.clone(),
-            message: error.to_string(),
-        })?
+        .map_err(generation_failed)?
         .generate()
-        .map_err(|error| TileGenerationError::GenerationFailed {
-            input: request.input.clone(),
-            message: error.to_string(),
-        })?,
-    }
+        .map_err(generation_failed)?,
+    };
 
-    read_generation_summary(&request.output_dir)
+    read_generation_summary(&request.output_dir, skipped_pbf_files)
 }
 
 fn validate_tile_generation_request(
@@ -206,6 +215,7 @@ fn prepare_output_dir(path: &Path) -> Result<(), TileGenerationError> {
 
 fn read_generation_summary(
     output_dir: &Path,
+    skipped_pbf_files: Vec<SkippedPbfFile>,
 ) -> Result<TileGenerationSummary, TileGenerationError> {
     let manifest_path = output_dir.join("manifest.json");
     let manifest_file =
@@ -223,6 +233,7 @@ fn read_generation_summary(
     Ok(TileGenerationSummary {
         output_dir: output_dir.to_path_buf(),
         tile_count: manifest.tiles.len(),
+        skipped_pbf_files,
     })
 }
 
@@ -255,6 +266,7 @@ mod tests {
             output_dir: PathBuf::from("/tmp/output"),
             tile_size_deg: 1.0,
             db_path: None,
+            strict: false,
         };
 
         assert!(matches!(request.input, TileInputSource::File(_)));
@@ -267,6 +279,7 @@ mod tests {
             output_dir: PathBuf::from("/tmp/output"),
             tile_size_deg: 1.0,
             db_path: None,
+            strict: false,
         };
 
         assert!(matches!(request.input, TileInputSource::Directory(_)));
@@ -282,6 +295,7 @@ mod tests {
             output_dir: output_dir.clone(),
             tile_size_deg: 1.0,
             db_path: None,
+            strict: false,
         })
         .unwrap_err();
 
@@ -306,6 +320,7 @@ mod tests {
             output_dir: output_file.clone(),
             tile_size_deg: 1.0,
             db_path: None,
+            strict: false,
         })
         .unwrap_err();
 

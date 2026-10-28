@@ -14,8 +14,8 @@ use crate::osm_data::in_memory_pbf::PbfBounds;
 use crate::simd::haversine::min_distance_to_vertices;
 
 use super::rasterized_grid::{
-    bearing_to_sector, MilitaryStatus, RasterizedProximityGrid, MILITARY_GRID_CELL_SIZE_DEG,
-    RESIDENTIAL_PROXIMITY_THRESHOLD_M,
+    bearing_to_sector, MilitaryStatus, ProximityGridError, RasterizedProximityGrid,
+    MILITARY_GRID_CELL_SIZE_DEG, RESIDENTIAL_PROXIMITY_THRESHOLD_M,
 };
 
 /// Rasterizer that converts area polygons into grid cell values.
@@ -25,10 +25,18 @@ pub struct AreaRasterizer {
 
 impl AreaRasterizer {
     /// Create a new rasterizer with an empty grid covering the given bounds.
+    #[cfg(test)]
     pub fn new(bounds: &PbfBounds) -> Self {
         Self {
             grid: RasterizedProximityGrid::new(bounds),
         }
+    }
+
+    /// Try to create a new rasterizer with an empty grid covering the given bounds.
+    pub fn try_new(bounds: &PbfBounds) -> Result<Self, ProximityGridError> {
+        Ok(Self {
+            grid: RasterizedProximityGrid::try_new(bounds)?,
+        })
     }
 
     /// Rasterize residential polygons into the grid.

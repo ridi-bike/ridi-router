@@ -8,7 +8,9 @@ use std::{
 use ridi_router_routing::{
     Coords, RouteMode, RouteRequest, RouterRules, RoutingExecutor, RoutingExecutorConfig,
 };
-use ridi_router_tiles::{generate_tiles, TileGenerationRequest, TileInputSource};
+use ridi_router_tiles::{
+    generate_tiles, TileGenerationError, TileGenerationRequest, TileInputSource,
+};
 
 struct TestDir {
     path: PathBuf,
@@ -63,6 +65,7 @@ fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
         output_dir: output_dir.path().clone(),
         tile_size_deg: 180.0,
         db_path: None,
+        strict: false,
     })
     .unwrap();
 
@@ -114,5 +117,61 @@ fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
                 .all(|route| !route.coords.is_empty()),
         "routing returned malformed routes: {:?}",
         computation.routes
+    );
+}
+
+/// Directory holding the routing fixture plus a corrupt PBF that cannot be parsed.
+fn input_dir_with_broken_pbf(test_dir: &TestDir) -> (PathBuf, PathBuf) {
+    let input_dir = test_dir.path().join("input");
+    fs::create_dir_all(&input_dir).unwrap();
+    fs::copy(fixture_pbf(), input_dir.join("a-tiny-routing.osm.pbf")).unwrap();
+    let broken_pbf = input_dir.join("b-broken.osm.pbf");
+    fs::write(&broken_pbf, b"not-a-real-pbf").unwrap();
+    (input_dir, broken_pbf)
+}
+
+#[test]
+fn generate_tiles_directory_input_skips_and_reports_failing_pbf() {
+    let test_dir = TestDir::new("skip-broken-pbf");
+    let (input_dir, broken_pbf) = input_dir_with_broken_pbf(&test_dir);
+    let output_dir = test_dir.path().join("output");
+
+    let summary = generate_tiles(TileGenerationRequest {
+        input: TileInputSource::Directory(input_dir),
+        output_dir: output_dir.clone(),
+        tile_size_deg: 180.0,
+        db_path: None,
+        strict: false,
+    })
+    .unwrap();
+
+    assert!(summary.tile_count > 0);
+    assert_eq!(summary.skipped_pbf_files.len(), 1);
+    assert_eq!(summary.skipped_pbf_files[0].path, broken_pbf);
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(output_dir.join("manifest.json")).unwrap()).unwrap();
+    let manifest = manifest.to_string();
+    assert!(manifest.contains("a-tiny-routing.osm.pbf"));
+    assert!(!manifest.contains("b-broken.osm.pbf"));
+}
+
+#[test]
+fn generate_tiles_directory_input_strict_fails_on_failing_pbf() {
+    let test_dir = TestDir::new("strict-broken-pbf");
+    let (input_dir, _) = input_dir_with_broken_pbf(&test_dir);
+
+    let error = generate_tiles(TileGenerationRequest {
+        input: TileInputSource::Directory(input_dir),
+        output_dir: test_dir.path().join("output"),
+        tile_size_deg: 180.0,
+        db_path: None,
+        strict: true,
+    })
+    .unwrap_err();
+
+    assert!(
+        matches!(&error, TileGenerationError::GenerationFailed { message, .. } if message.contains("b-broken.osm.pbf")),
+        "unexpected error: {error}"
     );
 }

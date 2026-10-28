@@ -297,7 +297,7 @@ impl InMemoryPbf {
             &residential_polygons,
             &military_polygons,
             &bounds,
-        );
+        )?;
         info!(
             "Proximity flags computed in {:.2}s",
             flags_start.elapsed().as_secs_f64()
@@ -415,7 +415,7 @@ impl InMemoryPbf {
             &residential_polygons,
             &military_polygons,
             &bounds,
-        );
+        )?;
         info!(
             "Proximity flags computed in {:.2}s",
             flags_start.elapsed().as_secs_f64()

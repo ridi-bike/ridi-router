@@ -2,6 +2,7 @@
 //!
 //! Coordinates the building of the proximity grid and application of flags to nodes.
 
+use anyhow::Result;
 use geo::MultiPolygon;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -33,7 +34,7 @@ pub fn compute_proximity_flags(
     residential_polygons: &[MultiPolygon<f64>],
     military_polygons: &[MultiPolygon<f64>],
     bounds: &PbfBounds,
-) {
+) -> Result<()> {
     info!(
         "Computing proximity flags for {} nodes ({} residential, {} military polygons)",
         nodes.len(),
@@ -42,7 +43,7 @@ pub fn compute_proximity_flags(
     );
 
     // Step 1: Build rasterized grid
-    let mut rasterizer = AreaRasterizer::new(bounds);
+    let mut rasterizer = AreaRasterizer::try_new(bounds)?;
 
     // Step 2: Rasterize residential polygons
     rasterizer.rasterize_residential(residential_polygons);
@@ -54,8 +55,9 @@ pub fn compute_proximity_flags(
     let grid = rasterizer.into_grid();
 
     // Step 5: Apply flags to nodes
-    // Step 5: Apply flags to nodes
     apply_flags_to_nodes(nodes, &grid);
+
+    Ok(())
 }
 
 /// Build proximity grid and apply flags to nodes, returning the grid for storage.
@@ -67,7 +69,7 @@ pub fn compute_proximity_flags_with_grid(
     residential_polygons: &[MultiPolygon<f64>],
     military_polygons: &[MultiPolygon<f64>],
     bounds: &PbfBounds,
-) -> RasterizedProximityGrid {
+) -> Result<RasterizedProximityGrid> {
     info!(
         "Computing proximity flags for {} nodes ({} residential, {} military polygons)",
         nodes.len(),
@@ -76,7 +78,7 @@ pub fn compute_proximity_flags_with_grid(
     );
 
     // Step 1: Build rasterized grid
-    let mut rasterizer = AreaRasterizer::new(bounds);
+    let mut rasterizer = AreaRasterizer::try_new(bounds)?;
 
     // Step 2: Rasterize residential polygons
     rasterizer.rasterize_residential(residential_polygons);
@@ -90,7 +92,7 @@ pub fn compute_proximity_flags_with_grid(
     // Step 5: Apply flags to nodes
     apply_flags_to_nodes(nodes, &grid);
 
-    grid
+    Ok(grid)
 }
 
 /// Apply a grid to a subset of nodes (for re-evaluating overlap zones).
@@ -229,7 +231,7 @@ mod tests {
         let mut nodes = make_test_nodes();
         let bounds = make_test_bounds();
 
-        compute_proximity_flags(&mut nodes, &[], &[], &bounds);
+        compute_proximity_flags(&mut nodes, &[], &[], &bounds).unwrap();
 
         // With no polygons, all flags should be false
         for node in nodes.values() {
@@ -246,7 +248,7 @@ mod tests {
         // Create a large residential polygon
         let residential = make_square_polygon(50.05, 10.05, 0.04);
 
-        compute_proximity_flags(&mut nodes, &[residential], &[], &bounds);
+        compute_proximity_flags(&mut nodes, &[residential], &[], &bounds).unwrap();
 
         // Some nodes should have residential proximity
         let residential_count = nodes

@@ -148,6 +148,22 @@ pub fn bearing_to_sector(bearing_deg: f32) -> usize {
     (((b + 22.5) / 45.0) as usize) % 8
 }
 
+/// Reasons a proximity grid cannot be built for a set of bounds.
+#[derive(Debug, thiserror::Error)]
+pub enum ProximityGridError {
+    #[error("Cannot build proximity grid: bounds are not set (input contains no nodes)")]
+    MissingBounds,
+
+    #[error(
+        "Grid would require {cell_count} cells ({gb:.1} GB), exceeds maximum of {max_cells} cells. Consider using a smaller region or larger cell size."
+    )]
+    TooLarge {
+        cell_count: u64,
+        gb: f64,
+        max_cells: u64,
+    },
+}
+
 /// Rasterized grid for O(1) proximity flag lookups.
 ///
 /// The grid covers the geographic bounds of the PBF file with cells
@@ -182,11 +198,27 @@ impl RasterizedProximityGrid {
     /// # Panics
     ///
     /// Panics if bounds are invalid or would create a grid too large for memory.
+    #[cfg(test)]
     pub fn new(bounds: &PbfBounds) -> Self {
-        let lat_min = bounds.lat_min.expect("PbfBounds should have lat_min") as f32;
-        let lat_max = bounds.lat_max.expect("PbfBounds should have lat_max") as f32;
-        let lon_min = bounds.lon_min.expect("PbfBounds should have lon_min") as f32;
-        let lon_max = bounds.lon_max.expect("PbfBounds should have lon_max") as f32;
+        Self::try_new(bounds).expect("failed to create proximity grid")
+    }
+
+    /// Try to create a new grid covering the given bounds.
+    ///
+    /// Fails if bounds are unset or would create a grid too large for memory.
+    pub fn try_new(bounds: &PbfBounds) -> Result<Self, ProximityGridError> {
+        let (Some(lat_min), Some(lat_max), Some(lon_min), Some(lon_max)) = (
+            bounds.lat_min,
+            bounds.lat_max,
+            bounds.lon_min,
+            bounds.lon_max,
+        ) else {
+            return Err(ProximityGridError::MissingBounds);
+        };
+        let lat_min = lat_min as f32;
+        let lat_max = lat_max as f32;
+        let lon_min = lon_min as f32;
+        let lon_max = lon_max as f32;
 
         // Add small buffer to ensure edge points are included
         let buffer = GRID_CELL_SIZE_DEG;
@@ -208,13 +240,11 @@ impl RasterizedProximityGrid {
         // Limit to ~4GB of grid data
         const MAX_CELLS: u64 = 110_000_000; // ~4GB at 36 bytes/cell
         if cell_count > MAX_CELLS {
-            panic!(
-                "Grid would require {} cells ({:.1} GB), exceeds maximum of {} cells. \
-                Consider using a smaller region or larger cell size.",
+            return Err(ProximityGridError::TooLarge {
                 cell_count,
-                (cell_count * 36) as f64 / 1e9,
-                MAX_CELLS
-            );
+                gb: (cell_count * 36) as f64 / 1e9,
+                max_cells: MAX_CELLS,
+            });
         }
 
         tracing::info!(
@@ -234,7 +264,7 @@ impl RasterizedProximityGrid {
         let cells = vec![GridCell::default(); cell_count as usize];
         let military_cells = vec![MilitaryStatus::None; military_cell_count as usize];
 
-        Self {
+        Ok(Self {
             cells,
             military_cells,
             cols,
@@ -243,7 +273,7 @@ impl RasterizedProximityGrid {
             military_rows,
             lon_min,
             lat_min,
-        }
+        })
     }
 
     /// Get the residential cell index for a given coordinate, or None if out of bounds.

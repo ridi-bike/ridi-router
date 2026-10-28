@@ -2,7 +2,7 @@ use std::{num::ParseFloatError, path::PathBuf, str::FromStr, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     cli::{
@@ -207,6 +207,11 @@ enum CliMode {
         /// Path for intermediate database (multi-file mode only)
         /// Default: temp file in output directory
         db_path: Option<PathBuf>,
+
+        #[arg(long)]
+        /// Fail if any PBF file cannot be processed (multi-file mode only)
+        /// Default: skip failing PBF files and report them
+        strict: bool,
     },
     /// Generate JSON schema file for rule files
     #[cfg(feature = "rule-schema-writer")]
@@ -254,6 +259,7 @@ impl RouterRunner {
         output_dir: PathBuf,
         tile_size_deg: f32,
         db_path: Option<PathBuf>,
+        strict: bool,
     ) -> std::result::Result<TileGenerationRequest, RouterRunnerError> {
         let input = match (input, input_dir) {
             (Some(_), Some(_)) => {
@@ -275,6 +281,7 @@ impl RouterRunner {
             output_dir,
             tile_size_deg,
             db_path,
+            strict,
         })
     }
 
@@ -334,6 +341,7 @@ impl RouterRunner {
         output_dir: PathBuf,
         tile_size_deg: f32,
         db_path: Option<PathBuf>,
+        strict: bool,
     ) -> std::result::Result<(), RouterRunnerError> {
         let request = Self::build_tile_generation_request(
             input,
@@ -341,12 +349,21 @@ impl RouterRunner {
             output_dir,
             tile_size_deg,
             db_path,
+            strict,
         )?;
 
         info!(input = ?request.input, output_dir = ?request.output_dir, "Tile generation started");
         let summary =
             generate_tiles(request).map_err(|error| RouterRunnerError::TileGeneration { error })?;
-        info!(output_dir = ?summary.output_dir, tile_count = summary.tile_count, "Tile generation complete");
+        for skipped in &summary.skipped_pbf_files {
+            warn!(pbf = ?skipped.path, error = %skipped.error, "Skipped PBF file");
+        }
+        info!(
+            output_dir = ?summary.output_dir,
+            tile_count = summary.tile_count,
+            skipped_pbf_count = summary.skipped_pbf_files.len(),
+            "Tile generation complete"
+        );
 
         Ok(())
     }
@@ -375,7 +392,8 @@ impl RouterRunner {
                 output,
                 tile_size_deg,
                 db_path,
-            } => Self::run_generate_tiles(input, input_dir, output, tile_size_deg, db_path),
+                strict,
+            } => Self::run_generate_tiles(input, input_dir, output, tile_size_deg, db_path, strict),
             #[cfg(feature = "rule-schema-writer")]
             CliMode::RuleSchemaWrite { destination } => {
                 crate::cli::rules::generate_json_schema(&destination)
@@ -598,6 +616,7 @@ mod tests {
             PathBuf::from("/tmp/output"),
             1.0,
             None,
+            false,
         )
         .unwrap();
 
@@ -612,6 +631,7 @@ mod tests {
             PathBuf::from("/tmp/output"),
             1.0,
             None,
+            false,
         )
         .unwrap_err();
 

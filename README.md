@@ -51,6 +51,10 @@ ridi-router-cli generate-tiles \
   --tile-size-deg 1.0
 ```
 
+In directory mode, a PBF file that fails to process (unreadable, or too large for the proximity grid) is skipped with a warning
+and reported in the summary; the rest are still tiled and the manifest lists only the files that succeeded.
+Pass `--strict` to fail the whole run on the first such file instead.
+
 Tile generation materializes OSM turn restrictions for a motorcycle routing profile:
 `restriction:motorcycle`, `restriction:motor_vehicle`, and `restriction:vehicle` override generic `restriction=*`;
 matching `*:conditional` values are parsed and applied as unconditional motorcycle restrictions;
@@ -142,6 +146,7 @@ let summary = generate_tiles(TileGenerationRequest {
     output_dir: PathBuf::from("./tiles"),
     tile_size_deg: 1.0,
     db_path: None,
+    strict: false,
 })?;
 ```
 

@@ -1,7 +1,7 @@
 use crate::rmdf::format::TileId;
 use anyhow::Context;
 use bincode;
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableTable, TableDefinition, WriteTransaction};
 use ridi_router_common::osm::{OsmNode, OsmRelation, OsmWay};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -105,7 +105,15 @@ impl IntermediateTile {
     /// Save tile data to redb database
     pub fn save_to_redb(&self, db: &Database) -> anyhow::Result<()> {
         let write_txn = db.begin_write()?;
+        self.save_to_txn(&write_txn)?;
+        write_txn.commit()?;
+        Ok(())
+    }
 
+    /// Stage tile data in an open write transaction.
+    ///
+    /// Nothing is persisted until the caller commits the transaction.
+    pub fn save_to_txn(&self, write_txn: &WriteTransaction) -> anyhow::Result<()> {
         {
             let mut nodes_table = write_txn.open_table(TILE_NODES)?;
             for (osm_id, node) in &self.nodes {
@@ -133,7 +141,6 @@ impl IntermediateTile {
             }
         }
 
-        write_txn.commit()?;
         Ok(())
     }
 
@@ -276,27 +283,24 @@ impl GridBounds {
 pub struct GridStorage;
 
 impl GridStorage {
-    /// Store a proximity grid in the database
+    /// Stage a proximity grid in an open write transaction.
+    ///
+    /// Nothing is persisted until the caller commits the transaction.
     pub fn store_grid(
-        db: &Database,
+        write_txn: &WriteTransaction,
         pbf_id: u64,
         pbf_path: &str,
         grid_bytes: &[u8],
         bounds: &GridBounds,
     ) -> anyhow::Result<()> {
-        let write_txn = db.begin_write()?;
+        let mut grids_table = write_txn.open_table(PROXIMITY_GRIDS)?;
+        let mut files_table = write_txn.open_table(PBF_FILES)?;
+        let mut bounds_table = write_txn.open_table(PBF_BOUNDS)?;
 
-        {
-            let mut grids_table = write_txn.open_table(PROXIMITY_GRIDS)?;
-            let mut files_table = write_txn.open_table(PBF_FILES)?;
-            let mut bounds_table = write_txn.open_table(PBF_BOUNDS)?;
+        grids_table.insert(pbf_id, grid_bytes)?;
+        files_table.insert(pbf_id, pbf_path)?;
+        bounds_table.insert(pbf_id, bounds.to_bytes().as_slice())?;
 
-            grids_table.insert(pbf_id, grid_bytes)?;
-            files_table.insert(pbf_id, pbf_path)?;
-            bounds_table.insert(pbf_id, bounds.to_bytes().as_slice())?;
-        }
-
-        write_txn.commit()?;
         Ok(())
     }
 
@@ -403,7 +407,7 @@ pub fn find_overlapping_cells(
 pub fn build_combined_grid(
     grids: &[(u64, GridBounds, crate::proximity::RasterizedProximityGrid)],
     region: &GridBounds,
-) -> crate::proximity::RasterizedProximityGrid {
+) -> anyhow::Result<crate::proximity::RasterizedProximityGrid> {
     use crate::osm_data::in_memory_pbf::PbfBounds;
     use crate::proximity::RasterizedProximityGrid;
 
@@ -415,7 +419,8 @@ pub fn build_combined_grid(
         lon_max: Some(region.lon_max as f64),
     };
 
-    let mut combined = RasterizedProximityGrid::new(&bounds);
+    let mut combined = RasterizedProximityGrid::try_new(&bounds)
+        .with_context(|| format!("Failed to build combined grid for overlap zone {region:?}"))?;
 
     // Find overlapping cells and merge
     let overlaps = find_overlapping_cells(grids);
@@ -466,7 +471,7 @@ pub fn build_combined_grid(
         }
     }
 
-    combined
+    Ok(combined)
 }
 
 #[cfg(test)]
@@ -848,7 +853,7 @@ mod tests {
         let grids: Vec<(u64, GridBounds, RasterizedProximityGrid)> =
             vec![(1, grid_bounds1, grid1), (2, grid_bounds2, grid2)];
 
-        let combined = build_combined_grid(&grids, &region);
+        let combined = build_combined_grid(&grids, &region).unwrap();
 
         // Combined grid should cover the region
         let (lon_min, lat_min, lon_max, lat_max) = combined.bounds();
