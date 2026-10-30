@@ -51,9 +51,9 @@ ridi-router-cli generate-tiles \
   --tile-size-deg 1.0
 ```
 
-In directory mode, a PBF file that fails to process (unreadable, or too large for the proximity grid) is skipped with a warning
-and reported in the summary; the rest are still tiled and the manifest lists only the files that succeeded.
-Pass `--strict` to fail the whole run on the first such file instead.
+The files in the directory are read as one dataset, so overlapping extracts (e.g. neighbouring countries) can be passed as they are:
+objects present in several files are kept once. The files should come from the same OSM snapshot; a warning is logged when
+their replication timestamps differ. Any file that cannot be read fails the run.
 
 Tile generation materializes OSM turn restrictions for a motorcycle routing profile:
 `restriction:motorcycle`, `restriction:motor_vehicle`, and `restriction:vehicle` override generic `restriction=*`;
@@ -145,8 +145,6 @@ let summary = generate_tiles(TileGenerationRequest {
     input: TileInputSource::File(PathBuf::from("./region.osm.pbf")),
     output_dir: PathBuf::from("./tiles"),
     tile_size_deg: 1.0,
-    db_path: None,
-    strict: false,
 })?;
 ```
 

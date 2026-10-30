@@ -23,13 +23,10 @@ mod tests;
 use rstar::{RTree, RTreeObject, AABB};
 use tracing::info;
 
-use crate::proximity::area_rasterizer::{
-    calculate_bearing, compute_multipolygon_bbox, compute_multipolygon_centroid,
-    is_military_interior, polygon_distance_m, BBox,
-};
-use crate::proximity::rasterized_grid::{
-    bearing_to_sector, GRID_CELL_SIZE_DEG, MILITARY_GRID_CELL_SIZE_DEG,
-    RESIDENTIAL_PROXIMITY_THRESHOLD_M, THRESHOLD_AREA_M2,
+use crate::proximity::{
+    bearing_to_sector, calculate_bearing, compute_multipolygon_bbox, compute_multipolygon_centroid,
+    is_military_interior, polygon_distance_m, BBox, GRID_CELL_SIZE_DEG,
+    MILITARY_GRID_CELL_SIZE_DEG, RESIDENTIAL_PROXIMITY_THRESHOLD_M, THRESHOLD_AREA_M2,
 };
 
 /// Global grid size: residential cells (cols, rows) and military cells (cols, rows).

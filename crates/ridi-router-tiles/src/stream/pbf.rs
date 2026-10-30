@@ -640,7 +640,8 @@ impl PbfSet {
         let files = paths
             .iter()
             .map(|path| -> Result<_> {
-                let pbf = PbfFile::open(path)?;
+                let pbf =
+                    PbfFile::open(path).with_context(|| format!("Failed to read PBF {path:?}"))?;
                 let ranges = pbf
                     .type_ranges()
                     .with_context(|| format!("Failed to index PBF {path:?}"))?;

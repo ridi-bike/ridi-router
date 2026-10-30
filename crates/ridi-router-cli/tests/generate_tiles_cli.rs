@@ -188,7 +188,6 @@ fn generate_tiles_directory_input_then_generate_route_end_to_end() {
     link_or_copy_fixture(&fixture_pbf, &linked_pbf);
 
     let tiles_dir = TestDir::new("tiles-cli-directory-output");
-    let db_path = unique_test_path("tiles-cli-directory-output.redb");
     let generate_output = run_generate_tiles(&[
         "--input-dir",
         input_dir.path().to_str().unwrap(),
@@ -196,8 +195,6 @@ fn generate_tiles_directory_input_then_generate_route_end_to_end() {
         tiles_dir.path().to_str().unwrap(),
         "--tile-size-deg",
         "180",
-        "--db-path",
-        db_path.to_str().unwrap(),
     ]);
 
     let generate_stderr = String::from_utf8_lossy(&generate_output.stderr);
@@ -240,8 +237,4 @@ fn generate_tiles_directory_input_then_generate_route_end_to_end() {
         !route_files.is_empty() || route_stderr.contains("No routes found"),
         "expected route output or explicit no-route success, stderr: {route_stderr}",
     );
-
-    if db_path.exists() {
-        fs::remove_file(db_path).unwrap();
-    }
 }

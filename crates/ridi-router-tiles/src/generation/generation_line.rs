@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
 use super::TagSetId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -9,6 +10,8 @@ pub enum LineDirection {
     Roundabout = 2,
 }
 
+/// Line of the test-only `GenerationGraph`.
+#[cfg(test)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GenerationLine {
     pub from_node_id: u64,

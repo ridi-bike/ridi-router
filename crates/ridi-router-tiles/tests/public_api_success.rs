@@ -64,8 +64,6 @@ fn generate_tiles_public_api_writes_manifest_and_supports_routing() {
         input: TileInputSource::File(input_file),
         output_dir: output_dir.path().clone(),
         tile_size_deg: 180.0,
-        db_path: None,
-        strict: false,
     })
     .unwrap();
 
@@ -131,42 +129,14 @@ fn input_dir_with_broken_pbf(test_dir: &TestDir) -> (PathBuf, PathBuf) {
 }
 
 #[test]
-fn generate_tiles_directory_input_skips_and_reports_failing_pbf() {
-    let test_dir = TestDir::new("skip-broken-pbf");
-    let (input_dir, broken_pbf) = input_dir_with_broken_pbf(&test_dir);
-    let output_dir = test_dir.path().join("output");
-
-    let summary = generate_tiles(TileGenerationRequest {
-        input: TileInputSource::Directory(input_dir),
-        output_dir: output_dir.clone(),
-        tile_size_deg: 180.0,
-        db_path: None,
-        strict: false,
-    })
-    .unwrap();
-
-    assert!(summary.tile_count > 0);
-    assert_eq!(summary.skipped_pbf_files.len(), 1);
-    assert_eq!(summary.skipped_pbf_files[0].path, broken_pbf);
-
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(output_dir.join("manifest.json")).unwrap()).unwrap();
-    let manifest = manifest.to_string();
-    assert!(manifest.contains("a-tiny-routing.osm.pbf"));
-    assert!(!manifest.contains("b-broken.osm.pbf"));
-}
-
-#[test]
-fn generate_tiles_directory_input_strict_fails_on_failing_pbf() {
-    let test_dir = TestDir::new("strict-broken-pbf");
+fn generate_tiles_directory_input_fails_on_unreadable_pbf() {
+    let test_dir = TestDir::new("broken-pbf");
     let (input_dir, _) = input_dir_with_broken_pbf(&test_dir);
 
     let error = generate_tiles(TileGenerationRequest {
         input: TileInputSource::Directory(input_dir),
         output_dir: test_dir.path().join("output"),
         tile_size_deg: 180.0,
-        db_path: None,
-        strict: true,
     })
     .unwrap_err();
 
@@ -174,4 +144,45 @@ fn generate_tiles_directory_input_strict_fails_on_failing_pbf() {
         matches!(&error, TileGenerationError::GenerationFailed { message, .. } if message.contains("b-broken.osm.pbf")),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn generate_tiles_directory_input_lists_every_source_file() {
+    let test_dir = TestDir::new("two-copies");
+    let input_dir = test_dir.path().join("input");
+    fs::create_dir_all(&input_dir).unwrap();
+    // the same extract twice: every object is present in both files and must be kept once
+    fs::copy(fixture_pbf(), input_dir.join("a.osm.pbf")).unwrap();
+    fs::copy(fixture_pbf(), input_dir.join("b.osm.pbf")).unwrap();
+    let single_dir = test_dir.path().join("single");
+    let dir_out = test_dir.path().join("dir");
+
+    let single = generate_tiles(TileGenerationRequest {
+        input: TileInputSource::File(fixture_pbf()),
+        output_dir: single_dir.clone(),
+        tile_size_deg: 0.1,
+    })
+    .unwrap();
+    let both = generate_tiles(TileGenerationRequest {
+        input: TileInputSource::Directory(input_dir),
+        output_dir: dir_out.clone(),
+        tile_size_deg: 0.1,
+    })
+    .unwrap();
+
+    assert_eq!(single.tile_count, both.tile_count);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir_out.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["source_files"],
+        serde_json::json!(["a.osm.pbf", "b.osm.pbf"])
+    );
+    for tile in manifest["tiles"].as_array().unwrap() {
+        let name = tile["filename"].as_str().unwrap();
+        assert_eq!(
+            fs::read(single_dir.join(name)).unwrap().len(),
+            fs::read(dir_out.join(name)).unwrap().len(),
+            "tile {name} differs in size between single-file and duplicated-directory input"
+        );
+    }
 }

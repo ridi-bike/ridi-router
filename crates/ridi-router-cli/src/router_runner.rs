@@ -184,15 +184,15 @@ enum CliMode {
     },
     /// Generate RMDF tiles from OSM PBF file(s)
     ///
-    /// Single file mode: --input FILE
-    /// Multi-file mode: --input-dir DIR
+    /// Single file: --input FILE
+    /// Several files read as one dataset (e.g. overlapping extracts): --input-dir DIR
     GenerateTiles {
         #[arg(short, long, value_name = "FILE", conflicts_with = "input_dir")]
         /// Input OSM PBF file (single file mode)
         input: Option<PathBuf>,
 
         #[arg(long, value_name = "DIR", conflicts_with = "input")]
-        /// Input directory containing OSM PBF files (multi-file mode)
+        /// Directory of OSM PBF files, read as one dataset (objects in several files are kept once)
         input_dir: Option<PathBuf>,
 
         #[arg(short, long, visible_alias = "output-dir", value_name = "DIR")]
@@ -202,16 +202,6 @@ enum CliMode {
         #[arg(long, default_value = "1.0")]
         /// Tile size in degrees (e.g., 0.1, 1.0)
         tile_size_deg: f32,
-
-        #[arg(long, value_name = "FILE")]
-        /// Path for intermediate database (multi-file mode only)
-        /// Default: temp file in output directory
-        db_path: Option<PathBuf>,
-
-        #[arg(long)]
-        /// Fail if any PBF file cannot be processed (multi-file mode only)
-        /// Default: skip failing PBF files and report them
-        strict: bool,
     },
     /// Generate JSON schema file for rule files
     #[cfg(feature = "rule-schema-writer")]
@@ -258,8 +248,6 @@ impl RouterRunner {
         input_dir: Option<PathBuf>,
         output_dir: PathBuf,
         tile_size_deg: f32,
-        db_path: Option<PathBuf>,
-        strict: bool,
     ) -> std::result::Result<TileGenerationRequest, RouterRunnerError> {
         let input = match (input, input_dir) {
             (Some(_), Some(_)) => {
@@ -280,8 +268,6 @@ impl RouterRunner {
             input,
             output_dir,
             tile_size_deg,
-            db_path,
-            strict,
         })
     }
 
@@ -340,28 +326,16 @@ impl RouterRunner {
         input_dir: Option<PathBuf>,
         output_dir: PathBuf,
         tile_size_deg: f32,
-        db_path: Option<PathBuf>,
-        strict: bool,
     ) -> std::result::Result<(), RouterRunnerError> {
-        let request = Self::build_tile_generation_request(
-            input,
-            input_dir,
-            output_dir,
-            tile_size_deg,
-            db_path,
-            strict,
-        )?;
+        let request =
+            Self::build_tile_generation_request(input, input_dir, output_dir, tile_size_deg)?;
 
         info!(input = ?request.input, output_dir = ?request.output_dir, "Tile generation started");
         let summary =
             generate_tiles(request).map_err(|error| RouterRunnerError::TileGeneration { error })?;
-        for skipped in &summary.skipped_pbf_files {
-            warn!(pbf = ?skipped.path, error = %skipped.error, "Skipped PBF file");
-        }
         info!(
             output_dir = ?summary.output_dir,
             tile_count = summary.tile_count,
-            skipped_pbf_count = summary.skipped_pbf_files.len(),
             "Tile generation complete"
         );
 
@@ -391,9 +365,7 @@ impl RouterRunner {
                 input_dir,
                 output,
                 tile_size_deg,
-                db_path,
-                strict,
-            } => Self::run_generate_tiles(input, input_dir, output, tile_size_deg, db_path, strict),
+            } => Self::run_generate_tiles(input, input_dir, output, tile_size_deg),
             #[cfg(feature = "rule-schema-writer")]
             CliMode::RuleSchemaWrite { destination } => {
                 crate::cli::rules::generate_json_schema(&destination)
@@ -615,8 +587,6 @@ mod tests {
             None,
             PathBuf::from("/tmp/output"),
             1.0,
-            None,
-            false,
         )
         .unwrap();
 
@@ -630,8 +600,6 @@ mod tests {
             None,
             PathBuf::from("/tmp/output"),
             1.0,
-            None,
-            false,
         )
         .unwrap_err();
 

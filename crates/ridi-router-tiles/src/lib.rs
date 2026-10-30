@@ -1,6 +1,5 @@
 mod generation;
 pub mod local_stage;
-mod osm_data;
 mod proximity;
 mod rmdf;
 mod simd;
@@ -12,7 +11,6 @@ use std::{
 };
 
 use ridi_router_common::manifest::TileManifest;
-use rmdf::generator::{MultiPbfGenerator, TileGenerator};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TileInputSource {
@@ -25,24 +23,12 @@ pub struct TileGenerationRequest {
     pub input: TileInputSource,
     pub output_dir: PathBuf,
     pub tile_size_deg: f32,
-    pub db_path: Option<PathBuf>,
-    /// Directory input only: fail on the first PBF that cannot be processed
-    /// instead of skipping it and reporting it in the summary.
-    pub strict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TileGenerationSummary {
     pub output_dir: PathBuf,
     pub tile_count: usize,
-    /// PBF files left out of the output because they failed to process.
-    pub skipped_pbf_files: Vec<SkippedPbfFile>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SkippedPbfFile {
-    pub path: PathBuf,
-    pub error: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -98,56 +84,16 @@ pub fn generate_tiles(
         message: format!("{error:#}"),
     };
 
-    let skipped_pbf_files = match &request.input {
-        TileInputSource::File(input_file)
-            if std::env::var("RIDI_LEGACY_SINGLE").as_deref() != Ok("1") =>
-        {
-            stream::generate(
-                std::slice::from_ref(input_file),
-                &request.output_dir,
-                request.tile_size_deg,
-            )
-            .map_err(generation_failed)?;
-            Vec::new()
+    let inputs = match &request.input {
+        TileInputSource::File(input_file) => vec![input_file.clone()],
+        TileInputSource::Directory(input_dir) => {
+            pbf_files_in(input_dir).map_err(generation_failed)?
         }
-        TileInputSource::File(input_file) => {
-            TileGenerator::new(
-                input_file.clone(),
-                request.output_dir.clone(),
-                request.tile_size_deg,
-            )
-            .map_err(generation_failed)?
-            .generate()
-            .map_err(generation_failed)?;
-            Vec::new()
-        }
-        TileInputSource::Directory(input_dir)
-            if std::env::var("RIDI_LEGACY_MULTI").as_deref() != Ok("1") =>
-        {
-            stream::generate(
-                &pbf_files_in(input_dir).map_err(generation_failed)?,
-                &request.output_dir,
-                request.tile_size_deg,
-            )
-            .map_err(generation_failed)?;
-            Vec::new()
-        }
-        TileInputSource::Directory(input_dir) => MultiPbfGenerator::new(
-            input_dir.clone(),
-            request.output_dir.clone(),
-            request.tile_size_deg,
-            request
-                .db_path
-                .clone()
-                .unwrap_or_else(|| request.output_dir.join(".intermediate.redb")),
-            request.strict,
-        )
-        .map_err(generation_failed)?
-        .generate()
-        .map_err(generation_failed)?,
     };
+    stream::generate(&inputs, &request.output_dir, request.tile_size_deg)
+        .map_err(generation_failed)?;
 
-    read_generation_summary(&request.output_dir, skipped_pbf_files)
+    read_generation_summary(&request.output_dir)
 }
 
 /// The `*.pbf` files directly in `dir`, sorted by path.
@@ -249,7 +195,6 @@ fn prepare_output_dir(path: &Path) -> Result<(), TileGenerationError> {
 
 fn read_generation_summary(
     output_dir: &Path,
-    skipped_pbf_files: Vec<SkippedPbfFile>,
 ) -> Result<TileGenerationSummary, TileGenerationError> {
     let manifest_path = output_dir.join("manifest.json");
     let manifest_file =
@@ -267,7 +212,6 @@ fn read_generation_summary(
     Ok(TileGenerationSummary {
         output_dir: output_dir.to_path_buf(),
         tile_count: manifest.tiles.len(),
-        skipped_pbf_files,
     })
 }
 
@@ -299,8 +243,6 @@ mod tests {
             input: TileInputSource::File(PathBuf::from("/tmp/input.osm.pbf")),
             output_dir: PathBuf::from("/tmp/output"),
             tile_size_deg: 1.0,
-            db_path: None,
-            strict: false,
         };
 
         assert!(matches!(request.input, TileInputSource::File(_)));
@@ -312,8 +254,6 @@ mod tests {
             input: TileInputSource::Directory(PathBuf::from("/tmp/input-dir")),
             output_dir: PathBuf::from("/tmp/output"),
             tile_size_deg: 1.0,
-            db_path: None,
-            strict: false,
         };
 
         assert!(matches!(request.input, TileInputSource::Directory(_)));
@@ -328,8 +268,6 @@ mod tests {
             input: TileInputSource::File(missing_input.clone()),
             output_dir: output_dir.clone(),
             tile_size_deg: 1.0,
-            db_path: None,
-            strict: false,
         })
         .unwrap_err();
 
@@ -353,8 +291,6 @@ mod tests {
             input: TileInputSource::File(input_file.clone()),
             output_dir: output_file.clone(),
             tile_size_deg: 1.0,
-            db_path: None,
-            strict: false,
         })
         .unwrap_err();
 

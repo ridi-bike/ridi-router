@@ -15,11 +15,11 @@ use super::geom::{smallvec_lite::SmallTiles, TileGrid};
 use super::nodeidx::dec_coord;
 use super::passes::{area_frame_refs, routable_frame_refs, AREA_MEMBER, AREA_MIL, AREA_RES};
 use super::records::*;
+use super::rings::connect_ways_into_rings;
 use super::store::Resolver;
 use super::util::*;
 use crate::local_stage::proximity::lon_degrees_for;
-use crate::osm_data::in_memory_pbf::connect_ways_into_rings;
-use crate::proximity::area_rasterizer::compute_multipolygon_bbox;
+use crate::proximity::compute_multipolygon_bbox;
 
 /// Margin (degrees of latitude) around a polygon bbox when choosing regions: covers the
 /// 500 m * 1.5 prefilter (0.00676 deg), the tile buffer (0.005 deg) and cell-centre offsets.

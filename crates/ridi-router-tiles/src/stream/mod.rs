@@ -29,6 +29,7 @@ mod nodeidx;
 mod passes;
 mod pbf;
 mod records;
+mod rings;
 mod store;
 mod util;
 
@@ -60,12 +61,18 @@ pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result
     anyhow::ensure!(!inputs.is_empty(), "no input PBF files");
     util::raise_nofile_limit();
     let keep = std::env::var("RIDI_KEEP_SCRATCH").is_ok_and(|v| v == "1");
-    let scratch_path = std::env::temp_dir().join(format!("ridi-stream-{}", std::process::id()));
+    // unique per run, also for concurrent runs in one process
+    static RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let scratch_path = std::env::temp_dir().join(format!(
+        "ridi-stream-{}-{}",
+        std::process::id(),
+        RUN.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&scratch_path)
         .with_context(|| format!("create scratch dir {scratch_path:?}"))?;
     let scratch = ScratchDir(scratch_path.clone(), keep);
     let scratch_dir = &scratch.0;
-    info!("Prototype B streaming generator; scratch dir {scratch_dir:?}");
+    info!("Streaming tile generator; scratch dir {scratch_dir:?}");
     std::fs::create_dir_all(output_dir)?;
 
     let region_tiles: u32 = std::env::var("RIDI_REGION_TILES")
@@ -153,13 +160,7 @@ pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result
     let needed = NeededSet::new();
     let routable_spill = SpillWriter::create(&scratch_dir.join("routable_ways.bin"))?;
     let area_spill = SpillWriter::create(&scratch_dir.join("area_ways.bin"))?;
-    passes::way_pass(
-        &pbf,
-        &area_members,
-        &needed,
-        &routable_spill,
-        &area_spill,
-    )?;
+    passes::way_pass(&pbf, &area_members, &needed, &routable_spill, &area_spill)?;
     let routable_path = routable_spill.finish()?;
     let area_path = area_spill.finish()?;
     drop(area_members);
