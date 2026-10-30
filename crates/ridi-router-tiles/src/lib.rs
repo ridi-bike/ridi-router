@@ -102,8 +102,12 @@ pub fn generate_tiles(
         TileInputSource::File(input_file)
             if std::env::var("RIDI_LEGACY_SINGLE").as_deref() != Ok("1") =>
         {
-            stream::generate(input_file, &request.output_dir, request.tile_size_deg)
-                .map_err(generation_failed)?;
+            stream::generate(
+                std::slice::from_ref(input_file),
+                &request.output_dir,
+                request.tile_size_deg,
+            )
+            .map_err(generation_failed)?;
             Vec::new()
         }
         TileInputSource::File(input_file) => {
@@ -114,6 +118,17 @@ pub fn generate_tiles(
             )
             .map_err(generation_failed)?
             .generate()
+            .map_err(generation_failed)?;
+            Vec::new()
+        }
+        TileInputSource::Directory(input_dir)
+            if std::env::var("RIDI_LEGACY_MULTI").as_deref() != Ok("1") =>
+        {
+            stream::generate(
+                &pbf_files_in(input_dir).map_err(generation_failed)?,
+                &request.output_dir,
+                request.tile_size_deg,
+            )
             .map_err(generation_failed)?;
             Vec::new()
         }
@@ -133,6 +148,16 @@ pub fn generate_tiles(
     };
 
     read_generation_summary(&request.output_dir, skipped_pbf_files)
+}
+
+/// The `*.pbf` files directly in `dir`, sorted by path.
+fn pbf_files_in(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = fs::read_dir(dir)?
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<Result<_, _>>()?;
+    files.retain(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("pbf"));
+    files.sort();
+    Ok(files)
 }
 
 fn validate_tile_generation_request(

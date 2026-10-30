@@ -384,6 +384,8 @@ pub struct PbfFile {
     len: u64,
     kinds: Mutex<HashMap<u64, (u8, u8)>>,
     pub data_start: u64,
+    /// `osmosis_replication_timestamp` from the header, if present
+    pub replication_timestamp: Option<i64>,
 }
 
 pub const KIND_NODE: u8 = 0;
@@ -419,6 +421,7 @@ impl PbfFile {
             len,
             kinds: Mutex::new(HashMap::new()),
             data_start: 0,
+            replication_timestamp: None,
         };
         // header blob(s) at the start
         let mut off = 0u64;
@@ -431,6 +434,9 @@ impl PbfFile {
                 while let Some((f, v)) = pb.next()? {
                     if f == 5 && v.bytes() == b"Sort.Type_then_ID" {
                         sorted = true;
+                    }
+                    if f == 32 {
+                        pbf.replication_timestamp = Some(v.int() as i64);
                     }
                 }
                 sorted_flag = Some(sorted);
@@ -572,15 +578,9 @@ impl PbfFile {
     pub fn par_blocks(
         &self,
         range: std::ops::Range<u64>,
-        label: &'static str,
+        progress: std::sync::Arc<super::util::Progress>,
     ) -> impl rayon::iter::ParallelIterator<Item = Result<(u64, Vec<u8>)>> + '_ {
         use rayon::prelude::*;
-        let progress = std::sync::Arc::new(super::util::Progress::new(
-            label,
-            range.end.saturating_sub(range.start),
-            "MB",
-            1 << 20,
-        ));
         let threads = rayon::current_num_threads() as u64;
         let span = range.end.saturating_sub(range.start);
         let seg = (span / (threads * 8)).clamp(4 << 20, 256 << 20);
@@ -625,6 +625,74 @@ impl PbfFile {
                 }
             })
         })
+    }
+}
+
+/// One or more PBF inputs read as one dataset. Every pass reads the matching type range of all
+/// files in parallel; objects present in several (overlapping) files are deduplicated by the
+/// passes.
+pub struct PbfSet {
+    files: Vec<(PbfFile, [std::ops::Range<u64>; 3])>,
+}
+
+impl PbfSet {
+    pub fn open(paths: &[std::path::PathBuf]) -> Result<Self> {
+        let files = paths
+            .iter()
+            .map(|path| -> Result<_> {
+                let pbf = PbfFile::open(path)?;
+                let ranges = pbf
+                    .type_ranges()
+                    .with_context(|| format!("Failed to index PBF {path:?}"))?;
+                Ok((pbf, ranges))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut stamps: Vec<i64> = files
+            .iter()
+            .filter_map(|(f, _)| f.replication_timestamp)
+            .collect();
+        stamps.sort_unstable();
+        stamps.dedup();
+        if stamps.len() > 1 {
+            tracing::warn!(
+                "Input PBFs have {} different replication timestamps ({}..{}); objects present in several files are taken from any one of them",
+                stamps.len(),
+                stamps[0],
+                stamps[stamps.len() - 1]
+            );
+        }
+        Ok(Self { files })
+    }
+
+    pub fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn ranges(&self, file: usize) -> &[std::ops::Range<u64>; 3] {
+        &self.files[file].1
+    }
+
+    /// Parallel iterator over the blocks of entity `kind` in all files:
+    /// items are (file index, header offset, raw block bytes).
+    pub fn par_blocks(
+        &self,
+        kind: u8,
+        label: &'static str,
+    ) -> impl rayon::iter::ParallelIterator<Item = Result<(usize, u64, Vec<u8>)>> + '_ {
+        use rayon::prelude::*;
+        let total = self
+            .files
+            .iter()
+            .map(|(_, r)| r[kind as usize].end.saturating_sub(r[kind as usize].start))
+            .sum();
+        let progress = std::sync::Arc::new(super::util::Progress::new(label, total, "MB", 1 << 20));
+        self.files
+            .par_iter()
+            .enumerate()
+            .flat_map(move |(fi, (pbf, ranges))| {
+                pbf.par_blocks(ranges[kind as usize].clone(), progress.clone())
+                    .map(move |item| item.map(|(bi, raw)| (fi, bi, raw)))
+            })
     }
 }
 

@@ -76,9 +76,9 @@ pub fn write_manifest(
     output_dir: &Path,
     tile_size_degrees: f32,
     tiles: Vec<TileMetadata>,
-    source: &str,
+    sources: Vec<String>,
 ) -> Result<()> {
-    let manifest = build(tile_size_degrees, tiles, vec![source.to_string()]);
+    let manifest = build(tile_size_degrees, tiles, sources);
     write_json(&output_dir.join("manifest.json"), &manifest)
 }
 

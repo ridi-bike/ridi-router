@@ -361,6 +361,40 @@ impl std::hash::Hasher for IdHasher {
     }
 }
 
+/// Concurrent set of ids below 2^34, as a bitmap allocated in 2^16-id blocks on first use.
+pub struct IdBitmap {
+    blocks: Vec<std::sync::OnceLock<Box<[std::sync::atomic::AtomicU64]>>>,
+}
+
+impl IdBitmap {
+    const BLOCK_BITS: u32 = 16;
+    const MAX_ID: u64 = 1 << 34;
+
+    pub fn new() -> Self {
+        Self {
+            blocks: (0..Self::MAX_ID >> Self::BLOCK_BITS)
+                .map(|_| std::sync::OnceLock::new())
+                .collect(),
+        }
+    }
+
+    /// Insert `id`; true if it was not present yet.
+    pub fn insert(&self, id: u64) -> anyhow::Result<bool> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        if id >= Self::MAX_ID {
+            anyhow::bail!("id {id} out of range for IdBitmap");
+        }
+        let block = self.blocks[(id >> Self::BLOCK_BITS) as usize].get_or_init(|| {
+            (0..1 << (Self::BLOCK_BITS - 6))
+                .map(|_| AtomicU64::new(0))
+                .collect()
+        });
+        let bit = id & ((1 << Self::BLOCK_BITS) - 1);
+        let mask = 1u64 << (bit & 63);
+        Ok(block[(bit >> 6) as usize].fetch_or(mask, Ordering::Relaxed) & mask == 0)
+    }
+}
+
 pub type IdBuild = std::hash::BuildHasherDefault<IdHasher>;
 pub type IdSet = std::collections::HashSet<u64, IdBuild>;
 pub type IdMap<V> = std::collections::HashMap<u64, V, IdBuild>;

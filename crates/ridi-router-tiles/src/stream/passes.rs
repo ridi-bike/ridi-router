@@ -10,8 +10,8 @@ use tracing::info;
 use super::buckets::SpillWriter;
 use super::nodeidx::{enc_coord, NeededSet, RankedSet, SlotCursor};
 use super::pbf::{
-    classify_strings, lossy, packed_sint, parse_node, Block, DenseNodes, Packed, PbfFile,
-    RelationMsg, WayMsg, KIND_NODE, KIND_RELATION, KIND_WAY,
+    classify_strings, lossy, packed_sint, parse_node, Block, DenseNodes, Packed,
+    PbfSet, RelationMsg, WayMsg, KIND_NODE, KIND_RELATION, KIND_WAY,
 };
 use super::records::*;
 use super::store::Store;
@@ -76,13 +76,13 @@ fn check_order(block: &Block, idx: u64, ranges: &[std::ops::Range<u64>; 3]) -> R
 }
 
 #[hotpath::measure]
-pub fn relation_pass(pbf: &PbfFile, ranges: &[std::ops::Range<u64>; 3]) -> Result<RelationData> {
-    let parts: Vec<(u64, RelationData)> = pbf
-        .par_blocks(ranges[2].clone(), "relations")
-        .map(|item| -> Result<(u64, RelationData)> {
-            let (bi, raw) = item?;
+pub fn relation_pass(pbfs: &PbfSet) -> Result<RelationData> {
+    let parts: Vec<((usize, u64), RelationData)> = pbfs
+        .par_blocks(KIND_RELATION, "relations")
+        .map(|item| -> Result<((usize, u64), RelationData)> {
+            let (fi, bi, raw) = item?;
             let block = Block::parse(&raw)?;
-            check_order(&block, bi, ranges)?;
+            check_order(&block, bi, pbfs.ranges(fi))?;
             let codes = classify_strings(&block, classify_relation_key);
             let st = &block.strings;
             let mut out = RelationData::default();
@@ -194,7 +194,7 @@ pub fn relation_pass(pbf: &PbfFile, ranges: &[std::ops::Range<u64>; 3]) -> Resul
                 }
                 Ok(())
             })?;
-            Ok((bi, out))
+            Ok(((fi, bi), out))
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -208,6 +208,14 @@ pub fn relation_pass(pbf: &PbfFile, ranges: &[std::ops::Range<u64>; 3]) -> Resul
         data.areas.extend(p.areas);
     }
     data.kept.sort_unstable();
+    if pbfs.len() > 1 {
+        // relations present in several input files: keep the first (in file order)
+        data.kept.dedup();
+        let mut seen = IdSet::default();
+        data.restrictions.retain(|r| seen.insert(r.id));
+        seen.clear();
+        data.areas.retain(|a| seen.insert(a.id));
+    }
     info!(
         "Relations: {} kept, {} with relation members, {} restrictions, {} residential/military areas",
         data.kept.len(),
@@ -332,8 +340,7 @@ pub struct WayPassStats {
 /// Routable spill record: id, tags, node ids (delta). Area spill record: id, flags, node ids.
 #[hotpath::measure]
 pub fn way_pass(
-    pbf: &PbfFile,
-    ranges: &[std::ops::Range<u64>; 3],
+    pbfs: &PbfSet,
     area_members: &super::util::IdSet,
     needed: &NeededSet,
     routable_out: &SpillWriter,
@@ -341,13 +348,15 @@ pub fn way_pass(
 ) -> Result<WayPassStats> {
     let n_routable = AtomicU64::new(0);
     let n_area = AtomicU64::new(0);
-    pbf.par_blocks(ranges[1].clone(), "ways")
+    // ways present in several input files are spilled once
+    let seen = (pbfs.len() > 1).then(IdBitmap::new);
+    pbfs.par_blocks(KIND_WAY, "ways")
         .try_for_each_init(
             || (Vec::<i64>::new(), Vec::<i64>::new()),
             |(refs, block_ids), item| -> Result<()> {
-                let (bi, raw) = item?;
+                let (fi, bi, raw) = item?;
                 let block = Block::parse(&raw)?;
-                check_order(&block, bi, ranges)?;
+                check_order(&block, bi, pbfs.ranges(fi))?;
                 let codes = classify_strings(&block, classify_way_key);
                 let st = &block.strings;
                 let mut rbuf = Vec::with_capacity(1 << 20);
@@ -388,6 +397,11 @@ pub fn way_pass(
                     let area = ((res || mil) && closed) || member;
                     if !routable && !area {
                         return Ok(());
+                    }
+                    if let Some(seen) = &seen {
+                        if !seen.insert(id)? {
+                            return Ok(());
+                        }
                     }
                     block_ids.extend_from_slice(refs);
                     let put_refs = |buf: &mut Vec<u8>| {
@@ -525,20 +539,16 @@ impl NodeBounds {
 }
 
 #[hotpath::measure]
-pub fn node_pass(
-    pbf: &PbfFile,
-    ranges: &[std::ops::Range<u64>; 3],
-    set: &RankedSet,
-    store: &Store,
-) -> Result<NodeBounds> {
-    let bounds = pbf
-        .par_blocks(ranges[0].clone(), "nodes")
+/// Nodes present in several input files are written to their slot more than once (same value).
+pub fn node_pass(pbfs: &PbfSet, set: &RankedSet, store: &Store) -> Result<NodeBounds> {
+    let bounds = pbfs
+        .par_blocks(KIND_NODE, "nodes")
         .map_init(
             || Vec::<u64>::new(),
             |run, item| -> Result<NodeBounds> {
-                let (bi, raw) = item?;
+                let (fi, bi, raw) = item?;
                 let block = Block::parse(&raw)?;
-                check_order(&block, bi, ranges)?;
+                check_order(&block, bi, pbfs.ranges(fi))?;
                 let mut b = NodeBounds::empty();
                 // contiguous slot runs
                 let mut run_start = 0u64;

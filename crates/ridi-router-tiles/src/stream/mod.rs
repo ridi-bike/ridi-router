@@ -1,4 +1,5 @@
-//! Prototype B: streaming, external-memory RMDF tile generator (single PBF input).
+//! Streaming, external-memory RMDF tile generator. Input: one PBF, or several (e.g. overlapping
+//! extracts) read as one dataset; objects present in several files are kept once.
 //!
 //! Data flow (memory bounded independent of input size, except the explicitly modelled indexes):
 //!  1. index     – no blob index: type boundaries found by bisection over byte offsets
@@ -55,7 +56,8 @@ impl Drop for ScratchDir {
 }
 
 #[hotpath::measure]
-pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
+pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result<()> {
+    anyhow::ensure!(!inputs.is_empty(), "no input PBF files");
     util::raise_nofile_limit();
     let keep = std::env::var("RIDI_KEEP_SCRATCH").is_ok_and(|v| v == "1");
     let scratch_path = std::env::temp_dir().join(format!("ridi-stream-{}", std::process::id()));
@@ -93,7 +95,12 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
 
     // Fail early on insufficient scratch space (measured: ~0.19x PBF size at the route/areas
     // peak on Europe, + store/fill files if the coordinate store has to be chunked).
-    let pbf_size = std::fs::metadata(input)?.len();
+    let mut pbf_size = 0;
+    for input in inputs {
+        pbf_size += std::fs::metadata(input)
+            .with_context(|| format!("read metadata of {input:?}"))?
+            .len();
+    }
     let scratch_need = pbf_size / 100 * 30;
     if let Some(free) = util::free_space_bytes(scratch_dir) {
         info!(
@@ -114,18 +121,18 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
     let mut clock = PhaseClock::new(scratch_dir);
 
     // 1. index
-    let pbf = pbf::PbfFile::open(input)?;
-    let ranges = pbf.type_ranges()?;
+    let pbf = pbf::PbfSet::open(inputs)?;
+    info!("{} input PBF file(s), {} MB", pbf.len(), pbf_size >> 20);
     clock.phase("index");
     if std::env::var("RIDI_STOP_AFTER").as_deref() == Ok("index") {
         // probe mode: only locate the type ranges (decodes ~40 blobs)
-        write_manifest(output_dir, tile_size, Vec::new(), "none")?;
+        write_manifest(output_dir, tile_size, Vec::new(), Vec::new())?;
         clock.total();
         return Ok(());
     }
 
     // 2. relations
-    let rel_data = passes::relation_pass(&pbf, &ranges)?;
+    let rel_data = passes::relation_pass(&pbf)?;
     let unresolved = passes::resolvable_relations(&rel_data);
     let mut area_members: util::IdSet = util::IdSet::default();
     for a in &rel_data.areas {
@@ -148,7 +155,6 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
     let area_spill = SpillWriter::create(&scratch_dir.join("area_ways.bin"))?;
     passes::way_pass(
         &pbf,
-        &ranges,
         &area_members,
         &needed,
         &routable_spill,
@@ -167,10 +173,10 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
     clock.phase("rank");
 
     // 5. nodes
-    let bounds = passes::node_pass(&pbf, &ranges, &set, &store)?;
+    let bounds = passes::node_pass(&pbf, &set, &store)?;
     drop(pbf);
     if bounds.count == 0 {
-        anyhow::bail!("No nodes found in PBF {input:?}");
+        anyhow::bail!("No nodes found in {inputs:?}");
     }
     let resolver = Resolver {
         set: &set,
@@ -257,7 +263,7 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
     clock.phase("areas");
     if std::env::var("RIDI_STOP_AFTER").as_deref() == Ok("areas") {
         // measurement mode (front-end only): no tiles are written, empty manifest
-        write_manifest(output_dir, tile_size, Vec::new(), "none")?;
+        write_manifest(output_dir, tile_size, Vec::new(), Vec::new())?;
         clock.total();
         return Ok(());
     }
@@ -345,11 +351,15 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
     if tiles.is_empty() {
         tracing::warn!("No tiles were generated");
     }
-    let source = input
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-    write_manifest(output_dir, tile_size, tiles, source)?;
+    let sources = inputs
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+        .collect();
+    write_manifest(output_dir, tile_size, tiles, sources)?;
     clock.phase("manifest");
     clock.total();
     drop(scratch);
