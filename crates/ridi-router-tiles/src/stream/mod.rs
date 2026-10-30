@@ -174,7 +174,9 @@ fn generate_with(
 
     // 6. route ways into region buckets
     let bucket_dir = scratch_dir.join("regions");
-    let buckets = RegionBuckets::new(&bucket_dir, grid.all_regions())?;
+    // write buffers for the region buckets: 1/16 of the memory budget, 64 MB..1 GB
+    let bucket_buffer = (cfg.memory_bytes / 16).clamp(64 << 20, 1 << 30);
+    let buckets = RegionBuckets::new(&bucket_dir, grid.all_regions(), bucket_buffer)?;
     let nregions = (grid.region_cols * grid.region_rows) as usize;
     let region_used: Vec<AtomicBool> = (0..nregions).map(|_| AtomicBool::new(false)).collect();
     let spill = SpillReader::open(&routable_path)?;
@@ -223,6 +225,7 @@ fn generate_with(
     store.remove_file();
     drop(store);
     drop(set);
+    buckets.finish()?;
     drop(buckets);
     clock.phase("areas");
     if cfg.stop_after == Some(config::StopAfter::Areas) {

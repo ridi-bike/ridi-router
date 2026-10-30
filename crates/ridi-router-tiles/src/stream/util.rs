@@ -59,6 +59,16 @@ pub fn cpu_seconds() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// Return freed heap memory to the OS. glibc keeps freed memory in its arenas (its mmap threshold
+/// adapts upwards after large frees), so without this the buffers of one phase stay resident
+/// while the next phase allocates its own (measured on the planet: +5 GB after the route phase).
+pub fn release_free_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
 pub struct PhaseClock {
     cpu_start: f64,
     start: Instant,
@@ -81,6 +91,7 @@ impl PhaseClock {
     }
 
     pub fn phase(&mut self, name: &str) {
+        release_free_memory();
         let (rss, hwm) = mem_status_mb();
         let scratch_mb = dir_size_bytes(&self.scratch) / (1024 * 1024);
         self.peak_hwm = self.peak_hwm.max(hwm);

@@ -5,6 +5,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::Result;
@@ -74,22 +75,42 @@ pub const REC_WAY: u8 = 1;
 pub const REC_POLY: u8 = 2;
 pub const REC_RESTRICTION: u8 = 3;
 
-/// One append-only file per region. File handles are opened lazily and kept open; each region
-/// has its own mutex so appends of whole buffers never interleave.
+/// One append-only file per region, written through per-region buffers.
+///
+/// Records arrive in way-id order, which is spread over the whole planet, so writing each worker's
+/// batch straight to the files would make millions of appends of a few hundred bytes (measured on
+/// the planet: ~7 M write IOs for ~20 GB of buckets, with partial pages written back repeatedly).
+/// Instead, records collect in a shared buffer per region; a region is written once its buffer
+/// reaches `REGION_WRITE_BYTES`, and when all buffers together exceed the budget the largest ones
+/// are written. Record order within a region file is irrelevant (the local stage sorts by id).
 pub struct RegionBuckets {
     dir: PathBuf,
-    files: HashMap<u32, (OnceLock<File>, Mutex<()>)>,
+    regions: HashMap<u32, Region>,
+    buffered: AtomicU64,
+    budget: u64,
+    spilling: Mutex<()>,
 }
 
+#[derive(Default)]
+struct Region {
+    file: OnceLock<File>,
+    buf: Mutex<Vec<u8>>,
+    /// serializes file writes of this region (a buffer taken by one thread and a later one taken
+    /// by another may be written concurrently otherwise)
+    write: Mutex<()>,
+}
+
+const REGION_WRITE_BYTES: usize = 1 << 20;
+
 impl RegionBuckets {
-    pub fn new(dir: &Path, regions: impl Iterator<Item = u32>) -> Result<Self> {
+    pub fn new(dir: &Path, regions: impl Iterator<Item = u32>, budget: u64) -> Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let files = regions
-            .map(|r| (r, (OnceLock::new(), Mutex::new(()))))
-            .collect();
         Ok(Self {
             dir: dir.to_path_buf(),
-            files,
+            regions: regions.map(|r| (r, Region::default())).collect(),
+            buffered: AtomicU64::new(0),
+            budget,
+            spilling: Mutex::new(()),
         })
     }
 
@@ -97,24 +118,85 @@ impl RegionBuckets {
         dir.join(format!("r{region}.bin"))
     }
 
-    fn append(&self, region: u32, data: &[u8]) -> Result<()> {
-        let (cell, lock) = self
-            .files
+    fn region(&self, region: u32) -> &Region {
+        self.regions
             .get(&region)
-            .unwrap_or_else(|| panic!("region {region} not registered"));
-        let file = match cell.get() {
+            .unwrap_or_else(|| panic!("region {region} not registered"))
+    }
+
+    fn append(&self, region: u32, data: &[u8]) -> Result<()> {
+        let r = self.region(region);
+        let full = {
+            let mut buf = r.buf.lock().unwrap();
+            buf.extend_from_slice(data);
+            (buf.len() >= REGION_WRITE_BYTES).then(|| std::mem::take(&mut *buf))
+        };
+        let total = self
+            .buffered
+            .fetch_add(data.len() as u64, Ordering::Relaxed)
+            + data.len() as u64;
+        if let Some(full) = full {
+            self.write(region, r, &full)?;
+        }
+        if total > self.budget {
+            self.write_largest()?;
+        }
+        Ok(())
+    }
+
+    fn write(&self, region: u32, r: &Region, data: &[u8]) -> Result<()> {
+        let _w = r.write.lock().unwrap();
+        let file = match r.file.get() {
             Some(f) => f,
             None => {
                 let f = OpenOptions::new()
                     .create(true)
                     .append(true)
                     .open(Self::path_for(&self.dir, region))?;
-                let _ = cell.set(f);
-                cell.get().unwrap()
+                let _ = r.file.set(f);
+                r.file.get().unwrap()
             }
         };
-        let _g = lock.lock().unwrap();
         (&*file).write_all(data)?;
+        self.buffered
+            .fetch_sub(data.len() as u64, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Write the largest buffers until the total is back under half the budget (one thread at a
+    /// time; others carry on buffering).
+    fn write_largest(&self) -> Result<()> {
+        let Ok(_g) = self.spilling.try_lock() else {
+            return Ok(());
+        };
+        let mut sizes: Vec<(usize, u32)> = self
+            .regions
+            .iter()
+            .map(|(id, r)| (r.buf.lock().unwrap().len(), *id))
+            .filter(|(n, _)| *n > 0)
+            .collect();
+        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        for (_, id) in sizes {
+            if self.buffered.load(Ordering::Relaxed) <= self.budget / 2 {
+                break;
+            }
+            let r = self.region(id);
+            let data = std::mem::take(&mut *r.buf.lock().unwrap());
+            if !data.is_empty() {
+                self.write(id, r, &data)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Write all buffered records; call before the bucket files are read.
+    pub fn finish(&self) -> Result<()> {
+        for (id, r) in &self.regions {
+            let data = std::mem::take(&mut *r.buf.lock().unwrap());
+            if !data.is_empty() {
+                self.write(*id, r, &data)?;
+            }
+        }
         Ok(())
     }
 
