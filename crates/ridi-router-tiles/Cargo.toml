@@ -31,5 +31,6 @@ libc = "0.2"
 libdeflater = "1.22"
 
 [dev-dependencies]
+rmdf-diff = { path = "../rmdf-diff" }
 ridi-router-routing = { path = "../ridi-router-routing" }
 tracing-subscriber.workspace = true

@@ -1,9 +1,13 @@
-//! rmdf-diff: semantic comparison of two RMDF tile directories.
+//! Semantic comparison of RMDF tile directories.
 //!
-//! Usage: rmdf-diff <ref_dir> <candidate_dir> [--json <file>] [--max-examples N]
+//! Tile bytes are not deterministic (line, tag and rule order), so tiles are decoded and compared
+//! as models: points (coordinates, flags, incident lines), lines (endpoints, direction, tags) and
+//! restriction rules. Decoding also checks each tile's internal consistency (layout, checksum,
+//! spatial index, references) and a few generator invariants (points inside the tile's buffered
+//! bounds, no line across the antimeridian).
 //!
-//! Exit code: 0 = semantically identical (empty tiles ignored), no candidate
-//! consistency issues and no candidate manifest issues; 1 = differences; 2 = usage/IO error.
+//! * [`diff_dirs`] compares a candidate directory against a reference.
+//! * [`digest_dir`] reduces a directory to one semantic hash per non-empty tile (golden tests).
 
 use anyhow::{bail, Context, Result};
 use bytemuck::{pod_read_unaligned, Pod};
@@ -25,6 +29,9 @@ use std::time::Instant;
 /// Resolved tag strings: name, ref, highway, surface, smoothness.
 type Tags = [Option<Box<str>>; 5];
 const TAG_NAMES: [&str; 5] = ["name", "ref", "highway", "surface", "smoothness"];
+
+/// Buffer (degrees) around a tile's bounds within which the generator includes points.
+const TILE_BUFFER_DEG: f32 = 0.005;
 
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct LineKey {
@@ -127,7 +134,12 @@ impl Issues {
 fn slice_at<'a>(bytes: &'a [u8], off: usize, len: usize, what: &str) -> Result<&'a [u8]> {
     bytes
         .get(off..off.checked_add(len).context("overflow")?)
-        .with_context(|| format!("{what} out of bounds (off={off} len={len} file={})", bytes.len()))
+        .with_context(|| {
+            format!(
+                "{what} out of bounds (off={off} len={len} file={})",
+                bytes.len()
+            )
+        })
 }
 
 fn read_pods<T: Pod>(bytes: &[u8], off: usize, count: usize, what: &str) -> Result<Vec<T>> {
@@ -144,8 +156,10 @@ fn read_u64s(bytes: &[u8], off: usize, end: usize, what: &str) -> Result<Vec<u64
     if s.len() % 8 != 0 {
         bail!("{what}: size {} not a multiple of 8", s.len());
     }
-    Ok(s.chunks_exact(8)
-        .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+    Ok(s.as_chunks::<8>()
+        .0
+        .iter()
+        .map(|c| u64::from_le_bytes(*c))
         .collect())
 }
 
@@ -184,10 +198,14 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
         if Sha256::digest(data).as_slice() == sum {
             data_end = bytes.len() - 32;
         } else {
-            issues.add("checksum_mismatch", || format!("{name}: trailing sha256 mismatch"));
+            issues.add("checksum_mismatch", || {
+                format!("{name}: trailing sha256 mismatch")
+            });
         }
     } else {
-        issues.add("checksum_missing", || format!("{name}: no room for checksum"));
+        issues.add("checksum_missing", || {
+            format!("{name}: no room for checksum")
+        });
     }
 
     // Header bounds vs filename.
@@ -221,7 +239,10 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
     // Layout: sections must be contiguous in the order the writer emits them.
     let expect = [
         (section::SPATIAL_INDEX, RmdfHeader::SIZE),
-        (section::POINTS, so(section::SPATIAL_INDEX) + h.spatial_grid_cell_count as usize * gsz),
+        (
+            section::POINTS,
+            so(section::SPATIAL_INDEX) + h.spatial_grid_cell_count as usize * gsz,
+        ),
         (section::LINES, so(section::POINTS) + pc * psz),
         (section::LINE_REFS, so(section::LINES) + lc * lsz),
     ];
@@ -240,7 +261,9 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
         }
     }
     if so(section::TAG_SETS) + h.tag_set_count as usize * tsz != so(section::RULES) {
-        issues.add("section_layout", || format!("{name}: tag sets do not end at rules section"));
+        issues.add("section_layout", || {
+            format!("{name}: tag sets do not end at rules section")
+        });
     }
 
     let grid: Vec<GridCellEntry> = read_pods(
@@ -251,7 +274,35 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
     )?;
     let points: Vec<PointRecord> = read_pods(bytes, so(section::POINTS), pc, "points")?;
     let lines: Vec<LineRecord> = read_pods(bytes, so(section::LINES), lc, "lines")?;
-    let line_refs = read_u64s(bytes, so(section::LINE_REFS), so(section::TAG_VALUES), "line refs")?;
+    let line_refs = read_u64s(
+        bytes,
+        so(section::LINE_REFS),
+        so(section::TAG_VALUES),
+        "line refs",
+    )?;
+
+    // Generator invariants: every point lies in the tile bounds grown by the tile buffer (clamped
+    // to the world), and no line crosses the antimeridian (OSM splits ways there).
+    {
+        let b = &h.tile_bounds;
+        let buf = TILE_BUFFER_DEG + 1e-5;
+        let (la0, la1) = ((b.lat_min - buf).max(-90.0), (b.lat_max + buf).min(90.0));
+        let (lo0, lo1) = ((b.lon_min - buf).max(-180.0), (b.lon_max + buf).min(180.0));
+        for p in &points {
+            if !(p.lat >= la0 && p.lat <= la1 && p.lon >= lo0 && p.lon <= lo1) {
+                issues.add("point_outside_buffered_bounds", || {
+                    format!("{name}: point {} at ({}, {})", p.osm_id, p.lat, p.lon)
+                });
+            }
+        }
+        for l in &lines {
+            if (l.point_a_lon - l.point_b_lon).abs() > 180.0 {
+                issues.add("line_crosses_antimeridian", || {
+                    format!("{name}: line {}->{}", l.point_a_osm_id, l.point_b_osm_id)
+                });
+            }
+        }
+    }
 
     // Tag values.
     let tv_off = so(section::TAG_VALUES);
@@ -259,19 +310,30 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
     let entries: Vec<StringEntry> = read_pods(bytes, tv_off, tvc, "tag value entries")?;
     let pool_start = tv_off + tvc * ssz;
     let pool_end = so(section::TAG_SETS);
-    let pool = slice_at(bytes, pool_start, pool_end.saturating_sub(pool_start), "tag string pool")?;
+    let pool = slice_at(
+        bytes,
+        pool_start,
+        pool_end.saturating_sub(pool_start),
+        "tag string pool",
+    )?;
     let mut tag_values: Vec<Option<Box<str>>> = Vec::with_capacity(tvc);
     for (i, e) in entries.iter().enumerate() {
         let s = pool
             .get(e.offset as usize..(e.offset as usize).saturating_add(e.length as usize))
             .and_then(|b| std::str::from_utf8(b).ok());
         if s.is_none() {
-            issues.add("tag_value_invalid", || format!("{name}: tag value {i} out of pool / bad utf8"));
+            issues.add("tag_value_invalid", || {
+                format!("{name}: tag value {i} out of pool / bad utf8")
+            });
         }
         tag_values.push(s.map(Into::into));
     }
-    let tag_sets_raw: Vec<TagSetRecord> =
-        read_pods(bytes, so(section::TAG_SETS), h.tag_set_count as usize, "tag sets")?;
+    let tag_sets_raw: Vec<TagSetRecord> = read_pods(
+        bytes,
+        so(section::TAG_SETS),
+        h.tag_set_count as usize,
+        "tag sets",
+    )?;
     let resolve = |idx: u32, issues: &mut Issues, ts: usize| -> Option<Box<str>> {
         if idx == TagSetRecord::NONE {
             return None;
@@ -311,7 +373,8 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
     )?;
 
     // Line keys.
-    let invalid_tags: Arc<Tags> = Arc::new([Some("<invalid tag set>".into()), None, None, None, None]);
+    let invalid_tags: Arc<Tags> =
+        Arc::new([Some("<invalid tag set>".into()), None, None, None, None]);
     let line_keys: Vec<LineKey> = lines
         .iter()
         .enumerate()
@@ -320,13 +383,19 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
                 Some(t) => t.clone(),
                 None => {
                     issues.add("tag_set_index_oob", || {
-                        format!("{name}: line {i} tag_set_index {} >= {}", l.tag_set_index, tag_sets.len())
+                        format!(
+                            "{name}: line {i} tag_set_index {} >= {}",
+                            l.tag_set_index,
+                            tag_sets.len()
+                        )
                     });
                     invalid_tags.clone()
                 }
             };
             if l.direction > 2 {
-                issues.add("line_bad_direction", || format!("{name}: line {i} direction {}", l.direction));
+                issues.add("line_bad_direction", || {
+                    format!("{name}: line {i} direction {}", l.direction)
+                });
             }
             LineKey {
                 a: l.point_a_osm_id,
@@ -350,24 +419,34 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
         for (gi, g) in grid.iter().enumerate() {
             if let Some(p) = prev_cell {
                 if g.cell_id <= p {
-                    issues.add("spatial_index_unsorted", || format!("{name}: grid entry {gi} cell {} <= prev {p}", g.cell_id));
+                    issues.add("spatial_index_unsorted", || {
+                        format!("{name}: grid entry {gi} cell {} <= prev {p}", g.cell_id)
+                    });
                 }
             }
             prev_cell = Some(g.cell_id);
             if g.points_offset != next {
                 issues.add("spatial_index_gap", || {
-                    format!("{name}: grid entry {gi} offset {} expected {next}", g.points_offset)
+                    format!(
+                        "{name}: grid entry {gi} offset {} expected {next}",
+                        g.points_offset
+                    )
                 });
             }
             let end = g.points_offset.saturating_add(g.points_count as u64);
             if end > pc as u64 {
-                issues.add("spatial_index_oob", || format!("{name}: grid entry {gi} range end {end} > {pc}"));
+                issues.add("spatial_index_oob", || {
+                    format!("{name}: grid entry {gi} range end {end} > {pc}")
+                });
             } else {
                 for p in &points[g.points_offset as usize..end as usize] {
                     let want = GridCellEntry::encode_cell_id(p.lat, p.lon, 100);
                     if want != g.cell_id {
                         issues.add("spatial_index_wrong_cell", || {
-                            format!("{name}: point {} in cell {} but encodes to {want}", p.osm_id, g.cell_id)
+                            format!(
+                                "{name}: point {} in cell {} but encodes to {want}",
+                                p.osm_id, g.cell_id
+                            )
                         });
                     }
                 }
@@ -375,7 +454,9 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
             next = end;
         }
         if next != pc as u64 {
-            issues.add("spatial_index_incomplete", || format!("{name}: spatial index covers {next} of {pc} points"));
+            issues.add("spatial_index_incomplete", || {
+                format!("{name}: spatial index covers {next} of {pc} points")
+            });
         }
     }
 
@@ -384,18 +465,31 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
     let mut line_seen_from: Vec<u8> = vec![0; lc]; // bit0: listed at a, bit1: listed at b
     let mut rule_used = vec![false; rules_raw.len()];
     let mut rules: HashMap<RuleKey, u32> = HashMap::new();
-    let line_list = |off: u64, cnt: u32, refs: &[u64], what: &str, owner: u64, issues: &mut Issues| -> Vec<(usize, LineKey)> {
+    let line_list = |off: u64,
+                     cnt: u32,
+                     refs: &[u64],
+                     what: &str,
+                     owner: u64,
+                     issues: &mut Issues|
+     -> Vec<(usize, LineKey)> {
         let start = off as usize;
         let end = start.saturating_add(cnt as usize);
         let Some(s) = refs.get(start..end) else {
-            issues.add("ref_range_oob", || format!("{name}: {what} of {owner}: range {start}..{end} > {}", refs.len()));
+            issues.add("ref_range_oob", || {
+                format!(
+                    "{name}: {what} of {owner}: range {start}..{end} > {}",
+                    refs.len()
+                )
+            });
             return Vec::new();
         };
         s.iter()
             .filter_map(|&r| match line_keys.get(r as usize) {
                 Some(k) => Some((r as usize, k.clone())),
                 None => {
-                    issues.add("line_index_oob", || format!("{name}: {what} of {owner}: line index {r} >= {lc}"));
+                    issues.add("line_index_oob", || {
+                        format!("{name}: {what} of {owner}: line index {r} >= {lc}")
+                    });
                     None
                 }
             })
@@ -403,7 +497,14 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
     };
 
     for p in &points {
-        let incident_idx = line_list(p.lines_offset, p.lines_count, &line_refs, "incident lines", p.osm_id, issues);
+        let incident_idx = line_list(
+            p.lines_offset,
+            p.lines_count,
+            &line_refs,
+            "incident lines",
+            p.osm_id,
+            issues,
+        );
         let mut incident = Vec::with_capacity(incident_idx.len());
         for (li, k) in incident_idx {
             if k.a == p.osm_id {
@@ -414,7 +515,10 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
             }
             if k.a != p.osm_id && k.b != p.osm_id {
                 issues.add("incident_line_not_touching", || {
-                    format!("{name}: point {} lists line {li} ({k}) which does not touch it", p.osm_id)
+                    format!(
+                        "{name}: point {} lists line {li} ({k}) which does not touch it",
+                        p.osm_id
+                    )
                 });
             }
             incident.push(k);
@@ -427,53 +531,102 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
         if p.rules_count > 0 {
             match rules_raw.get(rs..re) {
                 None => issues.add("rule_range_oob", || {
-                    format!("{name}: point {} rules {rs}..{re} > {}", p.osm_id, rules_raw.len())
+                    format!(
+                        "{name}: point {} rules {rs}..{re} > {}",
+                        p.osm_id,
+                        rules_raw.len()
+                    )
                 }),
                 Some(rr) => {
                     for (ri, r) in rr.iter().enumerate() {
                         if std::mem::replace(&mut rule_used[rs + ri], true) {
-                            issues.add("rule_shared", || format!("{name}: rule {} referenced by multiple points", rs + ri));
+                            issues.add("rule_shared", || {
+                                format!("{name}: rule {} referenced by multiple points", rs + ri)
+                            });
                         }
-                        let mut from: Vec<LineKey> = line_list(r.from_lines_offset, r.from_lines_count, &rule_refs, "rule from", p.osm_id, issues)
-                            .into_iter().map(|x| x.1).collect();
-                        let mut to: Vec<LineKey> = line_list(r.to_lines_offset, r.to_lines_count, &rule_refs, "rule to", p.osm_id, issues)
-                            .into_iter().map(|x| x.1).collect();
+                        let mut from: Vec<LineKey> = line_list(
+                            r.from_lines_offset,
+                            r.from_lines_count,
+                            &rule_refs,
+                            "rule from",
+                            p.osm_id,
+                            issues,
+                        )
+                        .into_iter()
+                        .map(|x| x.1)
+                        .collect();
+                        let mut to: Vec<LineKey> = line_list(
+                            r.to_lines_offset,
+                            r.to_lines_count,
+                            &rule_refs,
+                            "rule to",
+                            p.osm_id,
+                            issues,
+                        )
+                        .into_iter()
+                        .map(|x| x.1)
+                        .collect();
                         from.sort_unstable();
                         to.sort_unstable();
                         if r.rule_type > 1 {
-                            issues.add("rule_bad_type", || format!("{name}: rule type {}", r.rule_type));
+                            issues.add("rule_bad_type", || {
+                                format!("{name}: rule type {}", r.rule_type)
+                            });
                         }
                         *rules
-                            .entry(RuleKey { via: p.osm_id, rule_type: r.rule_type, from, to })
+                            .entry(RuleKey {
+                                via: p.osm_id,
+                                rule_type: r.rule_type,
+                                from,
+                                to,
+                            })
                             .or_default() += 1;
                     }
                 }
             }
         }
 
-        if p.flags & !(PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG | PointRecord::NOGO_AREA_FLAG) != 0 {
-            issues.add("point_unknown_flags", || format!("{name}: point {} flags {:#x}", p.osm_id, p.flags));
+        if p.flags & !(PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG | PointRecord::NOGO_AREA_FLAG)
+            != 0
+        {
+            issues.add("point_unknown_flags", || {
+                format!("{name}: point {} flags {:#x}", p.osm_id, p.flags)
+            });
         }
         if p.lines_count == 0 {
-            issues.add("point_without_lines", || format!("{name}: point {} has no lines", p.osm_id));
+            issues.add("point_without_lines", || {
+                format!("{name}: point {} has no lines", p.osm_id)
+            });
         }
         let prev = point_map.insert(
             p.osm_id,
-            PointSem { lat: p.lat, lon: p.lon, flags: p.flags, incident },
+            PointSem {
+                lat: p.lat,
+                lon: p.lon,
+                flags: p.flags,
+                incident,
+            },
         );
         if prev.is_some() {
-            issues.add("duplicate_point", || format!("{name}: point {} appears twice", p.osm_id));
+            issues.add("duplicate_point", || {
+                format!("{name}: point {} appears twice", p.osm_id)
+            });
         }
     }
     let unused_rules = rule_used.iter().filter(|u| !**u).count();
     if unused_rules > 0 {
-        issues.add("rule_unreferenced", || format!("{name}: {unused_rules} rule records not referenced by any point"));
+        issues.add("rule_unreferenced", || {
+            format!("{name}: {unused_rules} rule records not referenced by any point")
+        });
     }
 
     // Lines: endpoints must be points in this tile, coords must agree, and each line must be
     // listed in the incident sets of both endpoints.
     for (i, k) in line_keys.iter().enumerate() {
-        for (end, id, lat, lon, bit) in [("a", k.a, k.coords[0], k.coords[1], 1u8), ("b", k.b, k.coords[2], k.coords[3], 2u8)] {
+        for (end, id, lat, lon, bit) in [
+            ("a", k.a, k.coords[0], k.coords[1], 1u8),
+            ("b", k.b, k.coords[2], k.coords[3], 2u8),
+        ] {
             match point_map.get(&id) {
                 None => issues.add("line_endpoint_missing_point", || {
                     format!("{name}: line {i} endpoint {end}={id} has no point record")
@@ -486,7 +639,9 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
                     }
                     if line_seen_from[i] & bit == 0 {
                         issues.add("line_not_in_endpoint_incident", || {
-                            format!("{name}: line {i} ({k}) not listed in incident lines of {end}={id}")
+                            format!(
+                                "{name}: line {i} ({k}) not listed in incident lines of {end}={id}"
+                            )
                         });
                     }
                 }
@@ -501,7 +656,12 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
 
     let b = &h.tile_bounds;
     Ok(Model {
-        bounds: [b.lat_min.to_bits(), b.lat_max.to_bits(), b.lon_min.to_bits(), b.lon_max.to_bits()],
+        bounds: [
+            b.lat_min.to_bits(),
+            b.lat_max.to_bits(),
+            b.lon_min.to_bits(),
+            b.lon_max.to_bits(),
+        ],
         points: point_map,
         lines: lines_ms,
         rules,
@@ -578,24 +738,36 @@ fn prefixed(prefix: &str, k: &'static str) -> &'static str {
 
 fn compare(name: &str, r: &Model, c: &Model, acc: &mut Acc) {
     if r.bounds != c.bounds {
-        acc.add("tile_bounds_mismatch", 1, || format!("{name}: header bounds differ"));
+        acc.add("tile_bounds_mismatch", 1, || {
+            format!("{name}: header bounds differ")
+        });
     }
     for (id, rp) in &r.points {
         match c.points.get(id) {
             None => acc.add("missing_points", 1, || {
-                format!("{name}: point {id} ({},{}) missing in candidate", rp.lat, rp.lon)
+                format!(
+                    "{name}: point {id} ({},{}) missing in candidate",
+                    rp.lat, rp.lon
+                )
             }),
             Some(cp) => {
                 if rp.lat.to_bits() != cp.lat.to_bits() || rp.lon.to_bits() != cp.lon.to_bits() {
                     acc.add("point_coord_mismatch", 1, || {
-                        format!("{name}: point {id} ref=({},{}) cand=({},{})", rp.lat, rp.lon, cp.lat, cp.lon)
+                        format!(
+                            "{name}: point {id} ref=({},{}) cand=({},{})",
+                            rp.lat, rp.lon, cp.lat, cp.lon
+                        )
                     });
                 }
                 let rr = rp.flags & PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
                 let cr = cp.flags & PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
                 if rr != cr {
                     acc.add("residential_mismatch", 1, || {
-                        format!("{name}: point {id} residential ref={} cand={}", rr != 0, cr != 0)
+                        format!(
+                            "{name}: point {id} residential ref={} cand={}",
+                            rr != 0,
+                            cr != 0
+                        )
                     });
                 }
                 let rn = rp.flags & PointRecord::NOGO_AREA_FLAG;
@@ -605,10 +777,14 @@ fn compare(name: &str, r: &Model, c: &Model, acc: &mut Acc) {
                         format!("{name}: point {id} nogo ref={} cand={}", rn != 0, cn != 0)
                     });
                 }
-                let mask = !(PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG | PointRecord::NOGO_AREA_FLAG);
+                let mask =
+                    !(PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG | PointRecord::NOGO_AREA_FLAG);
                 if rp.flags & mask != cp.flags & mask {
                     acc.add("other_flag_mismatch", 1, || {
-                        format!("{name}: point {id} flags ref={:#x} cand={:#x}", rp.flags, cp.flags)
+                        format!(
+                            "{name}: point {id} flags ref={:#x} cand={:#x}",
+                            rp.flags, cp.flags
+                        )
                     });
                 }
                 if rp.incident != cp.incident {
@@ -628,11 +804,30 @@ fn compare(name: &str, r: &Model, c: &Model, acc: &mut Acc) {
     }
     for (id, cp) in &c.points {
         if !r.points.contains_key(id) {
-            acc.add("extra_points", 1, || format!("{name}: point {id} ({},{}) extra in candidate", cp.lat, cp.lon));
+            acc.add("extra_points", 1, || {
+                format!(
+                    "{name}: point {id} ({},{}) extra in candidate",
+                    cp.lat, cp.lon
+                )
+            });
         }
     }
-    diff_multiset(name, &r.lines, &c.lines, "missing_lines", "extra_lines", acc);
-    diff_multiset(name, &r.rules, &c.rules, "missing_rules", "extra_rules", acc);
+    diff_multiset(
+        name,
+        &r.lines,
+        &c.lines,
+        "missing_lines",
+        "extra_lines",
+        acc,
+    );
+    diff_multiset(
+        name,
+        &r.rules,
+        &c.rules,
+        "missing_rules",
+        "extra_rules",
+        acc,
+    );
 }
 
 fn diff_multiset<K: std::hash::Hash + Eq + fmt::Display>(
@@ -646,18 +841,25 @@ fn diff_multiset<K: std::hash::Hash + Eq + fmt::Display>(
     for (k, &rc) in r {
         let cc = c.get(k).copied().unwrap_or(0);
         if rc > cc {
-            acc.add(miss, (rc - cc) as u64, || format!("{name}: {k} (ref x{rc}, cand x{cc})"));
+            acc.add(miss, (rc - cc) as u64, || {
+                format!("{name}: {k} (ref x{rc}, cand x{cc})")
+            });
         }
     }
     for (k, &cc) in c {
         let rc = r.get(k).copied().unwrap_or(0);
         if cc > rc {
-            acc.add(extra, (cc - rc) as u64, || format!("{name}: {k} (ref x{rc}, cand x{cc})"));
+            acc.add(extra, (cc - rc) as u64, || {
+                format!("{name}: {k} (ref x{rc}, cand x{cc})")
+            });
         }
     }
 }
 
-fn multiset_sym_diff<'a>(a: &'a [LineKey], b: &'a [LineKey]) -> (Vec<&'a LineKey>, Vec<&'a LineKey>) {
+fn multiset_sym_diff<'a>(
+    a: &'a [LineKey],
+    b: &'a [LineKey],
+) -> (Vec<&'a LineKey>, Vec<&'a LineKey>) {
     // both sorted
     let (mut i, mut j) = (0, 0);
     let (mut oa, mut ob) = (Vec::new(), Vec::new());
@@ -705,7 +907,9 @@ fn check_manifest(
     {
         Ok(m) => m,
         Err(e) => {
-            acc.add(prefixed(prefix, "manifest_unreadable"), 1, || format!("{}: {e}", path.display()));
+            acc.add(prefixed(prefix, "manifest_unreadable"), 1, || {
+                format!("{}: {e}", path.display())
+            });
             return None;
         }
     };
@@ -713,9 +917,15 @@ fn check_manifest(
         m.tiles.iter().map(|t| (t.filename.as_str(), t)).collect();
     for (fname, (size, pts, lns, sum)) in nonempty {
         match listed.get(fname.as_str()) {
-            None => acc.add(prefixed(prefix, "manifest_missing_tile"), 1, || format!("{fname} not listed in manifest")),
+            None => acc.add(prefixed(prefix, "manifest_missing_tile"), 1, || {
+                format!("{fname} not listed in manifest")
+            }),
             Some(t) => {
-                if t.size_bytes != *size || t.point_count != *pts || t.line_count != *lns || &t.checksum != sum {
+                if t.size_bytes != *size
+                    || t.point_count != *pts
+                    || t.line_count != *lns
+                    || &t.checksum != sum
+                {
                     acc.add(prefixed(prefix, "manifest_entry_mismatch"), 1, || {
                         format!(
                             "{fname}: manifest size/points/lines/checksum = {}/{}/{}/{} file = {size}/{pts}/{lns}/{sum}",
@@ -729,7 +939,10 @@ fn check_manifest(
     for t in &m.tiles {
         if (t.point_count > 0 || t.line_count > 0) && !nonempty.contains_key(&t.filename) {
             acc.add(prefixed(prefix, "manifest_lists_absent_tile"), 1, || {
-                format!("{} listed as non-empty in manifest but no such non-empty file", t.filename)
+                format!(
+                    "{} listed as non-empty in manifest but no such non-empty file",
+                    t.filename
+                )
             });
         }
     }
@@ -741,39 +954,39 @@ fn check_manifest(
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
-struct TileStats {
-    ref_files: usize,
-    ref_nonempty: usize,
-    cand_files: usize,
-    cand_nonempty: usize,
-    compared: usize,
-    identical: usize,
-    differing: usize,
-    missing_in_candidate: usize,
-    extra_in_candidate: usize,
-    ref_points: u64,
-    cand_points: u64,
-    ref_lines: u64,
-    cand_lines: u64,
-    ref_rules: u64,
-    cand_rules: u64,
+pub struct TileStats {
+    pub ref_files: usize,
+    pub ref_nonempty: usize,
+    pub cand_files: usize,
+    pub cand_nonempty: usize,
+    pub compared: usize,
+    pub identical: usize,
+    pub differing: usize,
+    pub missing_in_candidate: usize,
+    pub extra_in_candidate: usize,
+    pub ref_points: u64,
+    pub cand_points: u64,
+    pub ref_lines: u64,
+    pub cand_lines: u64,
+    pub ref_rules: u64,
+    pub cand_rules: u64,
 }
 
 #[derive(Serialize)]
-struct Summary {
-    ref_dir: String,
-    candidate_dir: String,
-    identical: bool,
-    tiles: TileStats,
+pub struct Summary {
+    pub ref_dir: String,
+    pub candidate_dir: String,
+    pub identical: bool,
+    pub tiles: TileStats,
     /// Semantic difference totals (ref vs candidate).
-    diffs: BTreeMap<&'static str, u64>,
+    pub diffs: BTreeMap<&'static str, u64>,
     /// Internal-consistency/manifest issues found in the candidate (non-zero => not identical).
-    candidate_issues: BTreeMap<&'static str, u64>,
+    pub candidate_issues: BTreeMap<&'static str, u64>,
     /// Same checks on the reference (informational).
-    ref_issues: BTreeMap<&'static str, u64>,
-    differing_tiles: Vec<String>,
-    examples: BTreeMap<&'static str, Vec<String>>,
-    elapsed_ms: u128,
+    pub ref_issues: BTreeMap<&'static str, u64>,
+    pub differing_tiles: Vec<String>,
+    pub examples: BTreeMap<&'static str, Vec<String>>,
+    pub elapsed_ms: u128,
 }
 
 struct Side {
@@ -791,12 +1004,15 @@ fn list_tiles(dir: &Path) -> Result<Side> {
         }
     }
     files.sort();
-    Ok(Side { dir: dir.to_path_buf(), files })
+    Ok(Side {
+        dir: dir.to_path_buf(),
+        files,
+    })
 }
 
 struct Loaded {
     nonempty: bool,
-    model: Option<Model>, // None if empty or undecodable
+    model: Option<Model>,          // None if empty or undecodable
     meta: (u64, u64, u64, String), // size, points, lines, stored checksum
     issues: Issues,
     fatal: bool,
@@ -808,7 +1024,13 @@ fn load(dir: &Path, name: &str, tile_size: f32, max_ex: usize) -> Loaded {
         Ok(b) => b,
         Err(e) => {
             issues.add("decode_error", || format!("{name}: {e}"));
-            return Loaded { nonempty: true, model: None, meta: (0, 0, 0, String::new()), issues, fatal: true };
+            return Loaded {
+                nonempty: true,
+                model: None,
+                meta: (0, 0, 0, String::new()),
+                issues,
+                fatal: true,
+            };
         }
     };
     let sum = if bytes.len() >= 32 {
@@ -820,58 +1042,55 @@ fn load(dir: &Path, name: &str, tile_size: f32, max_ex: usize) -> Loaded {
         Ok(h) => h,
         Err(e) => {
             issues.add("decode_error", || format!("{name}: {e:#}"));
-            return Loaded { nonempty: true, model: None, meta: (bytes.len() as u64, 0, 0, sum), issues, fatal: true };
+            return Loaded {
+                nonempty: true,
+                model: None,
+                meta: (bytes.len() as u64, 0, 0, sum),
+                issues,
+                fatal: true,
+            };
         }
     };
     let meta = (bytes.len() as u64, h.point_count, h.line_count, sum);
     if is_empty_header(&h) {
-        return Loaded { nonempty: false, model: None, meta, issues, fatal: false };
+        return Loaded {
+            nonempty: false,
+            model: None,
+            meta,
+            issues,
+            fatal: false,
+        };
     }
     match decode(name, &bytes, tile_size, &mut issues) {
-        Ok(m) => Loaded { nonempty: true, model: Some(m), meta, issues, fatal: false },
+        Ok(m) => Loaded {
+            nonempty: true,
+            model: Some(m),
+            meta,
+            issues,
+            fatal: false,
+        },
         Err(e) => {
             issues.add("decode_error", || format!("{name}: {e:#}"));
-            Loaded { nonempty: true, model: None, meta, issues, fatal: true }
-        }
-    }
-}
-
-fn usage() -> ! {
-    eprintln!("usage: rmdf-diff <ref_dir> <candidate_dir> [--json <file>] [--max-examples N]");
-    std::process::exit(2);
-}
-
-fn main() {
-    match run() {
-        Ok(identical) => std::process::exit(if identical { 0 } else { 1 }),
-        Err(e) => {
-            eprintln!("rmdf-diff: error: {e:#}");
-            std::process::exit(2);
-        }
-    }
-}
-
-fn run() -> Result<bool> {
-    let t0 = Instant::now();
-    let mut pos = Vec::new();
-    let mut json: Option<PathBuf> = None;
-    let mut max_ex = 10usize;
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        match a.as_str() {
-            "--json" => json = Some(args.next().unwrap_or_else(|| usage()).into()),
-            "--max-examples" => {
-                max_ex = args.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| usage())
+            Loaded {
+                nonempty: true,
+                model: None,
+                meta,
+                issues,
+                fatal: true,
             }
-            "-h" | "--help" => usage(),
-            _ => pos.push(PathBuf::from(a)),
         }
     }
-    if pos.len() != 2 {
-        usage();
-    }
-    let rs = list_tiles(&pos[0])?;
-    let cs = list_tiles(&pos[1])?;
+}
+
+/// (non-empty, (size, points, lines, checksum), rules) of one side of a compared tile.
+type TileSide = (bool, (u64, u64, u64, String), u64);
+
+/// Compare `cand_dir` against `ref_dir`. At most `max_examples` examples are kept per category.
+pub fn diff_dirs(ref_dir: &Path, cand_dir: &Path, max_examples: usize) -> Result<Summary> {
+    let t0 = Instant::now();
+    let max_ex = max_examples;
+    let rs = list_tiles(ref_dir)?;
+    let cs = list_tiles(cand_dir)?;
 
     // Tile size from the reference manifest (needed only for header-bounds sanity check).
     let tile_size = std::fs::read(rs.dir.join("manifest.json"))
@@ -887,8 +1106,8 @@ fn run() -> Result<bool> {
 
     struct TileOut {
         name: String,
-        r: Option<(bool, (u64, u64, u64, String), u64)>, // nonempty, meta, rules
-        c: Option<(bool, (u64, u64, u64, String), u64)>,
+        r: Option<TileSide>,
+        c: Option<TileSide>,
         kind: u8, // 0 skip, 1 compared, 2 missing, 3 extra
         identical: bool,
         acc: Acc,
@@ -897,14 +1116,25 @@ fn run() -> Result<bool> {
     let outs: Vec<TileOut> = all
         .par_iter()
         .map(|name| {
-            let mut acc = Acc { max_examples: max_ex, ..Default::default() };
-            let rl = rset.contains(name).then(|| load(&rs.dir, name, tile_size, max_ex));
-            let cl = cset.contains(name).then(|| load(&cs.dir, name, tile_size, max_ex));
-            let rne = rl.as_ref().map_or(false, |l| l.nonempty);
-            let cne = cl.as_ref().map_or(false, |l| l.nonempty);
+            let mut acc = Acc {
+                max_examples: max_ex,
+                ..Default::default()
+            };
+            let rl = rset
+                .contains(name)
+                .then(|| load(&rs.dir, name, tile_size, max_ex));
+            let cl = cset
+                .contains(name)
+                .then(|| load(&cs.dir, name, tile_size, max_ex));
+            let rne = rl.as_ref().is_some_and(|l| l.nonempty);
+            let cne = cl.as_ref().is_some_and(|l| l.nonempty);
             let rules_of = |l: &Loaded| l.model.as_ref().map_or(0, |m| m.rule_count);
-            let rmeta = rl.as_ref().map(|l| (l.nonempty, l.meta.clone(), rules_of(l)));
-            let cmeta = cl.as_ref().map(|l| (l.nonempty, l.meta.clone(), rules_of(l)));
+            let rmeta = rl
+                .as_ref()
+                .map(|l| (l.nonempty, l.meta.clone(), rules_of(l)));
+            let cmeta = cl
+                .as_ref()
+                .map(|l| (l.nonempty, l.meta.clone(), rules_of(l)));
             let mut kind = 0;
             let mut identical = true;
             let n = name.as_str();
@@ -914,7 +1144,14 @@ fn run() -> Result<bool> {
                     kind = 2;
                     identical = false;
                     let l = rl.as_ref().unwrap();
-                    acc.add("missing_tiles", 1, || format!("{n}: non-empty in ref ({} points, {} lines), {} in candidate", l.meta.1, l.meta.2, if cl.is_some() { "empty" } else { "absent" }));
+                    acc.add("missing_tiles", 1, || {
+                        format!(
+                            "{n}: non-empty in ref ({} points, {} lines), {} in candidate",
+                            l.meta.1,
+                            l.meta.2,
+                            if cl.is_some() { "empty" } else { "absent" }
+                        )
+                    });
                     acc.add("missing_tile_points", l.meta.1, String::new);
                     acc.add("missing_tile_lines", l.meta.2, String::new);
                 }
@@ -922,7 +1159,14 @@ fn run() -> Result<bool> {
                     kind = 3;
                     identical = false;
                     let l = cl.as_ref().unwrap();
-                    acc.add("extra_tiles", 1, || format!("{n}: non-empty in candidate ({} points, {} lines), {} in ref", l.meta.1, l.meta.2, if rl.is_some() { "empty" } else { "absent" }));
+                    acc.add("extra_tiles", 1, || {
+                        format!(
+                            "{n}: non-empty in candidate ({} points, {} lines), {} in ref",
+                            l.meta.1,
+                            l.meta.2,
+                            if rl.is_some() { "empty" } else { "absent" }
+                        )
+                    });
                     acc.add("extra_tile_points", l.meta.1, String::new);
                     acc.add("extra_tile_lines", l.meta.2, String::new);
                 }
@@ -937,7 +1181,9 @@ fn run() -> Result<bool> {
                         }
                         _ => {
                             identical = false;
-                            acc.add("undecodable_tiles", 1, || format!("{n}: could not decode one side"));
+                            acc.add("undecodable_tiles", 1, || {
+                                format!("{n}: could not decode one side")
+                            });
                         }
                     }
                 }
@@ -956,11 +1202,21 @@ fn run() -> Result<bool> {
                     acc.merge_issues("cand:", l.issues);
                 }
             }
-            TileOut { name: name.to_string(), r: rmeta, c: cmeta, kind, identical, acc }
+            TileOut {
+                name: name.to_string(),
+                r: rmeta,
+                c: cmeta,
+                kind,
+                identical,
+                acc,
+            }
         })
         .collect();
 
-    let mut acc = Acc { max_examples: max_ex, ..Default::default() };
+    let mut acc = Acc {
+        max_examples: max_ex,
+        ..Default::default()
+    };
     let mut st = TileStats {
         ref_files: rs.files.len(),
         ref_nonempty: 0,
@@ -1020,7 +1276,10 @@ fn run() -> Result<bool> {
     if let Some(cm) = cm {
         if (cm.tile_size_degrees - tile_size).abs() > 1e-6 {
             acc.add("cand:manifest_tile_size_mismatch", 1, || {
-                format!("tile_size_degrees ref={tile_size} cand={}", cm.tile_size_degrees)
+                format!(
+                    "tile_size_degrees ref={tile_size} cand={}",
+                    cm.tile_size_degrees
+                )
             });
         }
     }
@@ -1053,25 +1312,28 @@ fn run() -> Result<bool> {
         candidate_issues: cand_issues,
         ref_issues,
         differing_tiles,
-        examples: acc.examples.into_iter().filter(|(_, v)| !v.iter().all(|s| s.is_empty())).map(|(k, v)| (k, v.into_iter().filter(|s| !s.is_empty()).collect())).collect(),
+        examples: acc
+            .examples
+            .into_iter()
+            .filter(|(_, v)| !v.iter().all(|s| s.is_empty()))
+            .map(|(k, v)| (k, v.into_iter().filter(|s| !s.is_empty()).collect()))
+            .collect(),
         elapsed_ms: t0.elapsed().as_millis(),
     };
 
-    print_summary(&summary);
-    if let Some(p) = json {
-        std::fs::write(&p, serde_json::to_vec_pretty(&summary)?)
-            .with_context(|| format!("writing {}", p.display()))?;
-    }
-    Ok(identical)
+    Ok(summary)
 }
 
 fn leak(s: &str) -> &'static str {
     prefixed("", Box::leak(s.to_string().into_boxed_str()))
 }
 
-fn print_summary(s: &Summary) {
+pub fn print_summary(s: &Summary) {
     let t = &s.tiles;
-    println!("rmdf-diff  ref={}  candidate={}", s.ref_dir, s.candidate_dir);
+    println!(
+        "rmdf-diff  ref={}  candidate={}",
+        s.ref_dir, s.candidate_dir
+    );
     println!(
         "files: ref {} ({} non-empty), cand {} ({} non-empty)",
         t.ref_files, t.ref_nonempty, t.cand_files, t.cand_nonempty
@@ -1104,10 +1366,16 @@ fn print_summary(s: &Summary) {
         get("tile_bounds_mismatch")
     );
     if !s.candidate_issues.is_empty() {
-        println!("candidate consistency/manifest issues: {:?}", s.candidate_issues);
+        println!(
+            "candidate consistency/manifest issues: {:?}",
+            s.candidate_issues
+        );
     }
     if !s.ref_issues.is_empty() {
-        println!("reference consistency/manifest issues (info): {:?}", s.ref_issues);
+        println!(
+            "reference consistency/manifest issues (info): {:?}",
+            s.ref_issues
+        );
     }
     if !s.examples.is_empty() {
         println!("examples:");
@@ -1119,7 +1387,146 @@ fn print_summary(s: &Summary) {
     }
     println!(
         "RESULT: {} ({} ms)",
-        if s.identical { "IDENTICAL" } else { "DIFFERENT" },
+        if s.identical {
+            "IDENTICAL"
+        } else {
+            "DIFFERENT"
+        },
         s.elapsed_ms
     );
+}
+
+// ---------------------------------------------------------------------------
+// Digest
+// ---------------------------------------------------------------------------
+
+/// Semantic digest of a tile directory.
+#[derive(Debug, Serialize)]
+pub struct DirDigest {
+    /// sha256 (hex) of each non-empty tile's decoded model, in canonical order.
+    pub tiles: BTreeMap<String, String>,
+    /// Consistency issues over all tiles (empty for a correct directory).
+    pub issues: BTreeMap<&'static str, u64>,
+    pub issue_examples: Vec<String>,
+    pub totals: Totals,
+}
+
+/// Content totals over all non-empty tiles (points in a tile buffer count once per tile).
+#[derive(Debug, Default, Serialize)]
+pub struct Totals {
+    pub points: u64,
+    pub lines: u64,
+    pub rules: u64,
+    /// points with flag bit i set, i = 0..16
+    pub points_with_flag: [u64; 16],
+}
+
+fn feed_line(h: &mut Sha256, l: &LineKey) {
+    h.update(l.a.to_le_bytes());
+    h.update(l.b.to_le_bytes());
+    h.update([l.dir]);
+    for c in l.coords {
+        h.update(c.to_le_bytes());
+    }
+    for t in l.tags.iter() {
+        match t {
+            None => h.update([0u8]),
+            Some(v) => {
+                h.update([1u8]);
+                h.update((v.len() as u64).to_le_bytes());
+                h.update(v.as_bytes());
+            }
+        }
+    }
+}
+
+fn model_digest(m: &Model) -> String {
+    let mut h = Sha256::new();
+    for b in m.bounds {
+        h.update(b.to_le_bytes());
+    }
+    let mut ids: Vec<&u64> = m.points.keys().collect();
+    ids.sort();
+    h.update((ids.len() as u64).to_le_bytes());
+    for id in ids {
+        let p = &m.points[id];
+        h.update(id.to_le_bytes());
+        h.update(p.lat.to_bits().to_le_bytes());
+        h.update(p.lon.to_bits().to_le_bytes());
+        h.update(p.flags.to_le_bytes());
+        h.update((p.incident.len() as u64).to_le_bytes());
+        for l in &p.incident {
+            feed_line(&mut h, l);
+        }
+    }
+    let mut lines: Vec<(&LineKey, &u32)> = m.lines.iter().collect();
+    lines.sort();
+    h.update((lines.len() as u64).to_le_bytes());
+    for (l, n) in lines {
+        feed_line(&mut h, l);
+        h.update(n.to_le_bytes());
+    }
+    let mut rules: Vec<(&RuleKey, &u32)> = m.rules.iter().collect();
+    rules.sort();
+    h.update((rules.len() as u64).to_le_bytes());
+    for (r, n) in rules {
+        h.update(r.via.to_le_bytes());
+        h.update([r.rule_type]);
+        for side in [&r.from, &r.to] {
+            h.update((side.len() as u64).to_le_bytes());
+            for l in side {
+                feed_line(&mut h, l);
+            }
+        }
+        h.update(n.to_le_bytes());
+    }
+    hex::encode(h.finalize())
+}
+
+/// Digest every tile of `dir` (tile size from its manifest).
+pub fn digest_dir(dir: &Path) -> Result<DirDigest> {
+    let side = list_tiles(dir)?;
+    let tile_size = std::fs::read(dir.join("manifest.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<TileManifest>(&b).ok())
+        .map(|m| m.tile_size_degrees)
+        .with_context(|| format!("reading manifest in {}", dir.display()))?;
+    let loaded: Vec<(String, Loaded)> = side
+        .files
+        .par_iter()
+        .map(|name| (name.clone(), load(dir, name, tile_size, 3)))
+        .collect();
+    let mut tiles = BTreeMap::new();
+    let mut issues: BTreeMap<&'static str, u64> = BTreeMap::new();
+    let mut issue_examples = Vec::new();
+    let mut totals = Totals::default();
+    for (name, l) in loaded {
+        for (k, v) in &l.issues.counts {
+            *issues.entry(*k).or_default() += v;
+        }
+        for ex in l.issues.examples.values().flatten() {
+            if issue_examples.len() < 20 {
+                issue_examples.push(ex.clone());
+            }
+        }
+        if let Some(m) = &l.model {
+            totals.points += m.points.len() as u64;
+            totals.lines += m.lines.values().map(|n| *n as u64).sum::<u64>();
+            totals.rules += m.rule_count;
+            for p in m.points.values() {
+                for (bit, n) in totals.points_with_flag.iter_mut().enumerate() {
+                    if p.flags & (1 << bit) != 0 {
+                        *n += 1;
+                    }
+                }
+            }
+            tiles.insert(name, model_digest(m));
+        }
+    }
+    Ok(DirDigest {
+        tiles,
+        issues,
+        issue_examples,
+        totals,
+    })
 }

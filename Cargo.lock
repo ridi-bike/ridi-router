@@ -2520,6 +2520,7 @@ dependencies = [
  "rayon",
  "ridi-router-common",
  "ridi-router-routing",
+ "rmdf-diff",
  "rstar",
  "serde",
  "serde_json",
@@ -2588,6 +2589,20 @@ dependencies = [
  "quote",
  "serde_json",
  "syn",
+]
+
+[[package]]
+name = "rmdf-diff"
+version = "0.8.6"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "hex",
+ "rayon",
+ "ridi-router-common",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

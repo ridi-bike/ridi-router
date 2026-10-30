@@ -2,7 +2,7 @@
 # 500 m / +180 fix: parity in reference mode, before/after in global mode.
 set -u
 cd "$(dirname "$0")"
-D=tools/rmdf-diff/target/release/rmdf-diff
+D="${RMDF_DIFF:-tools/rmdf-diff/target/release/rmdf-diff}"
 for ds in latvia lithuania; do ./run-bench.sh B-fix-ref bins/B-fix $ds RIDI_TILES_GRID_ANCHOR=reference; done
 for rep in 1 2; do
   for ds in latvia poland; do

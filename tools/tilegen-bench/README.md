@@ -5,8 +5,9 @@ Tooling used to compare the tile generation prototypes (October 2026).
 - `BRIEF.md` – parity spec every prototype had to meet (the old generator's behaviour)
 - `LOCAL_STAGE.md` – interface of the shared per-region local stage
 - `EDGE_CASES.md` – antimeridian / high-latitude / southern-hemisphere findings
-- `rmdf-diff/` – semantic RMDF tile diff (`cargo build --release`); byte diffs are useless because
-  line/tag ordering is not deterministic
+- semantic RMDF tile diff: now the workspace crate `crates/rmdf-diff` (`cargo build --release -p
+  rmdf-diff`; set `RMDF_DIFF` to the binary for `run-bench.sh` / `run-fix.sh`); byte diffs are useless
+  because line/tag ordering is not deterministic
 - `run-bench.sh` – capped (systemd-run scope) + measured run of one generator binary on one dataset,
   diffed against `ref/<dataset>-0.1`, appended to `results.jsonl`
 - `run-round*.sh` – the official benchmark rounds

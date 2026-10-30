@@ -1,0 +1,15 @@
+[package]
+name = "rmdf-diff"
+version.workspace = true
+edition.workspace = true
+description = "Semantic comparison and digests of RMDF tile directories"
+
+[dependencies]
+anyhow.workspace = true
+bytemuck.workspace = true
+hex.workspace = true
+rayon.workspace = true
+ridi-router-common = { path = "../ridi-router-common" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

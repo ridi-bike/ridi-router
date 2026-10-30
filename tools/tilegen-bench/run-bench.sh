@@ -44,7 +44,8 @@ stats="$BENCH/logs/$name.stats"
 pidfile="$BENCH/logs/$name.pid"
 results="$BENCH/results.jsonl"
 ref="$BENCH/ref/$dataset-0.1"
-diff_bin="$BENCH/tools/rmdf-diff/target/release/rmdf-diff"
+# semantic diff tool: `cargo build --release -p rmdf-diff` in the repo, then point RMDF_DIFF at it
+diff_bin="${RMDF_DIFF:-$BENCH/tools/rmdf-diff/target/release/rmdf-diff}"
 
 mkdir -p "$BENCH/out" "$BENCH/logs" "$BENCH/tmp"
 rm -rf "$out" "$tmpd"
@@ -132,9 +133,6 @@ manifest=$([[ -f $out/manifest.json ]] && echo true || echo false)
 
 diff_json=null
 if [[ -d $ref && $exit_code == 0 ]]; then
-  if [[ ! -x $diff_bin ]]; then
-    (cd "$BENCH/tools/rmdf-diff" && cargo build --release -q) || true
-  fi
   if [[ -x $diff_bin ]]; then
     "$diff_bin" "$ref" "$out" --json "$BENCH/logs/$name.diff.json" --max-examples 5 \
       > "$BENCH/logs/$name.diff.txt" 2>&1
