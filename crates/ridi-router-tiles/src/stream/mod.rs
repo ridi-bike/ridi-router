@@ -18,8 +18,7 @@
 //!                 `local_stage` under a memory budget.
 //!  9. manifest  – from the in-memory tile results.
 //!
-//! Grid anchor: global (-180/-90) by default; `RIDI_TILES_GRID_ANCHOR=reference` reproduces the
-//! old single-PBF grid for parity tests. Run settings: see `config`.
+//! Run settings: see `config`.
 
 mod buckets;
 mod config;
@@ -45,7 +44,7 @@ use buckets::{RegionBuckets, SpillReader, SpillWriter};
 use geom::TileGrid;
 use nodeidx::NeededSet;
 use store::{Resolver, Store};
-use util::{decimicro_to_deg, PhaseClock};
+use util::PhaseClock;
 
 struct ScratchDir(PathBuf, bool);
 
@@ -99,7 +98,6 @@ fn generate_with(
 
     let region_tiles = region_tiles(tile_size);
     let grid = TileGrid::new(tile_size, region_tiles);
-    let global_anchor = !cfg.reference_anchor;
     let store_budget = cfg.store_bytes;
 
     let mut pbf_size = 0;
@@ -170,21 +168,7 @@ fn generate_with(
         budget_bytes: store_budget,
         scratch: scratch_dir,
     };
-    let anchor = if global_anchor {
-        GridAnchor::global()
-    } else {
-        GridAnchor::reference(
-            decimicro_to_deg(bounds.lat_min),
-            decimicro_to_deg(bounds.lat_max),
-            decimicro_to_deg(bounds.lon_min),
-            decimicro_to_deg(bounds.lon_max),
-        )
-    };
-    info!(
-        "Proximity grid anchor ({}): {:?}",
-        if global_anchor { "global" } else { "reference" },
-        anchor
-    );
+    let anchor = GridAnchor::global();
     pbf::log_io_counters("nodes");
     clock.phase("nodes");
 

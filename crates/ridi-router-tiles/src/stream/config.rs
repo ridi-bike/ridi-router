@@ -15,9 +15,8 @@
 //! | `RIDI_TILES_SKIP_SPACE_CHECK`  | 0                                        |
 //! | `RIDI_TILES_DROP_OUTPUT_CACHE` | 1 (written tiles are flushed from the page cache) |
 //!
-//! Test and benchmark only: `RIDI_TILES_GRID_ANCHOR=reference` (legacy per-input proximity
-//! grid), `RIDI_TILES_STOP_AFTER=index|areas`, `RIDI_TILES_VERIFY_PROXIMITY=1` (checks every
-//! proximity shortcut against the reference maths; slow).
+//! Test and benchmark only: `RIDI_TILES_STOP_AFTER=index|areas`, `RIDI_TILES_VERIFY_PROXIMITY=1`
+//! (checks every proximity shortcut against the reference maths; slow).
 
 use std::path::{Path, PathBuf};
 
@@ -40,7 +39,6 @@ pub struct Config {
     pub keep_scratch: bool,
     pub skip_space_check: bool,
     pub drop_output_cache: bool,
-    pub reference_anchor: bool,
     pub stop_after: Option<StopAfter>,
 }
 
@@ -91,13 +89,6 @@ impl Config {
             Some(n) => n,
             None => std::thread::available_parallelism().map_or(4, |n| n.get()),
         };
-        let reference_anchor = match var("RIDI_TILES_GRID_ANCHOR").as_deref() {
-            None | Some("global") => false,
-            Some("reference") => true,
-            Some(other) => {
-                bail!("RIDI_TILES_GRID_ANCHOR must be 'global' or 'reference', got {other:?}")
-            }
-        };
         let stop_after = match var("RIDI_TILES_STOP_AFTER").as_deref() {
             None => None,
             Some("index") => Some(StopAfter::Index),
@@ -127,7 +118,6 @@ impl Config {
             keep_scratch: flag("RIDI_TILES_KEEP_SCRATCH")?.unwrap_or(false),
             skip_space_check: flag("RIDI_TILES_SKIP_SPACE_CHECK")?.unwrap_or(false),
             drop_output_cache: flag("RIDI_TILES_DROP_OUTPUT_CACHE")?.unwrap_or(true),
-            reference_anchor,
             stop_after,
         })
     }

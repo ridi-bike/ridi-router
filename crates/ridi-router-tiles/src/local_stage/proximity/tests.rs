@@ -128,13 +128,6 @@ fn global_cells_clamp_at_antimeridian_and_pole() {
 }
 
 #[test]
-fn reference_cells_past_extent_get_no_flags() {
-    let anchor = GridAnchor::reference(-18.0, -16.0, 177.0, 180.0);
-    assert!(anchor.residential_cell(-17.0, 180.0).is_some());
-    assert!(anchor.residential_cell(-17.0, 180.1).is_none());
-}
-
-#[test]
 fn prefilter_keeps_500m_east_west_at_high_latitudes() {
     for lat in [0.0f64, 48.0, 57.0, 60.0, 70.0, 78.0] {
         // 100 m half-size polygon, cell centre 480 m (polygon edge distance) due east
@@ -145,14 +138,8 @@ fn prefilter_keeps_500m_east_west_at_high_latitudes() {
         let d = polygon_distance_m(&mp, plat, plon);
         assert!((d - 480.0).abs() < 2.0, "lat {lat}: distance {d}");
         let b = compute_multipolygon_bbox(&mp);
-        let global = prefilter_box(&b, 500.0, false).unwrap();
-        assert!(
-            in_box(&global, plat, plon),
-            "global prefilter drops lat {lat}"
-        );
-        let legacy = prefilter_box(&b, 500.0, true).unwrap();
-        // the legacy reach is 750 m * cos(lat) east-west (+ 100 m polygon half-size)
-        assert_eq!(in_box(&legacy, plat, plon), lat < 50.0, "legacy lat {lat}");
+        let prefilter = prefilter_box(&b, 500.0).unwrap();
+        assert!(in_box(&prefilter, plat, plon), "prefilter drops lat {lat}");
     }
 }
 
@@ -163,7 +150,7 @@ fn widened_prefilter_matches_reference_maths() {
     for &lat in &[45.0, 57.0, 60.0, 70.0, 78.0, 85.0, -60.0] {
         for _ in 0..20 {
             let mp = star(&mut rng, lat, 20.0, 9, 0.003, false);
-            let b = prefilter_box(&compute_multipolygon_bbox(&mp), 500.0, false).unwrap();
+            let b = prefilter_box(&compute_multipolygon_bbox(&mp), 500.0).unwrap();
             for _ in 0..300 {
                 let dlat = (rng.next() - 0.5) * 0.03;
                 let dlon = (rng.next() - 0.5) * 0.03 / (lat as f64).to_radians().cos();
