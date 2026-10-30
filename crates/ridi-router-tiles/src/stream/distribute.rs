@@ -14,14 +14,16 @@ use super::buckets::{RegionBuckets, SpillReader, REC_POLY, REC_RESTRICTION, REC_
 use super::geom::{smallvec_lite::SmallTiles, TileGrid};
 use super::nodeidx::dec_coord;
 use super::passes::{area_frame_refs, routable_frame_refs, AREA_MEMBER, AREA_MIL, AREA_RES};
-use super::store::Resolver;
 use super::records::*;
+use super::store::Resolver;
 use super::util::*;
+use crate::local_stage::proximity::lon_degrees_for;
 use crate::osm_data::in_memory_pbf::connect_ways_into_rings;
 use crate::proximity::area_rasterizer::compute_multipolygon_bbox;
 
-/// Margin (degrees) around a polygon bbox when choosing regions: covers the 500 m * 1.5
-/// prefilter (0.00676 deg), the tile buffer (0.005 deg) and cell-centre offsets.
+/// Margin (degrees of latitude) around a polygon bbox when choosing regions: covers the
+/// 500 m * 1.5 prefilter (0.00676 deg), the tile buffer (0.005 deg) and cell-centre offsets.
+/// The longitude margin is the same ground distance (see `lon_degrees_for`).
 const POLY_REGION_MARGIN_DEG: f64 = 0.02;
 
 pub struct RouteStats {
@@ -51,92 +53,92 @@ pub fn distribute_ways(
         routable_frame_refs,
         || buckets.local(),
         |local, _fi, frame, frame_coords| -> Result<()> {
-                let mut ci = 0usize;
-                let mut pos = 0;
-                let mut ids: Vec<i64> = Vec::new();
-                let mut coords: Vec<Option<(i32, i32)>> = Vec::new();
-                let mut regions: Vec<u32> = Vec::new();
-                let mut cols = SmallTiles::default();
-                let mut rows = SmallTiles::default();
-                let mut rec = Vec::new();
-                let mut local_members: Vec<(u64, Vec<u32>)> = Vec::new();
-                let (mut nw, mut nr, mut nm) = (0u64, 0u64, 0u64);
-                while pos < frame.len() {
-                    let id = get_uvarint(&frame, &mut pos);
-                    let tags_start = pos;
-                    let mut tmp = Vec::new();
-                    copy_way_tags(&frame, &mut pos, &mut tmp);
-                    let tags_end = pos;
-                    let n = get_uvarint(&frame, &mut pos) as usize;
-                    ids.clear();
-                    coords.clear();
-                    regions.clear();
-                    let mut acc = 0i64;
-                    for _ in 0..n {
-                        acc += get_svarint(&frame, &mut pos);
-                        ids.push(acc);
-                        let c = dec_coord(frame_coords[ci]);
-                        ci += 1;
-                        if let Some((la, lo)) = c {
-                            grid.cols_for(decimicro_to_deg(lo), &mut cols);
-                            grid.rows_for(decimicro_to_deg(la), &mut rows);
-                            for &r in rows.as_slice() {
-                                for &c in cols.as_slice() {
-                                    let reg = grid.region_of_tile(c, r);
-                                    if !regions.contains(&reg) {
-                                        regions.push(reg);
-                                    }
+            let mut ci = 0usize;
+            let mut pos = 0;
+            let mut ids: Vec<i64> = Vec::new();
+            let mut coords: Vec<Option<(i32, i32)>> = Vec::new();
+            let mut regions: Vec<u32> = Vec::new();
+            let mut cols = SmallTiles::default();
+            let mut rows = SmallTiles::default();
+            let mut rec = Vec::new();
+            let mut local_members: Vec<(u64, Vec<u32>)> = Vec::new();
+            let (mut nw, mut nr, mut nm) = (0u64, 0u64, 0u64);
+            while pos < frame.len() {
+                let id = get_uvarint(&frame, &mut pos);
+                let tags_start = pos;
+                let mut tmp = Vec::new();
+                copy_way_tags(&frame, &mut pos, &mut tmp);
+                let tags_end = pos;
+                let n = get_uvarint(&frame, &mut pos) as usize;
+                ids.clear();
+                coords.clear();
+                regions.clear();
+                let mut acc = 0i64;
+                for _ in 0..n {
+                    acc += get_svarint(&frame, &mut pos);
+                    ids.push(acc);
+                    let c = dec_coord(frame_coords[ci]);
+                    ci += 1;
+                    if let Some((la, lo)) = c {
+                        grid.cols_for(decimicro_to_deg(lo), &mut cols);
+                        grid.rows_for(decimicro_to_deg(la), &mut rows);
+                        for &r in rows.as_slice() {
+                            for &c in cols.as_slice() {
+                                let reg = grid.region_of_tile(c, r);
+                                if !regions.contains(&reg) {
+                                    regions.push(reg);
                                 }
                             }
-                        } else {
-                            nm += 1;
                         }
-                        coords.push(c);
+                    } else {
+                        nm += 1;
                     }
-                    nw += 1;
-                    if regions.is_empty() {
-                        continue;
-                    }
-                    // encode the region record once
-                    rec.clear();
-                    put_uvarint(&mut rec, id);
-                    rec.extend_from_slice(&frame[tags_start..tags_end]);
-                    let _ = &tmp;
-                    put_uvarint(&mut rec, n as u64);
-                    let (mut pid, mut pla, mut plo) = (0i64, 0i64, 0i64);
-                    for (nid, c) in ids.iter().zip(coords.iter()) {
-                        let d = nid - pid;
-                        pid = *nid;
-                        let zz = ((d << 1) ^ (d >> 63)) as u64;
-                        put_uvarint(&mut rec, (zz << 1) | c.is_some() as u64);
-                        if let Some((la, lo)) = c {
-                            put_svarint(&mut rec, *la as i64 - pla);
-                            put_svarint(&mut rec, *lo as i64 - plo);
-                            pla = *la as i64;
-                            plo = *lo as i64;
-                        }
-                    }
-                    for &reg in &regions {
-                        local.push(reg, REC_WAY, &rec)?;
-                        nr += 1;
-                        if !region_used[reg as usize].load(Ordering::Relaxed) {
-                            region_used[reg as usize].store(true, Ordering::Relaxed);
-                        }
-                    }
-                    if restriction_way_ids.contains(&id) {
-                        local_members.push((id, regions.clone()));
+                    coords.push(c);
+                }
+                nw += 1;
+                if regions.is_empty() {
+                    continue;
+                }
+                // encode the region record once
+                rec.clear();
+                put_uvarint(&mut rec, id);
+                rec.extend_from_slice(&frame[tags_start..tags_end]);
+                let _ = &tmp;
+                put_uvarint(&mut rec, n as u64);
+                let (mut pid, mut pla, mut plo) = (0i64, 0i64, 0i64);
+                for (nid, c) in ids.iter().zip(coords.iter()) {
+                    let d = nid - pid;
+                    pid = *nid;
+                    let zz = ((d << 1) ^ (d >> 63)) as u64;
+                    put_uvarint(&mut rec, (zz << 1) | c.is_some() as u64);
+                    if let Some((la, lo)) = c {
+                        put_svarint(&mut rec, *la as i64 - pla);
+                        put_svarint(&mut rec, *lo as i64 - plo);
+                        pla = *la as i64;
+                        plo = *lo as i64;
                     }
                 }
-                n_ways.fetch_add(nw, Ordering::Relaxed);
-                n_records.fetch_add(nr, Ordering::Relaxed);
-                n_missing.fetch_add(nm, Ordering::Relaxed);
-                if !local_members.is_empty() {
-                    let mut m = member_regions.lock().unwrap();
-                    for (id, regs) in local_members {
-                        m.entry(id).or_default().extend(regs);
+                for &reg in &regions {
+                    local.push(reg, REC_WAY, &rec)?;
+                    nr += 1;
+                    if !region_used[reg as usize].load(Ordering::Relaxed) {
+                        region_used[reg as usize].store(true, Ordering::Relaxed);
                     }
                 }
-                Ok(())
+                if restriction_way_ids.contains(&id) {
+                    local_members.push((id, regions.clone()));
+                }
+            }
+            n_ways.fetch_add(nw, Ordering::Relaxed);
+            n_records.fetch_add(nr, Ordering::Relaxed);
+            n_missing.fetch_add(nm, Ordering::Relaxed);
+            if !local_members.is_empty() {
+                let mut m = member_regions.lock().unwrap();
+                for (id, regs) in local_members {
+                    m.entry(id).or_default().extend(regs);
+                }
+            }
+            Ok(())
         },
     )?;
     let stats = RouteStats {
@@ -281,6 +283,11 @@ impl PolyEmitter<'_> {
             bbox.lon_min,
             bbox.lon_max,
             POLY_REGION_MARGIN_DEG,
+            lon_degrees_for(
+                POLY_REGION_MARGIN_DEG,
+                bbox.lat_min as f64 - POLY_REGION_MARGIN_DEG,
+                bbox.lat_max as f64 + POLY_REGION_MARGIN_DEG,
+            ),
             &mut self.regions,
         );
         self.regions
@@ -339,61 +346,64 @@ pub fn distribute_polygons(
         area_frame_refs,
         || buckets.local(),
         |local, _fi, frame, frame_coords| -> Result<()> {
-                let mut ci = 0usize;
-                let mut em = PolyEmitter {
-                    grid,
-                    region_used,
-                    regions: Vec::new(),
-                    buf: Vec::new(),
-                    count: [0; 2],
-                    large,
-                };
-                let mut local_members = Vec::new();
-                let mut pos = 0;
-                while pos < frame.len() {
-                    let id = get_uvarint(&frame, &mut pos);
-                    let flags = frame[pos];
-                    pos += 1;
-                    let n = get_uvarint(&frame, &mut pos) as usize;
-                    let mut acc = 0i64;
-                    let mut first = 0i64;
-                    let mut coords = Vec::with_capacity(n);
-                    for i in 0..n {
-                        acc += get_svarint(&frame, &mut pos);
-                        if i == 0 {
-                            first = acc;
-                        }
-                        if let Some(c) = dec_coord(frame_coords[ci]) {
-                            coords.push(c);
-                        }
-                        ci += 1;
+            let mut ci = 0usize;
+            let mut em = PolyEmitter {
+                grid,
+                region_used,
+                regions: Vec::new(),
+                buf: Vec::new(),
+                count: [0; 2],
+                large,
+            };
+            let mut local_members = Vec::new();
+            let mut pos = 0;
+            while pos < frame.len() {
+                let id = get_uvarint(&frame, &mut pos);
+                let flags = frame[pos];
+                pos += 1;
+                let n = get_uvarint(&frame, &mut pos) as usize;
+                let mut acc = 0i64;
+                let mut first = 0i64;
+                let mut coords = Vec::with_capacity(n);
+                for i in 0..n {
+                    acc += get_svarint(&frame, &mut pos);
+                    if i == 0 {
+                        first = acc;
                     }
-                    let ids_closed = n >= 4 && first == acc;
-                    if flags & (AREA_RES | AREA_MIL) != 0 && coords.len() >= 4 {
-                        em.emit(
-                            local,
-                            flags & AREA_RES != 0,
-                            flags & AREA_MIL != 0,
-                            (0, id, 0),
-                            vec![to_linestring(&coords)],
-                        )?;
+                    if let Some(c) = dec_coord(frame_coords[ci]) {
+                        coords.push(c);
                     }
-                    if flags & AREA_MEMBER != 0 {
-                        local_members.push((id, MemberWay { ids_closed, coords }));
-                    }
+                    ci += 1;
                 }
-                if !local_members.is_empty() {
-                    members.lock().unwrap().extend(local_members);
+                let ids_closed = n >= 4 && first == acc;
+                if flags & (AREA_RES | AREA_MIL) != 0 && coords.len() >= 4 {
+                    em.emit(
+                        local,
+                        flags & AREA_RES != 0,
+                        flags & AREA_MIL != 0,
+                        (0, id, 0),
+                        vec![to_linestring(&coords)],
+                    )?;
                 }
-                let mut c = counts.lock().unwrap();
-                c[0] += em.count[0];
-                c[1] += em.count[1];
-                Ok(())
+                if flags & AREA_MEMBER != 0 {
+                    local_members.push((id, MemberWay { ids_closed, coords }));
+                }
+            }
+            if !local_members.is_empty() {
+                members.lock().unwrap().extend(local_members);
+            }
+            let mut c = counts.lock().unwrap();
+            c[0] += em.count[0];
+            c[1] += em.count[1];
+            Ok(())
         },
     )?;
 
     let members = members.into_inner().unwrap();
-    let mut areas: Vec<&AreaRel> = areas.iter().filter(|a| !unresolved.contains(&a.id)).collect();
+    let mut areas: Vec<&AreaRel> = areas
+        .iter()
+        .filter(|a| !unresolved.contains(&a.id))
+        .collect();
     areas.sort_by_key(|a| a.id);
     let rel_counts = areas
         .par_iter()
@@ -459,7 +469,13 @@ pub fn distribute_polygons(
                             .collect();
                         let mut rings = vec![outer_ring];
                         rings.extend(holes);
-                        em.emit(&mut local, rel.residential, rel.military, (1, rel.id, k), rings)?;
+                        em.emit(
+                            &mut local,
+                            rel.residential,
+                            rel.military,
+                            (1, rel.id, k),
+                            rings,
+                        )?;
                         k += 1;
                     }
                 }

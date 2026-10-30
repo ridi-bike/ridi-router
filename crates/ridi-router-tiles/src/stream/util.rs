@@ -218,7 +218,11 @@ pub fn memory_limit_bytes() -> u64 {
     if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
         for line in meminfo.lines() {
             if let Some(rest) = line.strip_prefix("MemTotal:") {
-                if let Some(kb) = rest.split_whitespace().next().and_then(|v| v.parse::<u64>().ok()) {
+                if let Some(kb) = rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse::<u64>().ok())
+                {
                     limit = kb * 1024;
                 }
             }
@@ -226,7 +230,8 @@ pub fn memory_limit_bytes() -> u64 {
     }
     if let Ok(cg) = std::fs::read_to_string("/proc/self/cgroup") {
         if let Some(path) = cg.lines().find_map(|l| l.strip_prefix("0::")) {
-            let mut p = std::path::PathBuf::from("/sys/fs/cgroup").join(path.trim_start_matches('/'));
+            let mut p =
+                std::path::PathBuf::from("/sys/fs/cgroup").join(path.trim_start_matches('/'));
             loop {
                 if let Ok(v) = std::fs::read_to_string(p.join("memory.max")) {
                     if let Ok(v) = v.trim().parse::<u64>() {

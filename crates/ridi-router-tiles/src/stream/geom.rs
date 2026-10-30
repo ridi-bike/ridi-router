@@ -72,7 +72,8 @@ impl TileGrid {
         let c0 = x.floor() as i64;
         // fast path: far (> buffer + f32 rounding slack) from both tile edges -> one column
         let d = (x - c0 as f64) * self.tile_size as f64;
-        if d > FAST_SLACK && self.tile_size as f64 - d > FAST_SLACK && c0 >= 0 && c0 < self.max_col {
+        if d > FAST_SLACK && self.tile_size as f64 - d > FAST_SLACK && c0 >= 0 && c0 < self.max_col
+        {
             out.push(c0 as u32);
             return;
         }
@@ -93,7 +94,8 @@ impl TileGrid {
         let y = (lat + 90.0) / self.tile_size as f64;
         let r0 = y.floor() as i64;
         let d = (y - r0 as f64) * self.tile_size as f64;
-        if d > FAST_SLACK && self.tile_size as f64 - d > FAST_SLACK && r0 >= 0 && r0 < self.max_row {
+        if d > FAST_SLACK && self.tile_size as f64 - d > FAST_SLACK && r0 >= 0 && r0 < self.max_row
+        {
             out.push(r0 as u32);
             return;
         }
@@ -121,30 +123,34 @@ impl TileGrid {
         (row / self.region_tiles) * self.region_cols + col / self.region_tiles
     }
 
-
     pub fn all_regions(&self) -> impl Iterator<Item = u32> {
         0..(self.region_cols * self.region_rows)
     }
 
     /// Regions whose tiles could need a polygon with this (f32) bbox: any region whose area,
-    /// grown by `margin` degrees, intersects the bbox.
+    /// grown by `lat_margin` / `lon_margin` degrees, intersects the bbox.
     pub fn regions_for_bbox(
         &self,
         lat_min: f32,
         lat_max: f32,
         lon_min: f32,
         lon_max: f32,
-        margin: f64,
+        lat_margin: f64,
+        lon_margin: f64,
         out: &mut Vec<u32>,
     ) {
         out.clear();
         let rdeg = self.region_tiles as f64 * self.tile_size as f64;
-        let c0 = (((lon_min as f64 - margin) + 180.0) / rdeg).floor().max(0.0) as i64;
-        let c1 = (((lon_max as f64 + margin) + 180.0) / rdeg)
+        let c0 = (((lon_min as f64 - lon_margin) + 180.0) / rdeg)
+            .floor()
+            .max(0.0) as i64;
+        let c1 = (((lon_max as f64 + lon_margin) + 180.0) / rdeg)
             .floor()
             .min(self.region_cols as f64 - 1.0) as i64;
-        let r0 = (((lat_min as f64 - margin) + 90.0) / rdeg).floor().max(0.0) as i64;
-        let r1 = (((lat_max as f64 + margin) + 90.0) / rdeg)
+        let r0 = (((lat_min as f64 - lat_margin) + 90.0) / rdeg)
+            .floor()
+            .max(0.0) as i64;
+        let r1 = (((lat_max as f64 + lat_margin) + 90.0) / rdeg)
             .floor()
             .min(self.region_rows as f64 - 1.0) as i64;
         for r in r0..=r1 {

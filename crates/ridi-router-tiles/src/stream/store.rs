@@ -30,7 +30,11 @@ use super::nodeidx::{MemStore, RankedSet};
 
 pub enum Store {
     Mem(MemStore),
-    File { file: File, path: PathBuf, count: u64 },
+    File {
+        file: File,
+        path: PathBuf,
+        count: u64,
+    },
 }
 
 impl Store {
@@ -90,7 +94,9 @@ impl Store {
         bytes
             .par_chunks_mut(64 << 20)
             .enumerate()
-            .try_for_each(|(i, piece)| file.read_exact_at(piece, start * 8 + (i as u64) * (64 << 20)))?;
+            .try_for_each(|(i, piece)| {
+                file.read_exact_at(piece, start * 8 + (i as u64) * (64 << 20))
+            })?;
         unsafe {
             libc::posix_fadvise(
                 file.as_raw_fd(),
@@ -156,7 +162,10 @@ impl Resolver<'_> {
                 let count = self.store.count();
                 let chunk_slots = (self.budget_bytes / 8).max(1 << 20);
                 let k = count.div_ceil(chunk_slots).max(1);
-                info!("Chunked coordinate join: {k} chunk(s) of {} MB", chunk_slots * 8 >> 20);
+                info!(
+                    "Chunked coordinate join: {k} chunk(s) of {} MB",
+                    chunk_slots * 8 >> 20
+                );
                 // fills[c][fi] = (offset, len in u64s)
                 let mut fills: Vec<(File, PathBuf, Vec<(AtomicU64, AtomicU64)>)> = Vec::new();
                 for c in 0..k - 1 {
@@ -211,7 +220,12 @@ impl Resolver<'_> {
                 let chunk = self.store.load_chunk(start, count)?;
                 (0..nframes).into_par_iter().try_for_each_init(
                     || (init(), Vec::new(), Vec::new(), Vec::new()),
-                    |(state, refs, coords, fillbufs): &mut (S, Vec<i64>, Vec<u64>, Vec<Vec<u64>>),
+                    |(state, refs, coords, fillbufs): &mut (
+                        S,
+                        Vec<i64>,
+                        Vec<u64>,
+                        Vec<Vec<u64>>,
+                    ),
                      fi|
                      -> Result<()> {
                         let frame = spill.read_frame(fi)?;

@@ -94,3 +94,84 @@ fn within_threshold_matches_reference_on_hard_shapes() {
         "within {within} of {checked}"
     );
 }
+
+/// Square polygon of `half` degrees (latitude) around (lat, lon), square on the ground.
+fn square(lat: f64, lon: f64, half: f64) -> MultiPolygon<f64> {
+    let hl = half / lat.to_radians().cos();
+    MultiPolygon::new(vec![Polygon::new(
+        LineString::from(vec![
+            (lon - hl, lat - half),
+            (lon + hl, lat - half),
+            (lon + hl, lat + half),
+            (lon - hl, lat + half),
+            (lon - hl, lat - half),
+        ]),
+        vec![],
+    )])
+}
+
+#[test]
+fn global_cells_clamp_at_antimeridian_and_pole() {
+    let anchor = GridAnchor::global();
+    let key = anchor.residential_cell(10.0, 180.0).unwrap();
+    assert_eq!(key as u32 as i32, GLOBAL_COLS - 1);
+    let key = anchor.residential_cell(90.0, 0.0).unwrap();
+    assert_eq!((key >> 32) as i32, GLOBAL_ROWS - 1);
+    let key = anchor.military_cell(90.0, 180.0).unwrap();
+    assert_eq!(key as u32 as i32, GLOBAL_MILITARY_COLS - 1);
+    assert_eq!((key >> 32) as i32, GLOBAL_MILITARY_ROWS - 1);
+    // the last cell's centre stays inside the world
+    let (lat, lon) = anchor.residential_center(anchor.residential_cell(90.0, 180.0).unwrap());
+    assert!(lon < 180.0 && lat < 90.0, "({lat}, {lon})");
+    // -180 and +180 are different cells (no wrap), as tiles do not wrap either
+    assert_eq!(anchor.residential_cell(10.0, -180.0).unwrap() as u32, 0);
+}
+
+#[test]
+fn reference_cells_past_extent_get_no_flags() {
+    let anchor = GridAnchor::reference(-18.0, -16.0, 177.0, 180.0);
+    assert!(anchor.residential_cell(-17.0, 180.0).is_some());
+    assert!(anchor.residential_cell(-17.0, 180.1).is_none());
+}
+
+#[test]
+fn prefilter_keeps_500m_east_west_at_high_latitudes() {
+    for lat in [0.0f64, 48.0, 57.0, 60.0, 70.0, 78.0] {
+        // 100 m half-size polygon, cell centre 480 m (polygon edge distance) due east
+        let mp = square(lat, 20.0, 0.0009);
+        let edge_lon = 20.0 + 0.0009 / lat.to_radians().cos();
+        let dlon = 480.0 / (METERS_PER_DEG * lat.to_radians().cos());
+        let (plat, plon) = (lat as f32, (edge_lon + dlon) as f32);
+        let d = polygon_distance_m(&mp, plat, plon);
+        assert!((d - 480.0).abs() < 2.0, "lat {lat}: distance {d}");
+        let b = compute_multipolygon_bbox(&mp);
+        let global = prefilter_box(&b, 500.0, false).unwrap();
+        assert!(
+            in_box(&global, plat, plon),
+            "global prefilter drops lat {lat}"
+        );
+        let legacy = prefilter_box(&b, 500.0, true).unwrap();
+        // the legacy reach is 750 m * cos(lat) east-west (+ 100 m polygon half-size)
+        assert_eq!(in_box(&legacy, plat, plon), lat < 50.0, "legacy lat {lat}");
+    }
+}
+
+#[test]
+fn widened_prefilter_matches_reference_maths() {
+    // Every polygon within 500 m of a cell centre must survive the widened prefilter.
+    let mut rng = Rng(0x2545f4914f6cdd1d);
+    for &lat in &[45.0, 57.0, 60.0, 70.0, 78.0, 85.0, -60.0] {
+        for _ in 0..20 {
+            let mp = star(&mut rng, lat, 20.0, 9, 0.003, false);
+            let b = prefilter_box(&compute_multipolygon_bbox(&mp), 500.0, false).unwrap();
+            for _ in 0..300 {
+                let dlat = (rng.next() - 0.5) * 0.03;
+                let dlon = (rng.next() - 0.5) * 0.03 / (lat as f64).to_radians().cos();
+                let (plat, plon) = ((lat + dlat) as f32, (20.0 + dlon) as f32);
+                if polygon_distance_m(&mp, plat, plon) <= 500.0 {
+                    assert!(in_box(&b, plat, plon), "lat {lat} point ({plat}, {plon})");
+                }
+            }
+        }
+    }
+}

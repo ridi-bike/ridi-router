@@ -208,7 +208,11 @@ impl<'a> Block<'a> {
 
     #[inline]
     pub fn coord(&self, c: i64, lat: bool) -> i32 {
-        let off = if lat { self.lat_offset } else { self.lon_offset };
+        let off = if lat {
+            self.lat_offset
+        } else {
+            self.lon_offset
+        };
         ((off + self.granularity * c) / 100) as i32
     }
 
@@ -512,7 +516,10 @@ impl PbfFile {
         if t != "OSMData" {
             bail!("unexpected blob type {t} at {h}");
         }
-        Ok((read_blob_raw(&self.file, data_off, dsize as u32)?, data_off + dsize))
+        Ok((
+            read_blob_raw(&self.file, data_off, dsize as u32)?,
+            data_off + dsize,
+        ))
     }
 
     fn kinds(&self, h: u64) -> Result<(u8, u8)> {
@@ -633,14 +640,21 @@ pub fn log_io_counters(phase: &str) {
     use std::sync::atomic::Ordering;
     let i = INFLATE_NS.swap(0, Ordering::Relaxed);
     let p = PREAD_NS.swap(0, Ordering::Relaxed);
-    info!("{phase}: pread {:.2} s, inflate {:.2} s (summed over threads)", p as f64 / 1e9, i as f64 / 1e9);
+    info!(
+        "{phase}: pread {:.2} s, inflate {:.2} s (summed over threads)",
+        p as f64 / 1e9,
+        i as f64 / 1e9
+    );
 }
 
 fn read_blob_raw(file: &File, offset: u64, size: u32) -> Result<Vec<u8>> {
     let mut buf = vec![0u8; size as usize];
     let t = std::time::Instant::now();
     file.read_exact_at(&mut buf, offset)?;
-    PREAD_NS.fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    PREAD_NS.fetch_add(
+        t.elapsed().as_nanos() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let mut raw: Option<&[u8]> = None;
     let mut zlib: Option<&[u8]> = None;
     let mut raw_size = 0usize;
@@ -650,7 +664,9 @@ fn read_blob_raw(file: &File, offset: u64, size: u32) -> Result<Vec<u8>> {
             1 => raw = Some(v.bytes()),
             2 => raw_size = v.int() as usize,
             3 => zlib = Some(v.bytes()),
-            4 | 5 | 6 | 7 => bail!("Unsupported blob compression (field {f}); only raw and zlib are supported"),
+            4 | 5 | 6 | 7 => {
+                bail!("Unsupported blob compression (field {f}); only raw and zlib are supported")
+            }
             _ => {}
         }
     }
@@ -672,7 +688,10 @@ fn read_blob_raw(file: &File, offset: u64, size: u32) -> Result<Vec<u8>> {
         } else {
             flate2::read::ZlibDecoder::new(z).read_to_end(&mut out)?;
         }
-        INFLATE_NS.fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        INFLATE_NS.fetch_add(
+            t.elapsed().as_nanos() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         Ok(out)
     } else {
         bail!("Blob has no data")

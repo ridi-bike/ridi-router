@@ -14,10 +14,12 @@ use ridi_router_common::osm::{
 use super::buckets::{REC_POLY, REC_RESTRICTION, REC_WAY};
 use super::records::*;
 use super::util::*;
+use crate::local_stage::proximity::lon_degrees_for;
 use crate::local_stage::{self, GridAnchor, LocalStageInput, NodeTable, WayTable, MISSING_COORD};
 
-/// Margin around a job's tile rectangle when selecting shared large polygons (covers the 500 m
-/// prefilter, tile buffer and nodes of ways that leave the rectangle).
+/// Margin (degrees of latitude) around a job's tile rectangle when selecting shared large
+/// polygons (covers the 500 m prefilter, tile buffer and nodes of ways that leave the
+/// rectangle). The longitude margin is the same ground distance (see `lon_degrees_for`).
 const JOB_POLY_MARGIN_DEG: f64 = 0.05;
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -148,7 +150,14 @@ pub fn process_job(
     let mut restrictions: Vec<RestrictionRel> = Vec::new();
     for path in &job.files {
         let data = std::fs::read(path).with_context(|| format!("read bucket {path:?}"))?;
-        parse_bucket(&data, path, &mut ways, &mut coords, &mut polys, &mut restrictions)?;
+        parse_bucket(
+            &data,
+            path,
+            &mut ways,
+            &mut coords,
+            &mut polys,
+            &mut restrictions,
+        )?;
     }
     // records of objects spanning several base regions appear once per region
     ways.sort_unstable_by_key(|w| w.id);
@@ -163,10 +172,11 @@ pub fn process_job(
     let lon1 = (job.col0 + job.ncols) as f64 * ts - 180.0;
     let lat1 = (job.row0 + job.nrows) as f64 * ts - 90.0;
     let m = JOB_POLY_MARGIN_DEG;
+    let m_lon = lon_degrees_for(m, lat0 - m, lat1 + m);
     for p in &global.polys {
         let [la0, la1, lo0, lo1] = p.bbox;
-        if (lo1 as f64) >= lon0 - m
-            && (lo0 as f64) <= lon1 + m
+        if (lo1 as f64) >= lon0 - m_lon
+            && (lo0 as f64) <= lon1 + m_lon
             && (la1 as f64) >= lat0 - m
             && (la0 as f64) <= lat1 + m
         {
@@ -334,7 +344,10 @@ fn parse_bucket(
         pos += 1;
         let len = get_uvarint(data, &mut pos) as usize;
         let end = pos + len;
-        anyhow::ensure!(end <= data.len(), "corrupt bucket {path:?}: truncated record");
+        anyhow::ensure!(
+            end <= data.len(),
+            "corrupt bucket {path:?}: truncated record"
+        );
         let rec = &data[pos..end];
         let mut p = 0;
         match kind {

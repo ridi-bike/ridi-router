@@ -32,12 +32,27 @@ use crate::proximity::rasterized_grid::{
     RESIDENTIAL_PROXIMITY_THRESHOLD_M, THRESHOLD_AREA_M2,
 };
 
-/// Grid origin and extent (extent only enforced in reference mode).
+/// Global grid size: residential cells (cols, rows) and military cells (cols, rows).
+const GLOBAL_COLS: i32 = (360.0 / GRID_CELL_SIZE_DEG + 0.5) as i32;
+const GLOBAL_ROWS: i32 = (180.0 / GRID_CELL_SIZE_DEG + 0.5) as i32;
+const GLOBAL_MILITARY_COLS: i32 = (360.0 / MILITARY_GRID_CELL_SIZE_DEG + 0.5) as i32;
+const GLOBAL_MILITARY_ROWS: i32 = (180.0 / MILITARY_GRID_CELL_SIZE_DEG + 0.5) as i32;
+
+/// Latitude (degrees) at which the longitude widening of the prefilter stops growing.
+const MAX_WIDEN_LAT_DEG: f32 = 89.0;
+
+/// Grid origin and extent.
+///
+/// Reference mode reproduces the legacy generator exactly: per-PBF origin, cells past the
+/// extent get no flags, and the prefilter buffer is the same number of degrees in latitude and
+/// longitude (so its east-west reach shrinks with cos(lat)). Global mode anchors at (-180, -90),
+/// clamps +180 / +90 into the last column / row, and widens the prefilter's longitude buffer by
+/// 1 / cos(lat) so the 500 m residential radius holds at every latitude.
 #[derive(Clone, Copy, Debug)]
 pub struct GridAnchor {
     pub lon_min: f32,
     pub lat_min: f32,
-    /// (cols, rows, military_cols, military_rows) if bounded
+    /// (cols, rows, military_cols, military_rows) in reference mode, None for global
     pub limits: Option<(u32, u32, u32, u32)>,
 }
 
@@ -78,11 +93,15 @@ impl GridAnchor {
         if col < 0 || row < 0 {
             return None;
         }
-        if let Some((cols, rows, _, _)) = self.limits {
-            if col >= cols as i32 || row >= rows as i32 {
-                return None;
+        let (col, row) = match self.limits {
+            Some((cols, rows, _, _)) => {
+                if col >= cols as i32 || row >= rows as i32 {
+                    return None;
+                }
+                (col, row)
             }
-        }
+            None => (col.min(GLOBAL_COLS - 1), row.min(GLOBAL_ROWS - 1)),
+        };
         Some(((row as u64) << 32) | col as u64)
     }
 
@@ -93,12 +112,25 @@ impl GridAnchor {
         if col < 0 || row < 0 {
             return None;
         }
-        if let Some((_, _, cols, rows)) = self.limits {
-            if col >= cols as i32 || row >= rows as i32 {
-                return None;
+        let (col, row) = match self.limits {
+            Some((_, _, cols, rows)) => {
+                if col >= cols as i32 || row >= rows as i32 {
+                    return None;
+                }
+                (col, row)
             }
-        }
+            None => (
+                col.min(GLOBAL_MILITARY_COLS - 1),
+                row.min(GLOBAL_MILITARY_ROWS - 1),
+            ),
+        };
         Some(((row as u64) << 32) | col as u64)
+    }
+
+    /// True in reference mode: keep the legacy degree-based prefilter.
+    #[inline]
+    fn legacy_prefilter(&self) -> bool {
+        self.limits.is_some()
     }
 
     #[inline]
@@ -134,17 +166,38 @@ impl RTreeObject for IndexedBox {
     }
 }
 
-/// Exact f32 prefilter box: `BBox::could_be_within(lat, lon, distance_m)` <=> point inside.
-fn prefilter_box(b: &BBox, distance_m: f32) -> Option<[f32; 4]> {
+/// `deg` degrees of latitude expressed as degrees of longitude at the most poleward latitude of
+/// [lat_min, lat_max] (clamped at `MAX_WIDEN_LAT_DEG`): the same east-west ground distance.
+pub(crate) fn lon_degrees_for(deg: f64, lat_min: f64, lat_max: f64) -> f64 {
+    let lat = lat_min
+        .abs()
+        .max(lat_max.abs())
+        .min(MAX_WIDEN_LAT_DEG as f64);
+    deg / lat.to_radians().cos()
+}
+
+/// Prefilter box: a point outside it is surely farther than `distance_m` from the polygon.
+///
+/// Legacy (reference mode): exactly `BBox::could_be_within(lat, lon, distance_m)`, which pads
+/// longitude by the same number of degrees as latitude. Otherwise the longitude padding is
+/// widened by 1 / cos(lat) at the most poleward latitude the box can be tested at.
+fn prefilter_box(b: &BBox, distance_m: f32, legacy: bool) -> Option<[f32; 4]> {
     if !(b.lat_min <= b.lat_max && b.lon_min <= b.lon_max) {
         return None;
     }
     let deg_buffer = distance_m / 111_000.0 * 1.5;
+    let lat_min = b.lat_min - deg_buffer;
+    let lat_max = b.lat_max + deg_buffer;
+    let lon_buffer = if legacy {
+        deg_buffer
+    } else {
+        lon_degrees_for(deg_buffer as f64, lat_min as f64, lat_max as f64) as f32
+    };
     Some([
-        b.lat_min - deg_buffer,
-        b.lat_max + deg_buffer,
-        b.lon_min - deg_buffer,
-        b.lon_max + deg_buffer,
+        lat_min,
+        lat_max,
+        b.lon_min - lon_buffer,
+        b.lon_max + lon_buffer,
     ])
 }
 
@@ -616,6 +669,7 @@ pub(crate) fn residential_cells(
             prefilter_box(
                 &compute_multipolygon_bbox(mp),
                 RESIDENTIAL_PROXIMITY_THRESHOLD_M,
+                anchor.legacy_prefilter(),
             )
         })
         .collect();
@@ -741,7 +795,7 @@ pub(crate) fn military_cells(
         .collect();
     let boxes: Vec<Option<[f32; 4]>> = polygon_bboxes
         .iter()
-        .map(|(_, b)| prefilter_box(b, 0.0))
+        .map(|(_, b)| prefilter_box(b, 0.0, anchor.legacy_prefilter()))
         .collect();
     let tree = prefilter_tree(&boxes);
     let half_size = MILITARY_GRID_CELL_SIZE_DEG / 2.0;

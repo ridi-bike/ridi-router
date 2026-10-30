@@ -13,8 +13,8 @@ use super::pbf::{
     classify_strings, lossy, packed_sint, parse_node, Block, DenseNodes, Packed, PbfFile,
     RelationMsg, WayMsg, KIND_NODE, KIND_RELATION, KIND_WAY,
 };
-use super::store::Store;
 use super::records::*;
+use super::store::Store;
 use super::util::*;
 
 // ---------------------------------------------------------------------------------------------
@@ -341,101 +341,102 @@ pub fn way_pass(
 ) -> Result<WayPassStats> {
     let n_routable = AtomicU64::new(0);
     let n_area = AtomicU64::new(0);
-    pbf.par_blocks(ranges[1].clone(), "ways").try_for_each_init(
-        || (Vec::<i64>::new(), Vec::<i64>::new()),
-        |(refs, block_ids), item| -> Result<()> {
-            let (bi, raw) = item?;
-            let block = Block::parse(&raw)?;
-            check_order(&block, bi, ranges)?;
-            let codes = classify_strings(&block, classify_way_key);
-            let st = &block.strings;
-            let mut rbuf = Vec::with_capacity(1 << 20);
-            let mut abuf = Vec::new();
-            block_ids.clear();
-            block.for_each_member(|field, bytes| -> Result<()> {
-                if field != 3 {
-                    return Ok(());
-                }
-                let way = WayMsg::parse(bytes)?;
-                let id = way.id as u64;
-                let mut vals: [Option<&[u8]>; 11] = [None; 11];
-                for (k, v) in Packed::new(way.keys).zip(Packed::new(way.vals)) {
-                    let c = codes[k as usize];
-                    if c != 0 {
-                        vals[c as usize] = Some(st[v as usize]);
+    pbf.par_blocks(ranges[1].clone(), "ways")
+        .try_for_each_init(
+            || (Vec::<i64>::new(), Vec::<i64>::new()),
+            |(refs, block_ids), item| -> Result<()> {
+                let (bi, raw) = item?;
+                let block = Block::parse(&raw)?;
+                check_order(&block, bi, ranges)?;
+                let codes = classify_strings(&block, classify_way_key);
+                let st = &block.strings;
+                let mut rbuf = Vec::with_capacity(1 << 20);
+                let mut abuf = Vec::new();
+                block_ids.clear();
+                block.for_each_member(|field, bytes| -> Result<()> {
+                    if field != 3 {
+                        return Ok(());
                     }
-                }
-                let highway = vals[WK_HIGHWAY as usize];
-                let routable = highway.is_some_and(|h| {
-                    ALLOWED_HIGHWAY_VALUES.contains(&h)
-                        || (h == b"path" && vals[WK_MOTORCYCLE as usize] == Some(b"yes"))
-                });
-                let landuse = vals[WK_LANDUSE as usize];
-                let res = landuse == Some(b"residential");
-                let mil = landuse == Some(b"military") || vals[WK_MILITARY as usize].is_some();
-                let member = area_members.contains(&id);
-                if !routable && !res && !mil && !member {
-                    return Ok(());
-                }
-                refs.clear();
-                let mut acc = 0i64;
-                for d in packed_sint(way.refs) {
-                    acc += d;
-                    refs.push(acc);
-                }
-                let closed = refs.len() >= 4 && refs[0] == refs[refs.len() - 1];
-                let area = ((res || mil) && closed) || member;
-                if !routable && !area {
-                    return Ok(());
-                }
-                block_ids.extend_from_slice(refs);
-                let put_refs = |buf: &mut Vec<u8>| {
-                    put_uvarint(buf, refs.len() as u64);
-                    let mut prev = 0i64;
-                    for &r in refs.iter() {
-                        put_svarint(buf, r - prev);
-                        prev = r;
+                    let way = WayMsg::parse(bytes)?;
+                    let id = way.id as u64;
+                    let mut vals: [Option<&[u8]>; 11] = [None; 11];
+                    for (k, v) in Packed::new(way.keys).zip(Packed::new(way.vals)) {
+                        let c = codes[k as usize];
+                        if c != 0 {
+                            vals[c as usize] = Some(st[v as usize]);
+                        }
                     }
-                };
-                if routable {
-                    n_routable.fetch_add(1, Ordering::Relaxed);
-                    put_uvarint(&mut rbuf, id);
-                    let tags: [Option<&[u8]>; 7] = [
-                        vals[WK_NAME as usize],
-                        vals[WK_REF as usize],
-                        vals[WK_HIGHWAY as usize],
-                        vals[WK_SURFACE as usize],
-                        vals[WK_SMOOTHNESS as usize],
-                        vals[WK_ONEWAY as usize],
-                        vals[WK_JUNCTION as usize],
-                    ];
-                    put_way_tags(&mut rbuf, &tags);
-                    put_refs(&mut rbuf);
-                }
-                if area {
-                    n_area.fetch_add(1, Ordering::Relaxed);
-                    put_uvarint(&mut abuf, id);
-                    let mut flags = 0u8;
-                    if res && closed {
-                        flags |= AREA_RES;
+                    let highway = vals[WK_HIGHWAY as usize];
+                    let routable = highway.is_some_and(|h| {
+                        ALLOWED_HIGHWAY_VALUES.contains(&h)
+                            || (h == b"path" && vals[WK_MOTORCYCLE as usize] == Some(b"yes"))
+                    });
+                    let landuse = vals[WK_LANDUSE as usize];
+                    let res = landuse == Some(b"residential");
+                    let mil = landuse == Some(b"military") || vals[WK_MILITARY as usize].is_some();
+                    let member = area_members.contains(&id);
+                    if !routable && !res && !mil && !member {
+                        return Ok(());
                     }
-                    if mil && closed {
-                        flags |= AREA_MIL;
+                    refs.clear();
+                    let mut acc = 0i64;
+                    for d in packed_sint(way.refs) {
+                        acc += d;
+                        refs.push(acc);
                     }
-                    if member {
-                        flags |= AREA_MEMBER;
+                    let closed = refs.len() >= 4 && refs[0] == refs[refs.len() - 1];
+                    let area = ((res || mil) && closed) || member;
+                    if !routable && !area {
+                        return Ok(());
                     }
-                    abuf.push(flags);
-                    put_refs(&mut abuf);
-                }
+                    block_ids.extend_from_slice(refs);
+                    let put_refs = |buf: &mut Vec<u8>| {
+                        put_uvarint(buf, refs.len() as u64);
+                        let mut prev = 0i64;
+                        for &r in refs.iter() {
+                            put_svarint(buf, r - prev);
+                            prev = r;
+                        }
+                    };
+                    if routable {
+                        n_routable.fetch_add(1, Ordering::Relaxed);
+                        put_uvarint(&mut rbuf, id);
+                        let tags: [Option<&[u8]>; 7] = [
+                            vals[WK_NAME as usize],
+                            vals[WK_REF as usize],
+                            vals[WK_HIGHWAY as usize],
+                            vals[WK_SURFACE as usize],
+                            vals[WK_SMOOTHNESS as usize],
+                            vals[WK_ONEWAY as usize],
+                            vals[WK_JUNCTION as usize],
+                        ];
+                        put_way_tags(&mut rbuf, &tags);
+                        put_refs(&mut rbuf);
+                    }
+                    if area {
+                        n_area.fetch_add(1, Ordering::Relaxed);
+                        put_uvarint(&mut abuf, id);
+                        let mut flags = 0u8;
+                        if res && closed {
+                            flags |= AREA_RES;
+                        }
+                        if mil && closed {
+                            flags |= AREA_MIL;
+                        }
+                        if member {
+                            flags |= AREA_MEMBER;
+                        }
+                        abuf.push(flags);
+                        put_refs(&mut abuf);
+                    }
+                    Ok(())
+                })?;
+                needed.insert_batch(block_ids)?;
+                routable_out.write_batch(&rbuf)?;
+                area_out.write_batch(&abuf)?;
                 Ok(())
-            })?;
-            needed.insert_batch(block_ids)?;
-            routable_out.write_batch(&rbuf)?;
-            area_out.write_batch(&abuf)?;
-            Ok(())
-        },
-    )?;
+            },
+        )?;
     let stats = WayPassStats {
         routable: n_routable.load(Ordering::Relaxed),
         area: n_area.load(Ordering::Relaxed),

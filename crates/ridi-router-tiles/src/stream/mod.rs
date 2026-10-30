@@ -188,7 +188,11 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
             decimicro_to_deg(bounds.lon_max),
         )
     };
-    info!("Proximity grid anchor ({}): {:?}", if global_anchor { "global" } else { "reference" }, anchor);
+    info!(
+        "Proximity grid anchor ({}): {:?}",
+        if global_anchor { "global" } else { "reference" },
+        anchor
+    );
     pbf::log_io_counters("nodes");
     clock.phase("nodes");
 
@@ -321,14 +325,20 @@ pub fn generate(input: &Path, output_dir: &Path, tile_size: f32) -> Result<()> {
         .iter()
         .find(|t| t.col as i64 >= grid.max_col() || t.row as i64 >= grid.max_row())
     {
-        anyhow::bail!("internal error: tile {} outside the valid tile grid", t.filename);
+        anyhow::bail!(
+            "internal error: tile {} outside the valid tile grid",
+            t.filename
+        );
     }
     {
         let mut names: Vec<&str> = tiles.iter().map(|t| t.filename.as_str()).collect();
         names.sort_unstable();
         let n = names.len();
         names.dedup();
-        anyhow::ensure!(names.len() == n, "internal error: a tile was written by two jobs");
+        anyhow::ensure!(
+            names.len() == n,
+            "internal error: a tile was written by two jobs"
+        );
     }
 
     // 9. manifest (from in-memory tile results)
@@ -444,9 +454,15 @@ fn run_jobs(
     global: local::GlobalPolys,
     budget: u64,
     times: std::sync::Arc<local::SubPhaseTimes>,
-) -> Result<(local::RegionStats, Vec<ridi_router_common::manifest::TileMetadata>)> {
+) -> Result<(
+    local::RegionStats,
+    Vec<ridi_router_common::manifest::TileMetadata>,
+)> {
     use std::sync::{mpsc, Arc, Condvar, Mutex};
-    type JobResult = Result<(local::RegionStats, Vec<ridi_router_common::manifest::TileMetadata>)>;
+    type JobResult = Result<(
+        local::RegionStats,
+        Vec<ridi_router_common::manifest::TileMetadata>,
+    )>;
     let gate = Arc::new((Mutex::new(0u64), Condvar::new()));
     let (tx, rx) = mpsc::channel::<JobResult>();
     let (flush_tx, flush_rx) = mpsc::channel::<Vec<PathBuf>>();

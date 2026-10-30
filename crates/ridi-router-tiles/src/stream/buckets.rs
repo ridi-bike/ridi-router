@@ -125,7 +125,6 @@ impl RegionBuckets {
             total: 0,
         }
     }
-
 }
 
 /// Per-worker write buffers; flushed when they exceed the threshold and on drop.
