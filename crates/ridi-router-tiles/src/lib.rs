@@ -1,8 +1,10 @@
 mod generation;
+pub mod local_stage;
 mod osm_data;
 mod proximity;
 mod rmdf;
 mod simd;
+mod stream;
 
 use std::{
     fs, io,
@@ -97,6 +99,13 @@ pub fn generate_tiles(
     };
 
     let skipped_pbf_files = match &request.input {
+        TileInputSource::File(input_file)
+            if std::env::var("RIDI_LEGACY_SINGLE").as_deref() != Ok("1") =>
+        {
+            stream::generate(input_file, &request.output_dir, request.tile_size_deg)
+                .map_err(generation_failed)?;
+            Vec::new()
+        }
         TileInputSource::File(input_file) => {
             TileGenerator::new(
                 input_file.clone(),

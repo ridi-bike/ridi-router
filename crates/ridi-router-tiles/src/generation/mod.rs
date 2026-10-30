@@ -6,6 +6,7 @@ mod tags;
 
 pub use generation_line::{GenerationLine, LineDirection};
 pub use graph::GenerationGraph;
+pub(crate) use graph::{materialize_restriction, RestrictionContext};
 pub use point::GenerationPoint;
 pub use restriction::{
     GenerationRestrictionRule, GenerationRestrictionRuleType, GenerationRestrictionSkipReason,

@@ -6,6 +6,8 @@ edition.workspace = true
 [features]
 default = []
 debug-polygons = []
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dependencies]
 anyhow.workspace = true
@@ -20,7 +22,7 @@ rayon.workspace = true
 redb.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
+sha2 = { workspace = true, features = ["asm"] }
 thiserror.workspace = true
 tracing.workspace = true
 rstar.workspace = true
@@ -28,6 +30,11 @@ smartstring.workspace = true
 wide.workspace = true
 num-traits.workspace = true
 ridi-router-common = { path = "../ridi-router-common" }
+hotpath.workspace = true
+protobuf = "2.28"
+flate2 = { version = "1.0.35", features = ["zlib-ng"] }
+libc = "0.2"
+libdeflater = "1.22"
 
 [dev-dependencies]
 ridi-router-routing = { path = "../ridi-router-routing" }

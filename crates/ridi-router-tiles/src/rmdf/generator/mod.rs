@@ -1,7 +1,7 @@
 pub mod intermediate;
 pub mod manifest;
 mod pbf_streamer;
-mod writer;
+pub(crate) mod writer;
 
 pub use manifest::ManifestGenerator;
 pub use pbf_streamer::PbfStreamer;

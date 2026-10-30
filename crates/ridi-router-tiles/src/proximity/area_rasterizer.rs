@@ -256,27 +256,28 @@ impl AreaRasterizer {
 }
 
 /// Pre-computed data for efficient polygon processing.
-struct PolygonData<'a> {
-    polygon: &'a MultiPolygon<f64>,
-    area: f32,
-    bbox: BBox,
-    centroid: (f64, f64), // (lat, lon)
+#[derive(Clone, Copy)]
+pub(crate) struct PolygonData<'a> {
+    pub(crate) polygon: &'a MultiPolygon<f64>,
+    pub(crate) area: f32,
+    pub(crate) bbox: BBox,
+    pub(crate) centroid: (f64, f64), // (lat, lon)
 }
 
 /// Simple bounding box for quick spatial filtering.
 #[derive(Clone, Copy, Debug)]
-struct BBox {
-    lat_min: f32,
-    lat_max: f32,
-    lon_min: f32,
-    lon_max: f32,
+pub(crate) struct BBox {
+    pub(crate) lat_min: f32,
+    pub(crate) lat_max: f32,
+    pub(crate) lon_min: f32,
+    pub(crate) lon_max: f32,
 }
 
 impl BBox {
     /// Check if a point could be within distance_m of this bbox.
     /// Uses a rough approximation: 1 degree ≈ 111km.
     #[inline]
-    fn could_be_within(&self, lat: f32, lon: f32, distance_m: f32) -> bool {
+    pub(crate) fn could_be_within(&self, lat: f32, lon: f32, distance_m: f32) -> bool {
         // Convert distance to degrees (conservative estimate)
         let deg_buffer = distance_m / 111_000.0 * 1.5; // 1.5x safety margin
 
@@ -288,7 +289,7 @@ impl BBox {
 }
 
 /// Compute bounding box for a multipolygon.
-fn compute_multipolygon_bbox(mp: &MultiPolygon<f64>) -> BBox {
+pub(crate) fn compute_multipolygon_bbox(mp: &MultiPolygon<f64>) -> BBox {
     let mut lat_min = f64::MAX;
     let mut lat_max = f64::MIN;
     let mut lon_min = f64::MAX;
@@ -312,7 +313,7 @@ fn compute_multipolygon_bbox(mp: &MultiPolygon<f64>) -> BBox {
 }
 
 /// Compute centroid of a multipolygon (simple average of all polygon centroids).
-fn compute_multipolygon_centroid(mp: &MultiPolygon<f64>) -> (f64, f64) {
+pub(crate) fn compute_multipolygon_centroid(mp: &MultiPolygon<f64>) -> (f64, f64) {
     let mut total_lat = 0.0;
     let mut total_lon = 0.0;
     let mut count = 0;
@@ -334,7 +335,7 @@ fn compute_multipolygon_centroid(mp: &MultiPolygon<f64>) -> (f64, f64) {
 
 /// Calculate bearing from one point to another (in degrees).
 /// Returns angle where 0° = North, 90° = East, 180° = South, 270° = West.
-fn calculate_bearing(from_lat: f32, from_lon: f32, to_lat: f64, to_lon: f64) -> f32 {
+pub(crate) fn calculate_bearing(from_lat: f32, from_lon: f32, to_lat: f64, to_lon: f64) -> f32 {
     let from_lat = from_lat as f64;
     let from_lon = from_lon as f64;
 
@@ -351,15 +352,33 @@ fn calculate_bearing(from_lat: f32, from_lon: f32, to_lat: f64, to_lon: f64) -> 
     (((bearing % 360.0) + 360.0) % 360.0) as f32
 }
 
+/// Reference distance (m) from a cell centre to a polygon: 0 inside, haversine closest point
+/// otherwise, SIMD vertex distance when the closest point is indeterminate.
+pub(crate) fn polygon_distance_m(polygon: &MultiPolygon<f64>, cell_lat: f32, cell_lon: f32) -> f64 {
+    let geo_point = Point::new(cell_lon as f64, cell_lat as f64);
+    match polygon.haversine_closest_point(&geo_point) {
+        geo::Closest::Intersection(_) => 0.0, // Point is inside polygon
+        geo::Closest::SinglePoint(p) => Haversine.distance(geo_point, p),
+        geo::Closest::Indeterminate => {
+            // Fall back to SIMD vertex distance
+            let vertices: Vec<(f32, f32)> = polygon
+                .iter()
+                .flat_map(|p| p.exterior().coords())
+                .map(|c| (c.y as f32, c.x as f32))
+                .collect();
+
+            min_distance_to_vertices(cell_lat, cell_lon, &vertices) as f64
+        }
+    }
+}
+
 /// Compute residential area by directional sector within threshold distance of a cell center.
-/// Compute residential area by directional sector within threshold distance of a cell center.
-fn compute_residential_sectors_for_cell(
+pub(crate) fn compute_residential_sectors_for_cell(
     cell_lat: f32,
     cell_lon: f32,
     polygons: &[PolygonData],
     threshold_m: f32,
 ) -> [f32; 8] {
-    let geo_point = Point::new(cell_lon as f64, cell_lat as f64);
     let mut sectors = [0.0f32; 8];
 
     for poly_data in polygons {
@@ -372,22 +391,7 @@ fn compute_residential_sectors_for_cell(
         }
 
         // Compute actual distance to polygon
-        let distance = match poly_data.polygon.haversine_closest_point(&geo_point) {
-            geo::Closest::Intersection(_) => 0.0, // Point is inside polygon
-            geo::Closest::SinglePoint(p) => Haversine.distance(geo_point, p),
-            geo::Closest::Indeterminate => {
-                // Fall back to SIMD vertex distance
-                // Fall back to SIMD vertex distance
-                let vertices: Vec<(f32, f32)> = poly_data
-                    .polygon
-                    .iter()
-                    .flat_map(|p| p.exterior().coords())
-                    .map(|c| (c.y as f32, c.x as f32))
-                    .collect();
-
-                min_distance_to_vertices(cell_lat, cell_lon, &vertices) as f64
-            }
-        };
+        let distance = polygon_distance_m(poly_data.polygon, cell_lat, cell_lon);
 
         if distance <= threshold_m as f64 {
             // Calculate bearing from cell to polygon centroid
@@ -452,7 +456,11 @@ fn check_military_status(
 }
 
 /// Check if a point is inside a military polygon.
-fn is_military_interior(lat: f32, lon: f32, polygon_bboxes: &[(&MultiPolygon<f64>, BBox)]) -> bool {
+pub(crate) fn is_military_interior(
+    lat: f32,
+    lon: f32,
+    polygon_bboxes: &[(&MultiPolygon<f64>, BBox)],
+) -> bool {
     let geo_point = Point::new(lon as f64, lat as f64);
 
     for (polygon, bbox) in polygon_bboxes {

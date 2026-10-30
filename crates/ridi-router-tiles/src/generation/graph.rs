@@ -10,6 +10,17 @@ use ridi_router_common::osm::{
     OsmNode, OsmRelation, OsmRelationMemberRole, OsmRelationMemberType, OsmWay,
 };
 
+/// Borrowed tag values read by `GenerationGraph::insert_way_parts`.
+pub struct WayTagValues<'a> {
+    pub name: Option<&'a String>,
+    pub hw_ref: Option<&'a String>,
+    pub highway: Option<&'a String>,
+    pub surface: Option<&'a String>,
+    pub smoothness: Option<&'a String>,
+    pub oneway: Option<&'a str>,
+    pub junction: Option<&'a str>,
+}
+
 pub struct GenerationGraph {
     pub(crate) points: Vec<GenerationPoint>,
     pub(crate) points_map: HashMap<u64, usize>,
@@ -83,21 +94,42 @@ impl GenerationGraph {
             return;
         };
 
+        self.insert_way_parts(
+            way.id,
+            &way.point_ids,
+            &WayTagValues {
+                name: tags_map.get("name"),
+                hw_ref: tags_map.get("ref"),
+                highway: tags_map.get("highway"),
+                surface: tags_map.get("surface"),
+                smoothness: tags_map.get("smoothness"),
+                oneway: tags_map.get("oneway").map(String::as_str),
+                junction: tags_map.get("junction").map(String::as_str),
+            },
+        );
+    }
+
+    /// Insert a way from borrowed parts (same semantics as `insert_way` for a way with tags).
+    pub fn insert_way_parts(&mut self, way_id: u64, point_ids: &[u64], tags: &WayTagValues<'_>) {
+        if point_ids.len() < 2 {
+            return;
+        }
+
         let tag_set_id = self.tags.get_or_create(
-            tags_map.get("name"),
-            tags_map.get("ref"),
-            tags_map.get("highway"),
-            tags_map.get("surface"),
-            tags_map.get("smoothness"),
+            tags.name,
+            tags.hw_ref,
+            tags.highway,
+            tags.surface,
+            tags.smoothness,
         );
 
-        let direction = if let Some(oneway) = tags_map.get("oneway") {
+        let direction = if let Some(oneway) = tags.oneway {
             if oneway == "yes" || oneway == "1" || oneway == "true" {
                 LineDirection::OneWay
             } else {
                 LineDirection::BothWays
             }
-        } else if let Some(junction) = tags_map.get("junction") {
+        } else if let Some(junction) = tags.junction {
             if junction == "roundabout" {
                 LineDirection::Roundabout
             } else {
@@ -109,9 +141,9 @@ impl GenerationGraph {
 
         let mut emitted_line_indices = Vec::new();
 
-        for i in 0..way.point_ids.len() - 1 {
-            let from_id = way.point_ids[i];
-            let to_id = way.point_ids[i + 1];
+        for i in 0..point_ids.len() - 1 {
+            let from_id = point_ids[i];
+            let to_id = point_ids[i + 1];
 
             if !self.points_map.contains_key(&from_id) || !self.points_map.contains_key(&to_id) {
                 continue;
@@ -129,174 +161,22 @@ impl GenerationGraph {
 
         if !emitted_line_indices.is_empty() {
             self.way_line_indices
-                .entry(way.id)
+                .entry(way_id)
                 .or_default()
                 .extend(emitted_line_indices);
         }
     }
 
     pub fn insert_relation(&mut self, relation: OsmRelation) {
-        if relation.tags.get("type").map(|value| value.as_str()) != Some("restriction") {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                format!(
-                    "unsupported relation type {:?}; expected type=restriction",
-                    relation.tags.get("type")
-                ),
-            );
-            return;
+        let mut stats = std::mem::take(&mut self.restriction_skip_stats);
+        let rule = materialize_restriction(&*self, &relation, &mut stats, true);
+        self.restriction_skip_stats = stats;
+        if let Some(rule) = rule {
+            self.restrictions_by_via
+                .entry(rule.via_node_id)
+                .or_default()
+                .push(rule);
         }
-
-        let Some(restriction_value) = self.resolve_motorcycle_restriction_value(&relation) else {
-            return;
-        };
-
-        let Some(rule_type) = Self::map_restriction_value(&restriction_value) else {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                format!("unsupported restriction value {restriction_value:?}"),
-            );
-            return;
-        };
-
-        let mut from_way_ids = Vec::new();
-        let mut to_way_ids = Vec::new();
-        let mut via_node_ids = Vec::new();
-
-        for member in &relation.members {
-            match (&member.role, &member.member_type) {
-                (OsmRelationMemberRole::From, OsmRelationMemberType::Way) => {
-                    from_way_ids.push(member.member_ref);
-                }
-                (OsmRelationMemberRole::From, _) => {
-                    self.warn_and_count_skipped_relation(
-                        relation.id,
-                        GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                        format!(
-                            "from member {} must be a way, got {:?}",
-                            member.member_ref, member.member_type
-                        ),
-                    );
-                    return;
-                }
-                (OsmRelationMemberRole::To, OsmRelationMemberType::Way) => {
-                    to_way_ids.push(member.member_ref);
-                }
-                (OsmRelationMemberRole::To, _) => {
-                    self.warn_and_count_skipped_relation(
-                        relation.id,
-                        GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                        format!(
-                            "to member {} must be a way, got {:?}",
-                            member.member_ref, member.member_type
-                        ),
-                    );
-                    return;
-                }
-                (OsmRelationMemberRole::Via, OsmRelationMemberType::Node) => {
-                    via_node_ids.push(member.member_ref);
-                }
-                (OsmRelationMemberRole::Via, OsmRelationMemberType::Way) => {
-                    self.warn_and_count_skipped_relation(
-                        relation.id,
-                        GenerationRestrictionSkipReason::ViaWay,
-                        "via-way restrictions are not supported".to_string(),
-                    );
-                    return;
-                }
-                (OsmRelationMemberRole::Via, _) => {
-                    self.warn_and_count_skipped_relation(
-                        relation.id,
-                        GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                        format!(
-                            "via member {} must be a node, got {:?}",
-                            member.member_ref, member.member_type
-                        ),
-                    );
-                    return;
-                }
-                (OsmRelationMemberRole::Other(_), _) => {}
-            }
-        }
-
-        if from_way_ids.is_empty() {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                "restriction relation has no from way members".to_string(),
-            );
-            return;
-        }
-
-        if to_way_ids.is_empty() {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                "restriction relation has no to way members".to_string(),
-            );
-            return;
-        }
-
-        if via_node_ids.len() != 1 {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                format!(
-                    "restriction relation must have exactly one via node, got {}",
-                    via_node_ids.len()
-                ),
-            );
-            return;
-        }
-
-        let via_node_id = via_node_ids[0];
-        if !self.points_map.contains_key(&via_node_id) {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                format!("via node {via_node_id} is not present in this tile"),
-            );
-            return;
-        }
-
-        let Some(from_line_indices) =
-            self.resolve_required_via_adjacent_line_indices(&from_way_ids, via_node_id)
-        else {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                format!(
-                    "at least one from way is missing via-adjacent local lines for via node {via_node_id}; skipping in this tile so an adjacent tile can materialize it"
-                ),
-            );
-            return;
-        };
-
-        let Some(to_line_indices) =
-            self.resolve_required_via_adjacent_line_indices(&to_way_ids, via_node_id)
-        else {
-            self.warn_and_count_skipped_relation(
-                relation.id,
-                GenerationRestrictionSkipReason::MalformedOrUnresolved,
-                format!(
-                    "at least one to way is missing via-adjacent local lines for via node {via_node_id}; skipping in this tile so an adjacent tile can materialize it"
-                ),
-            );
-            return;
-        };
-
-        self.restrictions_by_via
-            .entry(via_node_id)
-            .or_default()
-            .push(GenerationRestrictionRule {
-                relation_id: relation.id,
-                via_node_id,
-                rule_type,
-                from_line_indices,
-                to_line_indices,
-            });
     }
 
     pub fn log_restriction_skip_summary(&self) {
@@ -310,22 +190,11 @@ impl GenerationGraph {
         );
     }
 
-    fn warn_and_count_skipped_relation(
-        &mut self,
-        relation_id: u64,
-        reason: GenerationRestrictionSkipReason,
-        details: String,
-    ) {
-        self.restriction_skip_stats.increment(reason);
-        warn!(
-            "Skipping restriction relation {} [{}]: {}",
-            relation_id,
-            reason.label(),
-            details
-        );
-    }
-
-    fn resolve_motorcycle_restriction_value(&mut self, relation: &OsmRelation) -> Option<String> {
+    fn resolve_motorcycle_restriction_value(
+        relation: &OsmRelation,
+        stats: &mut GenerationRestrictionSkipStats,
+        log: bool,
+    ) -> Option<String> {
         if Self::except_list_excludes_motorcycle(relation.tags.get("except").map(String::as_str)) {
             return None;
         }
@@ -350,10 +219,12 @@ impl GenerationGraph {
             return None;
         }
 
-        self.warn_and_count_skipped_relation(
+        skip_relation(
+            stats,
+            log,
             relation.id,
             GenerationRestrictionSkipReason::MalformedOrUnresolved,
-            "missing restriction=* tag".to_string(),
+            || "missing restriction=* tag".to_string(),
         );
         None
     }
@@ -430,25 +301,6 @@ impl GenerationGraph {
         }
     }
 
-    fn resolve_required_via_adjacent_line_indices(
-        &self,
-        way_ids: &[u64],
-        via_node_id: u64,
-    ) -> Option<Vec<u32>> {
-        let mut line_indices = BTreeSet::new();
-
-        for &way_id in way_ids {
-            let way_line_indices =
-                self.resolve_via_adjacent_line_indices_for_way(way_id, via_node_id);
-            if way_line_indices.is_empty() {
-                return None;
-            }
-            line_indices.extend(way_line_indices);
-        }
-
-        Some(line_indices.into_iter().collect())
-    }
-
     fn resolve_via_adjacent_line_indices_for_way(&self, way_id: u64, via_node_id: u64) -> Vec<u32> {
         let mut line_indices = BTreeSet::new();
 
@@ -477,6 +329,205 @@ impl Default for GenerationGraph {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// What restriction materialization needs to know about a tile's graph.
+pub(crate) trait RestrictionContext {
+    fn has_point(&self, node_id: u64) -> bool;
+    /// Indices (ascending, unique) of this way's local lines touching `via_node_id`.
+    fn via_adjacent_lines_for_way(&self, way_id: u64, via_node_id: u64) -> Vec<u32>;
+}
+
+impl RestrictionContext for GenerationGraph {
+    fn has_point(&self, node_id: u64) -> bool {
+        self.points_map.contains_key(&node_id)
+    }
+
+    fn via_adjacent_lines_for_way(&self, way_id: u64, via_node_id: u64) -> Vec<u32> {
+        self.resolve_via_adjacent_line_indices_for_way(way_id, via_node_id)
+    }
+}
+
+fn skip_relation(
+    stats: &mut GenerationRestrictionSkipStats,
+    log: bool,
+    relation_id: u64,
+    reason: GenerationRestrictionSkipReason,
+    details: impl FnOnce() -> String,
+) {
+    stats.increment(reason);
+    if log {
+        warn!(
+            "Skipping restriction relation {} [{}]: {}",
+            relation_id,
+            reason.label(),
+            details()
+        );
+    }
+}
+
+fn resolve_required_via_adjacent_line_indices<C: RestrictionContext + ?Sized>(
+    ctx: &C,
+    way_ids: &[u64],
+    via_node_id: u64,
+) -> Option<Vec<u32>> {
+    let mut line_indices = BTreeSet::new();
+
+    for &way_id in way_ids {
+        let way_line_indices = ctx.via_adjacent_lines_for_way(way_id, via_node_id);
+        if way_line_indices.is_empty() {
+            return None;
+        }
+        line_indices.extend(way_line_indices);
+    }
+
+    Some(line_indices.into_iter().collect())
+}
+
+/// Turn a restriction relation into a rule for this tile (the semantics of
+/// `GenerationGraph::insert_relation`). Skips are counted in `stats`; with `log` each skip is
+/// also logged individually (the reference behaviour).
+pub(crate) fn materialize_restriction<C: RestrictionContext + ?Sized>(
+    ctx: &C,
+    relation: &OsmRelation,
+    stats: &mut GenerationRestrictionSkipStats,
+    log: bool,
+) -> Option<GenerationRestrictionRule> {
+    use GenerationRestrictionSkipReason::{MalformedOrUnresolved, ViaWay};
+
+    if relation.tags.get("type").map(|value| value.as_str()) != Some("restriction") {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            format!(
+                "unsupported relation type {:?}; expected type=restriction",
+                relation.tags.get("type")
+            )
+        });
+        return None;
+    }
+
+    let restriction_value =
+        GenerationGraph::resolve_motorcycle_restriction_value(relation, stats, log)?;
+
+    let Some(rule_type) = GenerationGraph::map_restriction_value(&restriction_value) else {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            format!("unsupported restriction value {restriction_value:?}")
+        });
+        return None;
+    };
+
+    let mut from_way_ids = Vec::new();
+    let mut to_way_ids = Vec::new();
+    let mut via_node_ids = Vec::new();
+
+    for member in &relation.members {
+        match (&member.role, &member.member_type) {
+            (OsmRelationMemberRole::From, OsmRelationMemberType::Way) => {
+                from_way_ids.push(member.member_ref);
+            }
+            (OsmRelationMemberRole::From, _) => {
+                skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+                    format!(
+                        "from member {} must be a way, got {:?}",
+                        member.member_ref, member.member_type
+                    )
+                });
+                return None;
+            }
+            (OsmRelationMemberRole::To, OsmRelationMemberType::Way) => {
+                to_way_ids.push(member.member_ref);
+            }
+            (OsmRelationMemberRole::To, _) => {
+                skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+                    format!(
+                        "to member {} must be a way, got {:?}",
+                        member.member_ref, member.member_type
+                    )
+                });
+                return None;
+            }
+            (OsmRelationMemberRole::Via, OsmRelationMemberType::Node) => {
+                via_node_ids.push(member.member_ref);
+            }
+            (OsmRelationMemberRole::Via, OsmRelationMemberType::Way) => {
+                skip_relation(stats, log, relation.id, ViaWay, || {
+                    "via-way restrictions are not supported".to_string()
+                });
+                return None;
+            }
+            (OsmRelationMemberRole::Via, _) => {
+                skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+                    format!(
+                        "via member {} must be a node, got {:?}",
+                        member.member_ref, member.member_type
+                    )
+                });
+                return None;
+            }
+            (OsmRelationMemberRole::Other(_), _) => {}
+        }
+    }
+
+    if from_way_ids.is_empty() {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            "restriction relation has no from way members".to_string()
+        });
+        return None;
+    }
+
+    if to_way_ids.is_empty() {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            "restriction relation has no to way members".to_string()
+        });
+        return None;
+    }
+
+    if via_node_ids.len() != 1 {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            format!(
+                "restriction relation must have exactly one via node, got {}",
+                via_node_ids.len()
+            )
+        });
+        return None;
+    }
+
+    let via_node_id = via_node_ids[0];
+    if !ctx.has_point(via_node_id) {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            format!("via node {via_node_id} is not present in this tile")
+        });
+        return None;
+    }
+
+    let Some(from_line_indices) =
+        resolve_required_via_adjacent_line_indices(ctx, &from_way_ids, via_node_id)
+    else {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            format!(
+                "at least one from way is missing via-adjacent local lines for via node {via_node_id}; skipping in this tile so an adjacent tile can materialize it"
+            )
+        });
+        return None;
+    };
+
+    let Some(to_line_indices) =
+        resolve_required_via_adjacent_line_indices(ctx, &to_way_ids, via_node_id)
+    else {
+        skip_relation(stats, log, relation.id, MalformedOrUnresolved, || {
+            format!(
+                "at least one to way is missing via-adjacent local lines for via node {via_node_id}; skipping in this tile so an adjacent tile can materialize it"
+            )
+        });
+        return None;
+    };
+
+    Some(GenerationRestrictionRule {
+        relation_id: relation.id,
+        via_node_id,
+        rule_type,
+        from_line_indices,
+        to_line_indices,
+    })
 }
 
 #[cfg(test)]

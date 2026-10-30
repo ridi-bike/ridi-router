@@ -1129,7 +1129,7 @@ mod relation_role_tests {
 /// Compared to the current broken implementation, we only keep *naturally closed*
 /// rings. Main branch does the same: incomplete chains are discarded instead of
 /// being force-closed into bogus polygons.
-fn connect_ways_into_rings(ways: Vec<LineString<f64>>) -> Vec<LineString<f64>> {
+pub(crate) fn connect_ways_into_rings(ways: Vec<LineString<f64>>) -> Vec<LineString<f64>> {
     use std::collections::VecDeque;
 
     let mut rings = Vec::new();
