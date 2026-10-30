@@ -3,7 +3,7 @@
 set -u
 cd "$(dirname "$0")"
 D=tools/rmdf-diff/target/release/rmdf-diff
-for ds in latvia lithuania; do ./run-bench.sh B-fix-ref bins/B-fix $ds RIDI_GRID_ANCHOR=reference; done
+for ds in latvia lithuania; do ./run-bench.sh B-fix-ref bins/B-fix $ds RIDI_TILES_GRID_ANCHOR=reference; done
 for rep in 1 2; do
   for ds in latvia poland; do
     ./run-bench.sh B-r2g$rep bins/B-r2 $ds

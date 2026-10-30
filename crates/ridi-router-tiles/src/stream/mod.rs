@@ -15,13 +15,14 @@
 //!  7. areas     – residential/military polygons assembled and appended to every region near
 //!                 their bbox (polygons touching > 16 regions go to one shared file instead).
 //!  8. tiles     – base regions grouped into jobs by size; each job runs the shared
-//!                 `local_stage` (vendored from prototype A) under a memory budget.
+//!                 `local_stage` under a memory budget.
 //!  9. manifest  – from the in-memory tile results.
 //!
-//! Grid anchor: global (-180/-90) by default; `RIDI_GRID_ANCHOR=reference` reproduces the old
-//! single-PBF grid for parity tests.
+//! Grid anchor: global (-180/-90) by default; `RIDI_TILES_GRID_ANCHOR=reference` reproduces the
+//! old single-PBF grid for parity tests. Run settings: see `config`.
 
 mod buckets;
+mod config;
 mod distribute;
 mod geom;
 mod local;
@@ -56,74 +57,58 @@ impl Drop for ScratchDir {
     }
 }
 
-#[hotpath::measure]
+/// Region side in tiles: ~0.5 degrees.
+fn region_tiles(tile_size: f32) -> u32 {
+    ((0.5 / tile_size).round() as u32).max(1)
+}
+
+/// Polygons touching more regions than this are kept once in a shared file.
+const LARGE_POLY_REGIONS: usize = 16;
+
 pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result<()> {
     anyhow::ensure!(!inputs.is_empty(), "no input PBF files");
-    util::raise_nofile_limit();
-    let keep = std::env::var("RIDI_KEEP_SCRATCH").is_ok_and(|v| v == "1");
-    // unique per run, also for concurrent runs in one process
-    static RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let scratch_path = std::env::temp_dir().join(format!(
-        "ridi-stream-{}-{}",
-        std::process::id(),
-        RUN.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&scratch_path)
-        .with_context(|| format!("create scratch dir {scratch_path:?}"))?;
-    let scratch = ScratchDir(scratch_path.clone(), keep);
-    let scratch_dir = &scratch.0;
-    info!("Streaming tile generator; scratch dir {scratch_dir:?}");
     std::fs::create_dir_all(output_dir)?;
+    let cfg = config::Config::from_env(output_dir)?;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(cfg.threads)
+        .thread_name(|i| format!("tiles-{i}"))
+        .build()
+        .context("build thread pool")?;
+    pool.install(|| generate_with(inputs, output_dir, tile_size, &cfg))
+}
 
-    let region_tiles: u32 = std::env::var("RIDI_REGION_TILES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| ((0.5 / tile_size).round() as u32).max(1));
-    let grid = TileGrid::new(tile_size, region_tiles);
-    // Default: global anchor (origin -180/-90, identical for every input; what a planet or
-    // split run needs). `reference` reproduces the old single-PBF grid for parity tests.
-    let global_anchor = match std::env::var("RIDI_GRID_ANCHOR").as_deref() {
-        Ok("global") | Err(_) => true,
-        Ok("reference") => false,
-        Ok(other) => anyhow::bail!("RIDI_GRID_ANCHOR must be 'reference' or 'global', got {other}"),
-    };
-
-    let mem_limit = util::memory_limit_bytes();
-    let store_budget: u64 = std::env::var("RIDI_STORE_BUDGET_MB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|v| v << 20)
-        .unwrap_or(mem_limit / 100 * 45);
+#[hotpath::measure]
+fn generate_with(
+    inputs: &[PathBuf],
+    output_dir: &Path,
+    tile_size: f32,
+    cfg: &config::Config,
+) -> Result<()> {
+    util::raise_nofile_limit();
+    let scratch = ScratchDir(cfg.create_scratch_dir()?, cfg.keep_scratch);
+    let scratch_dir = &scratch.0;
     info!(
-        "Memory limit {} MB, coordinate-store budget {} MB",
-        mem_limit >> 20,
-        store_budget >> 20
+        "Streaming tile generator: {} threads ({} job threads, {} writer threads per job), memory budget {} MB (coordinate store {} MB, tile jobs {} MB), scratch {scratch_dir:?}",
+        cfg.threads,
+        cfg.job_threads,
+        cfg.writer_threads,
+        cfg.memory_bytes >> 20,
+        cfg.store_bytes >> 20,
+        cfg.job_memory_bytes >> 20,
     );
 
-    // Fail early on insufficient scratch space (measured: ~0.19x PBF size at the route/areas
-    // peak on Europe, + store/fill files if the coordinate store has to be chunked).
+    let region_tiles = region_tiles(tile_size);
+    let grid = TileGrid::new(tile_size, region_tiles);
+    let global_anchor = !cfg.reference_anchor;
+    let store_budget = cfg.store_bytes;
+
     let mut pbf_size = 0;
     for input in inputs {
         pbf_size += std::fs::metadata(input)
             .with_context(|| format!("read metadata of {input:?}"))?
             .len();
     }
-    let scratch_need = pbf_size / 100 * 30;
-    if let Some(free) = util::free_space_bytes(scratch_dir) {
-        info!(
-            "Scratch: {} GB free, ~{} GB expected peak; output dir free: {} GB (expect ~2x PBF size)",
-            free >> 30,
-            scratch_need >> 30,
-            util::free_space_bytes(output_dir).unwrap_or(0) >> 30
-        );
-        if free < scratch_need && std::env::var("RIDI_SKIP_SPACE_CHECK").is_err() {
-            anyhow::bail!(
-                "Not enough scratch space in {scratch_dir:?}: {} GB free, ~{} GB needed (set TMPDIR to a bigger disk, or RIDI_SKIP_SPACE_CHECK=1)",
-                free >> 30,
-                scratch_need >> 30
-            );
-        }
-    }
+    check_space(cfg, scratch_dir, output_dir, pbf_size)?;
 
     let mut clock = PhaseClock::new(scratch_dir);
 
@@ -131,7 +116,7 @@ pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result
     let pbf = pbf::PbfSet::open(inputs)?;
     info!("{} input PBF file(s), {} MB", pbf.len(), pbf_size >> 20);
     clock.phase("index");
-    if std::env::var("RIDI_STOP_AFTER").as_deref() == Ok("index") {
+    if cfg.stop_after == Some(config::StopAfter::Index) {
         // probe mode: only locate the type ranges (decodes ~40 blobs)
         write_manifest(output_dir, tile_size, Vec::new(), Vec::new())?;
         clock.total();
@@ -230,13 +215,7 @@ pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result
 
     // 7. polygons
     let large_path = scratch_dir.join("large_polygons.bin");
-    let large = distribute::LargePolys::create(
-        &large_path,
-        std::env::var("RIDI_LARGE_POLY_REGIONS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(16),
-    )?;
+    let large = distribute::LargePolys::create(&large_path, LARGE_POLY_REGIONS)?;
     let spill = SpillReader::open(&area_path)?;
     distribute::distribute_polygons(
         &spill,
@@ -262,7 +241,7 @@ pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result
     drop(set);
     drop(buckets);
     clock.phase("areas");
-    if std::env::var("RIDI_STOP_AFTER").as_deref() == Ok("areas") {
+    if cfg.stop_after == Some(config::StopAfter::Areas) {
         // measurement mode (front-end only): no tiles are written, empty manifest
         write_manifest(output_dir, tile_size, Vec::new(), Vec::new())?;
         clock.total();
@@ -285,24 +264,13 @@ pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result
     // Job size target: big enough to amortize border duplication, small enough that there are
     // several jobs per worker (tail latency) — total / (4 * threads), clamped to 4..24 MB.
     let total_bytes: u64 = sizes.iter().sum();
-    let job_target: u64 = std::env::var("RIDI_JOB_TARGET_MB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|v| v << 20)
-        .unwrap_or_else(|| {
-            (total_bytes / (4 * rayon::current_num_threads() as u64)).clamp(4 << 20, 24 << 20)
-        });
+    let job_target: u64 = cfg.job_target_bytes.unwrap_or_else(|| {
+        (total_bytes / (4 * rayon::current_num_threads() as u64)).clamp(4 << 20, 24 << 20)
+    });
     let mut jobs = plan_jobs(&grid, &sizes, &bucket_dir, job_target);
     jobs.sort_by_key(|j| std::cmp::Reverse(j.bytes));
     let global = local::GlobalPolys::load(&large_path)?;
-    let local_budget: u64 = std::env::var("RIDI_LOCAL_BUDGET_MB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|v| v << 20)
-        .unwrap_or_else(|| {
-            // poland measured ~23x RSS per in-flight bucket byte (incl. allocator retention)
-            (mem_limit.saturating_sub(2 << 30) / 24).clamp(64 << 20, 2 << 30)
-        });
+    let local_budget = cfg.job_memory_bytes;
     info!(
         "Processing {} jobs from {} base regions ({} tiles per side, {} total bucket MB, largest job {} MB, budget {} MB), {} shared large polygons",
         jobs.len(),
@@ -319,7 +287,7 @@ pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result
         tile_size,
         anchor,
         output_dir,
-        keep,
+        cfg,
         global,
         local_budget,
         times.clone(),
@@ -451,17 +419,13 @@ fn plan_jobs(grid: &TileGrid, sizes: &[u64], dir: &Path, target: u64) -> Vec<loc
 /// Run the tile stage on the rayon pool, admitting jobs (largest first) only while the sum of
 /// in-flight bucket bytes stays within `budget` (measured RAM per job is ~12-23x its bucket
 /// bytes). A job larger than the budget runs alone.
-fn drop_output_cache() -> bool {
-    std::env::var("RIDI_DROP_OUTPUT_CACHE").as_deref() != Ok("0")
-}
-
 #[allow(clippy::too_many_arguments)]
 fn run_jobs(
     jobs: Vec<local::Job>,
     tile_size: f32,
     anchor: GridAnchor,
     output_dir: &Path,
-    keep: bool,
+    cfg: &config::Config,
     global: local::GlobalPolys,
     budget: u64,
     times: std::sync::Arc<local::SubPhaseTimes>,
@@ -478,7 +442,9 @@ fn run_jobs(
     let (tx, rx) = mpsc::channel::<JobResult>();
     let (flush_tx, flush_rx) = mpsc::channel::<Vec<PathBuf>>();
     let flush_rx = Arc::new(Mutex::new(flush_rx));
-    let flushers: Vec<_> = if drop_output_cache() {
+    let keep = cfg.keep_scratch;
+    let writer_threads = cfg.writer_threads;
+    let flushers: Vec<_> = if cfg.drop_output_cache {
         (0..4)
             .map(|_| {
                 let rx = flush_rx.clone();
@@ -524,11 +490,7 @@ fn run_jobs(
     // Jobs run on dedicated OS threads, not on rayon workers: local_stage::run blocks while its
     // writer threads drain, and a blocked rayon worker would idle a core. The parallel parts of
     // each job still execute on the global rayon pool.
-    let job_threads: usize = std::env::var("RIDI_JOB_THREADS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or_else(rayon::current_num_threads)
-        .max(1);
+    let job_threads = cfg.job_threads;
     type Task = Box<dyn FnOnce() + Send>;
     let (task_tx, task_rx) = mpsc::sync_channel::<Task>(job_threads);
     let task_rx = Arc::new(Mutex::new(task_rx));
@@ -564,7 +526,15 @@ fn run_jobs(
         let times = times.clone();
         let flush = flush_tx.clone();
         let task: Task = Box::new(move || {
-            let s = local::process_job(&job, tile_size, anchor, &out, &global, &times);
+            let s = local::process_job(
+                &job,
+                tile_size,
+                anchor,
+                &out,
+                &global,
+                writer_threads,
+                &times,
+            );
             if let (Ok((_, tiles)), Some(flush)) = (&s, &flush) {
                 // Written tiles are not read again: a background thread flushes them and drops
                 // them from the page cache so dirty output does not push anonymous memory into
@@ -598,4 +568,56 @@ fn run_jobs(
         let _ = f.join();
     }
     collected
+}
+
+/// Fail early when the scratch filesystem is too small; warn when the output filesystem looks
+/// too small. Measured: scratch peaks at ~0.19x the PBF size (Europe), plus the store and fill
+/// files if the coordinate store is chunked; output is 1.3x (Poland) to 2.7x (planet) the PBF
+/// size.
+fn check_space(
+    cfg: &config::Config,
+    scratch_dir: &Path,
+    output_dir: &Path,
+    pbf_size: u64,
+) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let scratch_need = pbf_size / 100 * 30;
+    let output_need = pbf_size * 3;
+    let same_fs = match (
+        std::fs::metadata(scratch_dir),
+        std::fs::metadata(output_dir),
+    ) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev(),
+        _ => false,
+    };
+    let scratch_free = util::free_space_bytes(scratch_dir);
+    let output_free = util::free_space_bytes(output_dir);
+    info!(
+        "Disk: scratch {} GB free (~{} GB needed), output {} GB free (~{} GB expected){}",
+        scratch_free.unwrap_or(0) >> 30,
+        scratch_need >> 30,
+        output_free.unwrap_or(0) >> 30,
+        output_need >> 30,
+        if same_fs { ", same filesystem" } else { "" }
+    );
+    if let Some(free) = scratch_free {
+        if free < scratch_need && !cfg.skip_space_check {
+            anyhow::bail!(
+                "Not enough scratch space in {scratch_dir:?}: {} GB free, ~{} GB needed (set RIDI_TILES_SCRATCH_DIR to a bigger disk, or RIDI_TILES_SKIP_SPACE_CHECK=1)",
+                free >> 30,
+                scratch_need >> 30
+            );
+        }
+    }
+    if let Some(free) = output_free {
+        let need = output_need + if same_fs { scratch_need } else { 0 };
+        if free < need {
+            tracing::warn!(
+                "Output filesystem may be too small: {} GB free, ~{} GB expected",
+                free >> 30,
+                need >> 30
+            );
+        }
+    }
+    Ok(())
 }

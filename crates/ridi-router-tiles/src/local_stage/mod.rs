@@ -139,6 +139,8 @@ pub struct LocalStageInput<'a> {
     pub anchor: GridAnchor,
     /// Only tiles whose centre lies in [lon_min, lon_max) x [lat_min, lat_max) are written.
     pub core_bbox: Option<[f64; 4]>,
+    /// Threads writing tile files (compute threads never block on file IO).
+    pub writer_threads: usize,
     pub nodes: NodeTable<'a>,
     pub ways: WayTable<'a>,
     /// Restriction relations: type starts with "restriction", nested relations resolved like
@@ -383,11 +385,7 @@ pub fn run(input: &LocalStageInput<'_>, phase: &mut dyn FnMut(&str)) -> Result<L
     let total_stats = Mutex::new(GenerationRestrictionSkipStats::default());
     // File writes run on dedicated threads so compute threads never stall in the kernel's
     // dirty-page throttling; the bounded channel caps the tile bytes in flight.
-    let writer_threads: usize = std::env::var("RIDI_WRITER_THREADS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(4)
-        .max(1);
+    let writer_threads = input.writer_threads.max(1);
     let (file_tx, file_rx) = std::sync::mpsc::sync_channel::<(std::path::PathBuf, Vec<u8>)>(
         rayon::current_num_threads() * 2,
     );

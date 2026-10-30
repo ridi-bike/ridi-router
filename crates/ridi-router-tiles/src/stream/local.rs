@@ -141,6 +141,7 @@ pub fn process_job(
     anchor: GridAnchor,
     out_dir: &Path,
     global: &GlobalPolys,
+    writer_threads: usize,
     times: &SubPhaseTimes,
 ) -> Result<(RegionStats, Vec<TileMetadata>)> {
     let t0 = std::time::Instant::now();
@@ -269,6 +270,7 @@ pub fn process_job(
         tile_size_degrees: tile_size,
         anchor,
         core_bbox: Some([lon0, lat0, lon1, lat1]),
+        writer_threads,
         nodes: NodeTable {
             ids: &node_ids,
             lat_e7: &lat_e7,

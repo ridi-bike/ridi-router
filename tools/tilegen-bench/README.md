@@ -15,3 +15,7 @@ Tooling used to compare the tile generation prototypes (October 2026).
 
 The scripts expect to live in a data directory (we used `map-data/bench/`, gitignored) next to
 `inputs/`, `ref/`, `bins/`, `out/`, `logs/`, `tmp/`; copy them there to use them.
+
+The round scripts and the `*.md` notes use the prototype-era variable names (`RIDI_GRID_ANCHOR`,
+`RIDI_STORE_BUDGET_MB`, ...) that the binaries benchmarked then understood. Current names all start
+with `RIDI_TILES_` (see `crates/ridi-router-tiles/src/stream/config.rs`); `run-fix.sh` uses them.

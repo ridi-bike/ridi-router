@@ -61,6 +61,26 @@ matching `*:conditional` values are parsed and applied as unconditional motorcyc
 and `except=*` suppresses a restriction when it contains `motorcycle`, `motor_vehicle`, or `vehicle`.
 Via-way turn restrictions are still ignored because the RMDF restriction model is via-node based; generation emits a warning when this happens.
 
+Tile generation streams the input and keeps its memory bounded, so it runs on the whole planet on a 24 GB machine
+(~30 minutes on 12 cores). Resources are configured through environment variables; every setting has a discovered
+or fixed default and the effective values are logged at startup:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RIDI_TILES_MEMORY_MB` | cgroup memory limit, else total RAM | Memory budget the other budgets derive from |
+| `RIDI_TILES_THREADS` | all cores | Worker threads |
+| `RIDI_TILES_SCRATCH_DIR` | the output directory | Where the run's temporary directory (~0.3x the input size) is created |
+| `RIDI_TILES_STORE_MB` | 45% of the memory budget | Node coordinate store; larger inputs are joined in chunks |
+| `RIDI_TILES_JOB_MEMORY_MB` | (memory - 2 GB) / 24 | Bucket bytes of tile jobs in flight |
+| `RIDI_TILES_JOB_TARGET_MB` | derived from the input | Target size of one tile job |
+| `RIDI_TILES_JOB_THREADS` | `RIDI_TILES_THREADS` | Tile jobs running at once |
+| `RIDI_TILES_WRITER_THREADS` | 4 | Tile file writer threads per job |
+| `RIDI_TILES_KEEP_SCRATCH` | 0 | Keep the temporary directory (debugging) |
+| `RIDI_TILES_SKIP_SPACE_CHECK` | 0 | Skip the free-space check for the scratch directory |
+| `RIDI_TILES_DROP_OUTPUT_CACHE` | 1 | Flush written tiles out of the page cache |
+
+The input must be sorted by type then id (as distributed PBFs are; otherwise use `osmium sort`).
+
 ### 2. Generate routes from tiles
 
 Start-finish mode:

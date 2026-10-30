@@ -641,7 +641,7 @@ fn within_threshold(p: &PreparedPolygon, lat: f32, lon: f32, threshold: f64) -> 
 
 fn verify_contains() -> bool {
     static VERIFY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *VERIFY.get_or_init(|| std::env::var("RIDI_VERIFY_PROXIMITY").as_deref() == Ok("1"))
+    *VERIFY.get_or_init(|| std::env::var("RIDI_TILES_VERIFY_PROXIMITY").as_deref() == Ok("1"))
 }
 
 /// Residential flag per cell key (keys sorted & unique).
