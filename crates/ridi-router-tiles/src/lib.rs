@@ -10,8 +10,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ridi_router_common::manifest::TileManifest;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TileInputSource {
     File(PathBuf),
@@ -59,18 +57,6 @@ pub enum TileGenerationError {
         input: TileInputSource,
         message: String,
     },
-
-    #[error("Failed to read generated manifest '{manifest_path:?}': {error}")]
-    ManifestRead {
-        manifest_path: PathBuf,
-        error: io::Error,
-    },
-
-    #[error("Failed to parse generated manifest '{manifest_path:?}': {error}")]
-    ManifestParse {
-        manifest_path: PathBuf,
-        error: serde_json::Error,
-    },
 }
 
 pub fn generate_tiles(
@@ -90,10 +76,13 @@ pub fn generate_tiles(
             pbf_files_in(input_dir).map_err(generation_failed)?
         }
     };
-    stream::generate(&inputs, &request.output_dir, request.tile_size_deg)
+    let tile_count = stream::generate(&inputs, &request.output_dir, request.tile_size_deg)
         .map_err(generation_failed)?;
 
-    read_generation_summary(&request.output_dir)
+    Ok(TileGenerationSummary {
+        output_dir: request.output_dir.clone(),
+        tile_count,
+    })
 }
 
 /// The `*.pbf` files directly in `dir`, sorted by path.
@@ -190,28 +179,6 @@ fn prepare_output_dir(path: &Path) -> Result<(), TileGenerationError> {
     fs::create_dir_all(path).map_err(|error| TileGenerationError::OutputDirCreate {
         path: path.to_path_buf(),
         error,
-    })
-}
-
-fn read_generation_summary(
-    output_dir: &Path,
-) -> Result<TileGenerationSummary, TileGenerationError> {
-    let manifest_path = output_dir.join("manifest.json");
-    let manifest_file =
-        std::fs::File::open(&manifest_path).map_err(|error| TileGenerationError::ManifestRead {
-            manifest_path: manifest_path.clone(),
-            error,
-        })?;
-    let manifest: TileManifest = serde_json::from_reader(manifest_file).map_err(|error| {
-        TileGenerationError::ManifestParse {
-            manifest_path,
-            error,
-        }
-    })?;
-
-    Ok(TileGenerationSummary {
-        output_dir: output_dir.to_path_buf(),
-        tile_count: manifest.tiles.len(),
     })
 }
 

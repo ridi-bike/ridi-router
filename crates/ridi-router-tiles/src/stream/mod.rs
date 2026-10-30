@@ -64,7 +64,8 @@ fn region_tiles(tile_size: f32) -> u32 {
 /// Polygons touching more regions than this are kept once in a shared file.
 const LARGE_POLY_REGIONS: usize = 16;
 
-pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result<()> {
+/// Generate tiles and `manifest.json` into `output_dir`; returns the number of tiles.
+pub fn generate(inputs: &[PathBuf], output_dir: &Path, tile_size: f32) -> Result<usize> {
     anyhow::ensure!(!inputs.is_empty(), "no input PBF files");
     std::fs::create_dir_all(output_dir)?;
     let cfg = config::Config::from_env(output_dir)?;
@@ -82,7 +83,7 @@ fn generate_with(
     output_dir: &Path,
     tile_size: f32,
     cfg: &config::Config,
-) -> Result<()> {
+) -> Result<usize> {
     util::raise_nofile_limit();
     let scratch = ScratchDir(cfg.create_scratch_dir()?, cfg.keep_scratch);
     let scratch_dir = &scratch.0;
@@ -118,7 +119,7 @@ fn generate_with(
         // probe mode: only locate the type ranges (decodes ~40 blobs)
         write_manifest(output_dir, tile_size, Vec::new(), Vec::new())?;
         clock.total();
-        return Ok(());
+        return Ok(0);
     }
 
     // 2. relations
@@ -232,7 +233,7 @@ fn generate_with(
         // measurement mode (front-end only): no tiles are written, empty manifest
         write_manifest(output_dir, tile_size, Vec::new(), Vec::new())?;
         clock.total();
-        return Ok(());
+        return Ok(0);
     }
 
     // 8. tiles, per region (VmHWM reset: the tiles PHASE line reports this stage's own peak)
@@ -315,11 +316,12 @@ fn generate_with(
                 .unwrap_or_else(|| "unknown".to_string())
         })
         .collect();
+    let tile_count = tiles.len();
     write_manifest(output_dir, tile_size, tiles, sources)?;
     clock.phase("manifest");
-    clock.total();
     drop(scratch);
-    Ok(())
+    clock.total();
+    Ok(tile_count)
 }
 
 /// Group base regions into jobs: each 4x4 block of base regions becomes one job if its buckets

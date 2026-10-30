@@ -198,13 +198,14 @@ impl RoutingExecutor {
 
 fn validate_tiles_manifest(tiles_dir: &Path) -> Result<TileManifest, RoutingOpenError> {
     let manifest_path = tiles_dir.join("manifest.json");
-    let file =
-        std::fs::File::open(&manifest_path).map_err(|error| RoutingOpenError::ManifestRead {
-            manifest_path: manifest_path.clone(),
-            error,
-        })?;
+    // read whole: serde_json::from_reader on an unbuffered File does one syscall per byte
+    // (minutes for a planet manifest)
+    let bytes = std::fs::read(&manifest_path).map_err(|error| RoutingOpenError::ManifestRead {
+        manifest_path: manifest_path.clone(),
+        error,
+    })?;
 
-    serde_json::from_reader(file).map_err(|error| RoutingOpenError::ManifestParse {
+    serde_json::from_slice(&bytes).map_err(|error| RoutingOpenError::ManifestParse {
         manifest_path,
         error,
     })
