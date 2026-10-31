@@ -1491,36 +1491,68 @@ pub fn digest_dir(dir: &Path) -> Result<DirDigest> {
         .and_then(|b| serde_json::from_slice::<TileManifest>(&b).ok())
         .map(|m| m.tile_size_degrees)
         .with_context(|| format!("reading manifest in {}", dir.display()))?;
-    let loaded: Vec<(String, Loaded)> = side
+    // Each tile is decoded, reduced to its hash, counts and issues, and dropped on the worker:
+    // memory stays at a few decoded tiles per thread however large the directory is.
+    struct TileDigest {
+        name: String,
+        hash: Option<String>,
+        issues: BTreeMap<&'static str, u64>,
+        examples: Vec<String>,
+        totals: Totals,
+    }
+    let per_tile: Vec<TileDigest> = side
         .files
         .par_iter()
-        .map(|name| (name.clone(), load(dir, name, tile_size, 3)))
+        .map(|name| {
+            let l = load(dir, name, tile_size, 3);
+            let mut totals = Totals::default();
+            let hash = l.model.as_ref().map(|m| {
+                totals.points = m.points.len() as u64;
+                totals.lines = m.lines.values().map(|n| *n as u64).sum::<u64>();
+                totals.rules = m.rule_count;
+                for p in m.points.values() {
+                    for (bit, n) in totals.points_with_flag.iter_mut().enumerate() {
+                        if p.flags & (1 << bit) != 0 {
+                            *n += 1;
+                        }
+                    }
+                }
+                model_digest(m)
+            });
+            TileDigest {
+                name: name.clone(),
+                hash,
+                issues: l.issues.counts.clone(),
+                examples: l.issues.examples.into_values().flatten().take(3).collect(),
+                totals,
+            }
+        })
         .collect();
     let mut tiles = BTreeMap::new();
     let mut issues: BTreeMap<&'static str, u64> = BTreeMap::new();
     let mut issue_examples = Vec::new();
     let mut totals = Totals::default();
-    for (name, l) in loaded {
-        for (k, v) in &l.issues.counts {
-            *issues.entry(*k).or_default() += v;
+    for t in per_tile {
+        for (k, v) in t.issues {
+            *issues.entry(k).or_default() += v;
         }
-        for ex in l.issues.examples.values().flatten() {
+        for ex in t.examples {
             if issue_examples.len() < 20 {
-                issue_examples.push(ex.clone());
+                issue_examples.push(ex);
             }
         }
-        if let Some(m) = &l.model {
-            totals.points += m.points.len() as u64;
-            totals.lines += m.lines.values().map(|n| *n as u64).sum::<u64>();
-            totals.rules += m.rule_count;
-            for p in m.points.values() {
-                for (bit, n) in totals.points_with_flag.iter_mut().enumerate() {
-                    if p.flags & (1 << bit) != 0 {
-                        *n += 1;
-                    }
-                }
-            }
-            tiles.insert(name, model_digest(m));
+        totals.points += t.totals.points;
+        totals.lines += t.totals.lines;
+        totals.rules += t.totals.rules;
+        for (a, b) in totals
+            .points_with_flag
+            .iter_mut()
+            .zip(t.totals.points_with_flag)
+        {
+            *a += b;
+        }
+        if let Some(h) = t.hash {
+            tiles.insert(t.name, h);
         }
     }
     Ok(DirDigest {
