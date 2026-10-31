@@ -12,8 +12,9 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use geo::{Distance, Haversine, Point};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -23,7 +24,7 @@ use ridi_router_common::manifest::TileManifest;
 
 struct LoadedTile {
     tile: MappedTile,
-    point_index: HashMap<u64, usize>,
+    point_index: FxHashMap<u64, usize>,
     last_used: AtomicU64,
 }
 
@@ -61,8 +62,8 @@ impl LoadedTile {
 
 pub struct TileManager {
     tile_dir: PathBuf,
-    available_tiles: HashSet<TileId>,
-    loaded_tiles: HashMap<TileId, LoadedTile>,
+    available_tiles: FxHashSet<TileId>,
+    loaded_tiles: FxHashMap<TileId, LoadedTile>,
     access_epoch: AtomicU64,
     #[cfg(test)]
     loaded_tiles_limit: usize,
@@ -71,9 +72,9 @@ pub struct TileManager {
 
 #[derive(Debug, Default)]
 struct AvoidTagSet {
-    highways: HashSet<String>,
-    surfaces: HashSet<String>,
-    smoothness: HashSet<String>,
+    highways: FxHashSet<String>,
+    surfaces: FxHashSet<String>,
+    smoothness: FxHashSet<String>,
 }
 
 #[derive(Debug, Default)]
@@ -114,7 +115,7 @@ impl TileManager {
         Self {
             tile_dir,
             available_tiles,
-            loaded_tiles: HashMap::new(),
+            loaded_tiles: FxHashMap::default(),
             access_epoch: AtomicU64::new(0),
             #[cfg(test)]
             loaded_tiles_limit: MAX_LOADED_TILES,
@@ -262,7 +263,11 @@ impl TileManager {
     }
 
     fn touch_loaded_tile(&self, loaded_tile: &LoadedTile) {
-        loaded_tile.touch(self.next_access_epoch());
+        // Advancing the shared epoch on every access makes routing threads fight over one cache
+        // line; a tile that is already the most recently used one keeps its epoch.
+        if loaded_tile.last_used() != self.access_epoch.load(Ordering::Relaxed) {
+            loaded_tile.touch(self.next_access_epoch());
+        }
     }
 
     fn loaded_tile(&self, tile_id: TileId) -> Option<&LoadedTile> {
@@ -291,7 +296,7 @@ impl TileManager {
     }
 
     /// Ensure tile is loaded (load if not already)
-    fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()> {
+    pub(crate) fn ensure_tile_loaded(&mut self, tile_id: TileId) -> Result<()> {
         if !self.is_tile_available(tile_id) {
             anyhow::bail!("Tile {tile_id:?} not available in manifest");
         }
@@ -334,45 +339,50 @@ impl TileManager {
         loaded_tile.point(osm_id)
     }
 
-    pub(crate) fn get_point_by_id_with_neighbor_fallback(
-        &mut self,
+    /// Loaded-only `get_point_by_id_with_neighbor_fallback`: `Err(tile)` names an available
+    /// tile that must be loaded before the lookup can be answered.
+    pub(crate) fn find_point_with_neighbor_fallback_if_loaded(
+        &self,
         tile_id: TileId,
         osm_id: u64,
-    ) -> Result<Option<(TileId, PointRecord)>> {
+    ) -> std::result::Result<Option<(TileId, PointRecord)>, TileId> {
         for candidate_tile in self.neighbor_search_tiles(tile_id) {
             if !self.is_tile_available(candidate_tile) {
                 continue;
             }
-
-            self.ensure_tile_loaded(candidate_tile)?;
-            if let Some(point_record) = self.get_point_by_id_if_loaded(candidate_tile, osm_id)? {
-                return Ok(Some((candidate_tile, point_record)));
+            match self.get_point_by_id_if_loaded(candidate_tile, osm_id) {
+                Ok(Some(point_record)) => return Ok(Some((candidate_tile, point_record))),
+                Ok(None) if !self.is_tile_loaded(candidate_tile) => return Err(candidate_tile),
+                Ok(None) => {}
+                Err(_) => return Ok(None),
             }
         }
 
         Ok(None)
     }
 
-    pub(crate) fn get_point_copies_for_coords(
-        &mut self,
+    /// Loaded-only `get_point_copies_for_coords`, see `find_point_with_neighbor_fallback_if_loaded`.
+    pub(crate) fn point_copies_for_coords_if_loaded(
+        &self,
         lat: f32,
         lon: f32,
         osm_id: u64,
-    ) -> Result<Vec<(TileId, PointRecord)>> {
+    ) -> std::result::Result<Option<Vec<(TileId, PointRecord)>>, TileId> {
         let mut point_copies = Vec::new();
 
         for candidate_tile in self.overlap_candidate_tiles_for_coords(lat, lon) {
             if !self.is_tile_available(candidate_tile) {
                 continue;
             }
-
-            self.ensure_tile_loaded(candidate_tile)?;
-            if let Some(point_record) = self.get_point_by_id_if_loaded(candidate_tile, osm_id)? {
-                point_copies.push((candidate_tile, point_record));
+            match self.get_point_by_id_if_loaded(candidate_tile, osm_id) {
+                Ok(Some(point_record)) => point_copies.push((candidate_tile, point_record)),
+                Ok(None) if !self.is_tile_loaded(candidate_tile) => return Err(candidate_tile),
+                Ok(None) => {}
+                Err(_) => return Ok(None),
             }
         }
 
-        Ok(point_copies)
+        Ok(Some(point_copies))
     }
 
     /// Get line by index within a specific tile
@@ -753,7 +763,7 @@ impl TileManager {
     fn collect_avoid_tags(rules: &RouterRules) -> AvoidTagSet {
         fn collect_tag_values(
             tag_rules: &Option<HashMap<String, RulesTagValueAction>>,
-        ) -> HashSet<String> {
+        ) -> FxHashSet<String> {
             tag_rules
                 .iter()
                 .flat_map(|tag_rules| tag_rules.iter())
@@ -1132,7 +1142,6 @@ impl TileManager {
         self.loaded_tiles.len()
     }
 
-    #[cfg(test)]
     pub(crate) fn is_tile_loaded(&self, tile_id: TileId) -> bool {
         self.loaded_tiles.contains_key(&tile_id)
     }

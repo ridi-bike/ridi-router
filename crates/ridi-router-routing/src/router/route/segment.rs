@@ -24,13 +24,9 @@ impl Segment {
     pub(crate) fn bearing(&self, ctx: &RoutingContext<'_>) -> f32 {
         let line = ctx.line(&self.line);
         if self.end_point == line.points.0 {
-            let from = ctx.point(&line.points.0);
-            let to = ctx.point(&line.points.1);
-            return from.bearing(&to);
+            return ctx.point_bearing(&line.points.0, &line.points.1);
         }
-        let from = ctx.point(&line.points.1);
-        let to = ctx.point(&line.points.0);
-        from.bearing(&to)
+        ctx.point_bearing(&line.points.1, &line.points.0)
     }
 }
 

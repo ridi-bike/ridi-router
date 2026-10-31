@@ -2735,6 +2735,7 @@ dependencies = [
  "ridi-router-test-support",
  "ridi-router-tiles",
  "rstar",
+ "rustc-hash",
  "rusty-fork",
  "schemars 0.8.21",
  "serde",

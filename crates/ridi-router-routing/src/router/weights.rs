@@ -53,9 +53,7 @@ fn point_distance(
     from: &crate::map_data::graph::MapDataPointRef,
     to: &crate::map_data::graph::MapDataPointRef,
 ) -> f32 {
-    let from = ctx.point(from);
-    let to = ctx.point(to);
-    from.distance_between(&to)
+    ctx.point_distance_m(from, to)
 }
 
 fn point_distance_approx_from_coords(

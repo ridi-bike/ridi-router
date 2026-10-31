@@ -1,8 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-};
+use std::fmt::Debug;
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
 use crate::{
@@ -50,20 +48,20 @@ impl WeightCalcResult {
 
 #[derive(Debug)]
 pub struct DiscardedForkChoices {
-    choices: Vec<HashMap<MapDataPointRef, HashSet<MapDataPointRef>>>,
+    choices: Vec<FxHashMap<MapDataPointRef, FxHashSet<MapDataPointRef>>>,
     reset_at_new_next: bool,
 }
 impl DiscardedForkChoices {
     pub fn new(reset_at_new_next: bool) -> Self {
         Self {
-            choices: vec![HashMap::new()],
+            choices: vec![FxHashMap::default()],
             reset_at_new_next,
         }
     }
 
     pub fn set_new_next(&mut self) {
         if self.reset_at_new_next {
-            self.choices.push(HashMap::new());
+            self.choices.push(FxHashMap::default());
         }
     }
 
@@ -89,7 +87,7 @@ impl DiscardedForkChoices {
                 .expect("There should always be an entry. set_new_next and set_prev_next incorrectly called")
                 .insert(point_ref.clone(), existing_choices);
         } else {
-            let mut ids = HashSet::new();
+            let mut ids = FxHashSet::default();
             ids.insert(choice_point_ref.clone());
             self.choices
                 .last_mut()
@@ -113,14 +111,14 @@ impl DiscardedForkChoices {
 #[derive(Clone)]
 pub struct ForkWeights {
     pub discard_fork: bool,
-    weight_list: HashMap<MapDataPointRef, u32>,
+    weight_list: FxHashMap<MapDataPointRef, u32>,
 }
 
 impl ForkWeights {
     pub fn new() -> Self {
         Self {
             discard_fork: false,
-            weight_list: HashMap::new(),
+            weight_list: FxHashMap::default(),
         }
     }
     pub fn discard(&mut self) {
@@ -313,7 +311,12 @@ impl Navigator {
                 self.progress.emit(RoutingProgressEvent::ItineraryFinished {
                     status: ItineraryStatus::Finished,
                 });
-                return NavigationResult::Finished(self.walker.get_route().clone());
+                // keep only the segments: the loop index is navigation state and is several
+                // times larger than the route, and all finished routes are held until scoring
+                let route = self.walker.get_route();
+                return NavigationResult::Finished(Route::from(
+                    route.get_route_chunk(0, route.get_segment_count()),
+                ));
             }
             if let Ok(WalkerMoveResult::Fork(fork_choices)) = move_result {
                 let last_point = self.walker.get_last_point().clone();

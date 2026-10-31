@@ -1,9 +1,6 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-};
+use std::{cell::RefCell, fmt::Debug};
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use crate::{
@@ -33,8 +30,8 @@ struct OrientedSegmentKey {
 
 #[derive(Default)]
 struct WalkerCaches {
-    fork_classifications: HashMap<OrientedSegmentKey, SmallVec<[Segment; 4]>>,
-    roundabout_exits: HashMap<OrientedSegmentKey, SmallVec<[Segment; 4]>>,
+    fork_classifications: FxHashMap<OrientedSegmentKey, SmallVec<[Segment; 4]>>,
+    roundabout_exits: FxHashMap<OrientedSegmentKey, SmallVec<[Segment; 4]>>,
 }
 
 pub struct Walker {
@@ -343,7 +340,7 @@ impl Walker {
             return f(cached.as_slice());
         }
 
-        let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
+        let mut visited_points: FxHashSet<MapDataPointRef> = FxHashSet::default();
         let mut exits = SmallVec::<[Segment; 4]>::new();
         let mut current_segment = segment.clone();
         let roundabout_entry_exit_point = self
@@ -418,7 +415,7 @@ impl Walker {
         ctx: &RoutingContext<'_>,
         exit_point: &MapDataPointRef,
     ) {
-        let mut visited_points: HashSet<MapDataPointRef> = HashSet::new();
+        let mut visited_points: FxHashSet<MapDataPointRef> = FxHashSet::default();
 
         let last_segment = match self.route_walked.get_segment_last() {
             Some(segment) => {
@@ -480,7 +477,7 @@ impl Walker {
         ctx: &RoutingContext<'_>,
         is_finished: T,
     ) -> Result<WalkerMoveResult, WalkerError> {
-        let mut visited_junction: HashSet<MapDataPointRef> = HashSet::new();
+        let mut visited_junction: FxHashSet<MapDataPointRef> = FxHashSet::default();
         loop {
             let point = match self.route_walked.get_segment_last() {
                 Some(route_segment) => route_segment.get_end_point(),

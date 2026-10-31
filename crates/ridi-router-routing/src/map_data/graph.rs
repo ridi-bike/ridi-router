@@ -159,8 +159,41 @@ pub(crate) type AdjacentRef = (MapDataLineRef, MapDataPointRef);
 #[allow(dead_code)]
 pub(crate) type AdjacentRefs = SmallVec<[AdjacentRef; ADJACENT_INLINE_CAPACITY]>;
 
+type MergedPoint = (
+    crate::rmdf::format::PointRecord,
+    Vec<MapDataLineRef>,
+    Vec<crate::map_data::rule::MapDataRule>,
+);
+
+impl HydratedPoint {
+    pub(crate) fn adjacent(
+        &self,
+        graph: &MapDataGraph,
+        point_ref: &MapDataPointRef,
+    ) -> &[(MapDataLineRef, MapDataPointRef)] {
+        self.adjacent.get_or_init(|| {
+            #[cfg(test)]
+            if graph.get_test_point(point_ref.get_element_id()).is_some() {
+                return graph.get_adjacent(point_ref.clone());
+            }
+            graph.adjacent_for_lines(point_ref, &self.point.lines)
+        })
+    }
+}
+
+/// A point with everything routing reads about it, merged across overlapping tiles once and
+/// shared by all itineraries of a generation run.
+pub(crate) struct HydratedPoint {
+    pub(crate) record: crate::rmdf::format::PointRecord,
+    pub(crate) point: MapDataPoint,
+    // only points the walker steps onto need their neighbours
+    adjacent: std::sync::OnceLock<Vec<(MapDataLineRef, MapDataPointRef)>>,
+}
+
 pub struct MapDataGraph {
     tile_manager: std::sync::RwLock<crate::rmdf::TileManager>,
+    hydrated_points:
+        super::shared_cache::SharedCache<MapDataPointRef, Option<std::sync::Arc<HydratedPoint>>>,
     #[allow(dead_code)]
     tags: std::sync::RwLock<ElementTags>,
     // Test-only: in-memory storage for unit tests
@@ -175,12 +208,43 @@ impl MapDataGraph {
     pub fn new(tile_manager: crate::rmdf::TileManager) -> Self {
         Self {
             tile_manager: std::sync::RwLock::new(tile_manager),
+            hydrated_points: super::shared_cache::SharedCache::new(),
             tags: std::sync::RwLock::new(ElementTags::new()),
             #[cfg(test)]
             test_points: std::sync::RwLock::new(std::collections::HashMap::new()),
             #[cfg(test)]
             test_lines: std::sync::RwLock::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// `None` when the point is in none of the available tiles.
+    pub(crate) fn hydrated_point(
+        &self,
+        point_ref: &MapDataPointRef,
+    ) -> Option<std::sync::Arc<HydratedPoint>> {
+        self.hydrated_points.get_or_insert_with(point_ref, || {
+            let (record, lines, rules) = self
+                .get_merged_point_from_tiles(point_ref.get_tile_id(), point_ref.get_element_id())?;
+            let point = MapDataPoint {
+                id: record.osm_id,
+                lat: record.lat,
+                lon: record.lon,
+                lines,
+                rules,
+                residential_in_proximity: record.residential_in_proximity(),
+                nogo_area: record.nogo_area(),
+            };
+            Some(std::sync::Arc::new(HydratedPoint {
+                record,
+                point,
+                adjacent: std::sync::OnceLock::new(),
+            }))
+        })
+    }
+
+    /// Drops the hydrated elements cached across itineraries (call between requests).
+    pub(crate) fn clear_shared_caches(&self) {
+        self.hydrated_points.clear();
     }
 
     pub fn open(tiles_dir: std::path::PathBuf, manifest: TileManifest) -> Self {
@@ -203,6 +267,7 @@ impl MapDataGraph {
             crate::rmdf::TileManager::from_manifest(manifest, std::path::PathBuf::from("test"));
         Self {
             tile_manager: std::sync::RwLock::new(tile_manager),
+            hydrated_points: super::shared_cache::SharedCache::new(),
             tags: std::sync::RwLock::new(ElementTags::new()),
             test_points: std::sync::RwLock::new(std::collections::HashMap::new()),
             test_lines: std::sync::RwLock::new(std::collections::HashMap::new()),
@@ -275,16 +340,20 @@ impl MapDataGraph {
     }
 
     fn normalize_rule_line_keys(
-        tile_manager: &mut crate::rmdf::TileManager,
+        tile_manager: &crate::rmdf::TileManager,
         line_refs: &[MapDataLineRef],
-        representative_line_refs: &mut std::collections::HashMap<(u64, u64), MapDataLineRef>,
+        representative_line_refs: &mut rustc_hash::FxHashMap<(u64, u64), MapDataLineRef>,
     ) -> Option<Vec<(u64, u64)>> {
         let mut line_keys = Vec::with_capacity(line_refs.len());
 
         for line_ref in line_refs {
+            // rule line refs point into the (already loaded) copy tile
             let line_record = tile_manager
-                .get_line_by_index(line_ref.get_tile_id(), line_ref.get_element_id() as usize)
-                .ok()?;
+                .get_line_by_index_if_loaded(
+                    line_ref.get_tile_id(),
+                    line_ref.get_element_id() as usize,
+                )
+                .ok()??;
             let line_key = Self::logical_line_key_from_record(&line_record);
             representative_line_refs
                 .entry(line_key)
@@ -301,11 +370,7 @@ impl MapDataGraph {
         &self,
         tile_id: crate::rmdf::TileId,
         osm_id: u64,
-    ) -> Option<(
-        crate::rmdf::format::PointRecord,
-        Vec<MapDataLineRef>,
-        Vec<crate::map_data::rule::MapDataRule>,
-    )> {
+    ) -> Option<MergedPoint> {
         #[cfg(test)]
         if let Some(point) = self.get_test_point(osm_id) {
             let mut flags = 0;
@@ -334,21 +399,73 @@ impl MapDataGraph {
             ));
         }
 
+        // Shared read lock while every tile involved is loaded; the write lock is only taken to
+        // load a missing tile, then the lookup is retried.
+        let missing_tile = match Self::merge_point_from_loaded_tiles(
+            &self.tile_manager.read().unwrap(),
+            tile_id,
+            osm_id,
+        ) {
+            Ok(merged) => return merged,
+            Err(missing_tile) => missing_tile,
+        };
+
         let mut tile_manager = self.tile_manager.write().unwrap();
-        let (source_tile_id, source_point_record) = tile_manager
-            .get_point_by_id_with_neighbor_fallback(tile_id, osm_id)
-            .ok()??;
-        let mut point_copies = tile_manager
-            .get_point_copies_for_coords(source_point_record.lat, source_point_record.lon, osm_id)
-            .ok()?;
+        let mut missing_tile = missing_tile;
+        // bounded: a load can evict another tile this lookup needs
+        for _ in 0..32 {
+            tile_manager.ensure_tile_loaded(missing_tile).ok()?;
+            match Self::merge_point_from_loaded_tiles(&tile_manager, tile_id, osm_id) {
+                Ok(merged) => return merged,
+                Err(next_missing) => missing_tile = next_missing,
+            }
+        }
+        warn!(
+            ?tile_id,
+            osm_id, "Point lookup kept missing tiles; giving up"
+        );
+        None
+    }
+
+    /// `Err(tile)` when `tile` must be loaded before the point can be merged.
+    fn merge_point_from_loaded_tiles(
+        tile_manager: &crate::rmdf::TileManager,
+        tile_id: crate::rmdf::TileId,
+        osm_id: u64,
+    ) -> Result<Option<MergedPoint>, crate::rmdf::TileId> {
+        macro_rules! if_loaded {
+            ($lookup:expr, $tile:expr) => {
+                match $lookup {
+                    Ok(Some(value)) => value,
+                    Ok(None) if !tile_manager.is_tile_loaded($tile) => return Err($tile),
+                    Ok(None) | Err(_) => return Ok(None),
+                }
+            };
+        }
+
+        let Some((source_tile_id, source_point_record)) =
+            tile_manager.find_point_with_neighbor_fallback_if_loaded(tile_id, osm_id)?
+        else {
+            return Ok(None);
+        };
+        let Some(mut point_copies) = tile_manager.point_copies_for_coords_if_loaded(
+            source_point_record.lat,
+            source_point_record.lon,
+            osm_id,
+        )?
+        else {
+            return Ok(None);
+        };
         if point_copies.is_empty() {
             point_copies.push((source_tile_id, source_point_record));
         }
 
-        let (base_tile_id, base_point_record) = point_copies.first().copied()?;
+        let Some((base_tile_id, base_point_record)) = point_copies.first().copied() else {
+            return Ok(None);
+        };
         let mut merged_flags = 0_u16;
         let mut representative_line_refs =
-            std::collections::HashMap::<(u64, u64), MapDataLineRef>::new();
+            rustc_hash::FxHashMap::<(u64, u64), MapDataLineRef>::default();
         let mut line_order = Vec::<(u64, u64)>::new();
 
         for (copy_tile_id, point_record) in &point_copies {
@@ -367,15 +484,17 @@ impl MapDataGraph {
                 );
             }
 
-            let line_indices = tile_manager
-                .get_line_indices_for_point(*copy_tile_id, point_record)
-                .ok()?
-                .to_vec();
+            let line_indices = if_loaded!(
+                tile_manager.get_line_indices_for_point_if_loaded(*copy_tile_id, point_record),
+                *copy_tile_id
+            )
+            .to_vec();
 
             for line_index in line_indices {
-                let line_record = tile_manager
-                    .get_line_by_index(*copy_tile_id, line_index as usize)
-                    .ok()?;
+                let line_record = if_loaded!(
+                    tile_manager.get_line_by_index_if_loaded(*copy_tile_id, line_index as usize),
+                    *copy_tile_id
+                );
                 let line_key = Self::logical_line_key_from_record(&line_record);
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     representative_line_refs.entry(line_key)
@@ -393,16 +512,17 @@ impl MapDataGraph {
 
         let mut rules = Vec::new();
         let mut seen_rules =
-            std::collections::HashSet::<(u8, Vec<(u64, u64)>, Vec<(u64, u64)>)>::new();
+            rustc_hash::FxHashSet::<(u8, Vec<(u64, u64)>, Vec<(u64, u64)>)>::default();
 
         for (copy_tile_id, point_record) in &point_copies {
-            let copy_rules = tile_manager
-                .get_rules_for_point(*copy_tile_id, point_record)
-                .ok()?;
+            let copy_rules = if_loaded!(
+                tile_manager.get_rules_for_point_if_loaded(*copy_tile_id, point_record),
+                *copy_tile_id
+            );
 
             for rule in copy_rules {
                 let Some(from_line_keys) = Self::normalize_rule_line_keys(
-                    &mut tile_manager,
+                    tile_manager,
                     &rule.from_lines,
                     &mut representative_line_refs,
                 ) else {
@@ -415,7 +535,7 @@ impl MapDataGraph {
                     continue;
                 };
                 let Some(to_line_keys) = Self::normalize_rule_line_keys(
-                    &mut tile_manager,
+                    tile_manager,
                     &rule.to_lines,
                     &mut representative_line_refs,
                 ) else {
@@ -464,7 +584,7 @@ impl MapDataGraph {
             }
         }
 
-        Some((
+        Ok(Some((
             crate::rmdf::format::PointRecord {
                 osm_id: base_point_record.osm_id,
                 lat: base_point_record.lat,
@@ -479,9 +599,10 @@ impl MapDataGraph {
             },
             lines,
             rules,
-        ))
+        )))
     }
 
+    #[cfg(test)]
     // Get point data from tiles (or test storage in test mode)
     pub fn get_point_from_tiles(&self, tile_id: crate::rmdf::TileId, osm_id: u64) -> MapDataPoint {
         if let Some((point_record, lines, rules)) =
@@ -506,8 +627,60 @@ impl MapDataGraph {
         tile_id: crate::rmdf::TileId,
         osm_id: u64,
     ) -> Option<crate::rmdf::format::PointRecord> {
+        #[cfg(test)]
+        if self.get_test_point(osm_id).is_some() {
+            return self
+                .get_merged_point_from_tiles(tile_id, osm_id)
+                .map(|(point_record, _, _)| point_record);
+        }
+
+        if let Some(point_record) = self.interior_point_record_if_loaded(tile_id, osm_id) {
+            return Some(point_record);
+        }
         self.get_merged_point_from_tiles(tile_id, osm_id)
             .map(|(point_record, _, _)| point_record)
+    }
+
+    /// Record of a point that has a single copy (away from tile edges) in an already loaded
+    /// tile, without the allocations of the overlap merge. `None` means "use the merge".
+    fn interior_point_record_if_loaded(
+        &self,
+        tile_id: crate::rmdf::TileId,
+        osm_id: u64,
+    ) -> Option<crate::rmdf::format::PointRecord> {
+        let tile_manager = self.tile_manager.read().unwrap();
+        let point_record = tile_manager
+            .get_point_by_id_if_loaded(tile_id, osm_id)
+            .ok()??;
+        if point_record.rules_count != 0
+            || tile_manager
+                .overlap_candidate_tiles_for_coords(point_record.lat, point_record.lon)
+                .as_slice()
+                != [tile_id]
+        {
+            return None;
+        }
+
+        // the merge dedupes lines by endpoints; keep its line count
+        let mut line_keys = SmallVec::<[(u64, u64); ADJACENT_INLINE_CAPACITY]>::new();
+        for line_index in tile_manager
+            .get_line_indices_for_point_if_loaded(tile_id, &point_record)
+            .ok()??
+        {
+            let line_record = tile_manager
+                .get_line_by_index_if_loaded(tile_id, *line_index as usize)
+                .ok()??;
+            line_keys.push(Self::logical_line_key_from_record(&line_record));
+        }
+        line_keys.sort_unstable();
+        line_keys.dedup();
+
+        Some(crate::rmdf::format::PointRecord {
+            lines_offset: 0,
+            lines_count: line_keys.len() as u32,
+            rules_offset: 0,
+            ..point_record
+        })
     }
 
     // Get line data from tiles (or test storage in test mode)
@@ -634,6 +807,7 @@ impl MapDataGraph {
         }
     }
 
+    #[cfg(test)]
     pub fn get_adjacent(
         &self,
         center_point: MapDataPointRef,
@@ -662,9 +836,17 @@ impl MapDataGraph {
 
         let point =
             self.get_point_from_tiles(center_point.get_tile_id(), center_point.get_element_id());
-        let mut adjacent = Vec::with_capacity(point.lines.len());
+        self.adjacent_for_lines(&center_point, &point.lines)
+    }
 
-        for line_ref in point.lines {
+    fn adjacent_for_lines(
+        &self,
+        center_point: &MapDataPointRef,
+        lines: &[MapDataLineRef],
+    ) -> Vec<(MapDataLineRef, MapDataPointRef)> {
+        let mut adjacent = Vec::with_capacity(lines.len());
+
+        for line_ref in lines.iter().cloned() {
             let line = self
                 .get_line_from_tiles(line_ref.get_tile_id(), line_ref.get_element_id() as usize);
             let Some(other_point) =

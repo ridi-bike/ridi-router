@@ -60,6 +60,8 @@ pub fn validate_header(header: &RmdfHeader) -> Result<()> {
     Ok(())
 }
 
+// Tile loads no longer hash the whole file; integrity is for download/install time.
+#[allow(dead_code)]
 pub fn validate_checksum(file_bytes: &[u8]) -> Result<()> {
     if file_bytes.len() < 32 {
         anyhow::bail!("File too small to contain checksum");

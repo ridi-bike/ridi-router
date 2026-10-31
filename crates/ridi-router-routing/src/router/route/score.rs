@@ -41,9 +41,7 @@ impl Score {
 
         for segment in route.iter() {
             let line = ctx.line(segment.get_line());
-            let point_a = ctx.point(&line.points.0);
-            let point_b = ctx.point(&line.points.1);
-            let line_len: f64 = line.len_m(&point_a, &point_b).into();
+            let line_len: f64 = ctx.point_distance_m(&line.points.0, &line.points.1).into();
             len_m += line_len;
 
             let curr_bearing = segment.bearing(ctx);
@@ -66,13 +64,15 @@ impl Score {
                     adjusted
                 }
             }
-            let end_point = ctx.point(segment.get_end_point());
+            let end_point = segment.get_end_point();
             let line_tags = ctx.tag_set(&line.tags);
-            prev_bearing = if end_point.is_junction() {
+            prev_bearing = if ctx.point_is_junction(end_point) {
                 None
             } else {
                 ctx.with_tag_value(&line_tags.highway, |highway| match highway {
-                    Some(hw) if hw == "residential" || end_point.residential_in_proximity => None,
+                    Some(hw) if hw == "residential" || ctx.point_near_residential(end_point) => {
+                        None
+                    }
                     _ => Some(curr_bearing),
                 })
             };

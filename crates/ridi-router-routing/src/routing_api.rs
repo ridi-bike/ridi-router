@@ -111,6 +111,7 @@ impl RoutingExecutor {
         trace!("Generating route");
 
         let progress = RoutingProgressReporter::new(progress);
+        let _clear_caches = ClearSharedCachesOnDrop(&self.graph);
         let (start_coords, finish_coords, round_trip) = match request.mode.clone() {
             RouteMode::StartFinish { start, finish } => (start, finish, None),
             RouteMode::RoundTrip {
@@ -193,6 +194,15 @@ impl RoutingExecutor {
             "routing_executor.materialize_route_output",
             RouteComputation::from_routes(&ctx, routes)
         ))
+    }
+}
+
+/// Hydrated points are shared across one request's itineraries; free them however it ends.
+struct ClearSharedCachesOnDrop<'a>(&'a MapDataGraph);
+
+impl Drop for ClearSharedCachesOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.clear_shared_caches();
     }
 }
 

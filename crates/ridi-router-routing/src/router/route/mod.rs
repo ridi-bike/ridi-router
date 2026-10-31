@@ -2,6 +2,7 @@ pub mod score;
 pub mod segment;
 pub mod segment_list;
 
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
 use score::Score;
@@ -122,12 +123,15 @@ struct LoopDetector {
     // One meta entry per route segment, same index as route_segments.
     metas: Vec<LoopMeta>,
 
+    // Indices of segments ending at a junction, ascending.
+    junction_idxs: Vec<usize>,
+
     // Exact point revisit lookup.
-    point_hits: HashMap<MapDataPointRef, Vec<usize>>,
+    point_hits: FxHashMap<MapDataPointRef, Vec<usize>>,
 
     // Spatial indexes scoped by road identity.
-    hw_ref_cells: HashMap<RoadKey, HashMap<CellId, Vec<usize>>>,
-    name_cells: HashMap<RoadKey, HashMap<CellId, Vec<usize>>>,
+    hw_ref_cells: FxHashMap<RoadKey, FxHashMap<CellId, Vec<usize>>>,
+    name_cells: FxHashMap<RoadKey, FxHashMap<CellId, Vec<usize>>>,
 }
 
 impl LoopDetector {
@@ -156,6 +160,9 @@ impl LoopDetector {
                 .push(idx);
         }
 
+        if meta.is_junction {
+            self.junction_idxs.push(idx);
+        }
         self.metas.push(meta);
     }
 
@@ -168,6 +175,9 @@ impl LoopDetector {
             return;
         };
         let popped_idx = self.metas.len();
+        if self.junction_idxs.last() == Some(&popped_idx) {
+            self.junction_idxs.pop();
+        }
 
         Self::remove_point_hit(&mut self.point_hits, &meta.end_point, popped_idx);
 
@@ -240,7 +250,7 @@ impl LoopDetector {
         current: &LoopMeta,
         since_idx: usize,
         road_key: Option<&RoadKey>,
-        cells_by_key: &HashMap<RoadKey, HashMap<CellId, Vec<usize>>>,
+        cells_by_key: &FxHashMap<RoadKey, FxHashMap<CellId, Vec<usize>>>,
         road_matches: impl Fn(&LoopMeta) -> bool,
     ) -> bool {
         let Some(road_key) = road_key else {
@@ -307,7 +317,7 @@ impl LoopDetector {
     }
 
     fn remove_cell_hit<K>(
-        map: &mut HashMap<K, HashMap<CellId, Vec<usize>>>,
+        map: &mut FxHashMap<K, FxHashMap<CellId, Vec<usize>>>,
         key: &K,
         cell_id: CellId,
         idx: usize,
@@ -335,7 +345,7 @@ impl LoopDetector {
         }
     }
 
-    fn remove_point_hit<K>(map: &mut HashMap<K, Vec<usize>>, key: &K, idx: usize)
+    fn remove_point_hit<K>(map: &mut FxHashMap<K, Vec<usize>>, key: &K, idx: usize)
     where
         K: std::cmp::Eq + std::hash::Hash,
     {
@@ -432,6 +442,17 @@ impl Route {
     ) -> Option<&Segment> {
         if self.route_segments.len().saturating_sub(since_idx) < num_of_junctions + 1 {
             return None;
+        }
+
+        // detector metadata covers every segment of a route under navigation
+        if num_of_junctions > 0 && self.loop_detector.metas.len() == self.route_segments.len() {
+            let junction_idxs = &self.loop_detector.junction_idxs;
+            return junction_idxs
+                .len()
+                .checked_sub(num_of_junctions)
+                .map(|pos| junction_idxs[pos])
+                .filter(|idx| *idx >= since_idx)
+                .and_then(|idx| self.route_segments.get(idx));
         }
 
         let mut junction_count = 0;
@@ -537,9 +558,8 @@ impl Route {
         let mut prev_segment: Option<&Segment> = None;
         for segment in self.iter().rev() {
             if let Some(prev_segment) = prev_segment {
-                let prev_point = ctx.point(prev_segment.get_end_point());
-                let current_point = ctx.point(segment.get_end_point());
-                len_tot_m += prev_point.distance_between(&current_point);
+                len_tot_m +=
+                    ctx.point_distance_m(prev_segment.get_end_point(), segment.get_end_point());
 
                 if segments_share_road_identity(ctx, segment, current_segment) {
                     return len_check_m >= len_tot_m;
@@ -608,9 +628,7 @@ impl Route {
 
         for segment in &self.route_segments {
             let line = ctx.line(segment.get_line());
-            let point_a = ctx.point(&line.points.0);
-            let point_b = ctx.point(&line.points.1);
-            let line_len: f64 = line.len_m(&point_a, &point_b).into();
+            let line_len: f64 = ctx.point_distance_m(&line.points.0, &line.points.1).into();
             len_m += line_len;
             if ctx.point_is_junction(segment.get_end_point()) {
                 junction_count += 1;

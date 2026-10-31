@@ -102,10 +102,8 @@ impl Itinerary {
     }
 
     pub fn check_set_next(&mut self, ctx: &RoutingContext<'_>, current: MapDataPointRef) -> bool {
-        let current_point = ctx.point(&current);
-        let next_point = ctx.point(&self.next);
         if self.next != self.finish
-            && current_point.distance_between(&next_point) <= self.waypoint_radius
+            && ctx.point_distance_m(&current, &self.next) <= self.waypoint_radius
         {
             if let Some(idx) = self.waypoints.iter().position(|w| w == &self.next) {
                 let prev_point = self.next.clone();
@@ -127,10 +125,9 @@ impl Itinerary {
             return true;
         }
 
-        let finish_point = ctx.point(&self.finish);
         if !self.visit_all_wps
             && self.next != self.finish
-            && current_point.distance_between(&finish_point) <= self.waypoint_radius
+            && ctx.point_distance_m(&current, &self.finish) <= self.waypoint_radius
         {
             self.switched_wps_on.push(WaypointHistoryElement {
                 on_point: current.clone(),

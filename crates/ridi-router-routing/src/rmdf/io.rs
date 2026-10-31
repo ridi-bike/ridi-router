@@ -8,7 +8,8 @@ use super::format::*;
 pub struct MappedTile {
     _file: File,
     mmap: Mmap,
-    data_end: usize,
+    // end of the rule line refs payload; excludes the trailing checksum when present
+    data_end: OnceLock<usize>,
     pub header: &'static RmdfHeader,
     spatial_index_cache: OnceLock<Box<[GridCellEntry]>>,
     points_cache: OnceLock<Box<[PointRecord]>>,
@@ -49,16 +50,10 @@ impl MappedTile {
         // for the lifetime of MappedTile
         let header_static: &'static RmdfHeader = unsafe { &*(header as *const RmdfHeader) };
 
-        let data_end = if super::validation::validate_checksum(&mmap).is_ok() {
-            mmap.len() - 32
-        } else {
-            mmap.len()
-        };
-
         Ok(Self {
             _file: file,
             mmap,
-            data_end,
+            data_end: OnceLock::new(),
             header: header_static,
             spatial_index_cache: OnceLock::new(),
             points_cache: OnceLock::new(),
@@ -209,6 +204,34 @@ impl MappedTile {
         Ok(self.cast_or_copy_pod_slice(slice, &self.rules_cache))
     }
 
+    /// Hashing the whole file to find out whether it ends in a checksum touched every page on
+    /// each tile load. The payload length is implied by the rule records instead: a file with a
+    /// checksum has exactly 32 bytes past the furthest referenced line ref.
+    fn data_end(&self, payload_offset: usize) -> Result<usize> {
+        if let Some(end) = self.data_end.get() {
+            return Ok(*end);
+        }
+        let referenced_end = self
+            .get_rules()?
+            .iter()
+            .flat_map(|rule| {
+                [
+                    rule.from_lines_offset + rule.from_lines_count as u64,
+                    rule.to_lines_offset + rule.to_lines_count as u64,
+                ]
+            })
+            .max()
+            .unwrap_or(0) as usize
+            * std::mem::size_of::<u64>();
+        let len = self.mmap.len();
+        let end = if len.checked_sub(payload_offset) == Some(referenced_end + 32) {
+            len - 32
+        } else {
+            len
+        };
+        Ok(*self.data_end.get_or_init(|| end))
+    }
+
     pub fn get_rule_line_refs_payload(&self) -> Result<&[u64]> {
         let rules_offset = self.header.section_offsets[section::RULES] as usize;
         let rule_record_bytes = self.header.rule_count as usize * std::mem::size_of::<RuleRecord>();
@@ -216,7 +239,7 @@ impl MappedTile {
 
         let slice = self
             .mmap
-            .get(payload_offset..self.data_end)
+            .get(payload_offset..self.data_end(payload_offset)?)
             .context("Rule line refs payload out of bounds")?;
 
         if slice.len() % std::mem::size_of::<u64>() != 0 {

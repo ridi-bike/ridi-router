@@ -1,12 +1,13 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::cell::RefCell;
 
+use rustc_hash::FxHashMap;
 use smartstring::alias::String as SmartString;
 
 use crate::{
     map_data::{
         graph::{
-            ElementTagSet, ElementTagSetRef, ElementTagValueRef, MapDataGraph, MapDataLineRef,
-            MapDataPointRef,
+            ElementTagSet, ElementTagSetRef, ElementTagValueRef, HydratedPoint, MapDataGraph,
+            MapDataLineRef, MapDataPointRef,
         },
         line::MapDataLine,
         point::MapDataPoint,
@@ -17,12 +18,10 @@ use crate::{
 
 #[derive(Default)]
 struct RoutingCaches {
-    point_records: HashMap<MapDataPointRef, PointRecord>,
-    points: HashMap<MapDataPointRef, MapDataPoint>,
-    lines: HashMap<MapDataLineRef, MapDataLine>,
-    tag_sets: HashMap<ElementTagSetRef, ElementTagSet>,
-    tag_values: HashMap<ElementTagValueRef, Option<SmartString>>,
-    adjacent: HashMap<MapDataPointRef, Vec<(MapDataLineRef, MapDataPointRef)>>,
+    points: FxHashMap<MapDataPointRef, std::sync::Arc<HydratedPoint>>,
+    lines: FxHashMap<MapDataLineRef, MapDataLine>,
+    tag_sets: FxHashMap<ElementTagSetRef, ElementTagSet>,
+    tag_values: FxHashMap<ElementTagValueRef, Option<SmartString>>,
 }
 
 pub(crate) struct RoutingContext<'a> {
@@ -48,52 +47,43 @@ impl<'a> RoutingContext<'a> {
     }
 
     fn point_record(&self, point_ref: &MapDataPointRef) -> PointRecord {
-        if let Some(point_record) = self.caches.borrow().point_records.get(point_ref).copied() {
-            return point_record;
-        }
-
-        let point_record = self
-            .graph
-            .get_point_record_from_tiles(point_ref.get_tile_id(), point_ref.get_element_id())
-            .expect("point record should exist for point ref");
-        self.caches
-            .borrow_mut()
-            .point_records
-            .insert(point_ref.clone(), point_record);
-        point_record
+        self.with_hydrated(point_ref, |hydrated| hydrated.record)
     }
 
+    fn with_hydrated<R>(
+        &self,
+        point_ref: &MapDataPointRef,
+        f: impl FnOnce(&HydratedPoint) -> R,
+    ) -> R {
+        if let Some(hydrated) = self.caches.borrow().points.get(point_ref) {
+            return f(hydrated);
+        }
+
+        let hydrated = self
+            .graph
+            .hydrated_point(point_ref)
+            .expect("point should exist for point ref");
+        let result = f(&hydrated);
+        self.caches
+            .borrow_mut()
+            .points
+            .insert(point_ref.clone(), hydrated);
+        result
+    }
+
+    #[cfg(test)]
     pub(crate) fn point(&self, point_ref: &MapDataPointRef) -> MapDataPoint {
-        self.with_point(point_ref, Clone::clone)
+        self.with_point(point_ref, |point| point.clone())
     }
 
     // Borrow a cached point for hot-path read access without cloning the owned point.
+    #[cfg(test)]
     pub(crate) fn with_point<R>(
         &self,
         point_ref: &MapDataPointRef,
         f: impl FnOnce(&MapDataPoint) -> R,
     ) -> R {
-        self.ensure_point_cached(point_ref);
-        let caches = self.caches.borrow();
-        let point = caches
-            .points
-            .get(point_ref)
-            .expect("point should exist in cache after hydration");
-        f(point)
-    }
-
-    fn ensure_point_cached(&self, point_ref: &MapDataPointRef) {
-        if self.caches.borrow().points.contains_key(point_ref) {
-            return;
-        }
-
-        let point = self
-            .graph
-            .get_point_from_tiles(point_ref.get_tile_id(), point_ref.get_element_id());
-        self.caches
-            .borrow_mut()
-            .points
-            .insert(point_ref.clone(), point);
+        self.with_hydrated(point_ref, |hydrated| f(&hydrated.point))
     }
 
     pub(crate) fn point_id(&self, point_ref: &MapDataPointRef) -> u64 {
@@ -103,6 +93,22 @@ impl<'a> RoutingContext<'a> {
     pub(crate) fn point_coords(&self, point_ref: &MapDataPointRef) -> (f32, f32) {
         let point = self.point_record(point_ref);
         (point.lat, point.lon)
+    }
+
+    /// `MapDataPoint::distance_between` without hydrating (and cloning) either point.
+    pub(crate) fn point_distance_m(&self, from: &MapDataPointRef, to: &MapDataPointRef) -> f32 {
+        use geo::{Distance, Haversine, Point};
+        let (from_lat, from_lon) = self.point_coords(from);
+        let (to_lat, to_lon) = self.point_coords(to);
+        Haversine.distance(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
+    }
+
+    /// `MapDataPoint::bearing` without hydrating (and cloning) either point.
+    pub(crate) fn point_bearing(&self, from: &MapDataPointRef, to: &MapDataPointRef) -> f32 {
+        use geo::{Bearing, Haversine, Point};
+        let (from_lat, from_lon) = self.point_coords(from);
+        let (to_lat, to_lon) = self.point_coords(to);
+        Haversine.bearing(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
     }
 
     pub(crate) fn point_degree(&self, point_ref: &MapDataPointRef) -> usize {
@@ -218,24 +224,21 @@ impl<'a> RoutingContext<'a> {
         point_ref: &MapDataPointRef,
         f: impl FnOnce(&[(MapDataLineRef, MapDataPointRef)]) -> R,
     ) -> R {
-        self.ensure_adjacent_cached(point_ref);
-        let caches = self.caches.borrow();
-        let adjacent = caches
-            .adjacent
-            .get(point_ref)
-            .expect("adjacent should exist in cache after hydration");
-        f(adjacent.as_slice())
+        self.with_hydrated(point_ref, |hydrated| {
+            f(hydrated.adjacent(self.graph, point_ref))
+        })
     }
 
     fn ensure_adjacent_lines_cached(&self, point_ref: &MapDataPointRef) {
-        self.ensure_adjacent_cached(point_ref);
+        self.with_hydrated(point_ref, |_| ());
 
         let missing_line_refs = {
             let caches = self.caches.borrow();
             let adjacent = caches
-                .adjacent
+                .points
                 .get(point_ref)
-                .expect("adjacent should exist in cache after hydration");
+                .expect("point should exist in cache after hydration")
+                .adjacent(self.graph, point_ref);
 
             adjacent
                 .iter()
@@ -263,35 +266,22 @@ impl<'a> RoutingContext<'a> {
         f: impl FnOnce(
             &MapDataPoint,
             &[(MapDataLineRef, MapDataPointRef)],
-            &HashMap<MapDataLineRef, MapDataLine>,
+            &FxHashMap<MapDataLineRef, MapDataLine>,
         ) -> R,
     ) -> R {
-        self.ensure_point_cached(point_ref);
         self.ensure_adjacent_lines_cached(point_ref);
 
         let caches = self.caches.borrow();
-        let point = caches
+        let hydrated = caches
             .points
             .get(point_ref)
             .expect("point should exist in cache after hydration");
-        let adjacent = caches
-            .adjacent
-            .get(point_ref)
-            .expect("adjacent should exist in cache after hydration");
 
-        f(point, adjacent.as_slice(), &caches.lines)
-    }
-
-    fn ensure_adjacent_cached(&self, point_ref: &MapDataPointRef) {
-        if self.caches.borrow().adjacent.contains_key(point_ref) {
-            return;
-        }
-
-        let adjacent = self.graph.get_adjacent(point_ref.clone());
-        self.caches
-            .borrow_mut()
-            .adjacent
-            .insert(point_ref.clone(), adjacent);
+        f(
+            &hydrated.point,
+            hydrated.adjacent(self.graph, point_ref),
+            &caches.lines,
+        )
     }
 
     pub(crate) fn closest_to_coords(
@@ -312,14 +302,13 @@ impl<'a> RoutingContext<'a> {
     }
 
     #[cfg(test)]
-    fn cache_sizes(&self) -> (usize, usize, usize, usize, usize) {
+    /// (hydrated points, lines, tag sets)
+    fn cache_sizes(&self) -> (usize, usize, usize) {
         let caches = self.caches.borrow();
         (
-            caches.point_records.len(),
             caches.points.len(),
             caches.lines.len(),
             caches.tag_sets.len(),
-            caches.adjacent.len(),
         )
     }
 
@@ -374,13 +363,13 @@ mod tests {
         );
 
         let ctx = RoutingContext::new(&graph);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0));
 
         assert_eq!(ctx.point(&point_ref).id, 1);
         assert_eq!(ctx.point(&point_ref).id, 1);
         assert_eq!(ctx.line(&line_ref).points.0, point_ref);
         assert_eq!(ctx.line(&line_ref).points.0.get_element_id(), 1);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (1, 1, 0));
     }
 
     #[test]
@@ -399,14 +388,14 @@ mod tests {
 
         let parent = RoutingContext::new(&graph);
         parent.point(&point_ref);
-        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0, 0));
+        assert_eq!(parent.cache_sizes(), (1, 0, 0));
 
         let task_ctx = parent.for_route_generation_task();
-        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0, 0));
+        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0));
 
         task_ctx.point(&point_ref);
-        assert_eq!(task_ctx.cache_sizes(), (0, 1, 0, 0, 0));
-        assert_eq!(parent.cache_sizes(), (0, 1, 0, 0, 0));
+        assert_eq!(task_ctx.cache_sizes(), (1, 0, 0));
+        assert_eq!(parent.cache_sizes(), (1, 0, 0));
     }
 
     #[test]
@@ -416,7 +405,7 @@ mod tests {
         let ctx = RoutingContext::new(&graph);
         let point_ref = MapDataPointRef::new(fixture.tile_id, fixture.start_osm_id);
 
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0));
         assert_eq!(ctx.point_id(&point_ref), fixture.start_osm_id);
         assert_eq!(ctx.point_degree(&point_ref), 1);
         assert!(!ctx.point_is_junction(&point_ref));
@@ -424,7 +413,7 @@ mod tests {
             ctx.point_coords(&point_ref),
             (fixture.start_lat, fixture.start_lon)
         );
-        assert_eq!(ctx.cache_sizes(), (1, 0, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (1, 0, 0));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
@@ -437,13 +426,13 @@ mod tests {
         let line_ref = MapDataLineRef::new(fixture.tile_id, 0);
         let line = ctx.line(&line_ref);
 
-        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 1, 0));
 
         let first = ctx.tag_set(&line.tags);
         let second = ctx.tag_set(&line.tags);
 
         assert_eq!(first, second);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 1, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 1, 1));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
@@ -509,7 +498,7 @@ mod tests {
         });
 
         assert_eq!(point_id, fixture.start_osm_id);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 1, 0));
+        assert_eq!(ctx.cache_sizes(), (1, 1, 1));
         assert_eq!(ctx.tag_value_cache_size(), 1);
 
         fs::remove_dir_all(fixture.dir).unwrap();
@@ -521,7 +510,7 @@ mod tests {
         let ctx = RoutingContext::new(&graph);
         let point_ref = MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id);
 
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 0, 0));
 
         let first = ctx.adjacent(&point_ref);
         assert_eq!(first.len(), 1);
@@ -529,11 +518,11 @@ mod tests {
             MapDataLineRef::new(fixture.tile_a, 0),
             MapDataPointRef::new(fixture.tile_a, fixture.in_tile_neighbor_osm_id),
         )));
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+        assert_eq!(ctx.cache_sizes(), (1, 0, 0));
 
         let second = ctx.adjacent(&point_ref);
         assert_eq!(second, first);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+        assert_eq!(ctx.cache_sizes(), (1, 0, 0));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
@@ -559,7 +548,7 @@ mod tests {
         let borrowed = ctx.with_point(&point_ref, |point| point.clone());
 
         assert_eq!(borrowed, owned);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 0, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (1, 0, 0));
     }
 
     #[test]
@@ -582,7 +571,7 @@ mod tests {
         let borrowed = ctx.with_line(&line_ref, |line| line.clone());
 
         assert_eq!(borrowed, owned);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 1, 0, 0));
+        assert_eq!(ctx.cache_sizes(), (0, 1, 0));
     }
 
     #[test]
@@ -596,7 +585,7 @@ mod tests {
         let borrowed = ctx.with_adjacent(&point_ref, |adjacent| adjacent.to_vec());
 
         assert_eq!(borrowed, owned);
-        assert_eq!(ctx.cache_sizes(), (0, 0, 0, 0, 1));
+        assert_eq!(ctx.cache_sizes(), (1, 0, 0));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
@@ -611,7 +600,7 @@ mod tests {
         let first_point = ctx.point(&point_ref);
         let first_adjacent = ctx.adjacent(&point_ref);
         let first_line = ctx.line(&first_adjacent[0].0);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0, 1));
+        assert_eq!(ctx.cache_sizes(), (1, 1, 0));
 
         let cached_point_id = ctx.with_point(&point_ref, |point| point.id);
         let cached_adjacent = ctx.with_adjacent(&point_ref, |adjacent| adjacent.to_vec());
@@ -620,7 +609,7 @@ mod tests {
         assert_eq!(cached_point_id, first_point.id);
         assert_eq!(cached_adjacent, first_adjacent);
         assert_eq!(cached_line, first_line);
-        assert_eq!(ctx.cache_sizes(), (0, 1, 1, 0, 1));
+        assert_eq!(ctx.cache_sizes(), (1, 1, 0));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
@@ -634,15 +623,15 @@ mod tests {
         let point_ref = MapDataPointRef::new(fixture.tile_a, fixture.center_osm_id);
 
         let expected = parent.adjacent(&point_ref);
-        assert_eq!(parent.cache_sizes(), (0, 0, 0, 0, 1));
+        assert_eq!(parent.cache_sizes(), (1, 0, 0));
 
         let task_ctx = parent.for_route_generation_task();
-        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0, 0));
+        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0));
 
         let actual = task_ctx.adjacent(&point_ref);
         assert_eq!(actual, expected);
-        assert_eq!(task_ctx.cache_sizes(), (0, 0, 0, 0, 1));
-        assert_eq!(parent.cache_sizes(), (0, 0, 0, 0, 1));
+        assert_eq!(task_ctx.cache_sizes(), (1, 0, 0));
+        assert_eq!(parent.cache_sizes(), (1, 0, 0));
 
         fs::remove_dir_all(fixture.dir).unwrap();
     }
