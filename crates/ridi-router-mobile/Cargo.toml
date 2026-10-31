@@ -1,0 +1,25 @@
+[package]
+name = "ridi-router-mobile"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "ridi-router-mobile-uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["uniffi/cli"]
+
+[dependencies]
+ridi-router-routing = { path = "../ridi-router-routing" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uniffi = "=0.29.5"
+
+[build-dependencies]
+uniffi = { version = "=0.29.5", features = ["build"] }
+
+[dev-dependencies]
+ridi-router-test-support = { path = "../ridi-router-test-support" }

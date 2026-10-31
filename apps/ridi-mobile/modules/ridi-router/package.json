@@ -1,0 +1,15 @@
+{
+  "name": "ridi-router",
+  "version": "0.1.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true,
+  "expo-module": {
+    "ios": {
+      "modules": ["RidiRouterModule"]
+    },
+    "android": {
+      "modules": ["bike.ridi.modules.router.RidiRouterModule"]
+    }
+  }
+}

@@ -1,3 +1,4 @@
+const MERCATOR_MAX_LAT: f64 = 85.051_128_78;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GpsCoord {
     pub lat: f64,
@@ -36,25 +37,109 @@ impl Space {
     }
 
     pub fn world_to_screen(&self, gps: GpsCoord) -> ScreenCoord {
-        let lon_range = self.world.max.lon - self.world.min.lon;
-        let lat_range = self.world.max.lat - self.world.min.lat;
+        let min_x = lon_to_mercator_x(self.world.min.lon);
+        let max_x = lon_to_mercator_x(self.world.max.lon);
+        let min_y = lat_to_mercator_y(self.world.max.lat);
+        let max_y = lat_to_mercator_y(self.world.min.lat);
+        let x_range = max_x - min_x;
+        let y_range = max_y - min_y;
 
-        let x = self.screen.x + ((gps.lon - self.world.min.lon) / lon_range) * self.screen.width;
-        let y = self.screen.y + ((self.world.max.lat - gps.lat) / lat_range) * self.screen.height;
+        let x =
+            self.screen.x + ((lon_to_mercator_x(gps.lon) - min_x) / x_range) * self.screen.width;
+        let y =
+            self.screen.y + ((lat_to_mercator_y(gps.lat) - min_y) / y_range) * self.screen.height;
 
         ScreenCoord { x, y }
     }
 
     pub fn screen_to_world(&self, screen: ScreenCoord) -> GpsCoord {
-        let lon_range = self.world.max.lon - self.world.min.lon;
-        let lat_range = self.world.max.lat - self.world.min.lat;
+        let min_x = lon_to_mercator_x(self.world.min.lon);
+        let max_x = lon_to_mercator_x(self.world.max.lon);
+        let min_y = lat_to_mercator_y(self.world.max.lat);
+        let max_y = lat_to_mercator_y(self.world.min.lat);
+        let x_range = max_x - min_x;
+        let y_range = max_y - min_y;
 
-        let lon = self.world.min.lon + ((screen.x - self.screen.x) / self.screen.width) * lon_range;
-        let lat =
-            self.world.max.lat - ((screen.y - self.screen.y) / self.screen.height) * lat_range;
+        let mercator_x = min_x + ((screen.x - self.screen.x) / self.screen.width) * x_range;
+        let mercator_y = min_y + ((screen.y - self.screen.y) / self.screen.height) * y_range;
 
-        GpsCoord { lat, lon }
+        GpsCoord {
+            lat: mercator_y_to_lat(mercator_y),
+            lon: mercator_x_to_lon(mercator_x),
+        }
     }
+
+    pub fn world_to_map_screen(
+        &self,
+        gps: GpsCoord,
+        screen_width: f32,
+        screen_height: f32,
+    ) -> ScreenCoord {
+        self.mercator_to_map_screen(
+            lon_to_mercator_x(gps.lon),
+            lat_to_mercator_y(gps.lat),
+            screen_width,
+            screen_height,
+        )
+    }
+
+    pub fn mercator_to_map_screen(
+        &self,
+        mercator_x: f64,
+        mercator_y: f64,
+        screen_width: f32,
+        screen_height: f32,
+    ) -> ScreenCoord {
+        let min_x = lon_to_mercator_x(self.world.min.lon);
+        let max_x = lon_to_mercator_x(self.world.max.lon);
+        let min_y = lat_to_mercator_y(self.world.max.lat);
+        let max_y = lat_to_mercator_y(self.world.min.lat);
+
+        ScreenCoord {
+            x: ((mercator_x - min_x) / (max_x - min_x)) * screen_width as f64,
+            y: ((mercator_y - min_y) / (max_y - min_y)) * screen_height as f64,
+        }
+    }
+
+    pub fn map_screen_to_world(
+        &self,
+        screen: ScreenCoord,
+        screen_width: f32,
+        screen_height: f32,
+    ) -> GpsCoord {
+        let min_x = lon_to_mercator_x(self.world.min.lon);
+        let max_x = lon_to_mercator_x(self.world.max.lon);
+        let min_y = lat_to_mercator_y(self.world.max.lat);
+        let max_y = lat_to_mercator_y(self.world.min.lat);
+        let x_range = max_x - min_x;
+        let y_range = max_y - min_y;
+
+        let mercator_x = min_x + (screen.x / screen_width as f64) * x_range;
+        let mercator_y = min_y + (screen.y / screen_height as f64) * y_range;
+
+        GpsCoord {
+            lat: mercator_y_to_lat(mercator_y),
+            lon: mercator_x_to_lon(mercator_x),
+        }
+    }
+}
+
+pub fn lon_to_mercator_x(lon: f64) -> f64 {
+    (lon + 180.0) / 360.0
+}
+
+pub fn mercator_x_to_lon(x: f64) -> f64 {
+    x * 360.0 - 180.0
+}
+
+pub fn lat_to_mercator_y(lat: f64) -> f64 {
+    let lat = lat.clamp(-MERCATOR_MAX_LAT, MERCATOR_MAX_LAT).to_radians();
+    (1.0 - (lat.tan() + 1.0 / lat.cos()).ln() / std::f64::consts::PI) / 2.0
+}
+
+pub fn mercator_y_to_lat(y: f64) -> f64 {
+    let lat_rad = (std::f64::consts::PI * (1.0 - 2.0 * y)).sinh().atan();
+    lat_rad.to_degrees()
 }
 
 #[cfg(test)]
@@ -89,7 +174,7 @@ mod tests {
         let screen = space.world_to_screen(gps);
         let round_trip = space.screen_to_world(screen);
 
-        assert!((gps.lat - round_trip.lat).abs() < f64::EPSILON);
-        assert!((gps.lon - round_trip.lon).abs() < f64::EPSILON);
+        assert!((gps.lat - round_trip.lat).abs() < 1e-12);
+        assert!((gps.lon - round_trip.lon).abs() < 1e-12);
     }
 }

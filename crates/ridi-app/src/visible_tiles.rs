@@ -4,14 +4,37 @@ use crate::decoded_mvt_tile::DecodedMvtTile;
 use crate::pmtiles_source::PmtilesSource;
 use crate::space::{GpsCoord, WorldBounds};
 use crate::tile_address::TileAddress;
-use crate::web_mercator_tiles::{lon_lat_to_tile, zoom_for_lon_span};
+use crate::web_mercator_tiles::lon_lat_to_tile;
 use tracing::{debug, error, info, trace, warn};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisibleTileRequest {
+    zoom: u8,
+    min_x: u32,
+    max_x: u32,
+    min_y: u32,
+    max_y: u32,
+}
+
+impl VisibleTileRequest {
+    fn addresses(self) -> Vec<TileAddress> {
+        let mut addresses = Vec::new();
+        for y in self.min_y..=self.max_y {
+            for x in self.min_x..=self.max_x {
+                addresses.push(TileAddress::new(self.zoom, x, y));
+            }
+        }
+        addresses
+    }
+}
 
 pub struct VisibleTileDownloader {
     source: PmtilesSource,
     runtime: tokio::runtime::Runtime,
     tiles: HashMap<TileAddress, DecodedMvtTile>,
     failed: HashSet<TileAddress>,
+    visible_request: Option<VisibleTileRequest>,
+    visible_addresses: Vec<TileAddress>,
 }
 
 impl VisibleTileDownloader {
@@ -28,20 +51,29 @@ impl VisibleTileDownloader {
             runtime,
             tiles: HashMap::new(),
             failed: HashSet::new(),
+            visible_request: None,
+            visible_addresses: Vec::new(),
         })
     }
 
-    pub fn update_visible_tiles(&mut self, bounds: WorldBounds, max_zoom: u8) {
-        let addresses = visible_tile_addresses(bounds, max_zoom);
+    pub fn update_visible_tiles(&mut self, bounds: WorldBounds, zoom: u8) {
+        let request = visible_tile_request(bounds, zoom);
+        if self.visible_request == Some(request) {
+            return;
+        }
+
+        self.visible_addresses = request.addresses();
+        self.visible_request = Some(request);
+
         debug!(
             min_lat = bounds.min.lat,
             min_lon = bounds.min.lon,
             max_lat = bounds.max.lat,
             max_lon = bounds.max.lon,
-            tile_count = addresses.len(),
+            tile_count = self.visible_addresses.len(),
             "updating visible tiles"
         );
-        for address in addresses {
+        for &address in &self.visible_addresses {
             if self.tiles.contains_key(&address) {
                 trace!(
                     z = address.z,
@@ -112,23 +144,14 @@ impl VisibleTileDownloader {
         }
     }
 
-    pub fn visible_tiles(
-        &self,
-        bounds: WorldBounds,
-        max_zoom: u8,
-    ) -> impl Iterator<Item = &DecodedMvtTile> {
-        let visible: HashSet<_> = visible_tile_addresses(bounds, max_zoom)
-            .into_iter()
-            .collect();
-        self.tiles
+    pub fn visible_tiles(&self) -> impl Iterator<Item = &DecodedMvtTile> {
+        self.visible_addresses
             .iter()
-            .filter(move |(address, _tile)| visible.contains(address))
-            .map(|(_address, tile)| tile)
+            .filter_map(|address| self.tiles.get(address))
     }
 }
 
-pub fn visible_tile_addresses(bounds: WorldBounds, max_zoom: u8) -> Vec<TileAddress> {
-    let zoom = zoom_for_lon_span(bounds.max.lon - bounds.min.lon, max_zoom);
+fn visible_tile_request(bounds: WorldBounds, zoom: u8) -> VisibleTileRequest {
     let north_west = lon_lat_to_tile(
         GpsCoord {
             lat: bounds.max.lat,
@@ -144,12 +167,11 @@ pub fn visible_tile_addresses(bounds: WorldBounds, max_zoom: u8) -> Vec<TileAddr
         zoom,
     );
 
-    let mut addresses = Vec::new();
-    for y in north_west.y.min(south_east.y)..=north_west.y.max(south_east.y) {
-        for x in north_west.x.min(south_east.x)..=north_west.x.max(south_east.x) {
-            addresses.push(TileAddress::new(zoom, x, y));
-        }
+    VisibleTileRequest {
+        zoom,
+        min_x: north_west.x.min(south_east.x),
+        max_x: north_west.x.max(south_east.x),
+        min_y: north_west.y.min(south_east.y),
+        max_y: north_west.y.max(south_east.y),
     }
-
-    addresses
 }

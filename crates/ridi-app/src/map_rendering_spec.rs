@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use macroquad::prelude::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use tracing::warn;
 
 #[allow(dead_code)]
@@ -60,7 +60,16 @@ pub enum RenderInstruction {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FillStyle {
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub color: Option<String>,
+    pub dots: Option<DottedFillStyle>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DottedFillStyle {
     pub color: String,
+    pub spacing_px: f32,
+    pub radius_px: f32,
 }
 
 #[allow(dead_code)]
@@ -147,6 +156,12 @@ impl MapRenderingSpec {
 }
 
 impl FillStyle {
+    pub fn color(&self) -> Option<Color> {
+        self.color.as_deref().and_then(parse_hex_color)
+    }
+}
+
+impl DottedFillStyle {
     pub fn color(&self) -> Color {
         parse_hex_color(&self.color).unwrap_or(Color::from_rgba(0, 0, 0, 255))
     }
@@ -219,6 +234,25 @@ fn parse_hex_color(value: &str) -> Option<Color> {
         _ => return None,
     };
     Some(Color::from_rgba(r, g, b, a))
+}
+
+fn deserialize_optional_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrOption {
+        String(String),
+        Option(Option<String>),
+    }
+
+    match StringOrOption::deserialize(deserializer)? {
+        StringOrOption::String(value) => Ok(Some(value)),
+        StringOrOption::Option(value) => Ok(value),
+    }
 }
 
 #[cfg(test)]

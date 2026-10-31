@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "ios": {
+    "modules": ["RidiRouterModule"]
+  },
+  "android": {
+    "modules": ["bike.ridi.modules.router.RidiRouterModule"]
+  }
+}

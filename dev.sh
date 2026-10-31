@@ -52,12 +52,26 @@ cmd_help() {
     echo "  run                                 Run the CLI"
     echo "  rmdf-view                           Run the RMDF debug viewer"
     echo "  test                                Run tests"
+    echo "  app-build                           Build Android release APK"
+    echo "  app-build-debug                     Build Android debug APK"
+    echo "  app-run-debug                       Build, install, launch, and stream logs via adb"
+    echo "  app-logcat                          Stream Android logs for app debugging"
+    echo "  rust-router android                 Build/copy Rust Android libraries for all ABIs"
+    echo "  rust-router ios                     Build/copy Rust iOS xcframework"
+    echo "  rust-router bindings                Generate/copy UniFFI Kotlin and Swift bindings"
+    echo "  rust-router build                   Generate bindings and build all native artifacts"
+    echo "  mobile android device               Launch Expo Android app on device"
+    echo "  mobile android simulator            Launch Expo Android app on emulator"
+    echo "  mobile ios device                   Launch Expo iOS app on device"
+    echo "  mobile ios simulator                Launch Expo iOS app on simulator"
     echo ""
     echo "Examples:"
     echo "  ./dev.sh generate-tiles latvia"
     echo "  ./dev.sh route riga,latvia cesis,latvia"
     echo "  ./dev.sh route riga,latvia cesis,latvia prefer-unpaved"
     echo "  ./dev.sh route -p riga,latvia cesis,latvia prefer-unpaved"
+    echo "  ./dev.sh app-run-debug"
+    echo "  ./dev.sh app-logcat"
     echo ""
     echo "Route preset mapping: <preset> -> $RULE_EXAMPLES_DIR/rules-<preset>.json"
     echo "If no preset is provided, dev.sh uses the default preset."
@@ -430,8 +444,320 @@ cmd_rmdf_view() {
     run_cli_release_with_features "rmdf-viewer" rmdf-viewer --input-dir "$OUTPUT_DIR"
 }
 
+cmd_app_build() {
+    local profile="${1:-release}"
+    local apk_profile_dir
+
+    if [[ "$profile" != "release" && "$profile" != "debug" ]]; then
+        echo "Error: unknown Android app build profile '$profile'" >&2
+        exit 1
+    fi
+
+    ANDROID_APP_BUILD_DIR="$SCRIPT_DIR/target/android-ridi-app"
+    ANDROID_CARGO_REGISTRY_DIR="$SCRIPT_DIR/target/android-cargo-registry"
+    ANDROID_CARGO_GIT_DIR="$SCRIPT_DIR/target/android-cargo-git"
+    ANDROID_RUSTUP_HOME="$SCRIPT_DIR/target/android-rustup-home"
+    ANDROID_DOT_ANDROID_DIR="$SCRIPT_DIR/target/android-dot-android"
+    ANDROID_RUST_TOOLCHAIN="${ANDROID_RUST_TOOLCHAIN:-stable}"
+    apk_profile_dir="$profile"
+
+    mkdir -p \
+        "$ANDROID_APP_BUILD_DIR" \
+        "$ANDROID_CARGO_REGISTRY_DIR" \
+        "$ANDROID_CARGO_GIT_DIR" \
+        "$ANDROID_RUSTUP_HOME" \
+        "$ANDROID_DOT_ANDROID_DIR"
+
+    rm -rf "$ANDROID_APP_BUILD_DIR/src" "$ANDROID_APP_BUILD_DIR/assets"
+    cp "$SCRIPT_DIR/crates/ridi-app/Cargo.toml" "$ANDROID_APP_BUILD_DIR/"
+    cp "$SCRIPT_DIR/crates/ridi-app/map-rendering.ron" "$ANDROID_APP_BUILD_DIR/"
+    cp -R "$SCRIPT_DIR/crates/ridi-app/src" "$ANDROID_APP_BUILD_DIR/"
+    cp -R "$SCRIPT_DIR/crates/ridi-app/assets" "$ANDROID_APP_BUILD_DIR/"
+
+    docker run --rm \
+       -e ANDROID_RUST_TOOLCHAIN="$ANDROID_RUST_TOOLCHAIN" \
+       -e ANDROID_APP_BUILD_PROFILE="$profile" \
+       -e CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git \
+       -v "$ANDROID_APP_BUILD_DIR:/root/src" \
+       -v "$ANDROID_CARGO_REGISTRY_DIR:/usr/local/cargo/registry" \
+       -v "$ANDROID_CARGO_GIT_DIR:/usr/local/cargo/git" \
+       -v "$ANDROID_RUSTUP_HOME:/usr/local/rustup" \
+       -v "$ANDROID_DOT_ANDROID_DIR:/root/.android" \
+       -w /root/src \
+       notfl3/cargo-apk \
+       sh -lc 'set -e
+if ! rustup toolchain list | grep -Eq "^${ANDROID_RUST_TOOLCHAIN}(-| )"; then
+    rustup toolchain install "$ANDROID_RUST_TOOLCHAIN" --profile minimal
+fi
+rustup target add --toolchain "$ANDROID_RUST_TOOLCHAIN" aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+rustup default "$ANDROID_RUST_TOOLCHAIN"
+manifest_hash=$(sha256sum Cargo.toml | awk "{print \$1}")
+fetch_stamp=/usr/local/cargo/registry/.ridi-app-fetch-$manifest_hash
+if [ ! -f "$fetch_stamp" ]; then
+    cargo fetch --target aarch64-linux-android --target armv7-linux-androideabi --target i686-linux-android --target x86_64-linux-android
+    touch "$fetch_stamp"
+fi
+legacy_registry=github.com-1ecc6299db9ec823
+legacy_cache=/usr/local/cargo/registry/cache/$legacy_registry
+legacy_src=/usr/local/cargo/registry/src/$legacy_registry
+mkdir -p "$legacy_cache" "$legacy_src"
+find /usr/local/cargo/registry/cache -name "*.crate" -exec cp -n {} "$legacy_cache" \;
+for crate in "$legacy_cache"/*.crate; do
+    package=$(basename "$crate" .crate)
+    if [ ! -d "$legacy_src/$package" ]; then
+        tar -xzf "$crate" -C "$legacy_src"
+        touch "$legacy_src/$package/.cargo-ok"
+    fi
+done
+rm -f Cargo.lock
+build_profile_arg=""
+if [ "$ANDROID_APP_BUILD_PROFILE" = "release" ]; then
+    build_profile_arg="--release"
+fi
+for attempt in $(seq 1 20); do
+    find /usr/local/cargo/registry/src -name Cargo.toml -exec sed -i "s/^edition = \"2024\"$/edition = \"2021\"/" {} +
+    if cargo quad-apk build $build_profile_arg --offline; then
+        exit 0
+    fi
+    echo "cargo quad-apk failed; patched any newly downloaded 2024-edition manifests and will retry ($attempt/20)" >&2
+done
+exit 1'
+
+    echo "Android $profile APK: $ANDROID_APP_BUILD_DIR/target/android-artifacts/$apk_profile_dir/apk/app.apk"
+}
+
+cmd_app_debug_apk_path() {
+    printf '%s\n' "$SCRIPT_DIR/target/android-ridi-app/target/android-artifacts/debug/apk/app.apk"
+}
+
+cmd_app_require_adb() {
+    if ! command -v adb >/dev/null 2>&1; then
+        echo "Error: adb not found. Install Android platform tools, e.g. on Arch: sudo pacman -S android-tools" >&2
+        exit 1
+    fi
+}
+
+cmd_app_logcat() {
+    cmd_app_require_adb
+    adb logcat -v time | grep -E --line-buffered 'AndroidRuntime|FATAL EXCEPTION|DEBUG|libc|ridi|Ridi|bike\.ridi\.app|RustStdoutStderr'
+}
+
+cmd_app_run_debug() {
+    local apk
+    apk="$(cmd_app_debug_apk_path)"
+
+    cmd_app_require_adb
+    cmd_app_build debug
+
+    if [[ ! -f "$apk" ]]; then
+        echo "Error: debug APK not found: $apk" >&2
+        exit 1
+    fi
+
+    adb devices
+    if ! adb install -r "$apk"; then
+        echo "Install failed; uninstalling existing debug app and retrying." >&2
+        adb uninstall bike.ridi.app || true
+        adb install "$apk"
+    fi
+    adb logcat -c
+    adb shell monkey -p bike.ridi.app -c android.intent.category.LAUNCHER 1
+    echo "Streaming logs. Press Ctrl-C to stop."
+    cmd_app_logcat
+}
+
+RUST_ROUTER_CRATE="$SCRIPT_DIR/crates/ridi-router-mobile"
+RUST_ROUTER_UDL="$RUST_ROUTER_CRATE/src/ridi_router_mobile.udl"
+RUST_ROUTER_ANDROID_DIR="$SCRIPT_DIR/apps/ridi-mobile/modules/ridi-router/android"
+RUST_ROUTER_IOS_DIR="$SCRIPT_DIR/apps/ridi-mobile/modules/ridi-router/ios"
+RUST_ROUTER_IOS_RUST_DIR="$RUST_ROUTER_IOS_DIR/rust"
+RUST_ROUTER_TARGET_DIR="$SCRIPT_DIR/target/ridi-router-mobile"
+
+require_command() {
+    local command_name="$1"
+    local install_hint="${2:-}"
+
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Error: $command_name not found.$install_hint" >&2
+        exit 1
+    fi
+}
+
+rust_target_installed() {
+    local target="$1"
+    rustup target list --installed | grep -Fxq "$target"
+}
+
+require_rust_targets() {
+    local target
+    for target in "$@"; do
+        if ! rust_target_installed "$target"; then
+            echo "Error: Rust target '$target' is not installed. Run: rustup target add $*" >&2
+            exit 1
+        fi
+    done
+}
+
+cmd_rust_router_bindings() {
+    local out_dir="$RUST_ROUTER_TARGET_DIR/bindings"
+    local kotlin_out="$out_dir/kotlin"
+    local swift_out="$out_dir/swift"
+
+    rm -rf "$out_dir"
+    mkdir -p "$kotlin_out" "$swift_out"
+
+    cargo run -p ridi-router-mobile --features uniffi/cli --bin ridi-router-mobile-uniffi-bindgen -- \
+        generate "$RUST_ROUTER_UDL" --language kotlin --out-dir "$kotlin_out"
+    cargo run -p ridi-router-mobile --features uniffi/cli --bin ridi-router-mobile-uniffi-bindgen -- \
+        generate "$RUST_ROUTER_UDL" --language swift --out-dir "$swift_out"
+
+    rm -rf "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile"
+    mkdir -p "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile"
+    find "$kotlin_out" -type f -name '*.kt' -exec cp {} "$RUST_ROUTER_ANDROID_DIR/src/main/java/uniffi/ridi_router_mobile/" \;
+
+    mkdir -p "$RUST_ROUTER_IOS_RUST_DIR"
+    find "$RUST_ROUTER_IOS_DIR" -maxdepth 1 -type f \( -name 'ridi_router_mobile.swift' -o -name 'ridi_router_mobileFFI.*' -o -name '*.modulemap' \) -delete
+    find "$swift_out" -maxdepth 1 -type f \( -name '*.swift' -o -name '*.h' -o -name '*.modulemap' \) -exec cp {} "$RUST_ROUTER_IOS_DIR/" \;
+
+    echo "Generated UniFFI bindings in Expo module native source trees."
+}
+
+cmd_rust_router_android() {
+    local android_targets=(
+        aarch64-linux-android
+        armv7-linux-androideabi
+        i686-linux-android
+        x86_64-linux-android
+    )
+
+    require_command cargo-ndk " Install with: cargo install cargo-ndk"
+    require_rust_targets "${android_targets[@]}"
+
+    if [[ -n "${NDK_HOME:-}" ]]; then
+        export NDK_HOME="${NDK_HOME%/}"
+    fi
+    if [[ -n "${ANDROID_NDK_HOME:-}" ]]; then
+        export ANDROID_NDK_HOME="${ANDROID_NDK_HOME%/}"
+    fi
+
+    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86 -t x86_64 -P 24 -o "$RUST_ROUTER_ANDROID_DIR/src/main/jniLibs" \
+        build -p ridi-router-mobile --release
+
+    echo "Copied Android Rust libraries to $RUST_ROUTER_ANDROID_DIR/src/main/jniLibs"
+}
+
+cmd_rust_router_ios() {
+    local ios_targets=(
+        aarch64-apple-ios
+        aarch64-apple-ios-sim
+        x86_64-apple-ios
+    )
+
+    require_command xcodebuild " Install Xcode command line tools."
+    require_command lipo " Install Xcode command line tools."
+    require_rust_targets "${ios_targets[@]}"
+
+    cargo build -p ridi-router-mobile --release --target aarch64-apple-ios
+    cargo build -p ridi-router-mobile --release --target aarch64-apple-ios-sim
+    cargo build -p ridi-router-mobile --release --target x86_64-apple-ios
+
+    local build_dir="$RUST_ROUTER_TARGET_DIR/ios"
+    local sim_universal_dir="$build_dir/simulator-universal"
+    local headers_dir="$build_dir/headers"
+    local framework_dir="$RUST_ROUTER_IOS_RUST_DIR/RidiRouterMobile.xcframework"
+
+    rm -rf "$build_dir" "$framework_dir"
+    mkdir -p "$sim_universal_dir" "$headers_dir" "$RUST_ROUTER_IOS_RUST_DIR"
+
+    lipo -create \
+        "$SCRIPT_DIR/target/aarch64-apple-ios-sim/release/libridi_router_mobile.a" \
+        "$SCRIPT_DIR/target/x86_64-apple-ios/release/libridi_router_mobile.a" \
+        -output "$sim_universal_dir/libridi_router_mobile.a"
+
+    find "$RUST_ROUTER_IOS_DIR" -maxdepth 1 -type f -name '*.h' -exec cp {} "$headers_dir/" \;
+    if ! find "$headers_dir" -type f -name '*.h' | grep -q .; then
+        printf '%s\n' '/* UniFFI headers are generated by ./dev.sh rust-router bindings. */' > "$headers_dir/RidiRouterMobile.h"
+    fi
+
+    xcodebuild -create-xcframework \
+        -library "$SCRIPT_DIR/target/aarch64-apple-ios/release/libridi_router_mobile.a" -headers "$headers_dir" \
+        -library "$sim_universal_dir/libridi_router_mobile.a" -headers "$headers_dir" \
+        -output "$framework_dir"
+
+    echo "Copied iOS Rust xcframework to $framework_dir"
+}
+
+cmd_rust_router() {
+    local subcommand="${1:-}"
+
+    case "$subcommand" in
+        android)
+            cmd_rust_router_android
+            ;;
+        ios)
+            cmd_rust_router_ios
+            ;;
+        bindings)
+            cmd_rust_router_bindings
+            ;;
+        build)
+            cmd_rust_router_bindings
+            cmd_rust_router_android
+            cmd_rust_router_ios
+            ;;
+        *)
+            echo "Usage: ./dev.sh rust-router {android|ios|bindings|build}" >&2
+            exit 1
+            ;;
+    esac
+}
+
+cmd_mobile() {
+    local platform="${1:-}"
+    local target="${2:-}"
+
+    case "$platform:$target" in
+        android:device)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" android -- --device
+            ;;
+        android:simulator)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" android
+            ;;
+        ios:device)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" ios -- --device
+            ;;
+        ios:simulator)
+            pnpm --dir "$SCRIPT_DIR/apps/ridi-mobile" ios -- --simulator
+            ;;
+        *)
+            echo "Usage: ./dev.sh mobile {android|ios} {device|simulator}" >&2
+            exit 1
+            ;;
+    esac
+}
+
 # Main
 case "${1:-}" in
+    rust-router)
+        shift
+        cmd_rust_router "$@"
+        ;;
+    mobile)
+        shift
+        cmd_mobile "$@"
+        ;;
+    app-build)
+        cmd_app_build
+        ;;
+    app-build-debug)
+        cmd_app_build debug
+        ;;
+    app-run-debug)
+        cmd_app_run_debug
+        ;;
+    app-logcat)
+        cmd_app_logcat
+        ;;
     pbf)
         download_pbf "${2:-}"
         ;;
