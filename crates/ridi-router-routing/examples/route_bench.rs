@@ -4,6 +4,7 @@
 //! route_bench <tiles_dir> rt <lat,lon> <bearing> <distance_m> [rules.json]
 //!
 //! Prints one JSON line: wall/cpu seconds, peak RSS, route count, best score.
+//! With ROUTE_BENCH_OUT=<file>, also writes the full route output (coords and stats) as JSON.
 use std::time::Instant;
 
 use ridi_router_routing::{
@@ -70,6 +71,9 @@ fn main() {
     let result = executor.generate(RouteRequest { mode, rules }, None);
     let gen_s = t1.elapsed().as_secs_f64();
     let (cpu_s, hwm_kb) = proc_stat();
+    if let (Ok(path), Ok(c)) = (std::env::var("ROUTE_BENCH_OUT"), &result) {
+        std::fs::write(path, serde_json::to_vec(c).unwrap()).unwrap();
+    }
     let (routes, best, lens) = match &result {
         Ok(c) => {
             let best = c

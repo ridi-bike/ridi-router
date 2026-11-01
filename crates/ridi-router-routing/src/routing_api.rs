@@ -226,11 +226,11 @@ mod tests {
     use std::{fs, path::PathBuf, sync::OnceLock};
 
     use crate::{map_data::graph::MapDataGraph, router::rules::RouterRules, RoutingContext};
-    use ridi_router_common::format::{LineRecord, PointRecord, TagSetRecord};
     use ridi_router_test_support::rmdf::{
         create_linear_single_tile_fixture, empty_neighbors, manifest_bounds, unique_test_dir,
-        write_manifest, write_tile, TileManifest, TileMetadata, TileSpec, SYNTHETIC_TILE_BOUNDS,
-        SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+        write_manifest, write_tile, LineRecord, PointRecord, TagSetRecord, TileManifest,
+        TileMetadata, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
+        SYNTHETIC_TILE_SIZE_DEGREES,
     };
     use rusty_fork::rusty_fork_test;
 

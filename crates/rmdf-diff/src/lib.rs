@@ -9,10 +9,9 @@
 //! * [`diff_dirs`] compares a candidate directory against a reference.
 //! * [`digest_dir`] reduces a directory to one semantic hash per non-empty tile (golden tests).
 
-use anyhow::{bail, Context, Result};
-use bytemuck::{pod_read_unaligned, Pod};
+use anyhow::{Context, Result};
 use rayon::prelude::*;
-use ridi_router_common::format::*;
+use ridi_router_common::format::{GridCellEntry, PointRecord, RmdfHeader, TagSetRecord};
 use ridi_router_common::manifest::TileManifest;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -21,6 +20,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+
+mod raw;
+use raw::read_header;
 
 // ---------------------------------------------------------------------------
 // Decoding
@@ -131,56 +133,10 @@ impl Issues {
     }
 }
 
-fn slice_at<'a>(bytes: &'a [u8], off: usize, len: usize, what: &str) -> Result<&'a [u8]> {
-    bytes
-        .get(off..off.checked_add(len).context("overflow")?)
-        .with_context(|| {
-            format!(
-                "{what} out of bounds (off={off} len={len} file={})",
-                bytes.len()
-            )
-        })
-}
-
-fn read_pods<T: Pod>(bytes: &[u8], off: usize, count: usize, what: &str) -> Result<Vec<T>> {
-    let sz = std::mem::size_of::<T>();
-    let s = slice_at(bytes, off, count.checked_mul(sz).context("overflow")?, what)?;
-    Ok(s.chunks_exact(sz).map(pod_read_unaligned).collect())
-}
-
-fn read_u64s(bytes: &[u8], off: usize, end: usize, what: &str) -> Result<Vec<u64>> {
-    if end < off {
-        bail!("{what}: end {end} < start {off}");
-    }
-    let s = slice_at(bytes, off, end - off, what)?;
-    if s.len() % 8 != 0 {
-        bail!("{what}: size {} not a multiple of 8", s.len());
-    }
-    Ok(s.as_chunks::<8>()
-        .0
-        .iter()
-        .map(|c| u64::from_le_bytes(*c))
-        .collect())
-}
-
 fn parse_tile_name(name: &str) -> Option<(u16, u16)> {
     let s = name.strip_prefix("tile_")?.strip_suffix(".rmdf")?;
     let (c, r) = s.split_once('_')?;
     Some((c.parse().ok()?, r.parse().ok()?))
-}
-
-fn read_header(bytes: &[u8]) -> Result<RmdfHeader> {
-    if bytes.len() < RmdfHeader::SIZE {
-        bail!("file too small for header ({} bytes)", bytes.len());
-    }
-    let h: RmdfHeader = pod_read_unaligned(&bytes[..RmdfHeader::SIZE]);
-    if h.magic != RmdfHeader::MAGIC {
-        bail!("bad magic {:?}", h.magic);
-    }
-    if h.version != RmdfHeader::VERSION {
-        bail!("unsupported version {}", h.version);
-    }
-    Ok(h)
 }
 
 fn is_empty_header(h: &RmdfHeader) -> bool {
@@ -191,22 +147,7 @@ fn is_empty_header(h: &RmdfHeader) -> bool {
 fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Result<Model> {
     let h = read_header(bytes)?;
 
-    // Checksum (trailing SHA-256 of all preceding bytes).
-    let mut data_end = bytes.len();
-    if bytes.len() >= RmdfHeader::SIZE + 32 {
-        let (data, sum) = bytes.split_at(bytes.len() - 32);
-        if Sha256::digest(data).as_slice() == sum {
-            data_end = bytes.len() - 32;
-        } else {
-            issues.add("checksum_mismatch", || {
-                format!("{name}: trailing sha256 mismatch")
-            });
-        }
-    } else {
-        issues.add("checksum_missing", || {
-            format!("{name}: no room for checksum")
-        });
-    }
+    let raw = raw::read_raw(name, &h, bytes, issues)?;
 
     // Header bounds vs filename.
     if let Some((col, row)) = parse_tile_name(name) {
@@ -227,59 +168,19 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
         issues.add("bad_filename", || format!("{name}: cannot parse tile id"));
     }
 
-    let so = |i: usize| h.section_offsets[i] as usize;
     let pc = h.point_count as usize;
     let lc = h.line_count as usize;
-    let gsz = std::mem::size_of::<GridCellEntry>();
-    let psz = std::mem::size_of::<PointRecord>();
-    let lsz = std::mem::size_of::<LineRecord>();
-    let tsz = std::mem::size_of::<TagSetRecord>();
-    let ssz = std::mem::size_of::<StringEntry>();
-
-    // Layout: sections must be contiguous in the order the writer emits them.
-    let expect = [
-        (section::SPATIAL_INDEX, RmdfHeader::SIZE),
-        (
-            section::POINTS,
-            so(section::SPATIAL_INDEX) + h.spatial_grid_cell_count as usize * gsz,
-        ),
-        (section::LINES, so(section::POINTS) + pc * psz),
-        (section::LINE_REFS, so(section::LINES) + lc * lsz),
-    ];
-    for (sec, want) in expect {
-        if so(sec) != want {
-            issues.add("section_layout", || {
-                format!("{name}: section {sec} offset {} expected {want}", so(sec))
-            });
-        }
-    }
-    for i in 1..NUM_SECTIONS {
-        if so(i) < so(i - 1) || so(i) > data_end {
-            issues.add("section_layout", || {
-                format!("{name}: section {i} offset {} out of order/bounds", so(i))
-            });
-        }
-    }
-    if so(section::TAG_SETS) + h.tag_set_count as usize * tsz != so(section::RULES) {
-        issues.add("section_layout", || {
-            format!("{name}: tag sets do not end at rules section")
-        });
-    }
-
-    let grid: Vec<GridCellEntry> = read_pods(
-        bytes,
-        so(section::SPATIAL_INDEX),
-        h.spatial_grid_cell_count as usize,
-        "spatial index",
-    )?;
-    let points: Vec<PointRecord> = read_pods(bytes, so(section::POINTS), pc, "points")?;
-    let lines: Vec<LineRecord> = read_pods(bytes, so(section::LINES), lc, "lines")?;
-    let line_refs = read_u64s(
-        bytes,
-        so(section::LINE_REFS),
-        so(section::TAG_VALUES),
-        "line refs",
-    )?;
+    let raw::Raw {
+        grid,
+        points,
+        lines,
+        line_refs,
+        tag_values: entries,
+        pool,
+        tag_sets: tag_sets_raw,
+        rules: rules_raw,
+        rule_refs,
+    } = raw;
 
     // Generator invariants: every point lies in the tile bounds grown by the tile buffer (clamped
     // to the world), and no line crosses the antimeridian (OSM splits ways there).
@@ -305,21 +206,11 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
     }
 
     // Tag values.
-    let tv_off = so(section::TAG_VALUES);
-    let tvc = h.tag_value_count as usize;
-    let entries: Vec<StringEntry> = read_pods(bytes, tv_off, tvc, "tag value entries")?;
-    let pool_start = tv_off + tvc * ssz;
-    let pool_end = so(section::TAG_SETS);
-    let pool = slice_at(
-        bytes,
-        pool_start,
-        pool_end.saturating_sub(pool_start),
-        "tag string pool",
-    )?;
+    let tvc = entries.len();
     let mut tag_values: Vec<Option<Box<str>>> = Vec::with_capacity(tvc);
-    for (i, e) in entries.iter().enumerate() {
+    for (i, &(offset, length)) in entries.iter().enumerate() {
         let s = pool
-            .get(e.offset as usize..(e.offset as usize).saturating_add(e.length as usize))
+            .get(offset as usize..(offset as usize).saturating_add(length as usize))
             .and_then(|b| std::str::from_utf8(b).ok());
         if s.is_none() {
             issues.add("tag_value_invalid", || {
@@ -328,12 +219,6 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
         }
         tag_values.push(s.map(Into::into));
     }
-    let tag_sets_raw: Vec<TagSetRecord> = read_pods(
-        bytes,
-        so(section::TAG_SETS),
-        h.tag_set_count as usize,
-        "tag sets",
-    )?;
     let resolve = |idx: u32, issues: &mut Issues, ts: usize| -> Option<Box<str>> {
         if idx == TagSetRecord::NONE {
             return None;
@@ -361,16 +246,6 @@ fn decode(name: &str, bytes: &[u8], tile_size: f32, issues: &mut Issues) -> Resu
             ])
         })
         .collect();
-
-    // Rules.
-    let rules_raw: Vec<RuleRecord> =
-        read_pods(bytes, so(section::RULES), h.rule_count as usize, "rules")?;
-    let rule_refs = read_u64s(
-        bytes,
-        so(section::RULES) + h.rule_count as usize * std::mem::size_of::<RuleRecord>(),
-        data_end,
-        "rule line refs",
-    )?;
 
     // Line keys.
     let invalid_tags: Arc<Tags> =
@@ -1033,11 +908,6 @@ fn load(dir: &Path, name: &str, tile_size: f32, max_ex: usize) -> Loaded {
             };
         }
     };
-    let sum = if bytes.len() >= 32 {
-        format!("sha256:{}", hex::encode(&bytes[bytes.len() - 32..]))
-    } else {
-        String::new()
-    };
     let h = match read_header(&bytes) {
         Ok(h) => h,
         Err(e) => {
@@ -1045,12 +915,13 @@ fn load(dir: &Path, name: &str, tile_size: f32, max_ex: usize) -> Loaded {
             return Loaded {
                 nonempty: true,
                 model: None,
-                meta: (bytes.len() as u64, 0, 0, sum),
+                meta: (bytes.len() as u64, 0, 0, String::new()),
                 issues,
                 fatal: true,
             };
         }
     };
+    let sum = raw::stored_checksum_string(h.version, &bytes);
     let meta = (bytes.len() as u64, h.point_count, h.line_count, sum);
     if is_empty_header(&h) {
         return Loaded {

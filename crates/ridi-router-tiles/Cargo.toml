@@ -13,11 +13,9 @@ anyhow.workspace = true
 bytemuck.workspace = true
 chrono.workspace = true
 geo.workspace = true
-hex.workspace = true
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2 = { workspace = true, features = ["asm"] }
 thiserror.workspace = true
 tracing.workspace = true
 rstar.workspace = true

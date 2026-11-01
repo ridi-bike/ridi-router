@@ -164,14 +164,14 @@ pub fn get_tile(input_dir: &Path, filename: &str) -> Result<TileResponse> {
                 lat: p.lat,
                 lon: p.lon,
                 flags,
-                connected_lines_count: p.lines_count,
+                connected_lines_count: p.lines_count.into(),
             }
         })
         .collect();
 
     // Build lines response
     let lines: Vec<LineResponse> = mapped_tile
-        .get_lines()?
+        .get_resolved_lines()?
         .iter()
         .map(|l| {
             let direction = match l.direction {

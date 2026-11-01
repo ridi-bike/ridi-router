@@ -29,6 +29,14 @@ impl MappedTile {
 
         let header: &RmdfHeader = try_from_bytes(&mmap[0..RmdfHeader::SIZE])
             .map_err(|_| anyhow::anyhow!("Failed to cast header bytes"))?;
+        if header.magic != RmdfHeader::MAGIC || header.version != RmdfHeader::VERSION {
+            anyhow::bail!(
+                "Unsupported RMDF file: magic {:?} version {} (expected version {})",
+                header.magic,
+                header.version,
+                RmdfHeader::VERSION
+            );
+        }
 
         let filename = path
             .as_ref()
@@ -94,6 +102,19 @@ impl MappedTile {
         Ok(cast_slice(slice))
     }
 
+    /// Lines with their endpoints looked up in this tile's points.
+    pub fn get_resolved_lines(&self) -> Result<Vec<ResolvedLine>> {
+        let points = self.get_points()?;
+        self.get_lines()?
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                ResolvedLine::resolve(line, points)
+                    .with_context(|| format!("Line {i} refers to a point outside the tile"))
+            })
+            .collect()
+    }
+
     pub fn get_tag_set(&self, index: u32) -> Result<TagSetRecord> {
         let offset = self.header.section_offsets[section::TAG_SETS] as usize;
         let record_offset = offset + (index as usize * std::mem::size_of::<TagSetRecord>());
@@ -114,8 +135,7 @@ impl MappedTile {
             .mmap
             .get(entry_offset..entry_offset + std::mem::size_of::<StringEntry>())
             .context("Tag value entry out of bounds")?;
-        let entry: &StringEntry = try_from_bytes(entry_slice)
-            .map_err(|_| anyhow::anyhow!("Failed to cast string entry"))?;
+        let entry: StringEntry = pod_read_unaligned(entry_slice);
 
         // String data pool starts after all StringEntry records
         let pool_start =

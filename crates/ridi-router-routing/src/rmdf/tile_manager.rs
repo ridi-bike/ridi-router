@@ -386,7 +386,11 @@ impl TileManager {
     }
 
     /// Get line by index within a specific tile
-    pub fn get_line_by_index(&mut self, tile_id: TileId, line_index: usize) -> Result<LineRecord> {
+    pub fn get_line_by_index(
+        &mut self,
+        tile_id: TileId,
+        line_index: usize,
+    ) -> Result<ResolvedLine> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_line_by_index_if_loaded(tile_id, line_index)?
             .with_context(|| format!("Line index {line_index} out of bounds in tile {tile_id:?}"))
@@ -396,13 +400,12 @@ impl TileManager {
         &self,
         tile_id: TileId,
         line_index: usize,
-    ) -> Result<Option<LineRecord>> {
+    ) -> Result<Option<ResolvedLine>> {
         let Some(loaded_tile) = self.loaded_tile(tile_id) else {
             return Ok(None);
         };
-        let lines = loaded_tile.tile.get_lines()?;
 
-        Ok(lines.get(line_index).copied())
+        loaded_tile.tile.get_resolved_line(line_index)
     }
 
     #[allow(dead_code)]
@@ -425,18 +428,11 @@ impl TileManager {
             return Ok(None);
         };
         let tile = &loaded_tile.tile;
-        let rule_records = tile.get_rules()?;
+        if !point.has_rules() {
+            return Ok(Some(Vec::new()));
+        }
         let payload = tile.get_rule_line_refs_payload()?;
-        let (rules_start, rules_end) =
-            Self::checked_range(point.rules_offset, point.rules_count, rule_records.len())
-                .with_context(|| {
-                    format!(
-                        "Rule slice for point {} is out of bounds in tile {:?}",
-                        point.osm_id, tile_id
-                    )
-                })?;
-
-        let selected_rules = &rule_records[rules_start..rules_end];
+        let selected_rules = tile.get_rules_for_via(point.osm_id)?;
         let mut rules = Vec::with_capacity(selected_rules.len());
 
         for rule_record in selected_rules {
@@ -478,7 +474,7 @@ impl TileManager {
         &mut self,
         tile_id: TileId,
         point: &PointRecord,
-    ) -> Result<&[u64]> {
+    ) -> Result<&[u32]> {
         self.ensure_tile_loaded(tile_id)?;
         self.get_line_indices_for_point_if_loaded(tile_id, point)?
             .with_context(|| format!("Tile {tile_id:?} not loaded after point line lookup"))
@@ -488,7 +484,7 @@ impl TileManager {
         &self,
         tile_id: TileId,
         point: &PointRecord,
-    ) -> Result<Option<&[u64]>> {
+    ) -> Result<Option<&[u32]>> {
         let Some(loaded_tile) = self.loaded_tile(tile_id) else {
             return Ok(None);
         };
@@ -589,7 +585,7 @@ impl TileManager {
         tile_id: TileId,
         tile: &MappedTile,
         points: &[PointRecord],
-        line_refs: &[u64],
+        line_refs: &[u32],
         lat: f32,
         lon: f32,
         avoid_proximity_to_residential: bool,
@@ -639,7 +635,7 @@ impl TileManager {
         tile_id: TileId,
         tile: &MappedTile,
         points: &[PointRecord],
-        line_refs: &[u64],
+        line_refs: &[u32],
         lat: f32,
         lon: f32,
         avoid_proximity_to_residential: bool,
@@ -668,7 +664,7 @@ impl TileManager {
     fn update_closest_for_points(
         tile_id: TileId,
         tile: &MappedTile,
-        line_refs: &[u64],
+        line_refs: &[u32],
         points: &[PointRecord],
         lat: f32,
         lon: f32,
@@ -796,7 +792,7 @@ impl TileManager {
 
     fn adjacent_line_tags(
         tile: &MappedTile,
-        line_refs: &[u64],
+        line_refs: &[u32],
         point: &PointRecord,
     ) -> Result<Vec<AdjacentLineTags>> {
         let lines = tile.get_lines()?;
@@ -817,10 +813,12 @@ impl TileManager {
                     line_index, point.osm_id
                 )
             })?;
-            let tag_set = tile.get_tag_set(line.tag_set_index).with_context(|| {
+            let tag_set = tile.get_tag_set(line.tag_set_index()).with_context(|| {
                 format!(
                     "Tag set index {} for point {} line {} is invalid",
-                    line.tag_set_index, point.osm_id, line_index
+                    line.tag_set_index(),
+                    point.osm_id,
+                    line_index
                 )
             })?;
 
@@ -844,7 +842,7 @@ impl TileManager {
 
     fn point_matches_filters(
         tile: &MappedTile,
-        line_refs: &[u64],
+        line_refs: &[u32],
         point: &PointRecord,
         avoid_proximity_to_residential: bool,
         avoid_tags: &AvoidTagSet,
@@ -1018,6 +1016,7 @@ impl TileManager {
             return Ok(None);
         };
 
+        let points = tile.get_points()?;
         let lines = tile.get_lines()?;
         let line_refs_array = tile.get_line_refs()?;
 
@@ -1029,7 +1028,8 @@ impl TileManager {
             SmallVec::<[AdjacentLineData; ADJACENT_INLINE_CAPACITY]>::with_capacity(end - start);
 
         for &line_idx in &line_refs_array[start..end] {
-            let line = &lines[line_idx as usize];
+            let line = ResolvedLine::resolve(&lines[line_idx as usize], points)
+                .context("Line refers to a point outside the tile")?;
             adjacent_line_data.push((
                 line_idx as usize,
                 line.point_a_osm_id,
@@ -1044,9 +1044,13 @@ impl TileManager {
         Ok(Some(adjacent_line_data))
     }
 
-    fn checked_range(offset: u64, count: u32, len: usize) -> Result<(usize, usize)> {
-        let start = usize::try_from(offset).context("offset must fit in usize")?;
-        let count = usize::try_from(count).context("count must fit in usize")?;
+    fn checked_range(
+        offset: impl Into<u64>,
+        count: impl Into<u64>,
+        len: usize,
+    ) -> Result<(usize, usize)> {
+        let start = usize::try_from(offset.into()).context("offset must fit in usize")?;
+        let count = usize::try_from(count.into()).context("count must fit in usize")?;
         let end = start.checked_add(count).context("slice end overflow")?;
 
         if end > len {
@@ -1056,15 +1060,15 @@ impl TileManager {
         Ok((start, end))
     }
 
-    fn slice_rule_line_refs(payload: &[u64], offset: u64, count: u32) -> Result<&[u64]> {
+    fn slice_rule_line_refs(payload: &[u32], offset: u32, count: u16) -> Result<&[u32]> {
         let (start, end) = Self::checked_range(offset, count, payload.len())?;
         Ok(&payload[start..end])
     }
 
-    fn map_rule_line_refs(tile_id: TileId, line_indices: &[u64]) -> Vec<MapDataLineRef> {
+    fn map_rule_line_refs(tile_id: TileId, line_indices: &[u32]) -> Vec<MapDataLineRef> {
         let mut line_refs = Vec::with_capacity(line_indices.len());
         for &line_index in line_indices {
-            line_refs.push(MapDataLineRef::new(tile_id, line_index));
+            line_refs.push(MapDataLineRef::new(tile_id, line_index as u64));
         }
         line_refs
     }
@@ -1127,8 +1131,8 @@ impl TileManager {
         lon: f32,
         points_offset: u64,
         points_count: u32,
-    ) -> GridCellEntry {
-        GridCellEntry {
+    ) -> ridi_router_test_support::rmdf::GridCellEntry {
+        ridi_router_test_support::rmdf::GridCellEntry {
             cell_id: GridCellEntry::encode_cell_id(lat, lon, GRID_CELL_PRECISION),
             _padding1: 0,
             points_offset,
@@ -1170,12 +1174,11 @@ mod tests {
     use super::*;
     use crate::map_data::rule::MapDataRuleType;
     use crate::router::rules::{RouterRules, RulesTagValueAction};
-    use ridi_router_common::format::RuleRecord;
     use ridi_router_test_support::rmdf::{
         create_linear_single_tile_fixture, create_missing_neighbor_fixture, empty_neighbors,
         manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord, PointRecord,
-        TagSetRecord, TileBounds, TileId, TileManifest, TileMetadata, TileNeighbors, TileSpec,
-        SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
+        RuleRecord, TagSetRecord, TileBounds, TileId, TileManifest, TileMetadata, TileNeighbors,
+        TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
     };
     use std::{collections::HashMap, fs, path::PathBuf};
 
@@ -1764,7 +1767,8 @@ mod tests {
         );
 
         let hydrated = manager
-            .get_rules_for_point(tile_id, &point)
+            .get_point_by_id(tile_id, point.osm_id)
+            .and_then(|point| manager.get_rules_for_point(tile_id, &point))
             .expect("rules should hydrate");
 
         assert_eq!(hydrated.len(), 2);
@@ -1811,6 +1815,7 @@ mod tests {
         let (dir, tile_id, mut manager) =
             create_rule_tile_manager_fixture("tile-manager-rule-bounds", point, rules, vec![42]);
 
+        let point = manager.get_point_by_id(tile_id, point.osm_id).unwrap();
         let error = manager.get_rules_for_point(tile_id, &point).unwrap_err();
         assert!(error
             .to_string()

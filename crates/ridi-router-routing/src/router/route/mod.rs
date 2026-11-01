@@ -694,11 +694,10 @@ impl IntoIterator for Route {
 mod tests {
     use std::{collections::HashMap, fs, path::PathBuf, sync::OnceLock};
 
-    use ridi_router_common::format::{LineRecord, PointRecord, TagSetRecord};
     use ridi_router_test_support::rmdf::{
-        empty_neighbors, manifest_bounds, unique_test_dir, write_manifest, write_tile,
-        TileManifest, TileMetadata, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
-        SYNTHETIC_TILE_SIZE_DEGREES,
+        empty_neighbors, manifest_bounds, unique_test_dir, write_manifest, write_tile, LineRecord,
+        PointRecord, TagSetRecord, TileManifest, TileMetadata, TileSpec, SYNTHETIC_TILE_BOUNDS,
+        SYNTHETIC_TILE_ID, SYNTHETIC_TILE_SIZE_DEGREES,
     };
 
     use crate::{

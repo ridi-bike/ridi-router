@@ -8,15 +8,13 @@ use super::format::*;
 pub struct MappedTile {
     _file: File,
     mmap: Mmap,
-    // end of the rule line refs payload; excludes the trailing checksum when present
-    data_end: OnceLock<usize>,
     pub header: &'static RmdfHeader,
     spatial_index_cache: OnceLock<Box<[GridCellEntry]>>,
     points_cache: OnceLock<Box<[PointRecord]>>,
     lines_cache: OnceLock<Box<[LineRecord]>>,
-    line_refs_cache: OnceLock<Box<[u64]>>,
+    line_refs_cache: OnceLock<Box<[u32]>>,
     rules_cache: OnceLock<Box<[RuleRecord]>>,
-    rule_line_refs_payload_cache: OnceLock<Box<[u64]>>,
+    rule_line_refs_payload_cache: OnceLock<Box<[u32]>>,
 }
 
 impl MappedTile {
@@ -30,8 +28,8 @@ impl MappedTile {
                 .context("Failed to memory-map file")?
         };
 
-        if mmap.len() < RmdfHeader::SIZE {
-            anyhow::bail!("File too small to contain header");
+        if mmap.len() < RmdfHeader::SIZE + CHECKSUM_LEN {
+            anyhow::bail!("File too small to contain header and checksum");
         }
 
         let header: &RmdfHeader = try_from_bytes(&mmap[0..RmdfHeader::SIZE])
@@ -53,7 +51,6 @@ impl MappedTile {
         Ok(Self {
             _file: file,
             mmap,
-            data_end: OnceLock::new(),
             header: header_static,
             spatial_index_cache: OnceLock::new(),
             points_cache: OnceLock::new(),
@@ -83,6 +80,8 @@ impl MappedTile {
 
         Ok(TileId { col, row })
     }
+
+    /// Sections are aligned in v2 files, so this only copies for a mapping that is not.
     fn cast_or_copy_pod_slice<'a, T: Pod + Copy>(
         &'a self,
         slice: &'a [u8],
@@ -103,56 +102,73 @@ impl MappedTile {
             .as_ref()
     }
 
-    pub fn get_spatial_index(&self) -> Result<&[GridCellEntry]> {
-        let offset = self.header.section_offsets[section::SPATIAL_INDEX] as usize;
-        let count = self.header.spatial_grid_cell_count as usize;
-        let size = count * std::mem::size_of::<GridCellEntry>();
+    fn section<'a, T: Pod + Copy>(
+        &'a self,
+        section: usize,
+        count: usize,
+        cache: &'a OnceLock<Box<[T]>>,
+        what: &str,
+    ) -> Result<&'a [T]> {
+        let offset = self.header.section_offsets[section] as usize;
+        let size = count * std::mem::size_of::<T>();
 
         let slice = self
             .mmap
             .get(offset..offset + size)
-            .context("Spatial index section out of bounds")?;
+            .with_context(|| format!("{what} section out of bounds"))?;
 
-        Ok(self.cast_or_copy_pod_slice(slice, &self.spatial_index_cache))
+        Ok(self.cast_or_copy_pod_slice(slice, cache))
+    }
+
+    pub fn get_spatial_index(&self) -> Result<&[GridCellEntry]> {
+        self.section(
+            section::SPATIAL_INDEX,
+            self.header.spatial_grid_cell_count as usize,
+            &self.spatial_index_cache,
+            "Spatial index",
+        )
     }
 
     pub fn get_points(&self) -> Result<&[PointRecord]> {
-        let offset = self.header.section_offsets[section::POINTS] as usize;
-        let count = self.header.point_count as usize;
-        let size = count * std::mem::size_of::<PointRecord>();
-
-        let slice = self
-            .mmap
-            .get(offset..offset + size)
-            .context("Points section out of bounds")?;
-
-        Ok(self.cast_or_copy_pod_slice(slice, &self.points_cache))
+        self.section(
+            section::POINTS,
+            self.header.point_count as usize,
+            &self.points_cache,
+            "Points",
+        )
     }
 
     pub fn get_lines(&self) -> Result<&[LineRecord]> {
-        let offset = self.header.section_offsets[section::LINES] as usize;
-        let count = self.header.line_count as usize;
-        let size = count * std::mem::size_of::<LineRecord>();
-
-        let slice = self
-            .mmap
-            .get(offset..offset + size)
-            .context("Lines section out of bounds")?;
-
-        Ok(self.cast_or_copy_pod_slice(slice, &self.lines_cache))
+        self.section(
+            section::LINES,
+            self.header.line_count as usize,
+            &self.lines_cache,
+            "Lines",
+        )
     }
 
-    pub fn get_line_refs(&self) -> Result<&[u64]> {
+    /// Line `index` with its endpoints looked up in this tile's points.
+    pub fn get_resolved_line(&self, index: usize) -> Result<Option<ResolvedLine>> {
+        let Some(line) = self.get_lines()?.get(index) else {
+            return Ok(None);
+        };
+        ResolvedLine::resolve(line, self.get_points()?)
+            .with_context(|| format!("Line {index} refers to a point outside the tile"))
+            .map(Some)
+    }
+
+    /// Runs to the tag values section, so it may end in alignment padding; points only address
+    /// it by range.
+    pub fn get_line_refs(&self) -> Result<&[u32]> {
         let offset = self.header.section_offsets[section::LINE_REFS] as usize;
-        // Line refs array continues until Tag Values section
         let next_offset = self.header.section_offsets[section::TAG_VALUES] as usize;
-
-        let slice = self
-            .mmap
-            .get(offset..next_offset)
-            .context("Line refs section out of bounds")?;
-
-        Ok(self.cast_or_copy_pod_slice(slice, &self.line_refs_cache))
+        let count = next_offset.saturating_sub(offset) / std::mem::size_of::<u32>();
+        self.section(
+            section::LINE_REFS,
+            count,
+            &self.line_refs_cache,
+            "Line refs",
+        )
     }
 
     pub fn get_tag_set(&self, index: u32) -> Result<TagSetRecord> {
@@ -175,8 +191,7 @@ impl MappedTile {
             .mmap
             .get(entry_offset..entry_offset + std::mem::size_of::<StringEntry>())
             .context("Tag value entry out of bounds")?;
-        let entry: &StringEntry = try_from_bytes(entry_slice)
-            .map_err(|_| anyhow::anyhow!("Failed to cast string entry"))?;
+        let entry: StringEntry = pod_read_unaligned(entry_slice);
 
         // String data pool starts after all StringEntry records
         let pool_start =
@@ -192,61 +207,36 @@ impl MappedTile {
     }
 
     pub fn get_rules(&self) -> Result<&[RuleRecord]> {
-        let offset = self.header.section_offsets[section::RULES] as usize;
-        let count = self.header.rule_count as usize;
-        let size = count * std::mem::size_of::<RuleRecord>();
-
-        let slice = self
-            .mmap
-            .get(offset..offset + size)
-            .context("Rules section out of bounds")?;
-
-        Ok(self.cast_or_copy_pod_slice(slice, &self.rules_cache))
+        self.section(
+            section::RULES,
+            self.header.rule_count as usize,
+            &self.rules_cache,
+            "Rules",
+        )
     }
 
-    /// Hashing the whole file to find out whether it ends in a checksum touched every page on
-    /// each tile load. The payload length is implied by the rule records instead: a file with a
-    /// checksum has exactly 32 bytes past the furthest referenced line ref.
-    fn data_end(&self, payload_offset: usize) -> Result<usize> {
-        if let Some(end) = self.data_end.get() {
-            return Ok(*end);
-        }
-        let referenced_end = self
-            .get_rules()?
-            .iter()
-            .flat_map(|rule| {
-                [
-                    rule.from_lines_offset + rule.from_lines_count as u64,
-                    rule.to_lines_offset + rule.to_lines_count as u64,
-                ]
-            })
-            .max()
-            .unwrap_or(0) as usize
-            * std::mem::size_of::<u64>();
-        let len = self.mmap.len();
-        let end = if len.checked_sub(payload_offset) == Some(referenced_end + 32) {
-            len - 32
-        } else {
-            len
-        };
-        Ok(*self.data_end.get_or_init(|| end))
+    /// The rules with point `osm_id` as via node.
+    pub fn get_rules_for_via(&self, osm_id: u64) -> Result<&[RuleRecord]> {
+        Ok(RuleRecord::for_via(self.get_rules()?, osm_id))
     }
 
-    pub fn get_rule_line_refs_payload(&self) -> Result<&[u64]> {
+    /// The rule line refs run from the end of the rule records to the trailing checksum.
+    pub fn get_rule_line_refs_payload(&self) -> Result<&[u32]> {
         let rules_offset = self.header.section_offsets[section::RULES] as usize;
         let rule_record_bytes = self.header.rule_count as usize * std::mem::size_of::<RuleRecord>();
         let payload_offset = rules_offset + rule_record_bytes;
+        let payload_end = self.mmap.len() - CHECKSUM_LEN;
 
         let slice = self
             .mmap
-            .get(payload_offset..self.data_end(payload_offset)?)
+            .get(payload_offset..payload_end)
             .context("Rule line refs payload out of bounds")?;
 
-        if slice.len() % std::mem::size_of::<u64>() != 0 {
+        if slice.len() % std::mem::size_of::<u32>() != 0 {
             anyhow::bail!(
                 "Rule line refs payload size {} is not a multiple of {}",
                 slice.len(),
-                std::mem::size_of::<u64>()
+                std::mem::size_of::<u32>()
             );
         }
 
@@ -257,11 +247,9 @@ impl MappedTile {
 #[cfg(test)]
 mod tests {
     use super::MappedTile;
-    use ridi_router_common::format::{
-        GridCellEntry, LineRecord, PointRecord, RuleRecord, TagSetRecord,
-    };
     use ridi_router_test_support::rmdf::{
-        unique_test_dir, write_tile, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
+        unique_test_dir, write_tile, GridCellEntry, LineRecord, PointRecord, RuleRecord,
+        TagSetRecord, TileSpec, SYNTHETIC_TILE_BOUNDS, SYNTHETIC_TILE_ID,
     };
 
     #[test]

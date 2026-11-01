@@ -6,13 +6,80 @@ pub mod rmdf {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    pub use ridi_router_common::format::{
-        GridCellEntry, LineRecord, PointRecord, RuleRecord, TagSetRecord, TileBounds, TileId,
-    };
-    use ridi_router_common::format::{RmdfHeader, StringEntry};
+    use std::collections::HashMap;
+
+    use bytemuck::{bytes_of, cast_slice};
+    use ridi_router_common::format as rmdf;
+    use ridi_router_common::format::{RmdfHeader, StringEntry, NUM_SECTIONS};
+    pub use ridi_router_common::format::{TagSetRecord, TileBounds, TileId};
     pub use ridi_router_common::manifest::{
         TileBounds as ManifestTileBounds, TileManifest, TileMetadata, TileNeighbors,
     };
+
+    // Fixtures describe tiles in the v1 record shapes (absolute offsets, endpoint ids and
+    // coordinates on each line, rules addressed from their via point); `write_tile` encodes them
+    // in the current format.
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct GridCellEntry {
+        pub cell_id: u32,
+        pub _padding1: u32,
+        pub points_offset: u64,
+        pub points_count: u32,
+        pub _padding2: u32,
+    }
+
+    impl GridCellEntry {
+        pub fn encode_cell_id(lat: f32, lon: f32, precision: u32) -> u32 {
+            rmdf::GridCellEntry::encode_cell_id(lat, lon, precision)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct PointRecord {
+        pub osm_id: u64,
+        pub lat: f32,
+        pub lon: f32,
+        pub lines_offset: u64,
+        pub lines_count: u32,
+        pub _padding1: u32,
+        pub rules_offset: u64,
+        pub rules_count: u32,
+        pub flags: u16,
+        pub _padding2: u16,
+    }
+
+    impl PointRecord {
+        pub const RESIDENTIAL_IN_PROXIMITY_FLAG: u16 =
+            rmdf::PointRecord::RESIDENTIAL_IN_PROXIMITY_FLAG;
+        pub const NOGO_AREA_FLAG: u16 = rmdf::PointRecord::NOGO_AREA_FLAG;
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct LineRecord {
+        pub point_a_osm_id: u64,
+        pub point_a_lat: f32,
+        pub point_a_lon: f32,
+        pub point_b_osm_id: u64,
+        pub point_b_lat: f32,
+        pub point_b_lon: f32,
+        pub direction: u8,
+        pub _padding1: u8,
+        pub _padding2: u16,
+        pub tag_set_index: u32,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct RuleRecord {
+        pub from_lines_offset: u64,
+        pub from_lines_count: u32,
+        pub _padding1: u32,
+        pub to_lines_offset: u64,
+        pub to_lines_count: u32,
+        pub rule_type: u8,
+        pub _padding2: u8,
+        pub _padding3: u16,
+    }
 
     pub const SYNTHETIC_TILE_ID: TileId = TileId { col: 200, row: 100 };
     pub const SYNTHETIC_TILE_BOUNDS: TileBounds = TileBounds {
@@ -111,70 +178,144 @@ pub mod rmdf {
 
     pub fn write_tile(dir: &Path, spec: &TileSpec) -> PathBuf {
         fs::create_dir_all(dir).unwrap();
-
-        let spatial_index_offset = RmdfHeader::SIZE as u64;
-        let points_offset = spatial_index_offset
-            + std::mem::size_of::<GridCellEntry>() as u64 * spec.spatial_index.len() as u64;
-        let lines_offset =
-            points_offset + std::mem::size_of::<PointRecord>() as u64 * spec.points.len() as u64;
-        let line_refs_offset =
-            lines_offset + std::mem::size_of::<LineRecord>() as u64 * spec.lines.len() as u64;
-        let tag_values_offset =
-            line_refs_offset + std::mem::size_of::<u64>() as u64 * spec.line_refs.len() as u64;
-        let tag_sets_offset = tag_values_offset + tag_values_section_size(&spec.tag_values);
-        let rules_offset = tag_sets_offset
-            + std::mem::size_of::<TagSetRecord>() as u64 * spec.tag_sets.len() as u64;
-
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"RMDF");
-        push_u32(&mut bytes, RmdfHeader::VERSION);
-        write_tile_bounds(&mut bytes, spec.bounds);
-        push_u64(&mut bytes, spec.points.len() as u64);
-        push_u64(&mut bytes, spec.lines.len() as u64);
-        push_u32(&mut bytes, spec.spatial_index.len() as u32);
-        push_u32(&mut bytes, spec.tag_values.len() as u32);
-        push_u32(&mut bytes, spec.tag_sets.len() as u32);
-        push_u32(&mut bytes, spec.rules.len() as u32);
-        for offset in [
-            spatial_index_offset,
-            points_offset,
-            lines_offset,
-            line_refs_offset,
-            tag_values_offset,
-            tag_sets_offset,
-            rules_offset,
-        ] {
-            push_u64(&mut bytes, offset);
-        }
-
-        assert_eq!(bytes.len() as u64, RmdfHeader::SIZE as u64);
-
-        for grid_cell in &spec.spatial_index {
-            write_grid_cell_entry(&mut bytes, *grid_cell);
-        }
-        for point in &spec.points {
-            write_point_record(&mut bytes, *point);
-        }
-        for line in &spec.lines {
-            write_line_record(&mut bytes, *line);
-        }
-        for line_ref in &spec.line_refs {
-            push_u64(&mut bytes, *line_ref);
-        }
-        write_tag_values_section(&mut bytes, &spec.tag_values);
-        for tag_set in &spec.tag_sets {
-            write_tag_set_record(&mut bytes, *tag_set);
-        }
-        for rule in &spec.rules {
-            write_rule_record(&mut bytes, *rule);
-        }
-        for line_ref in &spec.rule_line_refs {
-            push_u64(&mut bytes, *line_ref);
-        }
-
         let tile_path = dir.join(spec.tile_id.to_filename());
-        fs::write(&tile_path, bytes).unwrap();
+        fs::write(&tile_path, encode_tile(spec)).unwrap();
         tile_path
+    }
+
+    /// Encode `spec` as an RMDF file. A line endpoint that is not one of the spec's points (a
+    /// fixture shortcut the generator never produces) is added as a point without lines.
+    pub fn encode_tile(spec: &TileSpec) -> Vec<u8> {
+        let mut points: Vec<rmdf::PointRecord> = spec
+            .points
+            .iter()
+            .map(|p| rmdf::PointRecord {
+                osm_id: p.osm_id,
+                lat: p.lat,
+                lon: p.lon,
+                lines_offset: u32::try_from(p.lines_offset).unwrap(),
+                lines_count: u16::try_from(p.lines_count).unwrap(),
+                flags: if p.rules_count > 0 {
+                    p.flags | rmdf::PointRecord::HAS_RULES_FLAG
+                } else {
+                    p.flags
+                },
+            })
+            .collect();
+        let mut point_index = HashMap::<u64, u32>::new();
+        for (i, p) in points.iter().enumerate() {
+            point_index.entry(p.osm_id).or_insert(i as u32);
+        }
+        let mut endpoint = |osm_id: u64, lat: f32, lon: f32| -> u32 {
+            *point_index.entry(osm_id).or_insert_with(|| {
+                points.push(rmdf::PointRecord {
+                    osm_id,
+                    lat,
+                    lon,
+                    lines_offset: 0,
+                    lines_count: 0,
+                    flags: 0,
+                });
+                (points.len() - 1) as u32
+            })
+        };
+        let lines: Vec<rmdf::LineRecord> = spec
+            .lines
+            .iter()
+            .map(|l| {
+                rmdf::LineRecord::new(
+                    endpoint(l.point_a_osm_id, l.point_a_lat, l.point_a_lon),
+                    endpoint(l.point_b_osm_id, l.point_b_lat, l.point_b_lon),
+                    l.tag_set_index,
+                    l.direction,
+                )
+            })
+            .collect();
+
+        let mut rules: Vec<rmdf::RuleRecord> = spec
+            .points
+            .iter()
+            .flat_map(|p| {
+                let start = p.rules_offset as usize;
+                spec.rules[start..start + p.rules_count as usize]
+                    .iter()
+                    .map(move |r| rmdf::RuleRecord {
+                        via_osm_id: p.osm_id,
+                        from_lines_offset: u32::try_from(r.from_lines_offset).unwrap(),
+                        to_lines_offset: u32::try_from(r.to_lines_offset).unwrap(),
+                        from_lines_count: u16::try_from(r.from_lines_count).unwrap(),
+                        to_lines_count: u16::try_from(r.to_lines_count).unwrap(),
+                        rule_type: r.rule_type,
+                        _padding: [0; 3],
+                    })
+            })
+            .collect();
+        rules.sort_by_key(|r| r.via_osm_id);
+
+        let spatial_index: Vec<rmdf::GridCellEntry> = spec
+            .spatial_index
+            .iter()
+            .map(|g| rmdf::GridCellEntry {
+                cell_id: g.cell_id,
+                points_offset: u32::try_from(g.points_offset).unwrap(),
+                points_count: g.points_count,
+            })
+            .collect();
+        let refs = |refs: &[u64]| -> Vec<u32> {
+            refs.iter().map(|&r| u32::try_from(r).unwrap()).collect()
+        };
+        let line_refs = refs(&spec.line_refs);
+        let rule_line_refs = refs(&spec.rule_line_refs);
+
+        let mut string_entries = Vec::with_capacity(spec.tag_values.len());
+        let mut string_pool = Vec::new();
+        for value in &spec.tag_values {
+            string_entries.push(StringEntry {
+                offset: string_pool.len() as u32,
+                length: value.len() as u32,
+            });
+            string_pool.extend_from_slice(value.as_bytes());
+        }
+
+        let sections: [Vec<&[u8]>; NUM_SECTIONS] = [
+            vec![cast_slice(&spatial_index)],
+            vec![cast_slice(&points)],
+            vec![cast_slice(&lines)],
+            vec![cast_slice(&line_refs)],
+            vec![cast_slice(&string_entries), &string_pool],
+            vec![cast_slice(&spec.tag_sets)],
+            vec![cast_slice(&rules), cast_slice(&rule_line_refs)],
+        ];
+        let mut section_offsets = [0u64; NUM_SECTIONS];
+        let mut body = Vec::new();
+        for (i, parts) in sections.iter().enumerate() {
+            body.resize(
+                rmdf::align_section(RmdfHeader::SIZE + body.len()) - RmdfHeader::SIZE,
+                0,
+            );
+            section_offsets[i] = (RmdfHeader::SIZE + body.len()) as u64;
+            for part in parts {
+                body.extend_from_slice(part);
+            }
+        }
+
+        let header = RmdfHeader {
+            magic: RmdfHeader::MAGIC,
+            version: RmdfHeader::VERSION,
+            tile_bounds: spec.bounds,
+            point_count: points.len() as u64,
+            line_count: lines.len() as u64,
+            spatial_grid_cell_count: spatial_index.len() as u32,
+            tag_value_count: spec.tag_values.len() as u32,
+            tag_set_count: spec.tag_sets.len() as u32,
+            rule_count: rules.len() as u32,
+            section_offsets,
+        };
+        let mut bytes = bytes_of(&header).to_vec();
+        bytes.extend_from_slice(&body);
+        let checksum = rmdf::checksum(&bytes);
+        bytes.extend_from_slice(&checksum);
+        bytes
     }
 
     pub fn write_default_rules_file(dir: &Path) -> PathBuf {
@@ -735,137 +876,6 @@ pub mod rmdf {
         }
     }
 
-    fn push_u16(buf: &mut Vec<u8>, value: u16) {
-        buf.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_u32(buf: &mut Vec<u8>, value: u32) {
-        buf.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_u64(buf: &mut Vec<u8>, value: u64) {
-        buf.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_f32(buf: &mut Vec<u8>, value: f32) {
-        buf.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn align_up(value: u64, alignment: usize) -> u64 {
-        let alignment = alignment as u64;
-        if alignment <= 1 {
-            return value;
-        }
-
-        let remainder = value % alignment;
-        if remainder == 0 {
-            value
-        } else {
-            value + (alignment - remainder)
-        }
-    }
-
-    fn pad_to_alignment(buf: &mut Vec<u8>, alignment: usize) {
-        let target_len = align_up(buf.len() as u64, alignment) as usize;
-        buf.resize(target_len, 0);
-    }
-
-    fn write_tile_bounds(buf: &mut Vec<u8>, bounds: TileBounds) {
-        push_f32(buf, bounds.lat_min);
-        push_f32(buf, bounds.lat_max);
-        push_f32(buf, bounds.lon_min);
-        push_f32(buf, bounds.lon_max);
-    }
-
-    fn write_point_record(buf: &mut Vec<u8>, point: PointRecord) {
-        push_u64(buf, point.osm_id);
-        push_f32(buf, point.lat);
-        push_f32(buf, point.lon);
-        push_u64(buf, point.lines_offset);
-        push_u32(buf, point.lines_count);
-        push_u32(buf, point._padding1);
-        push_u64(buf, point.rules_offset);
-        push_u32(buf, point.rules_count);
-        push_u16(buf, point.flags);
-        push_u16(buf, point._padding2);
-    }
-
-    fn write_line_record(buf: &mut Vec<u8>, line: LineRecord) {
-        push_u64(buf, line.point_a_osm_id);
-        push_f32(buf, line.point_a_lat);
-        push_f32(buf, line.point_a_lon);
-        push_u64(buf, line.point_b_osm_id);
-        push_f32(buf, line.point_b_lat);
-        push_f32(buf, line.point_b_lon);
-        buf.push(line.direction);
-        buf.push(line._padding1);
-        push_u16(buf, line._padding2);
-        push_u32(buf, line.tag_set_index);
-    }
-
-    fn tag_values_section_size(tag_values: &[String]) -> u64 {
-        let entry_bytes = std::mem::size_of::<StringEntry>() * tag_values.len();
-        let string_bytes: usize = tag_values.iter().map(|value| value.len()).sum();
-        align_up(
-            (entry_bytes + string_bytes) as u64,
-            std::mem::align_of::<TagSetRecord>(),
-        )
-    }
-
-    fn write_grid_cell_entry(buf: &mut Vec<u8>, grid_cell: GridCellEntry) {
-        push_u32(buf, grid_cell.cell_id);
-        push_u32(buf, grid_cell._padding1);
-        push_u64(buf, grid_cell.points_offset);
-        push_u32(buf, grid_cell.points_count);
-        push_u32(buf, grid_cell._padding2);
-    }
-
-    fn write_string_entry(buf: &mut Vec<u8>, entry: StringEntry) {
-        push_u64(buf, entry.offset);
-        push_u32(buf, entry.length);
-        push_u32(buf, entry._padding);
-    }
-
-    fn write_tag_values_section(buf: &mut Vec<u8>, tag_values: &[String]) {
-        let mut string_offset = 0_u64;
-        for tag_value in tag_values {
-            write_string_entry(
-                buf,
-                StringEntry {
-                    offset: string_offset,
-                    length: u32::try_from(tag_value.len()).unwrap(),
-                    _padding: 0,
-                },
-            );
-            string_offset += tag_value.len() as u64;
-        }
-
-        for tag_value in tag_values {
-            buf.extend_from_slice(tag_value.as_bytes());
-        }
-
-        pad_to_alignment(buf, std::mem::align_of::<TagSetRecord>());
-    }
-
-    fn write_tag_set_record(buf: &mut Vec<u8>, tag_set: TagSetRecord) {
-        push_u32(buf, tag_set.name_idx);
-        push_u32(buf, tag_set.hw_ref_idx);
-        push_u32(buf, tag_set.highway_idx);
-        push_u32(buf, tag_set.surface_idx);
-        push_u32(buf, tag_set.smoothness_idx);
-    }
-
-    fn write_rule_record(buf: &mut Vec<u8>, rule: RuleRecord) {
-        push_u64(buf, rule.from_lines_offset);
-        push_u32(buf, rule.from_lines_count);
-        push_u32(buf, rule._padding1);
-        push_u64(buf, rule.to_lines_offset);
-        push_u32(buf, rule.to_lines_count);
-        buf.push(rule.rule_type);
-        buf.push(rule._padding2);
-        push_u16(buf, rule._padding3);
-    }
-
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -965,19 +975,17 @@ pub mod rmdf {
             let bytes = fs::read(&tile_path).unwrap();
             let header = pod_read_unaligned::<RmdfHeader>(&bytes[..RmdfHeader::SIZE]);
 
-            let expected_points_offset =
-                RmdfHeader::SIZE as u64 + std::mem::size_of::<GridCellEntry>() as u64;
-            let expected_lines_offset =
-                expected_points_offset + std::mem::size_of::<PointRecord>() as u64;
-            let expected_line_refs_offset =
-                expected_lines_offset + std::mem::size_of::<LineRecord>() as u64;
-            let expected_tag_values_offset =
-                expected_line_refs_offset + std::mem::size_of::<u64>() as u64;
-            let expected_tag_sets_offset =
-                expected_tag_values_offset + tag_values_section_size(&spec.tag_values);
-            let expected_rules_offset =
-                expected_tag_sets_offset + std::mem::size_of::<TagSetRecord>() as u64;
+            // the line's far endpoint is added as a second point
+            let expected_points_offset = RmdfHeader::SIZE as u64 + 16;
+            let expected_lines_offset = expected_points_offset + 2 * 24;
+            let expected_line_refs_offset = expected_lines_offset + 16;
+            let expected_tag_values_offset = expected_line_refs_offset + 8;
+            let expected_tag_sets_offset = expected_tag_values_offset
+                + (3 * 8 + "secondarygravelbad".len() as u64).next_multiple_of(8);
+            let expected_rules_offset = expected_tag_sets_offset + 24;
 
+            assert_eq!(header.version, RmdfHeader::VERSION);
+            assert_eq!(header.point_count, 2);
             assert_eq!(header.spatial_grid_cell_count, 1);
             assert_eq!(header.tag_value_count, 3);
             assert_eq!(header.tag_set_count, 1);
@@ -988,6 +996,7 @@ pub mod rmdf {
             assert_eq!(header.section_offsets[4], expected_tag_values_offset);
             assert_eq!(header.section_offsets[5], expected_tag_sets_offset);
             assert_eq!(header.section_offsets[6], expected_rules_offset);
+            assert_eq!(bytes.len(), expected_rules_offset as usize + 16);
 
             let tag_values_start = header.section_offsets[4] as usize;
             let tag_sets_start = header.section_offsets[5] as usize;

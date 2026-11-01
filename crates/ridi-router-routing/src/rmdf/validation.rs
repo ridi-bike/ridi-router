@@ -5,10 +5,9 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use sha2::{Digest, Sha256};
 
 use super::{
-    format::{RmdfHeader, TileId},
+    format::{checksum, RmdfHeader, TileId, CHECKSUM_LEN},
     io::MappedTile,
 };
 use ridi_router_common::manifest::TileManifest;
@@ -20,7 +19,6 @@ const OVERLAP_MARGIN_DEGREES: f32 = 0.005;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BoundaryIntegrityIssueKind {
     MissingOverlapPointCopy,
-    MissingLineEndpointPointCopy,
 }
 
 #[allow(dead_code)]
@@ -63,17 +61,12 @@ pub fn validate_header(header: &RmdfHeader) -> Result<()> {
 // Tile loads no longer hash the whole file; integrity is for download/install time.
 #[allow(dead_code)]
 pub fn validate_checksum(file_bytes: &[u8]) -> Result<()> {
-    if file_bytes.len() < 32 {
+    let Some(data_len) = file_bytes.len().checked_sub(CHECKSUM_LEN) else {
         anyhow::bail!("File too small to contain checksum");
-    }
+    };
+    let (data, stored_checksum) = file_bytes.split_at(data_len);
 
-    let (data, stored_checksum) = file_bytes.split_at(file_bytes.len() - 32);
-
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    let computed_checksum = hasher.finalize();
-
-    if stored_checksum != computed_checksum.as_slice() {
+    if stored_checksum != checksum(data) {
         anyhow::bail!("Checksum mismatch: file may be corrupted");
     }
 
@@ -129,9 +122,6 @@ fn scan_boundary_overlap_integrity_from_manifest(
             row: tile.row,
         };
         let mapped_tile = MappedTile::load(tile_dir.join(&tile.filename))?;
-        let current_tile_points = tile_point_ids
-            .get(&tile_id)
-            .with_context(|| format!("Point index missing for tile {tile_id:?}"))?;
 
         for point in mapped_tile.get_points()? {
             for candidate_tile in
@@ -161,31 +151,7 @@ fn scan_boundary_overlap_integrity_from_manifest(
             }
         }
 
-        for (line_index, line) in mapped_tile.get_lines()?.iter().enumerate() {
-            for (point_osm_id, lat, lon) in [
-                (line.point_a_osm_id, line.point_a_lat, line.point_a_lon),
-                (line.point_b_osm_id, line.point_b_lat, line.point_b_lon),
-            ] {
-                let candidate_tiles =
-                    overlap_candidate_tiles_for_coords(manifest.tile_size_degrees, lat, lon);
-                if !candidate_tiles.contains(&tile_id)
-                    || current_tile_points.contains(&point_osm_id)
-                {
-                    continue;
-                }
-
-                let issue = BoundaryIntegrityIssue {
-                    kind: BoundaryIntegrityIssueKind::MissingLineEndpointPointCopy,
-                    source_tile_id: tile_id,
-                    missing_tile_id: tile_id,
-                    point_osm_id,
-                    line_index: Some(line_index),
-                };
-                if seen_issues.insert(issue.clone()) {
-                    issues.push(issue);
-                }
-            }
-        }
+        // line endpoints are indices into this tile's points, so they always have a copy here
     }
 
     Ok(issues)
@@ -281,12 +247,14 @@ mod tests {
         let boundary_osm_id = 50_000;
         let local_osm_id = 50_001;
 
+        // without the copy, tile A has no line to the boundary point either: a line's endpoints
+        // are always points of its tile
         let mut tile_a_points = vec![PointRecord {
             osm_id: local_osm_id,
             lat: 10.50,
             lon: 20.90,
             lines_offset: 0,
-            lines_count: 1,
+            lines_count: include_boundary_copy_in_tile_a as u32,
             _padding1: 0,
             rules_offset: 0,
             rules_count: 0,
@@ -315,22 +283,26 @@ mod tests {
                 bounds: bounds_a,
                 spatial_index: Vec::new(),
                 points: tile_a_points,
-                lines: vec![LineRecord {
-                    point_a_osm_id: local_osm_id,
-                    point_a_lat: 10.50,
-                    point_a_lon: 20.90,
-                    point_b_osm_id: boundary_osm_id,
-                    point_b_lat: 10.50,
-                    point_b_lon: 20.998,
-                    direction: 0,
-                    _padding1: 0,
-                    _padding2: 0,
-                    tag_set_index: 0,
-                }],
+                lines: if include_boundary_copy_in_tile_a {
+                    vec![LineRecord {
+                        point_a_osm_id: local_osm_id,
+                        point_a_lat: 10.50,
+                        point_a_lon: 20.90,
+                        point_b_osm_id: boundary_osm_id,
+                        point_b_lat: 10.50,
+                        point_b_lon: 20.998,
+                        direction: 0,
+                        _padding1: 0,
+                        _padding2: 0,
+                        tag_set_index: 0,
+                    }]
+                } else {
+                    Vec::new()
+                },
                 line_refs: if include_boundary_copy_in_tile_a {
                     vec![0, 0]
                 } else {
-                    vec![0]
+                    Vec::new()
                 },
                 tag_values: Vec::new(),
                 tag_sets: Vec::new(),
@@ -460,7 +432,7 @@ mod tests {
     fn test_valid_header() {
         let header = RmdfHeader {
             magic: *b"RMDF",
-            version: 1,
+            version: RmdfHeader::VERSION,
             tile_bounds: TileBounds {
                 lat_min: 56.0,
                 lat_max: 57.0,
@@ -477,10 +449,15 @@ mod tests {
         };
 
         assert!(validate_header(&header).is_ok());
+        let v1 = RmdfHeader {
+            version: 1,
+            ..header
+        };
+        assert!(validate_header(&v1).is_err());
     }
 
     #[test]
-    fn test_boundary_overlap_scan_reports_missing_point_copy_and_invalid_line_endpoint() {
+    fn test_boundary_overlap_scan_reports_missing_point_copy() {
         let dir = write_overlap_scan_fixture("validation-overlap-missing", false);
 
         let issues = scan_boundary_overlap_integrity(&dir).unwrap();
@@ -492,14 +469,6 @@ mod tests {
             point_osm_id: 50_000,
             line_index: None,
         }));
-        assert!(issues.contains(&BoundaryIntegrityIssue {
-            kind: BoundaryIntegrityIssueKind::MissingLineEndpointPointCopy,
-            source_tile_id: TileId { col: 200, row: 100 },
-            missing_tile_id: TileId { col: 200, row: 100 },
-            point_osm_id: 50_000,
-            line_index: Some(0),
-        }));
-
         fs::remove_dir_all(dir).unwrap();
     }
 

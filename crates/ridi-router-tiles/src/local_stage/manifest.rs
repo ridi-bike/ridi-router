@@ -53,7 +53,7 @@ fn build(
     TileManifest {
         version: env!("CARGO_PKG_VERSION").to_string(),
         tile_size_degrees,
-        format_version: 1,
+        format_version: crate::rmdf::format::RmdfHeader::VERSION,
         generated_at: chrono::Utc::now().to_rfc3339(),
         source_files: sources,
         tiles,

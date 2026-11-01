@@ -335,7 +335,7 @@ impl MapDataGraph {
         (point_a_osm_id, point_b_osm_id)
     }
 
-    fn logical_line_key_from_record(line_record: &crate::rmdf::format::LineRecord) -> (u64, u64) {
+    fn logical_line_key_from_record(line_record: &crate::rmdf::format::ResolvedLine) -> (u64, u64) {
         Self::logical_line_key(line_record.point_a_osm_id, line_record.point_b_osm_id)
     }
 
@@ -387,12 +387,12 @@ impl MapDataGraph {
                     lat: point.lat,
                     lon: point.lon,
                     lines_offset: 0,
-                    lines_count: point.lines.len() as u32,
-                    _padding1: 0,
-                    rules_offset: 0,
-                    rules_count: point.rules.len() as u32,
-                    flags,
-                    _padding2: 0,
+                    lines_count: point.lines.len() as u16,
+                    flags: if point.rules.is_empty() {
+                        flags
+                    } else {
+                        flags | crate::rmdf::format::PointRecord::HAS_RULES_FLAG
+                    },
                 },
                 point.lines,
                 point.rules,
@@ -468,12 +468,16 @@ impl MapDataGraph {
             rustc_hash::FxHashMap::<(u64, u64), MapDataLineRef>::default();
         let mut line_order = Vec::<(u64, u64)>::new();
 
+        // whether a copy has rules depends on which restrictions its tile could materialize
+        let flags_without_rules = |p: &crate::rmdf::format::PointRecord| {
+            p.flags & !crate::rmdf::format::PointRecord::HAS_RULES_FLAG
+        };
         for (copy_tile_id, point_record) in &point_copies {
-            merged_flags |= point_record.flags;
+            merged_flags |= flags_without_rules(point_record);
 
             if point_record.lat != base_point_record.lat
                 || point_record.lon != base_point_record.lon
-                || point_record.flags != base_point_record.flags
+                || flags_without_rules(point_record) != flags_without_rules(&base_point_record)
             {
                 warn!(
                     requested_tile = ?tile_id,
@@ -499,7 +503,7 @@ impl MapDataGraph {
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     representative_line_refs.entry(line_key)
                 {
-                    entry.insert(MapDataLineRef::new(*copy_tile_id, line_index));
+                    entry.insert(MapDataLineRef::new(*copy_tile_id, line_index as u64));
                     line_order.push(line_key);
                 }
             }
@@ -590,12 +594,12 @@ impl MapDataGraph {
                 lat: base_point_record.lat,
                 lon: base_point_record.lon,
                 lines_offset: 0,
-                lines_count: lines.len() as u32,
-                _padding1: 0,
-                rules_offset: 0,
-                rules_count: rules.len() as u32,
-                flags: merged_flags,
-                _padding2: 0,
+                lines_count: lines.len() as u16,
+                flags: if rules.is_empty() {
+                    merged_flags
+                } else {
+                    merged_flags | crate::rmdf::format::PointRecord::HAS_RULES_FLAG
+                },
             },
             lines,
             rules,
@@ -652,7 +656,7 @@ impl MapDataGraph {
         let point_record = tile_manager
             .get_point_by_id_if_loaded(tile_id, osm_id)
             .ok()??;
-        if point_record.rules_count != 0
+        if point_record.has_rules()
             || tile_manager
                 .overlap_candidate_tiles_for_coords(point_record.lat, point_record.lon)
                 .as_slice()
@@ -677,8 +681,7 @@ impl MapDataGraph {
 
         Some(crate::rmdf::format::PointRecord {
             lines_offset: 0,
-            lines_count: line_keys.len() as u32,
-            rules_offset: 0,
+            lines_count: line_keys.len() as u16,
             ..point_record
         })
     }
