@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Sub, time::Instant};
+use std::{ops::Sub, time::Instant};
 
 use crate::{
     map_data::graph::MapDataPointRef,
@@ -6,14 +6,17 @@ use crate::{
         point_snapshot, GenerationPassMetadata, ItineraryMetadataPayload, RoutingProgressEvent,
         RoutingProgressReporter, SnapPointMetadata, WaypointSelectionMetadata,
     },
-    router::{clustering::Clustering, rules::RouterRules, weights::weight_check_avoid_rules},
+    router::{
+        dedupe::{approximate_route, select_distinct, Corridor, Projection},
+        rules::RouterRules,
+        weights::weight_check_avoid_rules,
+    },
     routing_api::{Coords, RouteMode},
     RoutingContext,
 };
-use geo::{Bearing, Destination, Distance, Haversine, Point};
-use hdbscan::{Hdbscan, HdbscanError, HdbscanHyperParams};
+use geo::{Bearing, Destination, Haversine, Point};
 use rayon::prelude::*;
-use tracing::{error, info, trace};
+use tracing::{info, trace};
 
 use super::{
     itinerary::Itinerary,
@@ -27,6 +30,9 @@ use super::{
     },
 };
 
+/// Points in `RouteStats::approximated_route`.
+const APPROXIMATION_POINTS: usize = 10;
+
 pub const WP_LOOKUP_ALLOWED_HWS: [&str; 6] = [
     "motorway",
     "trunk",
@@ -35,12 +41,6 @@ pub const WP_LOOKUP_ALLOWED_HWS: [&str; 6] = [
     "tertiary",
     "unclassified",
 ];
-
-#[derive(Debug, thiserror::Error)]
-pub enum GeneratorError {
-    #[error("Hdbscan error: {error}")]
-    Hdbscan { error: HdbscanError },
-}
 
 #[derive(Debug, Clone)]
 pub struct RouteWithStats {
@@ -93,6 +93,14 @@ impl Generator {
         let (to_lat, to_lon) = ctx.point_coords(to);
 
         Haversine.bearing(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
+    }
+
+    /// Round-trip target distance, or the start-finish distance.
+    fn trip_size_m(&self, ctx: &RoutingContext<'_>) -> f32 {
+        match self.round_trip {
+            Some((_, distance_m)) => distance_m as f32,
+            None => ctx.point_distance_m(&self.start, &self.finish),
+        }
     }
 
     fn create_waypoints_around(
@@ -286,6 +294,7 @@ impl Generator {
 
         let start_to_finish_bearing = Self::point_bearing(ctx, &self.start, &self.finish);
         let finish_to_start_bearing = Self::point_bearing(ctx, &self.finish, &self.start);
+        let start_finish_distance_m = ctx.point_distance_m(&self.start, &self.finish);
         let from_waypoints = self.create_waypoints_around(
             ctx,
             &self.start,
@@ -298,14 +307,6 @@ impl Generator {
             &finish_to_start_bearing,
             avoid_residential,
         );
-        let start_finish_distance_m = {
-            let (start_lat, start_lon) = ctx.point_coords(&self.start);
-            let (finish_lat, finish_lon) = ctx.point_coords(&self.finish);
-            Haversine.distance(
-                Point::new(start_lon, start_lat),
-                Point::new(finish_lon, finish_lat),
-            )
-        };
 
         let direct_id = Self::next_itinerary_id(next_id);
         let direct_itinerary =
@@ -362,60 +363,34 @@ impl Generator {
         itineraries
     }
 
+    /// Drops itineraries whose snapped waypoints all lie within the dedupe tolerance of an
+    /// earlier itinerary's. Waypoints snap to roads the rules allow, so variations requested far
+    /// apart can land on effectively the same points and would route the same way.
     #[tracing::instrument(skip(self, ctx, itineraries))]
     pub fn dedupe_itineraries(
         &self,
         ctx: &RoutingContext<'_>,
         itineraries: Vec<GeneratedItinerary>,
-    ) -> Result<Vec<GeneratedItinerary>, GeneratorError> {
-        let mut points = Vec::new();
-        let mut point_source_indices = Vec::new();
-        for (idx, itinerary) in itineraries
-            .iter()
-            .enumerate()
-            .filter(|(_, i)| !i.itinerary.waypoints.is_empty())
-        {
-            point_source_indices.push(idx);
-            points.push(
-                itinerary
-                    .itinerary
-                    .waypoints
-                    .iter()
-                    .flat_map(|point_ref| {
-                        let (lat, lon) = ctx.point_coords(point_ref);
-                        [lat, lon]
-                    })
-                    .collect(),
-            );
+    ) -> Vec<GeneratedItinerary> {
+        let rules = &self.rules.generation.waypoint_generation;
+        let tolerance_m = (rules.dedupe_tolerance_ratio * self.trip_size_m(ctx))
+            .max(rules.dedupe_tolerance_min_m);
+        let mut kept: Vec<GeneratedItinerary> = Vec::with_capacity(itineraries.len());
+        for candidate in itineraries {
+            let waypoints = &candidate.itinerary.waypoints;
+            let is_duplicate = kept.iter().any(|existing| {
+                let existing = &existing.itinerary.waypoints;
+                existing.len() == waypoints.len()
+                    && existing
+                        .iter()
+                        .zip(waypoints)
+                        .all(|(a, b)| a == b || ctx.point_distance_m(a, b) <= tolerance_m)
+            });
+            if !is_duplicate {
+                kept.push(candidate);
+            }
         }
-
-        if points.len() < 2 {
-            return Ok(itineraries);
-        }
-        let params = HdbscanHyperParams::builder()
-            .epsilon(0.01)
-            .min_cluster_size(2)
-            .build();
-        let alg = Hdbscan::new(&points, params);
-        let labels = match alg.cluster() {
-            Ok(l) => l,
-            Err(e) => return Err(GeneratorError::Hdbscan { error: e }),
-        };
-
-        let mut deduped_itineraries_map = HashMap::new();
-        labels.iter().enumerate().for_each(|(idx, label)| {
-            deduped_itineraries_map.insert(*label, itineraries[point_source_indices[idx]].clone());
-        });
-
-        let mut deduped_itineraries = deduped_itineraries_map.into_values().collect::<Vec<_>>();
-        deduped_itineraries.append(
-            &mut itineraries
-                .into_iter()
-                .filter(|i| i.itinerary.waypoints.is_empty())
-                .collect(),
-        );
-
-        Ok(deduped_itineraries)
+        kept
     }
 
     #[tracing::instrument(skip(self, ctx, progress, snapping_metadata))]
@@ -426,7 +401,7 @@ impl Generator {
         request_mode: RouteMode,
         request_rules: RouterRules,
         snapping_metadata: Option<(SnapPointMetadata, SnapPointMetadata)>,
-    ) -> Result<Vec<RouteWithStats>, GeneratorError> {
+    ) -> Vec<RouteWithStats> {
         let route_generation_start = Instant::now();
         let mut routes: Vec<Route> = Vec::new();
         let mut next_itinerary_id = 1u64;
@@ -469,7 +444,7 @@ impl Generator {
                     )
                 });
                 let itineraries = hotpath::measure_block!("generator.dedupe_itineraries", {
-                    self.dedupe_itineraries(ctx, itineraries)?
+                    self.dedupe_itineraries(ctx, itineraries)
                 });
                 let itinerary_count = itineraries.len();
 
@@ -593,60 +568,158 @@ impl Generator {
             }
         }
 
-        let clustering = hotpath::measure_block!("generator.cluster_routes", {
-            Clustering::generate(ctx, &routes)
-        });
-        let clustering = match clustering {
-            None => return Ok(Vec::new()),
-            Some(c) => c,
-        };
-
-        let best_routes = hotpath::measure_block!("generator.score_routes", {
-            let mut cluster_best: HashMap<i32, RouteWithStats> = HashMap::new();
-            let mut noise = Vec::new();
-            let _routes: Vec<_> = routes
-                .iter()
-                .enumerate()
-                .map(|(idx, route)| {
-                    let mut stats = route.calc_stats(ctx, &self.rules);
-                    let approx_route = &clustering.approximated_routes[idx];
-                    stats.cluster = Some(clustering.labels[idx] as usize);
-                    stats.approximated_route = approx_route.iter().map(|p| (p[0], p[1])).collect();
-                    let route_with_stats = RouteWithStats {
-                        stats,
-                        route: route.clone(),
-                    };
-
-                    let label = clustering.labels[idx];
-                    if label != -1 {
-                        if let Some(current_best) = cluster_best.get(&label) {
-                            if current_best.stats.score < route_with_stats.stats.score {
-                                cluster_best.insert(label, route_with_stats.clone());
-                            }
-                        } else {
-                            cluster_best.insert(label, route_with_stats.clone());
-                        }
-                    } else {
-                        noise.push(route_with_stats.clone());
-                    }
-                    route_with_stats
-                })
+        let best_routes = hotpath::measure_block!("generator.dedupe_routes", {
+            let projection = {
+                let (lat, lon) = ctx.point_coords(&self.start);
+                Projection::new(lat, lon)
+            };
+            let graph = ctx.graph();
+            let candidates: Vec<(RouteWithStats, Corridor)> = routes
+                .into_par_iter()
+                .map_init(
+                    || RoutingContext::new(graph),
+                    |task_ctx, route| {
+                        let coords: Vec<(f32, f32)> = route
+                            .iter()
+                            .map(|segment| task_ctx.point_coords(segment.get_end_point()))
+                            .collect();
+                        let mut stats = route.calc_stats(task_ctx, &self.rules);
+                        stats.approximated_route =
+                            approximate_route(projection, &coords, APPROXIMATION_POINTS);
+                        let corridor = Corridor::from_coords(projection, coords);
+                        (RouteWithStats { stats, route }, corridor)
+                    },
+                )
                 .collect();
 
-            trace!(route_count = routes.len(), "routes");
-            trace!(noise_count = noise.len(), "noise");
+            // Best score first; ties go to the shorter route, then to generation order.
+            let mut best_first: Vec<usize> = (0..candidates.len()).collect();
+            best_first.sort_by(|&a, &b| {
+                let (a_stats, b_stats) = (&candidates[a].0.stats, &candidates[b].0.stats);
+                b_stats
+                    .score
+                    .total_cmp(&a_stats.score)
+                    .then(a_stats.len_m.total_cmp(&b_stats.len_m))
+                    .then(a.cmp(&b))
+            });
 
-            let mut best_routes = cluster_best.into_iter().map(|el| el.1).collect::<Vec<_>>();
-            noise.sort_by(|a, b| b.stats.score.total_cmp(&a.stats.score));
+            let (routes, corridors): (Vec<_>, Vec<_>) = candidates.into_iter().unzip();
+            let kept = select_distinct(&corridors, &best_first);
+            trace!(
+                route_count = routes.len(),
+                kept_count = kept.len(),
+                "deduped routes"
+            );
 
-            let noise_count = if best_routes.len() > 10 { 3 } else { 10 };
-            best_routes.append(&mut noise[..noise.len().min(noise_count)].to_vec());
-            best_routes
+            let mut routes: Vec<Option<RouteWithStats>> = routes.into_iter().map(Some).collect();
+            kept.into_iter()
+                .enumerate()
+                .filter_map(|(rank, idx)| {
+                    let mut route = routes[idx].take()?;
+                    route.stats.cluster = Some(rank);
+                    Some(route)
+                })
+                .collect::<Vec<_>>()
         });
 
         let route_generation_duration_secs = route_generation_start.elapsed().as_secs();
         info!(route_generation_duration_secs, "Route generation finished");
 
-        Ok(best_routes)
+        best_routes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::{test_dataset_1, RoutingTestContext};
+
+    fn rules(tolerance_ratio: f32, tolerance_min_m: f32) -> RouterRules {
+        let mut rules = RouterRules::default();
+        rules.generation.waypoint_generation.dedupe_tolerance_ratio = tolerance_ratio;
+        rules.generation.waypoint_generation.dedupe_tolerance_min_m = tolerance_min_m;
+        rules
+    }
+
+    fn itinerary(test: &RoutingTestContext, id: u64, waypoints: &[u64]) -> GeneratedItinerary {
+        GeneratedItinerary {
+            id,
+            itinerary: Itinerary::new_start_finish(
+                test.point(1),
+                test.point(9),
+                waypoints.iter().map(|&p| test.point(p)).collect(),
+                3000.,
+            ),
+            metadata: None,
+        }
+    }
+
+    fn kept_ids(itineraries: &[GeneratedItinerary]) -> Vec<u64> {
+        itineraries.iter().map(|i| i.id).collect()
+    }
+
+    #[test]
+    fn dedupe_itineraries_drops_identical_waypoints_and_keeps_the_first() {
+        let test = RoutingTestContext::new(test_dataset_1());
+        let ctx = test.resolver();
+        let generator = Generator::new(test.point(1), test.point(9), None, rules(0., 0.));
+        let itineraries = vec![
+            itinerary(&test, 1, &[3, 8]),
+            itinerary(&test, 2, &[3, 8]),
+            itinerary(&test, 3, &[]),
+        ];
+        assert_eq!(
+            kept_ids(&generator.dedupe_itineraries(&ctx, itineraries)),
+            vec![1, 3]
+        );
+    }
+
+    #[test]
+    fn dedupe_itineraries_uses_the_tolerance_for_every_waypoint() {
+        let test = RoutingTestContext::new(test_dataset_1());
+        let ctx = test.resolver();
+        // Points are id degrees apart on both axes, so neighbours are ~157 km apart.
+        let near = || vec![itinerary(&test, 1, &[3, 8]), itinerary(&test, 2, &[4, 8])];
+        let strict = Generator::new(test.point(1), test.point(9), None, rules(0., 100_000.));
+        assert_eq!(
+            kept_ids(&strict.dedupe_itineraries(&ctx, near())),
+            vec![1, 2]
+        );
+        let loose = Generator::new(test.point(1), test.point(9), None, rules(0., 200_000.));
+        assert_eq!(kept_ids(&loose.dedupe_itineraries(&ctx, near())), vec![1]);
+
+        // Only one waypoint is close: still different itineraries.
+        let one_close = vec![itinerary(&test, 1, &[3, 8]), itinerary(&test, 2, &[4, 1])];
+        assert_eq!(
+            kept_ids(&loose.dedupe_itineraries(&ctx, one_close)),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn dedupe_itineraries_scales_the_tolerance_with_trip_size() {
+        let test = RoutingTestContext::new(test_dataset_1());
+        let ctx = test.resolver();
+        let trip_m = ctx.point_distance_m(&test.point(1), &test.point(9));
+        let neighbours_m = ctx.point_distance_m(&test.point(3), &test.point(4));
+        let ratio = 1.1 * neighbours_m / trip_m;
+        let generator = Generator::new(test.point(1), test.point(9), None, rules(ratio, 0.));
+        let itineraries = vec![itinerary(&test, 1, &[3]), itinerary(&test, 2, &[4])];
+        assert_eq!(
+            kept_ids(&generator.dedupe_itineraries(&ctx, itineraries)),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn dedupe_itineraries_keeps_different_waypoint_counts() {
+        let test = RoutingTestContext::new(test_dataset_1());
+        let ctx = test.resolver();
+        let generator = Generator::new(test.point(1), test.point(9), None, rules(1., 0.));
+        let itineraries = vec![itinerary(&test, 1, &[3]), itinerary(&test, 2, &[3, 8])];
+        assert_eq!(
+            kept_ids(&generator.dedupe_itineraries(&ctx, itineraries)),
+            vec![1, 2]
+        );
     }
 }

@@ -1,4 +1,4 @@
-pub mod clustering;
+pub mod dedupe;
 pub mod generator;
 pub mod itinerary;
 pub mod navigator;

@@ -182,13 +182,39 @@ impl Default for GenerationRulesRetry {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GenerationRulesWaypoints {
     #[serde(default)]
     pub start_finish: GenerationRulesStartFinish,
     #[serde(default)]
     pub round_trip: GenerationRulesRoundTrip,
+    /// Itineraries whose snapped waypoints are all within this fraction of the trip size
+    /// (start-finish distance, or round-trip target distance) of each other are routed once.
+    #[serde(default = "default_dedupe_tolerance_ratio")]
+    pub dedupe_tolerance_ratio: f32,
+    /// Lower bound for the itinerary dedupe tolerance.
+    #[serde(default = "default_dedupe_tolerance_min_m")]
+    pub dedupe_tolerance_min_m: f32,
+}
+
+fn default_dedupe_tolerance_ratio() -> f32 {
+    0.02
+}
+
+fn default_dedupe_tolerance_min_m() -> f32 {
+    300.
+}
+
+impl Default for GenerationRulesWaypoints {
+    fn default() -> Self {
+        Self {
+            start_finish: GenerationRulesStartFinish::default(),
+            round_trip: GenerationRulesRoundTrip::default(),
+            dedupe_tolerance_ratio: default_dedupe_tolerance_ratio(),
+            dedupe_tolerance_min_m: default_dedupe_tolerance_min_m(),
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]

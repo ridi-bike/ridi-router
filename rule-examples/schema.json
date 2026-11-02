@@ -19,15 +19,15 @@
           "priority": 30
         },
         "progression_direction": {
-          "check_junctions_back": 50,
+          "check_junctions_back": 100,
           "enabled": true
         },
         "progression_speed": {
           "check_steps_back": 1000,
           "enabled": false,
-          "last_step_distance_below_avg_with_ratio": 1.3
+          "last_step_distance_below_avg_with_ratio": 1.2999999523162842
         },
-        "step_limit": 30000
+        "step_limit": 60000
       },
       "allOf": [
         {
@@ -53,6 +53,8 @@
           "trigger_min_route_count": 50
         },
         "waypoint_generation": {
+          "dedupe_tolerance_min_m": 300.0,
+          "dedupe_tolerance_ratio": 0.019999999552965164,
           "round_trip": {
             "variation_bearing_deg": [
               -25.0,
@@ -265,7 +267,7 @@
         },
         "progression_direction": {
           "default": {
-            "check_junctions_back": 50,
+            "check_junctions_back": 100,
             "enabled": true
           },
           "allOf": [
@@ -278,7 +280,7 @@
           "default": {
             "check_steps_back": 1000,
             "enabled": false,
-            "last_step_distance_below_avg_with_ratio": 1.3
+            "last_step_distance_below_avg_with_ratio": 1.2999999523162842
           },
           "allOf": [
             {
@@ -287,7 +289,7 @@
           ]
         },
         "step_limit": {
-          "default": 30000,
+          "default": 60000,
           "allOf": [
             {
               "$ref": "#/definitions/BasicRuleStepLimit"
@@ -324,6 +326,8 @@
         },
         "waypoint_generation": {
           "default": {
+            "dedupe_tolerance_min_m": 300.0,
+            "dedupe_tolerance_ratio": 0.019999999552965164,
             "round_trip": {
               "variation_bearing_deg": [
                 -25.0,
@@ -439,6 +443,18 @@
     "GenerationRulesWaypoints": {
       "type": "object",
       "properties": {
+        "dedupe_tolerance_min_m": {
+          "description": "Lower bound for the itinerary dedupe tolerance.",
+          "default": 300.0,
+          "type": "number",
+          "format": "float"
+        },
+        "dedupe_tolerance_ratio": {
+          "description": "Itineraries whose snapped waypoints are all within this fraction of the trip size (start-finish distance, or round-trip target distance) of each other are routed once.",
+          "default": 0.019999999552965164,
+          "type": "number",
+          "format": "float"
+        },
         "round_trip": {
           "default": {
             "variation_bearing_deg": [

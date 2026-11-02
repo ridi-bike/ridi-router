@@ -15,7 +15,7 @@ use crate::{
     },
     route_output::RouteComputation,
     router::{
-        generator::{Generator, GeneratorError, WP_LOOKUP_ALLOWED_HWS},
+        generator::{Generator, WP_LOOKUP_ALLOWED_HWS},
         rules::RouterRules,
     },
     RoutingContext,
@@ -85,9 +85,6 @@ pub enum RoutingOpenError {
 pub enum RoutingGenerationError {
     #[error("Could not find {point} on map")]
     PointNotFound { point: &'static str },
-
-    #[error("Failed to generate routes: {error}")]
-    RouteGeneration { error: GeneratorError },
 }
 
 #[hotpath::measure_all]
@@ -179,15 +176,13 @@ impl RoutingExecutor {
         };
 
         let routes = hotpath::measure_block!("routing_executor.generate_routes", {
-            Generator::new(start, finish, round_trip, request.rules.clone())
-                .generate_routes(
-                    &ctx,
-                    progress,
-                    request.mode,
-                    request.rules,
-                    snapping_metadata,
-                )
-                .map_err(|error| RoutingGenerationError::RouteGeneration { error })?
+            Generator::new(start, finish, round_trip, request.rules.clone()).generate_routes(
+                &ctx,
+                progress,
+                request.mode,
+                request.rules,
+                snapping_metadata,
+            )
         });
 
         Ok(hotpath::measure_block!(
