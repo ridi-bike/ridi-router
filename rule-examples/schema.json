@@ -80,11 +80,13 @@
               270.0,
               315.0
             ],
-            "variation_distances_m": [
-              10000.0,
-              20000.0,
-              30000.0
-            ]
+            "variation_distance_min_m": 2000.0,
+            "variation_distance_ratios": [
+              0.10000000149011612,
+              0.20000000298023224,
+              0.30000001192092896
+            ],
+            "variation_distances_m": []
           }
         }
       },
@@ -353,11 +355,13 @@
                 270.0,
                 315.0
               ],
-              "variation_distances_m": [
-                10000.0,
-                20000.0,
-                30000.0
-              ]
+              "variation_distance_min_m": 2000.0,
+              "variation_distance_ratios": [
+                0.10000000149011612,
+                0.20000000298023224,
+                0.30000001192092896
+              ],
+              "variation_distances_m": []
             }
           },
           "allOf": [
@@ -429,7 +433,27 @@
             "format": "float"
           }
         },
+        "variation_distance_min_m": {
+          "description": "Lower bound for ratio-based waypoint distances, so very short trips still get waypoints far enough out to reach other roads.",
+          "default": 2000.0,
+          "type": "number",
+          "format": "float"
+        },
+        "variation_distance_ratios": {
+          "description": "Waypoint distances from start and finish as fractions of the start-finish distance.",
+          "default": [
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896
+          ],
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
         "variation_distances_m": {
+          "description": "Fixed waypoint distances from start and finish. When set, these are used instead of `variation_distance_ratios`.",
           "default": [],
           "type": "array",
           "items": {
@@ -488,11 +512,13 @@
               270.0,
               315.0
             ],
-            "variation_distances_m": [
-              10000.0,
-              20000.0,
-              30000.0
-            ]
+            "variation_distance_min_m": 2000.0,
+            "variation_distance_ratios": [
+              0.10000000149011612,
+              0.20000000298023224,
+              0.30000001192092896
+            ],
+            "variation_distances_m": []
           },
           "allOf": [
             {

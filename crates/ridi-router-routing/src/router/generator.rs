@@ -95,6 +95,19 @@ impl Generator {
         Haversine.bearing(Point::new(from_lon, from_lat), Point::new(to_lon, to_lat))
     }
 
+    /// Fixed distances when the rules set them, otherwise ratios of the start-finish distance.
+    fn start_finish_variation_distances_m(&self, start_finish_distance_m: f32) -> Vec<f32> {
+        let rules = &self.rules.generation.waypoint_generation.start_finish;
+        if !rules.variation_distances_m.is_empty() {
+            return rules.variation_distances_m.clone();
+        }
+        rules
+            .variation_distance_ratios
+            .iter()
+            .map(|ratio| (ratio * start_finish_distance_m).max(rules.variation_distance_min_m))
+            .collect()
+    }
+
     /// Round-trip target distance, or the start-finish distance.
     fn trip_size_m(&self, ctx: &RoutingContext<'_>) -> f32 {
         match self.round_trip {
@@ -108,6 +121,7 @@ impl Generator {
         ctx: &RoutingContext<'_>,
         point: &MapDataPointRef,
         bearing: &f32,
+        distances_m: &[f32],
         avoid_residential: bool,
     ) -> Vec<GeneratedWaypoint> {
         let (point_lat, point_lon) = ctx.point_coords(point);
@@ -121,29 +135,23 @@ impl Generator {
             .iter()
             .filter(|deg| deg.sub(bearing).abs() > 20.)
             .flat_map(|bearing| {
-                self.rules
-                    .generation
-                    .waypoint_generation
-                    .start_finish
-                    .variation_distances_m
-                    .iter()
-                    .filter_map(|distance| {
-                        let wp_geo = Haversine.destination(point_geo, *bearing, *distance);
-                        let snapped = ctx.closest_to_coords(
-                            wp_geo.y(),
-                            wp_geo.x(),
-                            &self.rules,
-                            avoid_residential,
-                            Some(&WP_LOOKUP_ALLOWED_HWS),
-                        )?;
-                        Some(GeneratedWaypoint {
-                            requested: Coords {
-                                lat: wp_geo.y(),
-                                lon: wp_geo.x(),
-                            },
-                            snapped,
-                        })
+                distances_m.iter().filter_map(|distance| {
+                    let wp_geo = Haversine.destination(point_geo, *bearing, *distance);
+                    let snapped = ctx.closest_to_coords(
+                        wp_geo.y(),
+                        wp_geo.x(),
+                        &self.rules,
+                        avoid_residential,
+                        Some(&WP_LOOKUP_ALLOWED_HWS),
+                    )?;
+                    Some(GeneratedWaypoint {
+                        requested: Coords {
+                            lat: wp_geo.y(),
+                            lon: wp_geo.x(),
+                        },
+                        snapped,
                     })
+                })
             })
             .collect()
     }
@@ -295,16 +303,19 @@ impl Generator {
         let start_to_finish_bearing = Self::point_bearing(ctx, &self.start, &self.finish);
         let finish_to_start_bearing = Self::point_bearing(ctx, &self.finish, &self.start);
         let start_finish_distance_m = ctx.point_distance_m(&self.start, &self.finish);
+        let distances_m = self.start_finish_variation_distances_m(start_finish_distance_m);
         let from_waypoints = self.create_waypoints_around(
             ctx,
             &self.start,
             &start_to_finish_bearing,
+            &distances_m,
             avoid_residential,
         );
         let to_waypoints = self.create_waypoints_around(
             ctx,
             &self.finish,
             &finish_to_start_bearing,
+            &distances_m,
             avoid_residential,
         );
 
@@ -632,6 +643,7 @@ impl Generator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::router::rules::GenerationRulesStartFinish;
     use crate::test_utils::{test_dataset_1, RoutingTestContext};
 
     fn rules(tolerance_ratio: f32, tolerance_min_m: f32) -> RouterRules {
@@ -721,5 +733,48 @@ mod tests {
             kept_ids(&generator.dedupe_itineraries(&ctx, itineraries)),
             vec![1, 2]
         );
+    }
+
+    #[test]
+    fn start_finish_variation_distances_prefer_fixed_metres() {
+        let mut rules = RouterRules::default();
+        let start_finish = &mut rules.generation.waypoint_generation.start_finish;
+        start_finish.variation_distances_m = vec![5_000.];
+        start_finish.variation_distance_ratios = vec![0.5];
+        let test = RoutingTestContext::new(test_dataset_1());
+        let generator = Generator::new(test.point(1), test.point(9), None, rules);
+        assert_eq!(
+            generator.start_finish_variation_distances_m(100_000.),
+            vec![5_000.]
+        );
+    }
+
+    #[test]
+    fn start_finish_variation_distances_scale_with_trip_and_respect_the_minimum() {
+        let mut rules = RouterRules::default();
+        let start_finish = &mut rules.generation.waypoint_generation.start_finish;
+        start_finish.variation_distances_m = Vec::new();
+        start_finish.variation_distance_ratios = vec![0.125, 0.25];
+        start_finish.variation_distance_min_m = 1_000.;
+        let test = RoutingTestContext::new(test_dataset_1());
+        let generator = Generator::new(test.point(1), test.point(9), None, rules);
+        assert_eq!(
+            generator.start_finish_variation_distances_m(40_000.),
+            vec![5_000., 10_000.]
+        );
+        assert_eq!(
+            generator.start_finish_variation_distances_m(2_000.),
+            vec![1_000., 1_000.]
+        );
+    }
+
+    #[test]
+    fn start_finish_rules_default_to_ratios_and_keep_explicit_metres() {
+        let default: GenerationRulesStartFinish = serde_json::from_str("{}").unwrap();
+        assert!(default.variation_distances_m.is_empty());
+        assert_eq!(default.variation_distance_ratios, vec![0.1, 0.2, 0.3]);
+        let explicit: GenerationRulesStartFinish =
+            serde_json::from_str(r#"{"variation_distances_m": [3000]}"#).unwrap();
+        assert_eq!(explicit.variation_distances_m, vec![3000.]);
     }
 }

@@ -128,16 +128,35 @@ pub struct BasicRules {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GenerationRulesStartFinish {
+    /// Fixed waypoint distances from start and finish. When set, these are used instead of
+    /// `variation_distance_ratios`.
     #[serde(default)]
     pub variation_distances_m: Vec<f32>,
+    /// Waypoint distances from start and finish as fractions of the start-finish distance.
+    #[serde(default = "default_start_finish_variation_distance_ratios")]
+    pub variation_distance_ratios: Vec<f32>,
+    /// Lower bound for ratio-based waypoint distances, so very short trips still get waypoints
+    /// far enough out to reach other roads.
+    #[serde(default = "default_start_finish_variation_distance_min_m")]
+    pub variation_distance_min_m: f32,
     #[serde(default)]
     pub variation_bearing_deg: Vec<f32>,
+}
+
+fn default_start_finish_variation_distance_ratios() -> Vec<f32> {
+    vec![0.1, 0.2, 0.3]
+}
+
+fn default_start_finish_variation_distance_min_m() -> f32 {
+    2000.
 }
 
 impl Default for GenerationRulesStartFinish {
     fn default() -> Self {
         Self {
-            variation_distances_m: vec![10000., 20000., 30000.],
+            variation_distances_m: Vec::new(),
+            variation_distance_ratios: default_start_finish_variation_distance_ratios(),
+            variation_distance_min_m: default_start_finish_variation_distance_min_m(),
             variation_bearing_deg: vec![0., 45., 90., 135., 180., 225., 270., 315.],
         }
     }
