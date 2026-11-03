@@ -91,9 +91,22 @@ export function cellIdAt(longitude: number, latitude: number): string {
   return gridIdAt(longitude, latitude, CELL_SIZE_DEGREES);
 }
 
-export function tileIdAt(release: RmdfRelease, longitude: number, latitude: number): string {
-  const [col, row] = gridIdAt(longitude, latitude, release.tile_size_degrees).split('_');
-  return `tile_${col}_${row}.rmdf`;
+export function tilePositionFromFilename(filename: string): { col: number; row: number } | null {
+  const match = /^tile_(\d+)_(\d+)\.rmdf$/.exec(filename);
+  return match ? { col: Number(match[1]), row: Number(match[2]) } : null;
+}
+
+/** Map longitudes can run past ±180 after panning across the antimeridian. */
+export function normalizeLongitude(longitude: number): number {
+  return ((((longitude + 180) % 360) + 360) % 360) - 180;
+}
+
+/** A west/east span in -180..180; a span that wraps or covers the globe becomes the whole range. */
+export function normalizeLongitudeRange(west: number, east: number): Pick<RmdfBounds, 'lon_min' | 'lon_max'> {
+  if (east - west >= 360) return { lon_min: -180, lon_max: 180 };
+  const lonMin = normalizeLongitude(west);
+  const lonMax = normalizeLongitude(east);
+  return lonMin <= lonMax ? { lon_min: lonMin, lon_max: lonMax } : { lon_min: -180, lon_max: 180 };
 }
 
 export function boundsIntersect(a: RmdfBounds, b: RmdfBounds): boolean {

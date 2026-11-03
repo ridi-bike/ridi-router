@@ -233,6 +233,11 @@ enum CliMode {
         replace: bool,
 
         #[arg(long)]
+        /// Let tiles on the edge of the input replace tiles of the current release that extend
+        /// beyond the input (by default they are kept, as the input holds only its own side)
+        overwrite_edges: bool,
+
+        #[arg(long)]
         /// Actually write; without it only the plan is printed
         execute: bool,
     },
@@ -401,6 +406,7 @@ impl RouterRunner {
         to_dir: Option<PathBuf>,
         prefix: String,
         replace: bool,
+        overwrite_edges: bool,
         execute: bool,
     ) -> anyhow::Result<()> {
         let store: Box<dyn ObjectStore> = match to_dir {
@@ -413,6 +419,7 @@ impl RouterRunner {
             prefix,
             execute,
             replace,
+            overwrite_edges,
         })
     }
 
@@ -445,8 +452,9 @@ impl RouterRunner {
                 to_dir,
                 prefix,
                 replace,
+                overwrite_edges,
                 execute,
-            } => Self::run_publish_tiles(input, to_dir, prefix, replace, execute)
+            } => Self::run_publish_tiles(input, to_dir, prefix, replace, overwrite_edges, execute)
                 .map_err(|error| RouterRunnerError::PublishTiles { error }),
             #[cfg(feature = "rule-schema-writer")]
             CliMode::RuleSchemaWrite { destination } => {

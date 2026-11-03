@@ -224,11 +224,14 @@ export default function RideScreen() {
   }, [bottomDrawerTranslateY, mode, routeGeneration.selectedPlanId, topDrawerTranslateY]);
 
   // Until a GPS fix arrives, start over the downloaded routing data rather than a fixed city.
+  // Set once the map has been centered (on the tiles or the GPS fix); after that it stays put.
   const centeredOnLocation = useRef(false);
   const [mapLoaded, setMapLoaded] = useState(false);
   const installedCenter = useMemo(() => tilesCenter(manifestTiles), [manifestTiles]);
   useEffect(() => {
+    // Once only: later tile-table changes (each finished download) must not move the map.
     if (!mapLoaded || !installedCenter || centeredOnLocation.current || routeGeneration.selectedPlanId) return;
+    centeredOnLocation.current = true;
     cameraRef.current?.jumpTo({ center: installedCenter, zoom: 10 });
   }, [mapLoaded, installedCenter, routeGeneration.selectedPlanId]);
 

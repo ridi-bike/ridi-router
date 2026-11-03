@@ -3,7 +3,7 @@ import { ActivityIndicator, Text, View } from 'react-native';
 import { Provider as TinyBaseReactProvider } from 'tinybase/ui-react';
 
 import { LOCAL_STORE_ID, SYNCED_STORE_ID } from './ids';
-import { destroyTinyBaseRuntime, initializeTinyBaseRuntime, type TinyBaseRuntime } from './runtime';
+import { getTinyBaseRuntime, type TinyBaseRuntime } from './runtime';
 import { RmdfDownloadManagerProvider } from '@/rmdf/RmdfDownloadManagerContext';
 
 export function TinyBaseProvider({ children }: PropsWithChildren) {
@@ -12,24 +12,15 @@ export function TinyBaseProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     let cancelled = false;
-    let initialized: TinyBaseRuntime | null = null;
-
-    void initializeTinyBaseRuntime()
+    getTinyBaseRuntime()
       .then((result) => {
-        initialized = result;
-        if (cancelled) {
-          void destroyTinyBaseRuntime(result);
-          return;
-        }
-        setRuntime(result);
+        if (!cancelled) setRuntime(result);
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause : new Error('TinyBase initialization failed.'));
       });
-
     return () => {
       cancelled = true;
-      if (initialized) void destroyTinyBaseRuntime(initialized);
     };
   }, []);
 

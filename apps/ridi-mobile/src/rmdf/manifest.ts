@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { NETWORK_DISRUPTED_WARNING, RMDF_BASE_URL, RMDF_INDEX_URL, RMDF_SUPPORTED_FORMAT_VERSION } from './constants';
-import { getRmdfReleaseCacheDirectory, readTextIfExists } from './storage';
+import { getRmdfReleaseCacheDirectory, readTextIfExists, replaceFile } from './storage';
 import type { RmdfBounds, RmdfChunkManifest, RmdfChunkSummary, RmdfManifestTile, RmdfRelease, RmdfReleaseLoadResult, RmdfTileIndex } from './types';
 
 function isNumber(value: unknown): value is number {
@@ -104,8 +104,17 @@ function selectRelease(index: RmdfTileIndex): RmdfRelease {
   return release;
 }
 
+/** The server could not be reached or failed; unlike a bad response, the cache is worth using. */
+class UnreachableError extends Error {}
+
 async function fetchJson(url: string): Promise<unknown> {
-  const response = await fetch(url, { cache: 'no-store' } as RequestInit);
+  let response: Response;
+  try {
+    response = await fetch(url, { cache: 'no-store' } as RequestInit);
+  } catch (error) {
+    throw new UnreachableError(error instanceof Error ? error.message : `${url} could not be reached.`);
+  }
+  if (response.status >= 500) throw new UnreachableError(`${url} failed with HTTP ${response.status}.`);
   if (!response.ok) throw new Error(`${url} failed with HTTP ${response.status}.`);
   return response.json();
 }
@@ -117,6 +126,24 @@ async function ensureReleaseCacheDirectory(subdirectory = ''): Promise<string> {
   return directory;
 }
 
+async function writeCacheFile(path: string, json: unknown): Promise<void> {
+  const temp = `${path}.tmp`;
+  await FileSystem.writeAsStringAsync(temp, JSON.stringify(json));
+  await replaceFile(temp, path);
+}
+
+/** Cached JSON, or null when missing or unreadable (a damaged file is removed so it is refetched). */
+async function readCacheFile(path: string): Promise<unknown> {
+  const text = await readTextIfExists(path).catch(() => null);
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    await FileSystem.deleteAsync(path, { idempotent: true });
+    return null;
+  }
+}
+
 function cachedIndexPath(): string {
   return `${getRmdfReleaseCacheDirectory()}index.json`;
 }
@@ -125,21 +152,36 @@ function cachedChunkPath(releaseId: string, chunkId: string): string {
   return `${getRmdfReleaseCacheDirectory()}${releaseId}/${chunkId}.json`;
 }
 
-/** Fetches the current release, falling back to the last one seen when offline. */
-export async function loadRmdfRelease(): Promise<RmdfReleaseLoadResult> {
-  try {
-    const json = await fetchJson(RMDF_INDEX_URL);
-    const release = selectRelease(parseRmdfIndex(json));
-    await ensureReleaseCacheDirectory();
-    await FileSystem.writeAsStringAsync(cachedIndexPath(), JSON.stringify(json));
-    return { release, source: 'remote', deleteOnly: false };
-  } catch (remoteError) {
-    const text = await readTextIfExists(cachedIndexPath()).catch(() => null);
-    if (text) {
-      return { release: selectRelease(parseRmdfIndex(JSON.parse(text))), source: 'cache', deleteOnly: true, warning: NETWORK_DISRUPTED_WARNING };
-    }
-    throw remoteError instanceof Error ? remoteError : new Error('Tile index request failed and no cache exists.');
+/** Chunk caches of releases other than `releaseId` are never read again. */
+async function pruneReleaseCaches(releaseId: string): Promise<void> {
+  const directory = getRmdfReleaseCacheDirectory();
+  const entries = await FileSystem.readDirectoryAsync(directory).catch(() => [] as string[]);
+  for (const entry of entries) {
+    if (entry === releaseId || entry.endsWith('.json') || entry.endsWith('.tmp')) continue;
+    await FileSystem.deleteAsync(`${directory}${entry}`, { idempotent: true }).catch(() => undefined);
   }
+}
+
+/**
+ * Fetches the current release. Only when the server cannot be reached does it fall back to the
+ * last release seen (downloads then stay disabled); a reachable server without a release for this
+ * app's format is an error, not "offline".
+ */
+export async function loadRmdfRelease(): Promise<RmdfReleaseLoadResult> {
+  let json: unknown;
+  try {
+    json = await fetchJson(RMDF_INDEX_URL);
+  } catch (error) {
+    if (!(error instanceof UnreachableError)) throw error;
+    const cached = await readCacheFile(cachedIndexPath());
+    if (!cached) throw error;
+    return { release: selectRelease(parseRmdfIndex(cached)), source: 'cache', deleteOnly: true, warning: NETWORK_DISRUPTED_WARNING };
+  }
+  const release = selectRelease(parseRmdfIndex(json));
+  await ensureReleaseCacheDirectory();
+  await writeCacheFile(cachedIndexPath(), json);
+  await pruneReleaseCaches(release.release_id);
+  return { release, source: 'remote', deleteOnly: false };
 }
 
 const chunkRequests = new Map<string, Promise<RmdfChunkManifest>>();
@@ -158,12 +200,12 @@ export function loadRmdfChunk(release: RmdfRelease, chunk: RmdfChunkSummary): Pr
 
 async function loadChunkUncached(releaseId: string, chunk: RmdfChunkSummary): Promise<RmdfChunkManifest> {
   const path = cachedChunkPath(releaseId, chunk.id);
-  const cached = await readTextIfExists(path).catch(() => null);
-  if (cached) return parseRmdfChunkManifest(JSON.parse(cached));
+  const cached = await readCacheFile(path);
+  if (cached) return parseRmdfChunkManifest(cached);
   const json = await fetchJson(`${RMDF_BASE_URL}${chunk.manifest}`);
   const manifest = parseRmdfChunkManifest(json);
   await ensureReleaseCacheDirectory(`${releaseId}/`);
-  await FileSystem.writeAsStringAsync(path, JSON.stringify(json));
+  await writeCacheFile(path, json);
   return manifest;
 }
 

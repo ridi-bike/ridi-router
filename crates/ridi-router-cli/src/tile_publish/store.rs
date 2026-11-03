@@ -134,29 +134,30 @@ impl S3Store {
     ) -> Result<Option<ureq::Response>, StoreError> {
         let canonical_path = sigv4::uri_encode_path(&format!("/{}/{key}", self.bucket));
         let payload_hash = sigv4::sha256_hex(body);
-        let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-        let mut headers = vec![
-            ("host".to_string(), self.host.clone()),
-            ("x-amz-content-sha256".to_string(), payload_hash.clone()),
-            ("x-amz-date".to_string(), amz_date.clone()),
-        ];
-        for (name, value) in extra_headers {
-            headers.push((name.to_string(), value.to_string()));
-        }
-        let authorization = sigv4::authorization(
-            &self.credentials,
-            method,
-            &canonical_path,
-            &headers,
-            &payload_hash,
-            &amz_date,
-        );
 
         let mut last_error = String::new();
         for attempt in 0..4 {
             if attempt > 0 {
                 std::thread::sleep(Duration::from_millis(500 << attempt));
             }
+            // Signed per attempt: a signature is only valid for 15 minutes around x-amz-date.
+            let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+            let mut headers = vec![
+                ("host".to_string(), self.host.clone()),
+                ("x-amz-content-sha256".to_string(), payload_hash.clone()),
+                ("x-amz-date".to_string(), amz_date.clone()),
+            ];
+            for (name, value) in extra_headers {
+                headers.push((name.to_string(), value.to_string()));
+            }
+            let authorization = sigv4::authorization(
+                &self.credentials,
+                method,
+                &canonical_path,
+                &headers,
+                &payload_hash,
+                &amz_date,
+            );
             let mut request = self
                 .agent
                 .request(method, &format!("{}{canonical_path}", self.endpoint))

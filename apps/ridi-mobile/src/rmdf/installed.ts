@@ -2,7 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import type { Store } from 'tinybase';
 
 import { RMDF_SUPPORTED_FORMAT_VERSION } from './constants';
-import { ensureRmdfDirectory, getRmdfManifestPath } from './storage';
+import { ensureRmdfDirectory, getRmdfManifestPath, replaceFile } from './storage';
 import type { RmdfInstalledManifest, RmdfManifestTile } from './types';
 import { RMDF_TILES_TABLE } from '@/tinybase/ids';
 import { rowInstalledTileMeta } from '@/tinybase/local/rmdfTiles';
@@ -16,16 +16,18 @@ export function getInstalledTiles(store: Store): RmdfManifestTile[] {
   return tiles;
 }
 
-/** Grid size a tile was generated with, recovered from its grid position (origin -180/-90). */
+/**
+ * Grid size a tile was generated with, from its extent. Only a fallback for stores written before
+ * the release tile size was recorded; release tiles are exactly one grid cell wide.
+ */
 export function tileSizeDegrees(tile: RmdfManifestTile): number {
-  const size = tile.col > 0 ? (tile.bounds.lon_min + 180) / tile.col : (tile.bounds.lat_min + 90) / Math.max(tile.row, 1);
-  return Math.round(size * 10000) / 10000;
+  return Math.round((tile.bounds.lon_max - tile.bounds.lon_min) * 10000) / 10000;
 }
 
-export function buildInstalledManifest(tiles: RmdfManifestTile[]): RmdfInstalledManifest {
+export function buildInstalledManifest(tiles: RmdfManifestTile[], tileSizeDegreesValue: number): RmdfInstalledManifest {
   return {
     version: 'ridi-mobile',
-    tile_size_degrees: tiles.length ? tileSizeDegrees(tiles[0]) : 0.1,
+    tile_size_degrees: tileSizeDegreesValue,
     format_version: RMDF_SUPPORTED_FORMAT_VERSION,
     generated_at: new Date().toISOString(),
     source_files: [],
@@ -46,9 +48,11 @@ export function writeInstalledManifest(store: Store): Promise<void> {
     await ensureRmdfDirectory();
     const path = getRmdfManifestPath();
     const temp = `${path}.tmp`;
-    await FileSystem.writeAsStringAsync(temp, JSON.stringify(buildInstalledManifest(getInstalledTiles(store))));
-    await FileSystem.deleteAsync(path, { idempotent: true });
-    await FileSystem.moveAsync({ from: temp, to: path });
+    const tiles = getInstalledTiles(store);
+    const stored = store.getValue('rmdf_tile_size_degrees');
+    const size = typeof stored === 'number' && stored > 0 ? stored : tiles.length ? tileSizeDegrees(tiles[0]) : 0.1;
+    await FileSystem.writeAsStringAsync(temp, JSON.stringify(buildInstalledManifest(tiles, size)));
+    await replaceFile(temp, path);
   });
   return pendingWrite;
 }

@@ -41,6 +41,10 @@ export const localTableSchemas = {
 export const localValueSchemas = {
   local_schema_version: z.number().default(1),
   rmdf_last_reconciled_at: z.string().optional(),
+  // Tile grid of the release the installed tiles come from; the router manifest needs it.
+  rmdf_tile_size_degrees: z.number().optional(),
+  // RMDF format the installed tiles were last checked against (see reconcile).
+  rmdf_checked_format_version: z.number().optional(),
   rmdf_download_warning: z.string().optional(),
   rmdf_download_last_summary: z.string().optional(),
 };

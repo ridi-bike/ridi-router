@@ -71,37 +71,36 @@ export function markRmdfManifestTileDownloaded(localStore: Store, tile: RmdfMani
   localStore.delCell(RMDF_TILES_TABLE, tile.filename, 'error_message');
 }
 
-export function markRmdfTileRemoteOnly(localStore: Store, filename: string, checkedAt?: string) {
-  const row = { ...localStore.getRow(RMDF_TILES_TABLE, filename) };
-  delete row.installed_checksum;
-  delete row.installed_meta;
-  delete row.downloaded_at;
-  localStore.setRow(RMDF_TILES_TABLE, filename, {
-    ...row,
-    tile_id: filename,
-    filename,
-    local_path: getRmdfTilePath(filename),
-    status: 'remoteOnly',
-    selected: false,
-    ...(checkedAt ? { last_checked_at: checkedAt } : null),
-  });
+/** The tile is not on disk; a row without a download, failure or selection is just dropped. */
+export function markRmdfTileRemoteOnly(localStore: Store, filename: string) {
+  localStore.delRow(RMDF_TILES_TABLE, filename);
+}
+
+/** A row that only records a selection carries no state worth keeping once deselected. */
+function isSelectionOnlyRow(localStore: Store, filename: string): boolean {
+  const row = localStore.getRow(RMDF_TILES_TABLE, filename);
+  return !row.installed_meta && row.status !== 'queued' && row.status !== 'downloading' && row.status !== 'failed';
 }
 
 export function setRmdfTilesSelected(localStore: Store, tiles: RmdfManifestTile[], selected: boolean) {
   localStore.transaction(() => {
     for (const tile of tiles) {
-      if (selected) upsertRmdfManifestTile(localStore, tile);
-      if (selected || localStore.hasRow(RMDF_TILES_TABLE, tile.filename)) {
-        localStore.setCell(RMDF_TILES_TABLE, tile.filename, 'selected', selected);
+      if (selected) {
+        upsertRmdfManifestTile(localStore, tile);
+        localStore.setCell(RMDF_TILES_TABLE, tile.filename, 'selected', true);
+      } else {
+        clearRmdfTileSelection(localStore, [tile.filename]);
       }
     }
   });
 }
 
 export function clearRmdfTileSelection(localStore: Store, filenames: Iterable<string>) {
-  for (const filename of filenames) {
-    if (localStore.hasRow(RMDF_TILES_TABLE, filename)) {
-      localStore.setCell(RMDF_TILES_TABLE, filename, 'selected', false);
+  localStore.transaction(() => {
+    for (const filename of filenames) {
+      if (!localStore.hasRow(RMDF_TILES_TABLE, filename)) continue;
+      if (isSelectionOnlyRow(localStore, filename)) localStore.delRow(RMDF_TILES_TABLE, filename);
+      else localStore.setCell(RMDF_TILES_TABLE, filename, 'selected', false);
     }
-  }
+  });
 }

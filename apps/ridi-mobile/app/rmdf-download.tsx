@@ -1,7 +1,7 @@
 import { Camera, GeoJSONSource, Images, Layer, Map, type MapProps } from '@maplibre/maplibre-react-native';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -26,7 +26,10 @@ import {
   formatBytes,
   gridLevelForZoom,
   releaseCenter,
-  tileIdAt,
+  hitTestTile,
+  normalizeLongitude,
+  normalizeLongitudeRange,
+  tilePositionFromFilename,
   tilesInCell,
   tileStatesToGeoJson,
   tileStatus,
@@ -34,7 +37,7 @@ import {
 } from '@/rmdf/tiles';
 import type { RmdfBounds, RmdfChunkSummary, RmdfManifestTile, RmdfRelease } from '@/rmdf/types';
 import { useLocalStore, useRmdfDownloadingTileIds, useRmdfQueuedTileIds, useRmdfTileTable } from '@/tinybase/hooks';
-import { adoptUntrackedTiles, listUntrackedTileFiles, reconcileLocalRmdfTiles } from '@/tinybase/local/rmdfReconcile';
+import { adoptUntrackedTiles, listUntrackedTileFiles, reconcileLocalRmdfTiles, refreshPendingTiles } from '@/tinybase/local/rmdfReconcile';
 import { clearRmdfTileSelection, rowInstalledTileMeta, rowTileMeta, setRmdfTilesSelected } from '@/tinybase/local/rmdfTiles';
 
 type LoadState =
@@ -45,8 +48,6 @@ type LoadState =
 type ViewState = { zoom: number; bounds: RmdfBounds };
 
 const INITIAL_ZOOM = 6;
-// Chunk manifests to fetch for the viewport at once; more means the view is zoomed out too far.
-const MAX_VISIBLE_CHUNK_LOADS = 6;
 
 const TILE_COLORS = {
   downloaded: '#22c55e',
@@ -99,52 +100,45 @@ export default function RmdfDownloadScreen() {
   const [loadState, setLoadState] = useState<LoadState>({ kind: 'loading' });
   const [cameraCenter, setCameraCenter] = useState<[number, number] | null>(null);
   const [view, setView] = useState<ViewState | null>(null);
+  // Keyed by `<release id>/<chunk id>`, so loads still in flight from an older release never mix in.
   const [chunkTiles, setChunkTiles] = useState<globalThis.Map<string, RmdfManifestTile[]>>(() => new globalThis.Map());
   const [chunkError, setChunkError] = useState<string | null>(null);
-  const loadingChunks = useRef(new Set<string>());
 
   const release = loadState.kind === 'ready' ? loadState.release : null;
 
-  const ensureChunks = useCallback(
-    async (target: RmdfRelease, chunks: RmdfChunkSummary[]): Promise<RmdfManifestTile[]> => {
-      const loaded = await Promise.all(
-        chunks.map(async (chunk) => {
-          const manifest = await loadRmdfChunk(target, chunk);
-          if (!loadingChunks.current.has(chunk.id)) {
-            loadingChunks.current.add(chunk.id);
-            setChunkTiles((current) => new globalThis.Map(current).set(chunk.id, manifest.tiles));
-          }
-          return manifest.tiles;
-        })
-      );
-      return loaded.flat();
-    },
-    []
-  );
+  const ensureChunks = useCallback(async (target: RmdfRelease, chunks: RmdfChunkSummary[]): Promise<RmdfManifestTile[]> => {
+    const loaded = await Promise.all(
+      chunks.map(async (chunk) => {
+        const manifest = await loadRmdfChunk(target, chunk);
+        const key = `${target.release_id}/${chunk.id}`;
+        setChunkTiles((current) => (current.has(key) ? current : new globalThis.Map(current).set(key, manifest.tiles)));
+        return manifest.tiles;
+      })
+    );
+    return loaded.flat();
+  }, []);
 
   const load = useCallback(async () => {
     setLoadState({ kind: 'loading' });
     try {
       const result = await loadRmdfRelease();
-      await reconcileLocalRmdfTiles(localStore, result.release);
-      loadingChunks.current.clear();
-      setChunkTiles(new globalThis.Map());
-      setLoadState({ kind: 'ready', release: result.release, deleteOnly: result.deleteOnly, warning: result.warning });
-      setCameraCenter(await resolveInitialCamera(result.release));
-      // Chunks holding tiles on disk are needed to tell which are outdated and to re-register
-      // files the local store no longer lists.
-      const chunkIds = new Set<string>();
-      for (const row of Object.values(localStore.getTable('rmdf_tiles'))) {
-        const meta = rowInstalledTileMeta(row);
-        if (meta) chunkIds.add(chunkIdForTile(meta, result.release));
-      }
+      const target = result.release;
+      await reconcileLocalRmdfTiles(localStore, target);
+      setLoadState({ kind: 'ready', release: target, deleteOnly: result.deleteOnly, warning: result.warning });
+      setCameraCenter(await resolveInitialCamera(target));
+      // Chunks of every tile the store or the disk knows about: installed ones to spot outdated
+      // tiles, selected and queued ones to move them to this release, untracked files to adopt.
       const untracked = await listUntrackedTileFiles(localStore);
+      const known = Object.values(localStore.getTable('rmdf_tiles')).flatMap((row) => rowInstalledTileMeta(row) ?? rowTileMeta(row) ?? []);
+      const chunkIds = new Set(known.map((tile) => chunkIdForTile(tile, target)));
       for (const filename of untracked) {
-        const match = /^tile_(\d+)_(\d+)\.rmdf$/.exec(filename);
-        if (match) chunkIds.add(chunkIdForTile({ col: Number(match[1]), row: Number(match[2]) }, result.release));
+        const position = tilePositionFromFilename(filename);
+        if (position) chunkIds.add(chunkIdForTile(position, target));
       }
-      const tiles = await ensureChunks(result.release, result.release.chunks.filter((chunk) => chunkIds.has(chunk.id)));
-      if (untracked.length > 0) await adoptUntrackedTiles(localStore, new globalThis.Map(tiles.map((tile) => [tile.filename, tile])));
+      const chunks = target.chunks.filter((chunk) => chunkIds.has(chunk.id));
+      const tiles = new globalThis.Map((await ensureChunks(target, chunks)).map((tile) => [tile.filename, tile]));
+      refreshPendingTiles(localStore, tiles);
+      if (untracked.length > 0) await adoptUntrackedTiles(localStore, tiles);
     } catch (error) {
       setLoadState({ kind: 'error', message: error instanceof Error ? error.message : 'Failed to load map data index.' });
     }
@@ -159,8 +153,9 @@ export default function RmdfDownloadScreen() {
 
   useEffect(() => {
     if (!release || !view || level === 'chunk') return;
-    const visible = release.chunks.filter((chunk) => boundsIntersect(chunk.bounds, view.bounds));
-    const missing = visible.filter((chunk) => !chunkTiles.has(chunk.id)).slice(0, MAX_VISIBLE_CHUNK_LOADS);
+    const missing = release.chunks.filter(
+      (chunk) => boundsIntersect(chunk.bounds, view.bounds) && !chunkTiles.has(`${release.release_id}/${chunk.id}`)
+    );
     if (missing.length === 0) return;
     ensureChunks(release, missing)
       .then(() => setChunkError(null))
@@ -169,9 +164,13 @@ export default function RmdfDownloadScreen() {
 
   const loadedTiles = useMemo(() => {
     const byFilename = new globalThis.Map<string, RmdfManifestTile>();
-    for (const tiles of chunkTiles.values()) for (const tile of tiles) byFilename.set(tile.filename, tile);
+    if (!release) return byFilename;
+    for (const [key, tiles] of chunkTiles) {
+      if (!key.startsWith(`${release.release_id}/`)) continue;
+      for (const tile of tiles) byFilename.set(tile.filename, tile);
+    }
     return byFilename;
-  }, [chunkTiles]);
+  }, [chunkTiles, release]);
 
   const tileState = useMemo(() => ({ rows, queuedIds, downloadingIds }), [rows, queuedIds, downloadingIds]);
 
@@ -223,15 +222,17 @@ export default function RmdfDownloadScreen() {
     return { count, bytes };
   }, [rows]);
 
+  // Reads the store, not `rows`: this runs after awaiting chunks, when `rows` may be stale.
   const toggleTiles = (tiles: RmdfManifestTile[]) => {
     if (tiles.length === 0) return;
-    const allSelected = tiles.every((tile) => rows[tile.filename]?.selected === true);
+    const allSelected = tiles.every((tile) => localStore.getCell('rmdf_tiles', tile.filename, 'selected') === true);
     setRmdfTilesSelected(localStore, tiles, !allSelected);
   };
 
   const handleMapPress: NonNullable<MapProps['onPress']> = async (event) => {
     if (!release) return;
-    const [longitude, latitude] = event.nativeEvent.lngLat;
+    const [rawLongitude, latitude] = event.nativeEvent.lngLat;
+    const longitude = normalizeLongitude(rawLongitude);
     const chunk = chunkAt(release, longitude, latitude);
     if (!chunk || (level === 'chunk' && !boundsContain(chunkDrawBounds(chunk), longitude, latitude))) return;
     try {
@@ -239,8 +240,8 @@ export default function RmdfDownloadScreen() {
       if (level === 'chunk') toggleTiles(tiles);
       else if (level === 'cell') toggleTiles(tilesInCell(release, tiles, cellIdAt(longitude, latitude)));
       else {
-        const filename = tileIdAt(release, longitude, latitude);
-        toggleTiles(tiles.filter((tile) => tile.filename === filename));
+        const tile = hitTestTile(tiles, longitude, latitude);
+        if (tile) toggleTiles([tile]);
       }
     } catch (error) {
       setChunkError(error instanceof Error ? error.message : 'Failed to load map data.');
@@ -250,7 +251,7 @@ export default function RmdfDownloadScreen() {
   const handleRegionDidChange: NonNullable<MapProps['onRegionDidChange']> = (event) => {
     const { zoom, bounds } = event.nativeEvent;
     const [west, south, east, north] = bounds;
-    setView({ zoom, bounds: { lon_min: west, lat_min: south, lon_max: east, lat_max: north } });
+    setView({ zoom, bounds: { ...normalizeLongitudeRange(west, east), lat_min: south, lat_max: north } });
   };
 
   const confirmCellular = async (start: () => Promise<void>) => {
@@ -273,7 +274,8 @@ export default function RmdfDownloadScreen() {
     const tiles = selection.downloadable;
     await confirmCellular(async () => {
       await rmdfDownloadManager.enqueue(tiles);
-      clearRmdfTileSelection(localStore, tiles.map((tile) => tile.filename));
+      // The whole selection is done with, including tiles that were already downloaded.
+      clearRmdfTileSelection(localStore, selection.tiles.map((tile) => tile.filename));
     });
   };
 

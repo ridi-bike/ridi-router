@@ -45,6 +45,9 @@ pub struct PublishRequest {
     pub execute: bool,
     /// Drop every tile of the previous release instead of merging into it.
     pub replace: bool,
+    /// Let input edge tiles replace complete tiles of the current release (see
+    /// `layout::clipping_tiles`).
+    pub overwrite_edges: bool,
 }
 
 pub fn publish(request: PublishRequest) -> Result<()> {
@@ -59,6 +62,16 @@ pub fn publish(request: PublishRequest) -> Result<()> {
         "{} has RMDF format {format_version}; this build publishes format {}",
         request.input_dir.display(),
         RmdfHeader::VERSION
+    );
+    ensure!(
+        !manifest.tiles.is_empty(),
+        "{} lists no tiles; refusing to publish an empty release",
+        request.input_dir.display()
+    );
+    ensure!(
+        layout::tile_size_fits_grid(manifest.tile_size_degrees),
+        "tile size {} deg does not divide 1 and 10 deg cells; apps select tiles in those cells",
+        manifest.tile_size_degrees
     );
     println!(
         "Verifying {} tiles in {} ...",
@@ -108,8 +121,19 @@ pub fn publish(request: PublishRequest) -> Result<()> {
     }
     let known_paths: BTreeSet<String> = merged.values().map(|tile| tile.path.clone()).collect();
 
+    let kept_edges = if request.overwrite_edges {
+        BTreeSet::new()
+    } else {
+        let input: BTreeSet<(u16, u16)> = manifest.tiles.iter().map(|t| (t.col, t.row)).collect();
+        let current: BTreeSet<(u16, u16)> = merged.keys().copied().collect();
+        layout::clipping_tiles(&input, &current)
+    };
+
     let (mut added, mut changed, mut unchanged) = (0usize, 0usize, 0usize);
     for tile in &manifest.tiles {
+        if kept_edges.contains(&(tile.col, tile.row)) {
+            continue;
+        }
         let published = PublishedTile::from_metadata(format_version, tile);
         match merged.insert((tile.col, tile.row), published.clone()) {
             None => added += 1,
@@ -155,6 +179,13 @@ pub fn publish(request: PublishRequest) -> Result<()> {
         (None, _) => println!("Previous:   none for format v{format_version}"),
     }
     println!("Input:      {added} new, {changed} changed, {unchanged} unchanged");
+    if !kept_edges.is_empty() {
+        println!(
+            "Kept:       {} edge tiles of the current release; the input holds only its own side of \
+             them (generate neighbouring regions together, or pass --overwrite-edges)",
+            kept_edges.len()
+        );
+    }
     println!(
         "Upload:     {} tile objects, {}",
         to_upload.len(),
@@ -178,7 +209,7 @@ pub fn publish(request: PublishRequest) -> Result<()> {
         })
     })?;
 
-    let release_id = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let release_id = chrono::Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
     let chunks = build_chunks(
         format_version,
         &release_id,

@@ -11,7 +11,7 @@
 //! The pre-index `manifest.json` + `tile_*.rmdf` objects that older app builds read are not
 //! touched.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ridi_router_common::manifest::{TileBounds, TileMetadata};
 use serde::{Deserialize, Serialize};
@@ -95,6 +95,43 @@ impl PublishedTile {
 pub fn tile_key(format_version: u32, col: u16, row: u16, checksum: &str) -> String {
     let hash = checksum.split_once(':').map_or(checksum, |(_, hex)| hex);
     format!("v{format_version}/tiles/{col}_{row}/{hash}.rmdf")
+}
+
+/// Input tiles that would clip the current release. A tile-gen run only sees its own extract, so
+/// a tile on the edge of the extract holds just the extract's side. Such a tile replacing a
+/// complete one (e.g. from a larger extract) loses data. An input tile counts as an edge tile when
+/// the current release has a neighbour of it that the input lacks; coastlines do not count, as the
+/// sea has no tiles on either side.
+pub fn clipping_tiles(
+    input: &BTreeSet<(u16, u16)>,
+    current: &BTreeSet<(u16, u16)>,
+) -> BTreeSet<(u16, u16)> {
+    input
+        .iter()
+        .copied()
+        .filter(|tile| current.contains(tile))
+        .filter(|&(col, row)| {
+            (-1i32..=1).any(|dc| {
+                (-1i32..=1).any(|dr| {
+                    let neighbour = (col as i32 + dc, row as i32 + dr);
+                    let (Ok(c), Ok(r)) = (u16::try_from(neighbour.0), u16::try_from(neighbour.1))
+                    else {
+                        return false;
+                    };
+                    (dc, dr) != (0, 0) && current.contains(&(c, r)) && !input.contains(&(c, r))
+                })
+            })
+        })
+        .collect()
+}
+
+/// Tile sizes must tile 1 and 10 degree cells exactly; apps group tiles into those cells.
+pub fn tile_size_fits_grid(tile_size_degrees: f32) -> bool {
+    let fits = |cell: f32| {
+        let ratio = cell / tile_size_degrees;
+        ratio >= 1.0 && (ratio - ratio.round()).abs() < 1e-3
+    };
+    tile_size_degrees > 0.0 && fits(CHUNK_SIZE_DEGREES) && (tile_size_degrees >= 1.0 || fits(1.0))
 }
 
 fn chunk_coords(tile: &PublishedTile, tile_size_degrees: f32) -> (u16, u16) {
@@ -215,6 +252,30 @@ mod tests {
         assert!((extent.lon_min - 24.1).abs() < 1e-3 && (extent.lon_max - 30.0).abs() < 1e-3);
         assert!((extent.lat_min - 56.9).abs() < 1e-3 && (extent.lat_max - 60.0).abs() < 1e-3);
         assert_eq!(manifest.tiles.len(), 2);
+    }
+
+    #[test]
+    fn clipping_tiles_are_input_edges_next_to_current_tiles_outside_the_input() {
+        let set = |tiles: &[(u16, u16)]| tiles.iter().copied().collect::<BTreeSet<_>>();
+        // Current release covers a 4x1 strip; the input re-publishes the left two tiles.
+        let current = set(&[(10, 10), (11, 10), (12, 10), (13, 10)]);
+        let input = set(&[(10, 10), (11, 10)]);
+        assert_eq!(clipping_tiles(&input, &current), set(&[(11, 10)]));
+        // Coast: nothing beyond the input in the current release, so nothing is kept back.
+        assert!(clipping_tiles(&input, &set(&[(10, 10), (11, 10)])).is_empty());
+        // New tiles are never edge tiles of the current release.
+        assert!(clipping_tiles(&set(&[(20, 20)]), &current).is_empty());
+    }
+
+    #[test]
+    fn tile_sizes_must_divide_one_and_ten_degree_cells() {
+        assert!(tile_size_fits_grid(0.1));
+        assert!(tile_size_fits_grid(0.5));
+        assert!(tile_size_fits_grid(1.0));
+        assert!(tile_size_fits_grid(2.0));
+        assert!(!tile_size_fits_grid(0.3));
+        assert!(!tile_size_fits_grid(3.0));
+        assert!(!tile_size_fits_grid(0.0));
     }
 
     #[test]
