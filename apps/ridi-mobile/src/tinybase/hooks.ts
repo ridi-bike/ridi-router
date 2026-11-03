@@ -3,6 +3,8 @@ import { useCell, useRow, useStore, useTable, useValue } from 'tinybase/ui-react
 
 import { ROUTE_PLANS_TABLE, ROUTES_TABLE, typedPlanRow, typedRouteRow } from '@/routes/persistence';
 import type { RoutePlanRow, RouteRow } from '@/routes/types';
+import { rowInstalledTileMeta } from './local/rmdfTiles';
+import type { RmdfManifestTile } from '@/rmdf/types';
 import { LOCAL_STORE_ID, RMDF_DOWNLOAD_QUEUE_TABLE, RMDF_TILES_TABLE, SYNCED_STORE_ID } from './ids';
 
 export function useLocalStore() {
@@ -64,6 +66,12 @@ export function useSyncedRoutesForPlan(planId: string | null): RouteRow[] {
     () => Object.values(table).map((row) => typedRouteRow(row)).filter((row) => row.plan_id === planId && !row.deleted_at).sort((a, b) => a.route_index - b.route_index),
     [planId, table]
   );
+}
+
+/** Tiles on disk that the router can use, with the metadata they were installed with. */
+export function useRmdfInstalledTiles(): RmdfManifestTile[] {
+  const tiles = useRmdfTileTable();
+  return useMemo(() => Object.values(tiles).flatMap((row) => rowInstalledTileMeta(row) ?? []), [tiles]);
 }
 
 export function useRmdfSelectedTileIds(): Set<string> {

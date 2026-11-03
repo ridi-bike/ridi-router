@@ -1,13 +1,20 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import { RMDF_DIRECTORY_NAME, RMDF_MANIFEST_FILENAME } from './constants';
-import type { RmdfManifestTile } from './types';
+import { RMDF_DIRECTORY_NAME, RMDF_MANIFEST_FILENAME, RMDF_RELEASE_CACHE_DIRECTORY_NAME } from './constants';
 
 export function getRmdfDirectory(): string {
   if (!FileSystem.documentDirectory) {
     throw new Error('App document directory is unavailable.');
   }
   return `${FileSystem.documentDirectory}${RMDF_DIRECTORY_NAME}/`;
+}
+
+/** Cached index and chunk manifests; kept outside the tiles directory the router reads. */
+export function getRmdfReleaseCacheDirectory(): string {
+  if (!FileSystem.documentDirectory) {
+    throw new Error('App document directory is unavailable.');
+  }
+  return `${FileSystem.documentDirectory}${RMDF_RELEASE_CACHE_DIRECTORY_NAME}/`;
 }
 
 export function getRmdfNativeDirectoryPath(): string {
@@ -21,7 +28,6 @@ export function getRmdfNativeDirectoryPath(): string {
 export function getRmdfManifestPath(): string {
   return `${getRmdfDirectory()}${RMDF_MANIFEST_FILENAME}`;
 }
-
 
 export function getRmdfTilePath(filename: string): string {
   return `${getRmdfDirectory()}${filename}`;
@@ -57,20 +63,6 @@ export async function listLocalRmdfFiles(): Promise<Set<string>> {
   await ensureRmdfDirectory();
   const files = await FileSystem.readDirectoryAsync(getRmdfDirectory());
   return new Set(files.filter((file) => file.endsWith('.rmdf')));
-}
-
-export async function getDownloadedTileIds(tiles: RmdfManifestTile[]): Promise<Set<string>> {
-  await ensureRmdfDirectory();
-  const downloaded = new Set<string>();
-  await Promise.all(
-    tiles.map(async (tile) => {
-      const info = await FileSystem.getInfoAsync(getRmdfTilePath(tile.filename));
-      if (info.exists && !info.isDirectory && info.size === tile.size_bytes) {
-        downloaded.add(tile.filename);
-      }
-    })
-  );
-  return downloaded;
 }
 
 export async function deleteRmdfTiles(filenames: string[]): Promise<{ deleted: string[]; failed: string[] }> {

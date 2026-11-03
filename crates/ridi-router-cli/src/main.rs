@@ -9,6 +9,7 @@ mod result_writer;
 #[cfg(feature = "rmdf-viewer")]
 mod rmdf;
 mod router_runner;
+mod tile_publish;
 
 use std::{
     io::{self, IsTerminal},

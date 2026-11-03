@@ -16,6 +16,7 @@ pub fn render_user_error(error: &RouterRunnerError) -> String {
         RouterRunnerError::ProgressWrite { error } => {
             format!("Progress writer error: {error}")
         }
+        RouterRunnerError::PublishTiles { .. } => error.to_string(),
         #[cfg(feature = "rule-schema-writer")]
         RouterRunnerError::RuleSchema { error } => format!("Rule schema error: {error}"),
         #[cfg(feature = "rmdf-viewer")]

@@ -6,14 +6,12 @@ build = "build.rs"
 
 [features]
 default = []
-rule-schema-writer = ["dep:anyhow", "dep:schemars"]
+rule-schema-writer = ["dep:schemars"]
 debug-split-gpx = []
 rmdf-viewer = [
-  "dep:anyhow",
   "dep:bytemuck",
   "dep:include_directory",
   "dep:memmap2",
-  "dep:ridi-router-common",
   "dep:tiny_http",
   "dep:ts-rs",
 ]
@@ -36,23 +34,29 @@ hotpath-mcp = [
 ]
 
 [dependencies]
-anyhow = { workspace = true, optional = true }
+anyhow.workspace = true
 bytemuck = { workspace = true, optional = true }
+chrono.workspace = true
 clap.workspace = true
 geo.workspace = true
 gpx.workspace = true
+hex.workspace = true
+hmac = "0.12"
 include_directory = { workspace = true, optional = true }
 memmap2 = { workspace = true, optional = true }
+rayon.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tiny_http = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 ts-rs = { workspace = true, optional = true }
+ureq = "2"
 ridi-router-routing = { path = "../ridi-router-routing" }
-ridi-router-common = { path = "../ridi-router-common", optional = true }
+ridi-router-common = { path = "../ridi-router-common" }
 ridi-router-tiles = { path = "../ridi-router-tiles" }
 hotpath.workspace = true
 

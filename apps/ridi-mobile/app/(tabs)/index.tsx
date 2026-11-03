@@ -9,7 +9,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { configureMapLibreLogs } from '@/map/mapLibreLogs';
 import { POI_ICON_IMAGES } from '@/map/poiIcons';
 import { INTERACTIVE_MAP_LAYER_IDS, ridiMapStyle } from '@/map/ridiMapStyle';
-import { readCachedManifest } from '@/rmdf/manifest';
 import type { RmdfManifestTile } from '@/rmdf/types';
 import { endpointBounds, formatCoordinate, formatDistance, planFinishPoint, planStartPoint, routeBounds } from '@/routes/format';
 import { generatedRoutesGeoJson, planningGuideGeoJson } from '@/routes/geojson';
@@ -18,7 +17,7 @@ import { routeRowToNormalized } from '@/routes/persistence';
 import { MISSING_FINISH_TILE_WARNING, MISSING_START_TILE_WARNING, MISSING_TILE_WARNING, validateDownloadedTileCoverage } from '@/routes/tileCoverage';
 import type { NormalizedRoute, RouteDraft, RouteFeatureKind, RoutePoint } from '@/routes/types';
 import { useRouteGeneration } from '@/routes/RouteGenerationProvider';
-import { useRmdfDownloadedTileIds, useSyncedPlan, useSyncedRoutesForPlan } from '@/tinybase/hooks';
+import { useRmdfInstalledTiles, useSyncedPlan, useSyncedRoutesForPlan } from '@/tinybase/hooks';
 
 configureMapLibreLogs();
 
@@ -135,6 +134,18 @@ function currentLocationPoint(location: UserLocation, tiles: RmdfManifestTile[],
   return { latitude: location.latitude, longitude: location.longitude, label: 'Current location', source: 'current_location', featureKind: 'coordinate', tileId: coverage.tileId };
 }
 
+function tilesCenter(tiles: RmdfManifestTile[]): [number, number] | null {
+  if (tiles.length === 0) return null;
+  let [west, south, east, north] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const { bounds } of tiles) {
+    west = Math.min(west, bounds.lon_min);
+    south = Math.min(south, bounds.lat_min);
+    east = Math.max(east, bounds.lon_max);
+    north = Math.max(north, bounds.lat_max);
+  }
+  return [(west + east) / 2, (south + north) / 2];
+}
+
 function boundsWithPadding(bounds: [number, number, number, number]): [number, number, number, number] {
   const [w, s, e, n] = bounds;
   const dx = Math.max((e - w) * 0.18, 0.003);
@@ -184,8 +195,8 @@ export default function RideScreen() {
   const [topDrawerTranslateY] = useState(() => new Animated.Value(-360));
   const [mode, setMode] = useState<MapRouteMode>({ kind: 'idle' });
   const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
-  const [manifestTiles, setManifestTiles] = useState<RmdfManifestTile[]>([]);
-  const downloadedTileIds = useRmdfDownloadedTileIds();
+  const manifestTiles = useRmdfInstalledTiles();
+  const downloadedTileIds = useMemo(() => new Set(manifestTiles.map((tile) => tile.filename)), [manifestTiles]);
   const routeGeneration = useRouteGeneration();
   const selectedPlan = useSyncedPlan(routeGeneration.selectedPlanId);
   const selectedRouteRows = useSyncedRoutesForPlan(routeGeneration.selectedPlanId);
@@ -206,15 +217,20 @@ export default function RideScreen() {
   }, []);
 
   useEffect(() => {
-    readCachedManifest().then((manifest) => setManifestTiles(manifest?.tiles ?? [])).catch(() => routeGeneration.showWarning('Missing RMDF manifest. Download routing tiles first.'));
-  }, [routeGeneration]);
-
-  useEffect(() => {
     const showBottom = mode.kind === 'point_selected';
     Animated.timing(bottomDrawerTranslateY, { duration: 220, toValue: showBottom ? 0 : 360, useNativeDriver: true }).start();
     const showTop = mode.kind === 'planning' || mode.kind === 'generating' || mode.kind === 'route_review' || !!routeGeneration.selectedPlanId;
     Animated.timing(topDrawerTranslateY, { duration: 220, toValue: showTop ? 0 : -360, useNativeDriver: true }).start();
   }, [bottomDrawerTranslateY, mode, routeGeneration.selectedPlanId, topDrawerTranslateY]);
+
+  // Until a GPS fix arrives, start over the downloaded routing data rather than a fixed city.
+  const centeredOnLocation = useRef(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const installedCenter = useMemo(() => tilesCenter(manifestTiles), [manifestTiles]);
+  useEffect(() => {
+    if (!mapLoaded || !installedCenter || centeredOnLocation.current || routeGeneration.selectedPlanId) return;
+    cameraRef.current?.jumpTo({ center: installedCenter, zoom: 10 });
+  }, [mapLoaded, installedCenter, routeGeneration.selectedPlanId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -225,6 +241,7 @@ export default function RideScreen() {
       if (!isMounted) return;
       const nextUserLocation = { latitude: location.coords.latitude, longitude: location.coords.longitude };
       setUserLocation(nextUserLocation);
+      centeredOnLocation.current = true;
       cameraRef.current?.easeTo({ center: [nextUserLocation.longitude, nextUserLocation.latitude], duration: 700, zoom: 14 });
     }
     requestLocationAndCenterMap().catch(() => undefined);
@@ -335,7 +352,7 @@ export default function RideScreen() {
 
   return (
     <View className="flex-1 bg-background">
-      <Map ref={mapRef} attribution={false} compass={false} logo={false} mapStyle={ridiMapStyle} onPress={handleMapPress} style={StyleSheet.absoluteFill}>
+      <Map ref={mapRef} attribution={false} compass={false} logo={false} mapStyle={ridiMapStyle} onDidFinishLoadingMap={() => setMapLoaded(true)} onPress={handleMapPress} style={StyleSheet.absoluteFill}>
         <Images images={{ 'military-hatch': require('@/assets/map/pattern-military-hatch.png'), 'park-dot': require('@/assets/map/pattern-park-dot.png'), ...POI_ICON_IMAGES }} />
         <Camera ref={cameraRef} initialViewState={{ center: [11.5761, 48.1372], zoom: 10 }} />
 

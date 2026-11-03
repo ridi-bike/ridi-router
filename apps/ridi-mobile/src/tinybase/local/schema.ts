@@ -8,7 +8,12 @@ export const localTableSchemas = {
   rmdf_tiles: z.object({
     tile_id: z.string(),
     filename: z.string(),
+    // Release metadata the tile was last selected or queued with (JSON RmdfManifestTile).
     checksum: z.string().optional(),
+    meta: z.string().optional(),
+    // What is on disk: checksum is the installed tile version, meta feeds the router manifest.
+    installed_checksum: z.string().optional(),
+    installed_meta: z.string().optional(),
     local_path: z.string().optional(),
     status: rmdfTileStatusSchema.default('remoteOnly'),
     selected: z.boolean().default(false),

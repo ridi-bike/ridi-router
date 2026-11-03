@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::tile_publish::{self, Credentials, DirStore, ObjectStore, PublishRequest, S3Store};
 use crate::{
     cli::{
         output_dir::{prepare_empty_output_dir, OutputDirError},
@@ -52,6 +53,9 @@ pub enum RouterRunnerError {
 
     #[error("Failed to initialize progress writer: {error}")]
     ProgressWrite { error: ProgressWriterError },
+
+    #[error("Tile publishing failed: {error:#}")]
+    PublishTiles { error: anyhow::Error },
 
     #[cfg(feature = "rule-schema-writer")]
     #[error("Failed to write rule schema: {error}")]
@@ -203,6 +207,35 @@ enum CliMode {
         /// Tile size in degrees (e.g., 0.1, 1.0)
         tile_size_deg: f32,
     },
+    /// Publish a tile generation output directory as a new tile release
+    ///
+    /// Merges the tiles into the current release for their RMDF format version, uploads tiles
+    /// whose contents are not published yet, then switches index.json to the new release.
+    /// Dry run unless --execute is passed.
+    ///
+    /// Bucket credentials come from the environment: R2_ACCOUNT_ID (or S3_ENDPOINT),
+    /// R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, optionally R2_BUCKET (default ridi-maps).
+    PublishTiles {
+        #[arg(long, value_name = "DIR")]
+        /// Tile generation output directory containing manifest.json and RMDF tiles
+        input: PathBuf,
+
+        #[arg(long, value_name = "DIR")]
+        /// Publish into a local directory with the bucket layout instead of the bucket
+        to_dir: Option<PathBuf>,
+
+        #[arg(long, default_value = "rmdf/")]
+        /// Key prefix inside the bucket or directory
+        prefix: String,
+
+        #[arg(long)]
+        /// Do not merge with the current release; publish only these tiles
+        replace: bool,
+
+        #[arg(long)]
+        /// Actually write; without it only the plan is printed
+        execute: bool,
+    },
     /// Generate JSON schema file for rule files
     #[cfg(feature = "rule-schema-writer")]
     RuleSchemaWrite {
@@ -217,6 +250,27 @@ enum CliMode {
         /// Directory containing manifest.json and RMDF tile files
         input_dir: PathBuf,
     },
+}
+
+fn s3_store_from_env() -> anyhow::Result<S3Store> {
+    let var = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let require = |name: &str| {
+        var(name).ok_or_else(|| anyhow::anyhow!("{name} is not set (needed to reach the bucket)"))
+    };
+    let endpoint = match var("S3_ENDPOINT") {
+        Some(endpoint) => endpoint,
+        None => format!(
+            "https://{}.r2.cloudflarestorage.com",
+            require("R2_ACCOUNT_ID")?
+        ),
+    };
+    let credentials = Credentials {
+        access_key_id: require("R2_ACCESS_KEY_ID")?,
+        secret_access_key: require("R2_SECRET_ACCESS_KEY")?,
+        region: var("S3_REGION").unwrap_or_else(|| "auto".to_string()),
+    };
+    let bucket = var("R2_BUCKET").unwrap_or_else(|| "ridi-maps".to_string());
+    Ok(S3Store::new(&endpoint, &bucket, credentials))
 }
 
 pub struct RouterRunner;
@@ -342,6 +396,26 @@ impl RouterRunner {
         Ok(())
     }
 
+    fn run_publish_tiles(
+        input_dir: PathBuf,
+        to_dir: Option<PathBuf>,
+        prefix: String,
+        replace: bool,
+        execute: bool,
+    ) -> anyhow::Result<()> {
+        let store: Box<dyn ObjectStore> = match to_dir {
+            Some(dir) => Box::new(DirStore::new(dir)),
+            None => Box::new(s3_store_from_env()?),
+        };
+        tile_publish::publish(PublishRequest {
+            input_dir,
+            store,
+            prefix,
+            execute,
+            replace,
+        })
+    }
+
     #[tracing::instrument]
     pub fn run() -> std::result::Result<(), RouterRunnerError> {
         let cli = Cli::parse();
@@ -366,6 +440,14 @@ impl RouterRunner {
                 output,
                 tile_size_deg,
             } => Self::run_generate_tiles(input, input_dir, output, tile_size_deg),
+            CliMode::PublishTiles {
+                input,
+                to_dir,
+                prefix,
+                replace,
+                execute,
+            } => Self::run_publish_tiles(input, to_dir, prefix, replace, execute)
+                .map_err(|error| RouterRunnerError::PublishTiles { error }),
             #[cfg(feature = "rule-schema-writer")]
             CliMode::RuleSchemaWrite { destination } => {
                 crate::cli::rules::generate_json_schema(&destination)
