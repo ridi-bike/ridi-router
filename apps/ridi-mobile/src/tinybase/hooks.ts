@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { useCell, useRow, useStore, useTable, useValue } from 'tinybase/ui-react';
 
+import { ROUTE_PLANS_TABLE, ROUTES_TABLE, typedPlanRow, typedRouteRow } from '@/routes/persistence';
+import type { RoutePlanRow, RouteRow } from '@/routes/types';
 import { LOCAL_STORE_ID, RMDF_DOWNLOAD_QUEUE_TABLE, RMDF_TILES_TABLE, SYNCED_STORE_ID } from './ids';
 
 export function useLocalStore() {
@@ -41,6 +43,27 @@ export function useRmdfTileTable() {
 
 export function useRmdfQueueTable() {
   return useTable(RMDF_DOWNLOAD_QUEUE_TABLE, LOCAL_STORE_ID);
+}
+
+export function useSyncedPlans(): RoutePlanRow[] {
+  const table = useTable(ROUTE_PLANS_TABLE, SYNCED_STORE_ID);
+  return useMemo(
+    () => Object.values(table).map((row) => typedPlanRow(row)).filter((row) => !row.deleted_at).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
+    [table]
+  );
+}
+
+export function useSyncedPlan(planId: string | null): RoutePlanRow | null {
+  const row = useRow(ROUTE_PLANS_TABLE, planId ?? '', SYNCED_STORE_ID);
+  return useMemo(() => (planId && Object.keys(row).length ? typedPlanRow(row) : null), [planId, row]);
+}
+
+export function useSyncedRoutesForPlan(planId: string | null): RouteRow[] {
+  const table = useTable(ROUTES_TABLE, SYNCED_STORE_ID);
+  return useMemo(
+    () => Object.values(table).map((row) => typedRouteRow(row)).filter((row) => row.plan_id === planId && !row.deleted_at).sort((a, b) => a.route_index - b.route_index),
+    [planId, table]
+  );
 }
 
 export function useRmdfSelectedTileIds(): Set<string> {

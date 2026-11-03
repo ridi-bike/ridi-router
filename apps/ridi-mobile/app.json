@@ -35,7 +35,8 @@
       ],
       "@maplibre/maplibre-react-native",
       "expo-background-task",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
