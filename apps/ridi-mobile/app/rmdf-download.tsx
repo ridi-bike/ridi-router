@@ -12,25 +12,29 @@ import { loadRmdfChunk, loadRmdfRelease } from '@/rmdf/manifest';
 import { useRmdfDownloadManager } from '@/rmdf/RmdfDownloadManagerContext';
 import { useRmdfDownloads } from '@/rmdf/RmdfDownloadProvider';
 import {
+  boundsContain,
   boundsIntersect,
   boxesToGeoJson,
+  boxLabelsToGeoJson,
   buildCellBoxes,
   buildChunkBoxes,
   buildTileBoxes,
   cellIdAt,
   chunkAt,
+  chunkDrawBounds,
   chunkIdForTile,
   formatBytes,
   gridLevelForZoom,
   releaseCenter,
   tileIdAt,
   tilesInCell,
+  tileStatesToGeoJson,
   tileStatus,
   type GridLevel,
 } from '@/rmdf/tiles';
 import type { RmdfBounds, RmdfChunkSummary, RmdfManifestTile, RmdfRelease } from '@/rmdf/types';
-import { useLocalStore, useRmdfDownloadingTileIds, useRmdfQueuePositions, useRmdfQueuedTileIds, useRmdfTileTable } from '@/tinybase/hooks';
-import { reconcileLocalRmdfTiles } from '@/tinybase/local/rmdfReconcile';
+import { useLocalStore, useRmdfDownloadingTileIds, useRmdfQueuedTileIds, useRmdfTileTable } from '@/tinybase/hooks';
+import { adoptUntrackedTiles, listUntrackedTileFiles, reconcileLocalRmdfTiles } from '@/tinybase/local/rmdfReconcile';
 import { clearRmdfTileSelection, rowInstalledTileMeta, rowTileMeta, setRmdfTilesSelected } from '@/tinybase/local/rmdfTiles';
 
 type LoadState =
@@ -44,47 +48,44 @@ const INITIAL_ZOOM = 6;
 // Chunk manifests to fetch for the viewport at once; more means the view is zoomed out too far.
 const MAX_VISIBLE_CHUNK_LOADS = 6;
 
-const stateColor = (alpha: number) =>
-  [
-    'match',
-    ['get', 'state'],
-    'selected',
-    `rgba(32, 138, 239, ${alpha + 0.12})`,
-    'partSelected',
-    `rgba(32, 138, 239, ${alpha})`,
-    'pending',
-    `rgba(59, 130, 246, ${alpha})`,
-    'failed',
-    `rgba(239, 68, 68, ${alpha + 0.1})`,
-    'outdated',
-    `rgba(245, 158, 11, ${alpha + 0.1})`,
-    'downloaded',
-    `rgba(34, 197, 94, ${alpha})`,
-    'partDownloaded',
-    `rgba(34, 197, 94, ${alpha / 2})`,
-    'rgba(0, 0, 0, 0)',
-  ] as const;
-
-const fillStyle = { fillColor: stateColor(0.3), fillOutlineColor: 'rgba(255,255,255,0)' } as const;
-
-const lineStyle = {
-  lineColor: ['match', ['get', 'state'], ['selected', 'partSelected'], '#208AEF', 'outdated', '#f59e0b', ['downloaded', 'partDownloaded'], '#22c55e', 'failed', '#ef4444', '#6b7280'],
-  lineWidth: ['match', ['get', 'state'], ['selected', 'partSelected'], 2.5, ['match', ['get', 'level'], 'tile', 1, 1.5]],
+const TILE_COLORS = {
+  downloaded: '#22c55e',
+  outdated: '#f59e0b',
+  pending: '#93c5fd',
+  failed: '#ef4444',
+  selected: '#208AEF',
 } as const;
+
+const tileFillStyle = {
+  fillColor: ['match', ['get', 'fill'], ...Object.entries(TILE_COLORS).flat(), 'rgba(0,0,0,0)'],
+  fillOpacity: 0.45,
+  fillOutlineColor: 'rgba(255,255,255,0)',
+} as const;
+
+const gridLineStyle = {
+  lineColor: ['match', ['get', 'selection'], 'none', '#4b5563', '#208AEF'],
+  lineWidth: ['match', ['get', 'selection'], 'all', 3, 'some', 2, ['match', ['get', 'level'], 'tile', 0.75, 1.25]],
+} as const;
+
+// Dash patterns cannot be data-driven, so partly selected squares get their own layer.
+const SOLID_GRID_FILTER = ['!=', ['get', 'selection'], 'some'] as const;
+const PARTLY_SELECTED_FILTER = ['==', ['get', 'selection'], 'some'] as const;
+const partlySelectedLineStyle = { lineColor: '#208AEF', lineWidth: 2, lineDasharray: [2, 1] } as const;
 
 const labelStyle = {
   textField: ['get', 'label'],
   textFont: ['Open Sans Regular'],
-  textSize: 12,
+  textSize: 13,
   textColor: '#ffffff',
   textHaloColor: '#1f2937',
   textHaloWidth: 1.5,
+  textAllowOverlap: false,
 } as const;
 
 const LEVEL_HINT: Record<GridLevel, string> = {
-  chunk: 'Tap a 10° area to select all of it. Zoom in for 1° areas.',
-  cell: 'Tap a 1° area to select all of it. Zoom in for single tiles.',
-  tile: 'Tap single tiles to select them.',
+  chunk: 'Tap a square to select or deselect all of it. Zoom in for smaller squares.',
+  cell: 'Tap a square to select or deselect all of it. Zoom in for single tiles.',
+  tile: 'Tap a tile to select or deselect it.',
 };
 
 export default function RmdfDownloadScreen() {
@@ -95,7 +96,6 @@ export default function RmdfDownloadScreen() {
   const rows = useRmdfTileTable();
   const queuedIds = useRmdfQueuedTileIds();
   const downloadingIds = useRmdfDownloadingTileIds();
-  const queuePositions = useRmdfQueuePositions();
   const [loadState, setLoadState] = useState<LoadState>({ kind: 'loading' });
   const [cameraCenter, setCameraCenter] = useState<[number, number] | null>(null);
   const [view, setView] = useState<ViewState | null>(null);
@@ -131,13 +131,20 @@ export default function RmdfDownloadScreen() {
       setChunkTiles(new globalThis.Map());
       setLoadState({ kind: 'ready', release: result.release, deleteOnly: result.deleteOnly, warning: result.warning });
       setCameraCenter(await resolveInitialCamera(result.release));
-      // Chunks holding installed tiles are needed to tell which of them are outdated.
-      const installedChunkIds = new Set<string>();
+      // Chunks holding tiles on disk are needed to tell which are outdated and to re-register
+      // files the local store no longer lists.
+      const chunkIds = new Set<string>();
       for (const row of Object.values(localStore.getTable('rmdf_tiles'))) {
         const meta = rowInstalledTileMeta(row);
-        if (meta) installedChunkIds.add(chunkIdForTile(meta, result.release));
+        if (meta) chunkIds.add(chunkIdForTile(meta, result.release));
       }
-      await ensureChunks(result.release, result.release.chunks.filter((chunk) => installedChunkIds.has(chunk.id)));
+      const untracked = await listUntrackedTileFiles(localStore);
+      for (const filename of untracked) {
+        const match = /^tile_(\d+)_(\d+)\.rmdf$/.exec(filename);
+        if (match) chunkIds.add(chunkIdForTile({ col: Number(match[1]), row: Number(match[2]) }, result.release));
+      }
+      const tiles = await ensureChunks(result.release, result.release.chunks.filter((chunk) => chunkIds.has(chunk.id)));
+      if (untracked.length > 0) await adoptUntrackedTiles(localStore, new globalThis.Map(tiles.map((tile) => [tile.filename, tile])));
     } catch (error) {
       setLoadState({ kind: 'error', message: error instanceof Error ? error.message : 'Failed to load map data index.' });
     }
@@ -166,16 +173,18 @@ export default function RmdfDownloadScreen() {
     return byFilename;
   }, [chunkTiles]);
 
-  const tileState = useMemo(() => ({ rows, queuedIds, downloadingIds, queuePositions }), [rows, queuedIds, downloadingIds, queuePositions]);
+  const tileState = useMemo(() => ({ rows, queuedIds, downloadingIds }), [rows, queuedIds, downloadingIds]);
 
   const boxes = useMemo(() => {
     if (!release) return [];
-    if (level === 'chunk' || !view) return buildChunkBoxes(release, loadedTiles, tileState);
+    if (level === 'chunk' || !view) return buildChunkBoxes(release, tileState);
     const tiles = [...loadedTiles.values()];
     return level === 'cell' ? buildCellBoxes(release, tiles, tileState, view.bounds) : buildTileBoxes(tiles, tileState, view.bounds);
   }, [release, level, view, loadedTiles, tileState]);
 
-  const geoJson = useMemo(() => boxesToGeoJson(boxes), [boxes]);
+  const gridGeoJson = useMemo(() => boxesToGeoJson(boxes), [boxes]);
+  const labelGeoJson = useMemo(() => boxLabelsToGeoJson(boxes), [boxes]);
+  const tileGeoJson = useMemo(() => tileStatesToGeoJson(tileState, loadedTiles), [tileState, loadedTiles]);
 
   // Selection lives in tile rows, so it survives leaving the screen and spans chunks not loaded.
   const selection = useMemo(() => {
@@ -224,7 +233,7 @@ export default function RmdfDownloadScreen() {
     if (!release) return;
     const [longitude, latitude] = event.nativeEvent.lngLat;
     const chunk = chunkAt(release, longitude, latitude);
-    if (!chunk) return;
+    if (!chunk || (level === 'chunk' && !boundsContain(chunkDrawBounds(chunk), longitude, latitude))) return;
     try {
       const tiles = await ensureChunks(release, [chunk]);
       if (level === 'chunk') toggleTiles(tiles);
@@ -309,11 +318,18 @@ export default function RmdfDownloadScreen() {
         />
         {cameraCenter ? <Camera initialViewState={{ center: cameraCenter, zoom: INITIAL_ZOOM }} /> : null}
         {release ? (
-          <GeoJSONSource id="rmdf-tiles" data={geoJson as never}>
-            <Layer id="rmdf-tile-fills" type="fill" style={fillStyle as never} />
-            <Layer id="rmdf-tile-borders" type="line" style={lineStyle as never} />
-            <Layer id="rmdf-tile-labels" type="symbol" style={labelStyle as never} />
-          </GeoJSONSource>
+          <>
+            <GeoJSONSource id="rmdf-tile-states" data={tileGeoJson as never}>
+              <Layer id="rmdf-tile-state-fills" type="fill" style={tileFillStyle as never} />
+            </GeoJSONSource>
+            <GeoJSONSource id="rmdf-grid" data={gridGeoJson as never}>
+              <Layer id="rmdf-grid-lines" type="line" filter={SOLID_GRID_FILTER as never} style={gridLineStyle as never} />
+              <Layer id="rmdf-grid-partly-selected" type="line" filter={PARTLY_SELECTED_FILTER as never} style={partlySelectedLineStyle as never} />
+            </GeoJSONSource>
+            <GeoJSONSource id="rmdf-grid-labels" data={labelGeoJson as never}>
+              <Layer id="rmdf-grid-label-text" type="symbol" style={labelStyle as never} />
+            </GeoJSONSource>
+          </>
         ) : null}
       </Map>
 
@@ -330,7 +346,17 @@ export default function RmdfDownloadScreen() {
           </View>
           {loadState.kind === 'loading' ? <ActivityIndicator /> : null}
         </View>
-        {release ? <Text className="text-muted mt-2 text-xs">{LEVEL_HINT[level]}</Text> : null}
+        {release ? (
+          <>
+            <Text className="text-muted mt-2 text-xs">{LEVEL_HINT[level]}</Text>
+            <View className="mt-2 flex-row flex-wrap gap-x-3 gap-y-1">
+              <LegendItem color={TILE_COLORS.downloaded} label="Downloaded" />
+              <LegendItem color={TILE_COLORS.selected} label="Selected" />
+              <LegendItem color={TILE_COLORS.outdated} label="Update available" />
+              <LegendItem color={TILE_COLORS.pending} label="Downloading" />
+            </View>
+          </>
+        ) : null}
         {warning ? <Text className="mt-3 text-xs font-semibold text-orange-500">{warning}</Text> : null}
         {chunkError ? <Text className="mt-3 text-xs font-semibold text-orange-500">{chunkError}</Text> : null}
         {downloads.warning ? <Text className="mt-3 text-xs font-semibold text-orange-500">{downloads.warning}</Text> : null}
@@ -373,7 +399,12 @@ export default function RmdfDownloadScreen() {
                 onPress={() => void handleDownload()}
                 variant="primary"
               />
-              <ActionButton disabled={selection.deletable.length === 0} label="Delete" onPress={handleDelete} variant="danger" />
+              <ActionButton
+                disabled={selection.deletable.length === 0}
+                label={selection.deletable.length > 0 ? `Delete ${selection.deletable.length}` : 'Delete'}
+                onPress={handleDelete}
+                variant="danger"
+              />
               <ActionButton
                 disabled={selection.tiles.length === 0}
                 label="Clear"
@@ -387,6 +418,15 @@ export default function RmdfDownloadScreen() {
           </ScrollView>
         )}
       </View>
+    </View>
+  );
+}
+
+function LegendItem({ color, label }: { color: string; label: string }) {
+  return (
+    <View className="flex-row items-center gap-1">
+      <View className="h-3 w-3 rounded-sm" style={{ backgroundColor: color, opacity: 0.7 }} />
+      <Text className="text-muted text-xs">{label}</Text>
     </View>
   );
 }

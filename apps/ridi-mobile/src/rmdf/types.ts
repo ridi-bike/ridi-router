@@ -25,7 +25,10 @@ export type RmdfRelease = {
 
 export type RmdfChunkSummary = {
   id: string;
+  /** Grid cell of the chunk. */
   bounds: RmdfBounds;
+  /** Extent of the chunk's tiles; the selectable area drawn on the map. */
+  tile_bounds?: RmdfBounds;
   tile_count: number;
   total_bytes: number;
   /** Chunk manifest path relative to the base URL. */

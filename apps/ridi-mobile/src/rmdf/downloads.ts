@@ -140,7 +140,7 @@ export class RmdfDownloadManager {
       this.processing = false;
       await writeInstalledManifest(store);
       if (!this.hasActiveRows(store)) {
-        store.setValue('rmdf_download_last_summary', `Downloaded queued map tile(s).${getFailedCount(store) ? ` ${getFailedCount(store)} failed.` : ''}`);
+        store.setValue('rmdf_download_last_summary', `Download finished.${getFailedCount(store) ? ` ${getFailedCount(store)} failed.` : ''}`);
         await this.finishNotification();
       }
     }

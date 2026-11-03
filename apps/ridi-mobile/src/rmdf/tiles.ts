@@ -25,8 +25,13 @@ export function hitTestTile(tiles: RmdfManifestTile[], longitude: number, latitu
 export function releaseCenter(release: RmdfRelease): [number, number] {
   if (release.chunks.length === 0) return [24.1, 56.9];
   // Chunk bounds are whole grid cells; the biggest chunk is a reasonable place to start.
-  const chunk = [...release.chunks].sort((a, b) => b.total_bytes - a.total_bytes)[0];
-  return [(chunk.bounds.lon_min + chunk.bounds.lon_max) / 2, (chunk.bounds.lat_min + chunk.bounds.lat_max) / 2];
+  const bounds = chunkDrawBounds([...release.chunks].sort((a, b) => b.total_bytes - a.total_bytes)[0]);
+  return [(bounds.lon_min + bounds.lon_max) / 2, (bounds.lat_min + bounds.lat_max) / 2];
+}
+
+/** The area a chunk square covers on the map: its tiles' extent, not the whole grid cell. */
+export function chunkDrawBounds(chunk: RmdfChunkSummary): RmdfBounds {
+  return chunk.tile_bounds ?? chunk.bounds;
 }
 
 /**
@@ -78,6 +83,10 @@ export function chunkAt(release: RmdfRelease, longitude: number, latitude: numbe
   return release.chunks.find((chunk) => chunk.id === id) ?? null;
 }
 
+export function boundsContain(bounds: RmdfBounds, longitude: number, latitude: number): boolean {
+  return longitude >= bounds.lon_min && longitude <= bounds.lon_max && latitude >= bounds.lat_min && latitude <= bounds.lat_max;
+}
+
 export function cellIdAt(longitude: number, latitude: number): string {
   return gridIdAt(longitude, latitude, CELL_SIZE_DEGREES);
 }
@@ -101,77 +110,37 @@ export function tileStatus(tile: RmdfManifestTile, row: Row | undefined, queuedI
   return 'remoteOnly';
 }
 
+/** One tappable grid square; it only reports how much of it is selected and on the device. */
 export type GridBox = {
   id: string;
   level: GridLevel;
   bounds: RmdfBounds;
   totalCount: number;
   totalBytes: number;
-  downloadedCount: number;
-  outdatedCount: number;
-  pendingCount: number;
-  failedCount: number;
   selectedCount: number;
-  queuePosition?: number;
+  installedCount: number;
+  installedBytes: number;
 };
 
-type BoxCounts = Omit<GridBox, 'id' | 'level' | 'bounds' | 'totalCount' | 'totalBytes' | 'queuePosition'>;
+type BoxCounts = Pick<GridBox, 'selectedCount' | 'installedCount' | 'installedBytes'>;
 
 function emptyCounts(): BoxCounts {
-  return { downloadedCount: 0, outdatedCount: 0, pendingCount: 0, failedCount: 0, selectedCount: 0 };
+  return { selectedCount: 0, installedCount: 0, installedBytes: 0 };
 }
 
-function addStatus(counts: BoxCounts, status: RmdfTileStatus, selected: boolean) {
-  if (status === 'downloaded') counts.downloadedCount += 1;
-  if (status === 'outdated') counts.outdatedCount += 1;
-  if (status === 'queued' || status === 'downloading') counts.pendingCount += 1;
-  if (status === 'failed') counts.failedCount += 1;
-  if (selected) counts.selectedCount += 1;
+function addTile(counts: BoxCounts, row: Row | undefined, installedBytes: number | null) {
+  if (row?.selected === true) counts.selectedCount += 1;
+  if (installedBytes !== null) {
+    counts.installedCount += 1;
+    counts.installedBytes += installedBytes;
+  }
 }
 
 export type TileStateLookup = {
   rows: Record<string, Row>;
   queuedIds: Set<string>;
   downloadingIds: Set<string>;
-  queuePositions: Map<string, number>;
 };
-
-/**
- * Chunk boxes come from the release summary, so they need no chunk manifests. Local state is
- * counted from tile rows, which carry the metadata they were selected or installed with.
- */
-export function buildChunkBoxes(release: RmdfRelease, loadedTiles: Map<string, RmdfManifestTile>, state: TileStateLookup): GridBox[] {
-  const counts = new Map<string, BoxCounts>();
-  const countFor = (id: string) => {
-    let entry = counts.get(id);
-    if (!entry) counts.set(id, (entry = emptyCounts()));
-    return entry;
-  };
-  for (const [filename, row] of Object.entries(state.rows)) {
-    const tile = loadedTiles.get(filename);
-    const meta = tile ?? parseRowMeta(row);
-    if (!meta) continue;
-    const status = tile ? tileStatus(tile, row, state.queuedIds, state.downloadingIds) : rowOnlyStatus(row, state);
-    if (status === 'remoteOnly' && row.selected !== true) continue;
-    addStatus(countFor(chunkIdForTile(meta, release)), status, row.selected === true);
-  }
-  return release.chunks.map((chunk) => ({
-    id: chunk.id,
-    level: 'chunk',
-    bounds: chunk.bounds,
-    totalCount: chunk.tile_count,
-    totalBytes: chunk.total_bytes,
-    ...(counts.get(chunk.id) ?? emptyCounts()),
-  }));
-}
-
-function rowOnlyStatus(row: Row, state: TileStateLookup): RmdfTileStatus {
-  const filename = String(row.filename ?? '');
-  if (state.downloadingIds.has(filename)) return 'downloading';
-  if (state.queuedIds.has(filename)) return 'queued';
-  if (row.installed_checksum) return row.installed_checksum === row.checksum ? 'downloaded' : 'outdated';
-  return row.status === 'failed' ? 'failed' : 'remoteOnly';
-}
 
 function parseRowMeta(row: Row): RmdfManifestTile | null {
   const value = row.installed_meta ?? row.meta;
@@ -181,6 +150,36 @@ function parseRowMeta(row: Row): RmdfManifestTile | null {
   } catch {
     return null;
   }
+}
+
+function installedSize(row: Row | undefined): number | null {
+  if (!row?.installed_meta) return null;
+  return parseRowMeta(row)?.size_bytes ?? 0;
+}
+
+/**
+ * Chunk boxes come from the release summary, so they need no chunk manifests. Local state is
+ * counted from tile rows, which carry the metadata they were selected or installed with.
+ */
+export function buildChunkBoxes(release: RmdfRelease, state: TileStateLookup): GridBox[] {
+  const counts = new Map<string, BoxCounts>();
+  for (const row of Object.values(state.rows)) {
+    const meta = parseRowMeta(row);
+    const installed = installedSize(row);
+    if (!meta || (installed === null && row.selected !== true)) continue;
+    const id = chunkIdForTile(meta, release);
+    let entry = counts.get(id);
+    if (!entry) counts.set(id, (entry = emptyCounts()));
+    addTile(entry, row, installed);
+  }
+  return release.chunks.map((chunk) => ({
+    id: chunk.id,
+    level: 'chunk',
+    bounds: chunkDrawBounds(chunk),
+    totalCount: chunk.tile_count,
+    totalBytes: chunk.total_bytes,
+    ...(counts.get(chunk.id) ?? emptyCounts()),
+  }));
 }
 
 export function buildCellBoxes(release: RmdfRelease, tiles: RmdfManifestTile[], state: TileStateLookup, viewport: RmdfBounds): GridBox[] {
@@ -197,7 +196,7 @@ export function buildCellBoxes(release: RmdfRelease, tiles: RmdfManifestTile[], 
     box.totalCount += 1;
     box.totalBytes += tile.size_bytes;
     const row = state.rows[tile.filename];
-    addStatus(box, tileStatus(tile, row, state.queuedIds, state.downloadingIds), row?.selected === true);
+    addTile(box, row, installedSize(row));
   }
   return [...boxes.values()];
 }
@@ -207,17 +206,9 @@ export function buildTileBoxes(tiles: RmdfManifestTile[], state: TileStateLookup
   for (const tile of tiles) {
     if (!boundsIntersect(tile.bounds, viewport)) continue;
     const row = state.rows[tile.filename];
-    const counts = emptyCounts();
-    addStatus(counts, tileStatus(tile, row, state.queuedIds, state.downloadingIds), row?.selected === true);
-    boxes.push({
-      id: tile.filename,
-      level: 'tile',
-      bounds: tile.bounds,
-      totalCount: 1,
-      totalBytes: tile.size_bytes,
-      queuePosition: state.queuePositions.get(tile.filename),
-      ...counts,
-    });
+    const box: GridBox = { id: tile.filename, level: 'tile', bounds: tile.bounds, totalCount: 1, totalBytes: tile.size_bytes, ...emptyCounts() };
+    addTile(box, row, installedSize(row));
+    boxes.push(box);
   }
   return boxes;
 }
@@ -228,26 +219,32 @@ export function tilesInCell(release: RmdfRelease, tiles: Iterable<RmdfManifestTi
   return result;
 }
 
-/** Map styling keys off `state`; aggregated boxes report the most actionable state they contain. */
-function boxState(box: GridBox): string {
-  if (box.selectedCount > 0) return box.selectedCount === box.totalCount ? 'selected' : 'partSelected';
-  if (box.pendingCount > 0) return 'pending';
-  if (box.failedCount > 0) return 'failed';
-  if (box.outdatedCount > 0) return 'outdated';
-  if (box.downloadedCount > 0) return box.downloadedCount === box.totalCount ? 'downloaded' : 'partDownloaded';
-  return 'remote';
+function boxSelection(box: GridBox): 'all' | 'some' | 'none' {
+  if (box.selectedCount === 0) return 'none';
+  return box.selectedCount >= box.totalCount ? 'all' : 'some';
 }
 
+/** What is still to download in the square; single tiles are too small for a label. */
 function boxLabel(box: GridBox): string {
-  if (box.level === 'tile') {
-    if (box.queuePosition) return String(box.queuePosition);
-    return box.outdatedCount ? 'update' : '';
-  }
-  const parts = [formatBytes(box.totalBytes)];
-  const installed = box.downloadedCount + box.outdatedCount;
-  if (installed > 0) parts.push(`${installed}/${box.totalCount} saved`);
-  if (box.outdatedCount > 0) parts.push(`${box.outdatedCount} to update`);
-  return parts.join('\n');
+  if (box.level === 'tile') return '';
+  if (box.installedCount >= box.totalCount) return 'Downloaded';
+  const remaining = formatBytes(box.totalBytes - box.installedBytes);
+  return box.installedCount > 0 ? `${remaining} left` : remaining;
+}
+
+function polygon(bounds: RmdfBounds) {
+  return {
+    type: 'Polygon' as const,
+    coordinates: [
+      [
+        [bounds.lon_min, bounds.lat_min],
+        [bounds.lon_max, bounds.lat_min],
+        [bounds.lon_max, bounds.lat_max],
+        [bounds.lon_min, bounds.lat_max],
+        [bounds.lon_min, bounds.lat_min],
+      ],
+    ],
+  };
 }
 
 export function boxesToGeoJson(boxes: GridBox[]) {
@@ -256,19 +253,44 @@ export function boxesToGeoJson(boxes: GridBox[]) {
     features: boxes.map((box) => ({
       type: 'Feature' as const,
       id: box.id,
-      properties: { id: box.id, level: box.level, state: boxState(box), label: boxLabel(box) },
-      geometry: {
-        type: 'Polygon' as const,
-        coordinates: [
-          [
-            [box.bounds.lon_min, box.bounds.lat_min],
-            [box.bounds.lon_max, box.bounds.lat_min],
-            [box.bounds.lon_max, box.bounds.lat_max],
-            [box.bounds.lon_min, box.bounds.lat_max],
-            [box.bounds.lon_min, box.bounds.lat_min],
-          ],
-        ],
-      },
+      properties: { id: box.id, level: box.level, selection: boxSelection(box) },
+      geometry: polygon(box.bounds),
     })),
   };
+}
+
+/** One label per square at its center; polygon labels repeat across render tiles. */
+export function boxLabelsToGeoJson(boxes: GridBox[]) {
+  return {
+    type: 'FeatureCollection' as const,
+    features: boxes.flatMap((box) => {
+      const label = boxLabel(box);
+      if (!label) return [];
+      const center = [(box.bounds.lon_min + box.bounds.lon_max) / 2, (box.bounds.lat_min + box.bounds.lat_max) / 2];
+      return [{ type: 'Feature' as const, id: box.id, properties: { label }, geometry: { type: 'Point' as const, coordinates: center } }];
+    }),
+  };
+}
+
+export type TileFillState = 'downloaded' | 'outdated' | 'pending' | 'failed' | 'selected';
+
+/**
+ * The tiles themselves, at every zoom: what is on the device (or on its way) and what is selected
+ * to download. Downloaded tiles stay green when selected so the saved area is always visible.
+ */
+export function tileStatesToGeoJson(state: TileStateLookup, loadedTiles: Map<string, RmdfManifestTile>) {
+  const features = [];
+  for (const [filename, row] of Object.entries(state.rows)) {
+    const release = loadedTiles.get(filename);
+    const meta = release ?? parseRowMeta(row);
+    if (!meta) continue;
+    let fill: TileFillState | null = null;
+    if (state.downloadingIds.has(filename) || state.queuedIds.has(filename)) fill = 'pending';
+    else if (row.installed_checksum) fill = row.installed_checksum === (release?.checksum ?? row.checksum) ? 'downloaded' : 'outdated';
+    else if (row.selected === true) fill = 'selected';
+    else if (row.status === 'failed') fill = 'failed';
+    if (!fill) continue;
+    features.push({ type: 'Feature' as const, id: filename, properties: { fill }, geometry: polygon(meta.bounds) });
+  }
+  return { type: 'FeatureCollection' as const, features };
 }

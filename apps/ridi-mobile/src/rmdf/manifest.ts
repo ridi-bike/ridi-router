@@ -52,7 +52,8 @@ function parseChunkSummary(value: unknown): RmdfChunkSummary | null {
   const chunk = value as Partial<RmdfChunkSummary>;
   const bounds = parseBounds(chunk.bounds);
   if (!bounds || !isString(chunk.id) || !isString(chunk.manifest) || !isNumber(chunk.tile_count) || !isNumber(chunk.total_bytes)) return null;
-  return { id: chunk.id, bounds, tile_count: chunk.tile_count, total_bytes: chunk.total_bytes, manifest: chunk.manifest };
+  const tileBounds = parseBounds(chunk.tile_bounds) ?? undefined;
+  return { id: chunk.id, bounds, tile_bounds: tileBounds, tile_count: chunk.tile_count, total_bytes: chunk.total_bytes, manifest: chunk.manifest };
 }
 
 export function parseRmdfIndex(json: unknown): RmdfTileIndex {

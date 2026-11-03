@@ -43,7 +43,11 @@ pub struct Release {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkSummary {
     pub id: String,
+    /// Grid cell of the chunk.
     pub bounds: TileBounds,
+    /// Extent of the tiles in the chunk, which apps draw as the selectable area.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tile_bounds: Option<TileBounds>,
     pub tile_count: u64,
     pub total_bytes: u64,
     /// Key of the chunk manifest, relative to the prefix.
@@ -120,6 +124,17 @@ pub fn build_chunks(
             let id = format!("{cx}_{cy}");
             let lon_min = cx as f32 * CHUNK_SIZE_DEGREES - 180.0;
             let lat_min = cy as f32 * CHUNK_SIZE_DEGREES - 90.0;
+            let tile_bounds = tiles.iter().fold(None::<TileBounds>, |extent, tile| {
+                Some(match extent {
+                    None => tile.bounds.clone(),
+                    Some(extent) => TileBounds {
+                        lat_min: extent.lat_min.min(tile.bounds.lat_min),
+                        lat_max: extent.lat_max.max(tile.bounds.lat_max),
+                        lon_min: extent.lon_min.min(tile.bounds.lon_min),
+                        lon_max: extent.lon_max.max(tile.bounds.lon_max),
+                    },
+                })
+            });
             let summary = ChunkSummary {
                 manifest: format!("v{format_version}/releases/{release_id}/chunks/{id}.json"),
                 id,
@@ -129,6 +144,7 @@ pub fn build_chunks(
                     lon_min,
                     lon_max: lon_min + CHUNK_SIZE_DEGREES,
                 },
+                tile_bounds,
                 tile_count: tiles.len() as u64,
                 total_bytes: tiles.iter().map(|tile| tile.size_bytes).sum(),
             };
@@ -152,11 +168,12 @@ mod tests {
             filename: format!("tile_{col}_{row}.rmdf"),
             col,
             row,
+            // 0.1 deg grid positions.
             bounds: TileBounds {
-                lat_min: 0.0,
-                lat_max: 0.0,
-                lon_min: 0.0,
-                lon_max: 0.0,
+                lat_min: row as f32 * 0.1 - 90.0,
+                lat_max: (row + 1) as f32 * 0.1 - 90.0,
+                lon_min: col as f32 * 0.1 - 180.0,
+                lon_max: (col + 1) as f32 * 0.1 - 180.0,
             },
             size_bytes: 10,
             point_count: 1,
@@ -194,6 +211,9 @@ mod tests {
         assert_eq!(summary.bounds.lon_min, 20.0);
         assert_eq!(summary.bounds.lat_min, 50.0);
         assert_eq!(summary.manifest, "v2/releases/r1/chunks/20_14.json");
+        let extent = summary.tile_bounds.as_ref().unwrap();
+        assert!((extent.lon_min - 24.1).abs() < 1e-3 && (extent.lon_max - 30.0).abs() < 1e-3);
+        assert!((extent.lat_min - 56.9).abs() < 1e-3 && (extent.lat_max - 60.0).abs() < 1e-3);
         assert_eq!(manifest.tiles.len(), 2);
     }
 
